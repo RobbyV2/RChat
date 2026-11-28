@@ -2,6 +2,7 @@
 
 import type { AvatarCrop } from './avatar_images'
 import type { AvatarMode } from './avatar_setting'
+import type { AnimateMode } from './avatar_motion'
 import type { Secret as Sealed } from './secret'
 import type { ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
@@ -405,6 +406,8 @@ export interface RChatState {
   streamer: boolean
   // What this device draws for people: pictures, built-in avatars, or one kind for everyone.
   avatarMode: AvatarMode
+  // When animated pictures play on this device.
+  animateMode: AnimateMode
   iceHelpers: boolean
   // This account's link safety choices on this device.
   linkPrefs: LinkPrefs
@@ -466,6 +469,7 @@ export interface RChatState {
   setTheme: (theme: Theme) => void
   setStreamer: (streamer: boolean) => void
   setAvatarMode: (mode: AvatarMode) => void
+  setAnimateMode: (mode: AnimateMode) => void
   setIceHelpers: (on: boolean) => void
   setLinkPrefs: (prefs: LinkPrefs) => void
   trustLinkSite: (site: Site) => void

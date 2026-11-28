@@ -52,6 +52,7 @@ const SWITCHES = [
   'interactive_docs',
   'member_lists',
   'profile_pictures',
+  'animated_profile_pictures',
 ]
 
 describe('feature switches', () => {

@@ -462,9 +462,9 @@ export function Tile({
           {streamer ? (
             <AvatarHidden size={avatar} />
           ) : tile.local ? (
-            <KeyAvatar person={shownUser(user, null)} size={avatar} />
+            <KeyAvatar person={shownUser(user, null)} size={avatar} animate={speaking} />
           ) : (
-            <UserAvatar person={shownUser(user, null)} size={avatar} />
+            <UserAvatar person={shownUser(user, null)} size={avatar} animate={speaking} />
           )}
         </span>
       )}

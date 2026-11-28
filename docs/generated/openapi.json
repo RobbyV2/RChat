@@ -1197,7 +1197,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Picture id, 32 hex characters",
+            "description": "Picture id: 32 hex characters, with `-a` after them when the picture has an animation",
             "required": true,
             "schema": {
               "type": "string"
@@ -1246,6 +1246,91 @@
           },
           "404": {
             "description": "`Not found`: no such picture or size, or the `profile_pictures` switch is off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the general bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
+    "/api/v1/avatars/{id}/{size}/animated": {
+      "get": {
+        "tags": [
+          "Media"
+        ],
+        "summary": "Get an animated picture",
+        "description": "The animation of the picture `id` as an animated GIF of `size` pixels: 128 or 512. Only a\npicture whose id ends in `-a` has one, and its 512 pixel animation is missing when it would\nhave passed the upload size: ask for 128 then. Cached like the stills. No authentication.\n404 while the `profile_pictures` or the `animated_profile_pictures` switch is off. General\nrate-limit bucket.",
+        "operationId": "get_animated",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Picture id ending in `-a`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "size",
+            "in": "path",
+            "description": "Side in pixels: 128 or 512",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The animation",
+            "content": {
+              "image/gif": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "`If-None-Match` names this animation"
+          },
+          "404": {
+            "description": "`Not found`: no such picture, no animation of that size, or a switch is off",
             "content": {
               "application/json": {
                 "schema": {
@@ -6927,7 +7012,7 @@
           "Account"
         ],
         "summary": "Upload your profile picture",
-        "description": "Sets the profile picture of the account from the image in the request body: a PNG, JPEG,\nGIF or WebP file (an animation gives its first frame) of at most\n`limits.avatar_upload_bytes` of `GET /api/v1/instance`, by default 8 MiB\n(`AVATAR_UPLOAD_MAX_MIB`), and at most 40 megapixels. The server turns the image as its\nEXIF orientation says, keeps the square `x`, `y`, `size` (without them the centered largest\nsquare), and stores it at 64, 128 and 512 pixels as PNG when it has transparency and as\nJPEG otherwise. Nothing else of the file is kept. The picture before is removed. The\nbuilt-in avatar (`avatar_kind`) stays as it is and shows where pictures are not shown.\nEmits `user_updated` to users who share a server or DM with the user. Requires a bearer\ntoken and the `profile_pictures` switch. Strict rate-limit bucket.",
+        "description": "Sets the profile picture of the account from the image in the request body: a PNG, JPEG,\nGIF or WebP file of at most\n`limits.avatar_upload_bytes` of `GET /api/v1/instance`, by default 8 MiB\n(`AVATAR_UPLOAD_MAX_MIB`), and at most 40 megapixels. The server turns the image as its\nEXIF orientation says, keeps the square `x`, `y`, `size` (without them the centered largest\nsquare), and stores it at 64, 128 and 512 pixels as PNG when it has transparency and as\nJPEG otherwise. An animated GIF, WebP or PNG also keeps its animation, as animated GIFs of\n128 and 512 pixels, while the `animated_profile_pictures` switch is on: the id then ends in\n`-a`, and an animation past `AVATAR_ANIMATION_MAX_FRAMES` (250), `AVATAR_ANIMATION_MAX_SECS`\n(20) or `AVATAR_ANIMATION_MAX_MEGAPIXELS` (400, over all frames) is refused with 413.\nNothing else of the file is kept. The picture before is removed. The\nbuilt-in avatar (`avatar_kind`) stays as it is and shows where pictures are not shown.\nEmits `user_updated` to users who share a server or DM with the user. Requires a bearer\ntoken and the `profile_pictures` switch. Strict rate-limit bucket.",
         "operationId": "put_my_avatar",
         "parameters": [
           {
@@ -37951,6 +38036,10 @@
           "guests_enabled"
         ],
         "properties": {
+          "animated_profile_pictures": {
+            "type": "boolean",
+            "description": "Whether an animated upload keeps its animation (under `profile_pictures`). Off: an\nupload keeps only its first frame, `GET /api/v1/avatars/{id}/{size}/animated` answers\n404, and clients draw the stills."
+          },
           "asset_previews": {
             "type": "boolean",
             "description": "Link previews: the server fetches page metadata for links in messages."

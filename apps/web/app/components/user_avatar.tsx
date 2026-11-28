@@ -1,11 +1,11 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import { User } from 'lucide-react'
 import { builtIn } from '../lib/avatar_setting'
 import { identiconBackground, identiconSvg } from '../lib/identicon'
 import type { Person } from '../lib/people'
-import { useAccountPicture, useAvatarView } from '../lib/avatar_view'
+import { useAccountAnimation, useAccountPicture, useAvatarView, usePlays } from '../lib/avatar_view'
 import { PictureOver } from './avatar_picture'
 
 interface Props {
@@ -13,15 +13,20 @@ interface Props {
   size?: number
   // A picture streamer mode hides: the viewer's own, outside a chat.
   covered?: boolean
+  // Plays an animated picture without a pointer over it: an open profile, a speaker's tile.
+  animate?: boolean
 }
 
 // The picture of an account, as the person given is drawn: the built-in avatar, and their
 // uploaded picture over it where this device shows pictures.
-export function UserAvatar({ person, size = 32, covered = false }: Props) {
+export function UserAvatar({ person, size = 32, covered = false, animate = false }: Props) {
   const view = useAvatarView()
   const { username } = person
   const { kind: avatarKind, color: avatarColor } = builtIn(person, view.mode)
   const picture = useAccountPicture(person.avatar_image ?? null, size, view)
+  const animation = useAccountAnimation(person.avatar_image ?? null, size, view)
+  const box = useRef<HTMLSpanElement>(null)
+  const plays = usePlays(box, animation !== null, animate)
   const background = identiconBackground(avatarKind, avatarColor)
   const src = useMemo(
     () =>
@@ -31,7 +36,7 @@ export function UserAvatar({ person, size = 32, covered = false }: Props) {
     [username, avatarKind, background]
   )
   return (
-    <PictureOver src={picture} size={size}>
+    <PictureOver src={picture} moving={plays ? animation : null} boxRef={box} size={size}>
       {src ? (
         <img
           src={src}

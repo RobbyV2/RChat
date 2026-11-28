@@ -46,10 +46,7 @@ export function useP2pPicture(
   size: number,
   view: AvatarView
 ): string | null {
-  const own = useP2p(s => (s.ik === ik ? s.pic : null))
-  const sent = useP2p(s => s.contacts.find(c => c.ik === ik)?.pic)
-  const theirs = useMemo(() => parsePic(sent) ?? null, [sent])
-  const pic = placed !== undefined ? placed : (own ?? theirs)
+  const pic = useP2pPic(ik, placed)
   return useP2pFileUrl(pic && picturesShown(view) ? stillFor(pic, size) : null)
 }
 
@@ -58,17 +55,40 @@ export function useP2pServerPicture(pic: P2pPic | null | undefined, view: Avatar
   return useP2pFileUrl(pic && picturesShown(view) ? pic.s : null)
 }
 
+// The picture this device draws for the identity `ik`, as `useP2pPicture` settles it.
+export function useP2pPic(ik: string, placed: P2pPic | null | undefined): P2pPic | null {
+  const own = useP2p(s => (s.ik === ik ? s.pic : null))
+  const sent = useP2p(s => s.contacts.find(c => c.ik === ik)?.pic)
+  const theirs = useMemo(() => parsePic(sent) ?? null, [sent])
+  return placed !== undefined ? placed : (own ?? theirs)
+}
+
+// Whether the P2P picture `pic` has an animation this device may play.
+export function useP2pAnimated(pic: P2pPic | null | undefined, view: AvatarView) {
+  const kept = useStore(s => s.settings.animated_profile_pictures)
+  return !!pic?.a && kept && picturesShown(view)
+}
+
+// The address of the animation of a P2P picture while it `plays`; its file is asked for only
+// then, and null comes back until it is here.
+export function useP2pAnimation(pic: P2pPic | null | undefined, plays: boolean) {
+  return useP2pFileUrl(plays && pic?.a ? pic.a : null)
+}
+
 // What the P2P picture editors share: whether a picture can be made here now, the most bytes of
 // a source file, and making one from the chosen square of a file for the picture `scope` names.
 export function useP2pPictureMaker() {
   const identity = useP2pApp()
   const served = useStore(s => s.settings.profile_pictures)
   const maxBytes = useStore(s => limitsOf(s.instance).avatar_upload_bytes)
+  const animated = useStore(s => s.settings.animated_profile_pictures)
   const make = async (
     file: Blob,
     crop: AvatarCrop,
     scope: PictureScope
   ): Promise<P2pPic | string> =>
-    identity ? keptPic(identity.p2pFiles, await pictureFiles(file, crop), scope) : P2P_NOT_RUNNING
+    identity
+      ? keptPic(identity.p2pFiles, await pictureFiles(file, crop, animated), scope)
+      : P2P_NOT_RUNNING
   return { off: served ? null : 'Profile pictures are turned off on this site', maxBytes, make }
 }

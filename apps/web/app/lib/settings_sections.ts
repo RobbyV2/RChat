@@ -186,6 +186,12 @@ const ROWS: Record<SettingsSection, SettingsRow[]> = {
       keywords: ['avatar', 'pfp', 'picture', 'identicon', 'appearance'],
     },
     {
+      id: 'user_avatar_motion',
+      label: 'Animate pictures',
+      line: 'Play animated pictures when pointed at, always, or never.',
+      keywords: ['avatar', 'pfp', 'gif', 'animation', 'motion', 'appearance'],
+    },
+    {
       id: 'user_streamer',
       label: 'Streamer mode',
       line: 'Blurs server names, usernames, and DM names until hovered.',

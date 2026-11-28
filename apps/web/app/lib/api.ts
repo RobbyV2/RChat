@@ -461,6 +461,10 @@ export class ApiClient {
     return `${this.base}/avatars/${seg(id)}/${size}`
   }
 
+  avatarAnimatedUrl(id: string, size: number) {
+    return `${this.base}/avatars/${seg(id)}/${size}/animated`
+  }
+
   hasToken(candidate: Sealed | null) {
     return this.token !== null && this.token.same(candidate)
   }

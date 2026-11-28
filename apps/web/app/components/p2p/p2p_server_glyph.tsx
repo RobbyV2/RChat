@@ -1,8 +1,8 @@
 'use client'
 
-import type { ReactNode } from 'react'
-import { useAvatarView } from '../../lib/avatar_view'
-import { useP2pServerPicture } from '../../lib/client/p2p_picture'
+import { useRef, type ReactNode } from 'react'
+import { useAvatarView, usePlays } from '../../lib/avatar_view'
+import { useP2pAnimated, useP2pAnimation, useP2pServerPicture } from '../../lib/client/p2p_picture'
 import type { P2pPic } from '../../lib/p2p/pictures'
 import { PictureOver } from '../avatar_picture'
 
@@ -14,9 +14,13 @@ export function P2pServerGlyph({
   pic: P2pPic | undefined
   children: ReactNode
 }) {
-  const src = useP2pServerPicture(pic, useAvatarView())
+  const view = useAvatarView()
+  const src = useP2pServerPicture(pic, view)
+  const box = useRef<HTMLSpanElement>(null)
+  const plays = usePlays(box, useP2pAnimated(pic, view))
+  const animation = useP2pAnimation(pic, plays)
   return (
-    <PictureOver src={src} size="fill">
+    <PictureOver src={src} moving={animation} boxRef={box} size="fill">
       {children}
     </PictureOver>
   )

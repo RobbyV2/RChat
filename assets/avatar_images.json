@@ -4,5 +4,11 @@
   "max_pixels": 40000000,
   "min_crop": 16,
   "p2p_sizes": [128, 512],
-  "p2p_max_bytes": 262144
+  "p2p_max_bytes": 262144,
+  "p2p_animation": {
+    "frames": 250,
+    "millis": 20000,
+    "megapixels": 400,
+    "max_bytes": 1048576
+  }
 }

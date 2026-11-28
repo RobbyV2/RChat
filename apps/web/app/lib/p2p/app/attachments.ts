@@ -6,7 +6,7 @@ import { assemble, EMPTY_VIEW, offText } from '../blobs'
 import type { Hashed } from '../hashing'
 import type { P2pFile } from '../pictures'
 import type { PictureScope } from '../picture_gate'
-import { AVATAR_IMAGES } from '../../avatar_images'
+import { ANIMATION_TYPE, AVATAR_IMAGES } from '../../avatar_images'
 import { checkedThumb, hashFile, imageFits, previewOf, saveName, UrlCache } from '../files'
 import { kindOf, NEUTRAL_TYPE } from '../../sniff'
 import { sharing } from '../../platform'
@@ -181,7 +181,7 @@ export function createAttachmentsPart(
       return pictureUrls.use(h, async () => {
         const s = parts.dms.dbNow()
         const blob = s ? await assemble(s.db, h).catch(() => null) : null
-        const known = (AVATAR_IMAGES.types as readonly string[]).includes(blob?.type ?? '')
+        const known = [...AVATAR_IMAGES.types, ANIMATION_TYPE].includes(blob?.type ?? '')
         if (!blob || !known || !(await imageFits(blob))) return null
         return URL.createObjectURL(blob)
       })

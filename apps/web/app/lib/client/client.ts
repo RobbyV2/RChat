@@ -10,7 +10,8 @@ import { createInstanceRegistry } from './instance_registry'
 import { ownInstance, writeLocal } from '../instances'
 import type { Theme } from '../types'
 import type { AvatarMode } from '../avatar_setting'
-import { AVATARS_KEY, STREAMER_KEY, keepTheme } from '../theme/device'
+import { AVATARS_KEY, AVATAR_MOTION_KEY, STREAMER_KEY, keepTheme } from '../theme/device'
+import type { AnimateMode } from '../avatar_motion'
 import type { AccountId, AccountSession } from './session'
 
 const closed = {
@@ -63,6 +64,7 @@ function createClient() {
     theme: 'dark' as Theme,
     streamer: false,
     avatarMode: 'pictures' as AvatarMode,
+    animateMode: 'hover' as AnimateMode,
     setTheme(theme: Theme) {
       device.theme = theme
       keepTheme(theme)
@@ -79,6 +81,12 @@ function createClient() {
       device.avatarMode = avatarMode
       writeLocal(AVATARS_KEY, avatarMode)
       for (const account of live) account.store.setState({ avatarMode })
+    },
+    // When animated pictures play on this device, for every account and P2P identity on it.
+    setAnimateMode(animateMode: AnimateMode) {
+      device.animateMode = animateMode
+      writeLocal(AVATAR_MOTION_KEY, animateMode)
+      for (const account of live) account.store.setState({ animateMode })
     },
   }
 

@@ -8,6 +8,7 @@ export const AVATAR_IMAGES = {
   min_crop: 16,
   p2p_sizes: [128, 512],
   p2p_max_bytes: 262_144,
+  p2p_animation: { frames: 250, millis: 20_000, megapixels: 400, max_bytes: 1_048_576 },
 } as const
 
 export type AvatarSize = (typeof AVATAR_IMAGES.sizes)[number]
@@ -19,8 +20,19 @@ export interface AvatarCrop {
   size: number
 }
 
+// Whether the picture `id` on an instance has an animation: its id says so.
+export const hasAnimation = (id: string | null | undefined) => !!id && id.endsWith('-a')
+
+// The sides an animation is kept at, and the smallest that fills `px` CSS pixels at `ratio`
+// device pixels each.
+export const ANIMATED_SIZES = [128, 512] as const
+export const animatedSizeFor = (px: number, ratio = 1) =>
+  ANIMATED_SIZES.find(s => s >= px * ratio) ?? ANIMATED_SIZES[1]
+
 // The file types a picture can be made from.
 export const AVATAR_SOURCES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const
+// The type of an animation as it is kept.
+export const ANIMATION_TYPE = 'image/gif'
 export const AVATAR_ACCEPT = AVATAR_SOURCES.join(',')
 
 // The smallest stored size that fills `px` CSS pixels at `ratio` device pixels each.

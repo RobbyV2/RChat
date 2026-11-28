@@ -274,6 +274,8 @@ pub struct SettingsPatch {
     member_lists: Option<bool>,
     /// Uploaded profile pictures.
     profile_pictures: Option<bool>,
+    /// Animated profile and server pictures.
+    animated_profile_pictures: Option<bool>,
     registration: Option<Registration>,
     upload_expiry_max_days: Option<i64>,
     server_creation: Option<ServerCreation>,
@@ -375,6 +377,7 @@ pub(crate) async fn patch_settings(
         interactive_docs,
         member_lists,
         profile_pictures,
+        animated_profile_pictures,
         registration,
         upload_expiry_max_days,
         server_creation,
@@ -508,6 +511,7 @@ pub(crate) async fn patch_settings(
         Feature::InteractiveDocs => interactive_docs,
         Feature::MemberLists => member_lists,
         Feature::ProfilePictures => profile_pictures,
+        Feature::AnimatedProfilePictures => animated_profile_pictures,
     };
     let switches = [
         ("profanity_filter", profanity_filter),

@@ -466,6 +466,7 @@ export function createChatStore(acct: AccountSession) {
       theme: client.device.theme,
       streamer: client.device.streamer,
       avatarMode: client.device.avatarMode,
+      animateMode: client.device.animateMode,
       iceHelpers: true,
       linkPrefs: DEFAULT_LINK_PREFS,
       iceRelay: false,

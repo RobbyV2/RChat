@@ -347,7 +347,7 @@ function ServerTile({
           : 'bg-primary-container text-on-primary-container'
       }
     >
-      <ServerGlyph name={name} displayName={displayName} look={look} />
+      <ServerGlyph name={name} displayName={displayName} look={look} animate />
     </Tile>
   )
 }

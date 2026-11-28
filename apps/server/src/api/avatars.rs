@@ -25,7 +25,7 @@ use crate::db::{Db, User, now};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
-use rchat_avatar::{Crop, Encoded, Mime, Refused, SIZES};
+use rchat_avatar::{ANIMATED_SIZES, Animated, Bounds, Crop, Encoded, Mime, Refused, SIZES};
 
 #[cfg(test)]
 mod tests;
@@ -85,7 +85,10 @@ fn over_unsized() -> ApiError {
     )
 }
 
-fn refused(why: Refused) -> ApiError {
+fn refused(why: Refused, bounds: &Bounds) -> ApiError {
+    let limit = |error: String, control: &str| {
+        ApiError::limit(StatusCode::PAYLOAD_TOO_LARGE, error, control)
+    };
     match why {
         Refused::NotImage => ApiError::invalid(
             "The picture must be a PNG, JPEG, GIF or WebP image",
@@ -99,25 +102,58 @@ fn refused(why: Refused) -> ApiError {
             "The crop must be a square of at least 16 pixels inside the picture",
             "crop",
         ),
+        Refused::Frames => limit(
+            format!("The animation has too many frames: up to {}", bounds.frames),
+            "avatar_animation_max_frames",
+        ),
+        Refused::Duration => limit(
+            format!(
+                "The animation is too long: up to {} seconds",
+                bounds.millis / 1000
+            ),
+            "avatar_animation_max_secs",
+        ),
+        Refused::AnimationPixels => limit(
+            format!(
+                "The animation is too large: up to {} megapixels over all its frames",
+                bounds.pixels / 1_000_000
+            ),
+            "avatar_animation_max_megapixels",
+        ),
+        Refused::AnimationBytes => limit(
+            format!(
+                "The animation is over {}MB once made smaller: use fewer frames",
+                bounds.bytes / (1024 * 1024)
+            ),
+            "avatar_upload_max_mib",
+        ),
     }
 }
 
+/// A picture made from an upload, not stored yet: its stills, and its animation when the
+/// upload has one and the site keeps animations.
+pub(crate) struct Picture {
+    still: Encoded,
+    animated: Option<Animated>,
+}
+
 /// The picture in an upload body of `user`: read within `AVATAR_UPLOAD_MAX_MIB` and the upload
-/// buffer, then decoded, cropped and encoded off the request threads. Refused while the
-/// `profile_pictures` switch is off.
+/// buffer, then decoded, cropped and encoded off the request threads. An animated upload keeps
+/// its animation while the `animated_profile_pictures` switch is on, within the bounds of
+/// `Limits::avatar_animation_bounds`. Refused while the `profile_pictures` switch is off.
 pub(crate) async fn uploaded(
     state: &AppState,
     user: &User,
     headers: &HeaderMap,
     crop: CropQuery,
     body: Body,
-) -> Result<Encoded, ApiError> {
-    if !Settings::cached(&state.db)
-        .await
-        .on(Feature::ProfilePictures)
-    {
+) -> Result<Picture, ApiError> {
+    let settings = Settings::cached(&state.db).await;
+    if !settings.on(Feature::ProfilePictures) {
         return Err(turned_off());
     }
+    let animations = settings.on(Feature::AnimatedProfilePictures);
+    let bounds = state.limits.avatar_animation_bounds();
     let crop = crop_of(crop)?;
     let max = state.limits.avatar_upload_bytes();
     let declared = declared_length(headers);
@@ -134,32 +170,47 @@ pub(crate) async fn uploaded(
         .map_err(ApiError::internal)?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        rchat_avatar::encode(&body.data, crop)
+        let still = rchat_avatar::encode(&body.data, crop)?;
+        let animated = match animations {
+            true => rchat_avatar::animate(&body.data, crop, &bounds)?,
+            false => None,
+        };
+        Ok(Picture { still, animated })
     })
     .await
     .map_err(ApiError::internal)?
-    .map_err(refused)
+    .map_err(|why| refused(why, &bounds))
 }
 
-/// Stores `picture` for `owner`, in `server` or for the account, and gives its new id.
+/// The end of the id of a picture that has an animation.
+const ANIMATED: &str = "-a";
+
+/// Stores `picture` for `owner`, in `server` or for the account, and gives its new id: 32 hex
+/// characters, with `-a` after them when the picture has an animation.
 pub(crate) async fn store(
     conn: &mut sqlx::AnyConnection,
     owner: &str,
     server: Option<&str>,
-    picture: &Encoded,
+    picture: &Picture,
 ) -> Result<String, ApiError> {
+    let Picture { still, animated } = picture;
     let mut bytes = [0u8; 16];
     rand::rng().fill_bytes(&mut bytes);
-    let id = hex::encode(bytes);
-    let [small, medium, large] = picture.files();
-    sqlx::query("INSERT INTO avatar_images(id, owner, server, mime, s64, s128, s512, created_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8)")
+    let id = match animated {
+        Some(_) => format!("{}{ANIMATED}", hex::encode(bytes)),
+        None => hex::encode(bytes),
+    };
+    let [small, medium, large] = still.files();
+    sqlx::query("INSERT INTO avatar_images(id, owner, server, mime, s64, s128, s512, a128, a512, created_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)")
         .bind(&id)
         .bind(owner)
         .bind(server)
-        .bind(picture.mime().as_str())
+        .bind(still.mime().as_str())
         .bind(small.clone())
         .bind(medium.clone())
         .bind(large.clone())
+        .bind(animated.as_ref().map(|a| a.small().to_vec()))
+        .bind(animated.as_ref().and_then(|a| a.large().map(<[u8]>::to_vec)))
         .bind(now())
         .execute(&mut *conn)
         .await?;
@@ -190,7 +241,7 @@ pub(crate) async fn sweep(db: &Db, at: i64) -> sqlx::Result<u64> {
 async fn replace(
     state: &AppState,
     username: &str,
-    next: Option<&Encoded>,
+    next: Option<&Picture>,
 ) -> Result<Option<String>, ApiError> {
     let mut tx = state.db.begin().await?;
     let before: Option<String> = sqlx::query("SELECT avatar_image FROM users WHERE username = $1")
@@ -219,12 +270,16 @@ async fn replace(
 /// Upload your profile picture
 ///
 /// Sets the profile picture of the account from the image in the request body: a PNG, JPEG,
-/// GIF or WebP file (an animation gives its first frame) of at most
+/// GIF or WebP file of at most
 /// `limits.avatar_upload_bytes` of `GET /api/v1/instance`, by default 8 MiB
 /// (`AVATAR_UPLOAD_MAX_MIB`), and at most 40 megapixels. The server turns the image as its
 /// EXIF orientation says, keeps the square `x`, `y`, `size` (without them the centered largest
 /// square), and stores it at 64, 128 and 512 pixels as PNG when it has transparency and as
-/// JPEG otherwise. Nothing else of the file is kept. The picture before is removed. The
+/// JPEG otherwise. An animated GIF, WebP or PNG also keeps its animation, as animated GIFs of
+/// 128 and 512 pixels, while the `animated_profile_pictures` switch is on: the id then ends in
+/// `-a`, and an animation past `AVATAR_ANIMATION_MAX_FRAMES` (250), `AVATAR_ANIMATION_MAX_SECS`
+/// (20) or `AVATAR_ANIMATION_MAX_MEGAPIXELS` (400, over all frames) is refused with 413.
+/// Nothing else of the file is kept. The picture before is removed. The
 /// built-in avatar (`avatar_kind`) stays as it is and shows where pictures are not shown.
 /// Emits `user_updated` to users who share a server or DM with the user. Requires a bearer
 /// token and the `profile_pictures` switch. Strict rate-limit bucket.
@@ -268,7 +323,7 @@ async fn replace_icon(
     state: &AppState,
     access: &ServerAccess,
     user: &User,
-    next: Option<&Encoded>,
+    next: Option<&Picture>,
 ) -> Result<bool, ApiError> {
     let key = access.name();
     let actor = access.audit_actor(&state.db, Perm::ManageServer).await?;
@@ -376,11 +431,8 @@ pub(crate) async fn delete_server_icon(
 
 /// The headers of every picture answer: nothing may read it as another type or run it, other
 /// origins may show it, and its address serves the same bytes for good.
-fn picture_headers(headers: &mut HeaderMap, mime: Mime, etag: &str) {
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static(mime.as_str()),
-    );
+fn picture_headers(headers: &mut HeaderMap, mime: &'static str, etag: &str) {
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
     headers.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
@@ -402,6 +454,20 @@ fn picture_headers(headers: &mut HeaderMap, mime: Mime, etag: &str) {
     }
 }
 
+/// Whether `id` has the form of a picture id: 32 hex characters, and `-a` after them for a
+/// picture with an animation.
+fn well_formed(id: &str) -> bool {
+    let hex = id.strip_suffix(ANIMATED).unwrap_or(id);
+    hex.len() == 32 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn fresh(headers: &HeaderMap, etag: &str) -> bool {
+    headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|t| t.trim() == etag || t.trim() == "*"))
+}
+
 fn column(size: &str) -> Option<&'static str> {
     SIZES
         .iter()
@@ -417,16 +483,15 @@ fn column(size: &str) -> Option<&'static str> {
 /// cached for a year (`immutable`); a changed picture has a new id. No authentication: the id
 /// is 128 random bits that only people who were shown the user have. 404 while the
 /// `profile_pictures` switch is off. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/avatars/{id}/{size}", tag = "Media", params(("id" = String, Path, description = "Picture id, 32 hex characters"), ("size" = u32, Path, description = "Side in pixels: 64, 128 or 512")), responses((status = 200, description = "The picture", content((Vec<u8> = "image/png"), (Vec<u8> = "image/jpeg"))), (status = 304, description = "`If-None-Match` names this picture"), (status = 404, description = "`Not found`: no such picture or size, or the `profile_pictures` switch is off", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(()))]
+#[utoipa::path(get, path = "/api/v1/avatars/{id}/{size}", tag = "Media", params(("id" = String, Path, description = "Picture id: 32 hex characters, with `-a` after them when the picture has an animation"), ("size" = u32, Path, description = "Side in pixels: 64, 128 or 512")), responses((status = 200, description = "The picture", content((Vec<u8> = "image/png"), (Vec<u8> = "image/jpeg"))), (status = 304, description = "`If-None-Match` names this picture"), (status = 404, description = "`Not found`: no such picture or size, or the `profile_pictures` switch is off", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(()))]
 pub(crate) async fn get_avatar(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path((id, size)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
     let column = column(&size).ok_or_else(not_found)?;
-    let hex = id.len() == 32 && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
     let db = state.read();
-    if !hex || !Settings::cached(&db).await.on(Feature::ProfilePictures) {
+    if !well_formed(&id) || !Settings::cached(&db).await.on(Feature::ProfilePictures) {
         return Err(not_found());
     }
     let row = sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -438,14 +503,56 @@ pub(crate) async fn get_avatar(
     .ok_or_else(not_found)?;
     let mime = Mime::parse(&row.try_get::<String, _>(0)?).ok_or_else(not_found)?;
     let etag = format!("\"{id}-{size}\"");
-    let fresh = headers
-        .get(header::IF_NONE_MATCH)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.split(',').any(|t| t.trim() == etag || t.trim() == "*"));
-    let mut res = match fresh {
+    let mut res = match fresh(&headers, &etag) {
         true => StatusCode::NOT_MODIFIED.into_response(),
         false => row.try_get::<Vec<u8>, _>(1)?.into_response(),
     };
-    picture_headers(res.headers_mut(), mime, &etag);
+    picture_headers(res.headers_mut(), mime.as_str(), &etag);
+    Ok(res)
+}
+
+/// Get an animated picture
+///
+/// The animation of the picture `id` as an animated GIF of `size` pixels: 128 or 512. Only a
+/// picture whose id ends in `-a` has one, and its 512 pixel animation is missing when it would
+/// have passed the upload size: ask for 128 then. Cached like the stills. No authentication.
+/// 404 while the `profile_pictures` or the `animated_profile_pictures` switch is off. General
+/// rate-limit bucket.
+#[utoipa::path(get, path = "/api/v1/avatars/{id}/{size}/animated", tag = "Media", params(("id" = String, Path, description = "Picture id ending in `-a`"), ("size" = u32, Path, description = "Side in pixels: 128 or 512")), responses((status = 200, description = "The animation", content_type = "image/gif", body = Vec<u8>), (status = 304, description = "`If-None-Match` names this animation"), (status = 404, description = "`Not found`: no such picture, no animation of that size, or a switch is off", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(()))]
+pub(crate) async fn get_animated(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((id, size)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let column = ANIMATED_SIZES
+        .iter()
+        .position(|side| side.to_string() == size)
+        .map(|at| ["a128", "a512"][at])
+        .ok_or_else(not_found)?;
+    let db = state.read();
+    let settings = Settings::cached(&db).await;
+    let shown = settings.on(Feature::ProfilePictures)
+        && settings.on(Feature::AnimatedProfilePictures)
+        && well_formed(&id)
+        && id.ends_with(ANIMATED);
+    if !shown {
+        return Err(not_found());
+    }
+    let etag = format!("\"{id}-{size}-animated\"");
+    let mut res = match fresh(&headers, &etag) {
+        true => StatusCode::NOT_MODIFIED.into_response(),
+        false => sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT {column} FROM avatar_images WHERE id = $1"
+        )))
+        .bind(&id)
+        .fetch_optional(&db)
+        .await?
+        .map(|row| row.try_get::<Option<Vec<u8>>, _>(0))
+        .transpose()?
+        .flatten()
+        .ok_or_else(not_found)?
+        .into_response(),
+    };
+    picture_headers(res.headers_mut(), Animated::MIME, &etag);
     Ok(res)
 }

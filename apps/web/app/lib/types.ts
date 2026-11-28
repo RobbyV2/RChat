@@ -894,6 +894,7 @@ export interface SiteSettings {
   // Who is in each server, their presence and mention suggestions.
   member_lists: boolean
   profile_pictures: boolean
+  animated_profile_pictures: boolean
   registration: Registration
   // Days; 0 or absent: no cap.
   upload_expiry_max_days?: number

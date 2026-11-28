@@ -156,31 +156,59 @@ describe('a picture made on this device', () => {
   const file = new Blob([new Uint8Array(4)])
   const crop = { x: 1, y: 2, size: 64 }
 
+  const moduleOf = (animation: number, calls: string[] = []) => ({
+    picture_files: (bytes: Uint8Array, x: number, y: number, size: number) => {
+      calls.push(`files ${bytes.length} ${x} ${y} ${size}`)
+      return { mime: 'image/png', file: (at: number) => new Uint8Array(at + 1), free: () => {} }
+    },
+    picture_animation: (...args: [Uint8Array, ...number[]]) => {
+      calls.push(`animation ${args.slice(1).join(' ')}`)
+      return new Uint8Array(animation)
+    },
+  })
+
   test('the shared module makes one file per size, and its refusals have their text', async () => {
-    const calls: number[][] = []
-    const module = {
-      picture_files: (bytes: Uint8Array, x: number, y: number, size: number) => {
-        calls.push([bytes.length, x, y, size])
-        return { mime: 'image/png', file: (at: number) => new Uint8Array(at + 1), free: () => {} }
-      },
-    }
-    const made = await pictureFiles(file, crop, async () => module)
-    expect(calls).toEqual([[4, 1, 2, 64]])
+    const calls: string[] = []
+    const made = await pictureFiles(file, crop, false, async () => moduleOf(0, calls))
+    expect(calls).toEqual(['files 4 1 2 64'])
     expect('files' in made && made.files.map(f => [f.size, f.type])).toEqual([
       [1, 'image/png'],
       [2, 'image/png'],
       [3, 'image/png'],
     ])
+    expect('files' in made && made.animation).toBeNull()
     const refusing = {
+      ...moduleOf(0),
       picture_files: () => {
         throw new Error('too_large')
       },
     }
-    expect(await pictureFiles(file, crop, async () => refusing)).toEqual({
+    expect(await pictureFiles(file, crop, false, async () => refusing)).toEqual({
       error: PICTURE_REFUSALS.too_large,
     })
     const failing = () => Promise.reject(new Error('no module'))
-    expect(await pictureFiles(file, crop, failing)).toEqual({ error: NO_PICTURE_MODULE })
+    expect(await pictureFiles(file, crop, false, failing)).toEqual({ error: NO_PICTURE_MODULE })
+  })
+
+  test('an animated file also gives its animation, within the bounds of P2P pictures', async () => {
+    const calls: string[] = []
+    const moving = await pictureFiles(file, crop, true, async () => moduleOf(7, calls))
+    expect(calls[1]).toBe('animation 1 2 64 250 20000 400 1048576')
+    expect('files' in moving && [moving.animation?.size, moving.animation?.type]).toEqual([
+      7,
+      'image/gif',
+    ])
+    const plain = await pictureFiles(file, crop, true, async () => moduleOf(0))
+    expect('files' in plain && plain.animation).toBeNull()
+    const long = {
+      ...moduleOf(0),
+      picture_animation: () => {
+        throw new Error('duration')
+      },
+    }
+    expect(await pictureFiles(file, crop, true, async () => long)).toEqual({
+      error: PICTURE_REFUSALS.duration,
+    })
   })
 
   test('the 128 and 512 pixel files are kept for peers, within the size a file may have', async () => {
@@ -207,5 +235,17 @@ describe('a picture made on this device', () => {
     expect(await keptPic(keeper, { error: 'why' }, 'identity')).toBe('why')
     expect(await keptPic({ keepPicture: async () => null }, made, 'identity')).toBe(P2P_NOT_RUNNING)
     expect(picWire(pic(1))).toEqual(wire(1))
+    const moving = { ...made, animation: blob(900) }
+    expect(await keptPic(keeper, moving, 'identity')).toEqual({
+      s: { h: h(1), size: 50 },
+      l: { h: h(2), size: 500 },
+      a: { h: h(3), size: 900 },
+    })
+    const heavyMoving = { ...made, animation: blob(PIC_LIMITS.animated + 1) }
+    expect(await keptPic(keeper, heavyMoving, 'identity')).toEqual({
+      s: { h: h(1), size: 50 },
+      l: { h: h(2), size: 500 },
+    })
+    expect(PIC_LIMITS.animated).toBe(AVATAR_IMAGES.p2p_animation.max_bytes)
   })
 })

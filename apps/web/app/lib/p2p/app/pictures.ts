@@ -65,7 +65,7 @@ export interface PictureKeeper {
 // wrong when there is none.
 export async function keptPic(
   keeper: PictureKeeper,
-  made: { files: Blob[] } | { error: string },
+  made: { files: Blob[]; animation?: Blob | null } | { error: string },
   scope: PictureScope
 ): Promise<P2pPic | string> {
   if ('error' in made) return made.error
@@ -74,7 +74,9 @@ export async function keptPic(
   )
   if (stills.some(file => !file || file.size < 1 || file.size > PIC_LIMITS.still))
     return PICTURE_TOO_DETAILED
-  const kept = await keeper.keepPicture(stills, scope)
-  if (!kept || kept.length !== 2) return P2P_NOT_RUNNING
-  return { s: kept[0], l: kept[1] }
+  const moving =
+    made.animation && made.animation.size <= PIC_LIMITS.animated ? made.animation : null
+  const kept = await keeper.keepPicture(moving ? [...stills, moving] : stills, scope)
+  if (!kept || kept.length < 2) return P2P_NOT_RUNNING
+  return { s: kept[0], l: kept[1], ...(moving && kept[2] ? { a: kept[2] } : {}) }
 }

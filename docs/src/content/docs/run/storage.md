@@ -36,7 +36,7 @@ The server addresses the bucket by path (`https://s3.example.com/rchat/...`), wh
 
 A file is removed 1 day after upload unless its server chose a longer expiry. The message stays and shows that the file was removed. P2P attachments never reach the instance (see [Files](/docs/p2p/files/)).
 
-Profile pictures live in the database. The server keeps a square crop of each at 64, 128 and 512 pixels and nothing else of the uploaded file.
+Profile and server pictures live in the database. The server keeps a square crop of each at 64, 128 and 512 pixels and nothing else of the uploaded file. An animated upload also keeps animated GIFs at 128 and 512 pixels, within `AVATAR_ANIMATION_MAX_FRAMES` (250), `AVATAR_ANIMATION_MAX_SECS` (20) and `AVATAR_ANIMATION_MAX_MEGAPIXELS` (400, over all frames). An animation past a bound is refused. `FEATURE_ANIMATED_PROFILE_PICTURES=off` keeps only the first frame.
 
 ## Settings and keys
 

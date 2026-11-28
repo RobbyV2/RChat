@@ -22,7 +22,7 @@ pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 pub const SESSION_IDLE_MIN: i64 = 300;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 126] = [
+const RANGES: [(&str, i64, i64); 129] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("RATE_LIMIT_STRICT_PER_SECOND", 1, 1_000),
@@ -57,6 +57,9 @@ const RANGES: [(&str, i64, i64); 126] = [
     ("UPLOAD_SERVER_KEPT_MIB", 0, 1_048_576),
     ("UPLOAD_OWNER_KEPT_MIB", 0, 1_048_576),
     ("AVATAR_UPLOAD_MAX_MIB", 1, 64),
+    ("AVATAR_ANIMATION_MAX_FRAMES", 2, 2_000),
+    ("AVATAR_ANIMATION_MAX_SECS", 1, 120),
+    ("AVATAR_ANIMATION_MAX_MEGAPIXELS", 1, 4_000),
     ("MESSAGE_MAX_CHARS", 1, 100_000),
     ("MESSAGE_RATE_PER_MINUTE", 0, 100_000),
     ("MESSAGE_RATE_BURST", 0, 100_000),
@@ -289,6 +292,9 @@ pub struct Limits {
     pub upload_server_kept_mib: u64,
     pub upload_owner_kept_mib: u64,
     pub avatar_upload_max_mib: u64,
+    pub avatar_animation_max_frames: u64,
+    pub avatar_animation_max_secs: u64,
+    pub avatar_animation_max_megapixels: u64,
     pub message_max_chars: usize,
     pub message_rate_per_minute: u32,
     pub message_rate_burst: u32,
@@ -426,6 +432,9 @@ impl Default for Limits {
             upload_server_kept_mib: 8192,
             upload_owner_kept_mib: 16384,
             avatar_upload_max_mib: 8,
+            avatar_animation_max_frames: 250,
+            avatar_animation_max_secs: 20,
+            avatar_animation_max_megapixels: 400,
             message_max_chars: 4000,
             message_rate_per_minute: 2400,
             message_rate_burst: 100,
@@ -715,6 +724,14 @@ impl Limits {
             upload_server_kept_mib: e.num("UPLOAD_SERVER_KEPT_MIB", d.upload_server_kept_mib)?,
             upload_owner_kept_mib: e.num("UPLOAD_OWNER_KEPT_MIB", d.upload_owner_kept_mib)?,
             avatar_upload_max_mib: e.num("AVATAR_UPLOAD_MAX_MIB", d.avatar_upload_max_mib)?,
+            avatar_animation_max_frames: e
+                .num("AVATAR_ANIMATION_MAX_FRAMES", d.avatar_animation_max_frames)?,
+            avatar_animation_max_secs: e
+                .num("AVATAR_ANIMATION_MAX_SECS", d.avatar_animation_max_secs)?,
+            avatar_animation_max_megapixels: e.num(
+                "AVATAR_ANIMATION_MAX_MEGAPIXELS",
+                d.avatar_animation_max_megapixels,
+            )?,
             message_max_chars: e.num("MESSAGE_MAX_CHARS", d.message_max_chars)?,
             message_rate_per_minute: e.num("MESSAGE_RATE_PER_MINUTE", d.message_rate_per_minute)?,
             message_rate_burst: e.num("MESSAGE_RATE_BURST", d.message_rate_burst)?,
@@ -878,6 +895,9 @@ impl Limits {
             upload_server_kept_mib,
             upload_owner_kept_mib,
             avatar_upload_max_mib,
+            avatar_animation_max_frames,
+            avatar_animation_max_secs,
+            avatar_animation_max_megapixels,
             message_max_chars,
             message_rate_per_minute,
             message_rate_burst,
@@ -1040,6 +1060,15 @@ impl Limits {
             ("UPLOAD_SERVER_KEPT_MIB", set(upload_server_kept_mib)),
             ("UPLOAD_OWNER_KEPT_MIB", set(upload_owner_kept_mib)),
             ("AVATAR_UPLOAD_MAX_MIB", set(avatar_upload_max_mib)),
+            (
+                "AVATAR_ANIMATION_MAX_FRAMES",
+                set(avatar_animation_max_frames),
+            ),
+            ("AVATAR_ANIMATION_MAX_SECS", set(avatar_animation_max_secs)),
+            (
+                "AVATAR_ANIMATION_MAX_MEGAPIXELS",
+                set(avatar_animation_max_megapixels),
+            ),
             ("MESSAGE_MAX_CHARS", set(message_max_chars)),
             ("MESSAGE_RATE_PER_MINUTE", set(message_rate_per_minute)),
             ("MESSAGE_RATE_BURST", set(message_rate_burst)),
@@ -1298,6 +1327,20 @@ impl Limits {
     /// The largest profile picture upload in bytes (`AVATAR_UPLOAD_MAX_MIB`).
     pub fn avatar_upload_bytes(&self) -> usize {
         self.avatar_upload_max_mib as usize * MIB
+    }
+
+    /// The bounds of an animated picture: frames (`AVATAR_ANIMATION_MAX_FRAMES`), duration
+    /// (`AVATAR_ANIMATION_MAX_SECS`), decoded pixels over all frames
+    /// (`AVATAR_ANIMATION_MAX_MEGAPIXELS`), and for each stored animation the bytes of an upload.
+    pub fn avatar_animation_bounds(&self) -> rchat_avatar::Bounds {
+        rchat_avatar::Bounds {
+            frames: u32::try_from(self.avatar_animation_max_frames).unwrap_or(u32::MAX),
+            millis: self.avatar_animation_max_secs.saturating_mul(1000),
+            pixels: self
+                .avatar_animation_max_megapixels
+                .saturating_mul(1_000_000),
+            bytes: self.avatar_upload_bytes(),
+        }
     }
 
     /// The largest request body that carries an upload: the upload and 1 MiB for the rest.

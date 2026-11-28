@@ -303,7 +303,10 @@ async fn the_sweep_removes_only_old_pictures_nothing_names() {
     let (state, path) = temp_state("avatar_sweep").await;
     account(&state, "alice").await;
     let used = upload(&state, "alice").await;
-    let picture = rchat_avatar::encode(&png(&halves(64, 64)), None).expect("picture");
+    let picture = Picture {
+        still: rchat_avatar::encode(&png(&halves(64, 64)), None).expect("picture"),
+        animated: None,
+    };
     let mut conn = state.db.acquire().await.expect("conn");
     let old = store(&mut conn, "alice", None, &picture)
         .await
@@ -440,5 +443,94 @@ async fn a_manager_sets_and_removes_the_server_picture_and_others_are_refused() 
         None
     );
     assert!(rx.try_recv().is_err(), "nothing changed, nothing is sent");
+    done(state, path).await;
+}
+
+#[tokio::test]
+async fn an_animated_upload_keeps_its_animation_within_the_bounds() {
+    use rchat_avatar::samples::{frames, gif};
+    let (mut state, path) = temp_state("avatar_animated").await;
+    account(&state, "alice").await;
+    let animated = |state: &AppState, count: u32| {
+        let state = state.clone();
+        async move {
+            put(
+                &state,
+                "alice",
+                WHOLE,
+                HeaderMap::new(),
+                gif(64, count, 100),
+            )
+            .await
+        }
+    };
+    let id = animated(&state, 5)
+        .await
+        .expect("upload")
+        .user
+        .avatar_image
+        .expect("id");
+    assert!(id.ends_with("-a") && id.len() == 34, "{id}");
+    let moving = |state: &AppState, id: &str, size: &str| {
+        let (state, id, size) = (state.clone(), id.to_string(), size.to_string());
+        async move {
+            get_animated(State(state), HeaderMap::new(), Path((id, size)))
+                .await
+                .unwrap_or_else(IntoResponse::into_response)
+        }
+    };
+    for size in ["128", "512"] {
+        let res = moving(&state, &id, size).await;
+        assert_eq!(res.status(), StatusCode::OK, "{size}");
+        assert_eq!(res.headers()[header::CONTENT_TYPE], "image/gif");
+        assert_eq!(
+            res.headers()[header::CACHE_CONTROL],
+            "public, max-age=31536000, immutable"
+        );
+        let bytes = to_bytes(res.into_body(), usize::MAX).await.expect("body");
+        assert_eq!(frames(&bytes), 5);
+    }
+    assert_eq!(
+        moving(&state, &id, "64").await.status(),
+        StatusCode::NOT_FOUND
+    );
+    let still = served(&state, &id, "64", HeaderMap::new()).await;
+    assert_eq!(
+        still.status(),
+        StatusCode::OK,
+        "the stills are served as before"
+    );
+    let plain = upload(&state, "alice").await;
+    assert!(!plain.ends_with("-a"));
+    assert_eq!(
+        moving(&state, &plain, "128").await.status(),
+        StatusCode::NOT_FOUND
+    );
+    state.limits = Arc::new(Limits {
+        avatar_animation_max_frames: 4,
+        ..Limits::default()
+    });
+    assert_eq!(
+        refusal(animated(&state, 5).await),
+        (
+            413,
+            "The animation has too many frames: up to 4".to_string(),
+            Some(ReasonKind::Limit),
+            Some("avatar_animation_max_frames".to_string())
+        )
+    );
+    state.limits = Arc::new(Limits::default());
+    sqlx::query("UPDATE settings SET value = '0' WHERE key = 'animated_profile_pictures'")
+        .execute(&state.db)
+        .await
+        .expect("off");
+    Settings::forget(&state.db);
+    let first_frame = animated(&state, 5)
+        .await
+        .expect("upload")
+        .user
+        .avatar_image
+        .expect("id");
+    assert!(!first_frame.ends_with("-a"), "only the still is kept");
     done(state, path).await;
 }

@@ -1,12 +1,17 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import { minidenticon } from 'minidenticons'
 import { identiconInk } from '../../lib/identicon'
 import { validColor } from '../../lib/profile'
 import { builtIn } from '../../lib/avatar_setting'
-import { useAvatarView } from '../../lib/avatar_view'
-import { useP2pPicture } from '../../lib/client/p2p_picture'
+import { useAvatarView, usePlays } from '../../lib/avatar_view'
+import {
+  useP2pAnimated,
+  useP2pAnimation,
+  useP2pPic,
+  useP2pPicture,
+} from '../../lib/client/p2p_picture'
 import { PictureOver } from '../avatar_picture'
 import type { Person } from '../../lib/people'
 
@@ -18,11 +23,14 @@ export function KeyAvatar({
   person,
   size = 36,
   covered = false,
+  animate = false,
 }: {
   person: Person
   size?: number
   // A picture streamer mode hides: the viewer's own, outside a chat.
   covered?: boolean
+  // Plays an animated picture without a pointer over it: an open profile, a speaker's tile.
+  animate?: boolean
 }) {
   const mark = covered ? 'streamer ' : ''
   const view = useAvatarView()
@@ -38,9 +46,13 @@ export function KeyAvatar({
     return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
   }, [ik, shade, disc])
   const picture = useP2pPicture(ik, person.avatar_pic, size, view)
+  const pic = useP2pPic(ik, person.avatar_pic)
+  const box = useRef<HTMLSpanElement>(null)
+  const plays = usePlays(box, useP2pAnimated(pic, view), animate)
+  const animation = useP2pAnimation(pic, plays)
   const dot = Math.max(12, Math.round(size * 0.45))
   return (
-    <PictureOver src={picture} size={size}>
+    <PictureOver src={picture} moving={animation} boxRef={box} size={size}>
       {disc ? (
         <span
           className={`${mark}relative inline-block shrink-0 rounded-full`}

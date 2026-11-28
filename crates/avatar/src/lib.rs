@@ -3,6 +3,10 @@
 //! the file. The server runs it natively and the client through WebAssembly, so both make the
 //! same files.
 
+pub mod anim;
+
+pub use anim::{ANIMATED_SIZES, Animated, Bounds, animate};
+
 use std::io::Cursor;
 
 use image::codecs::jpeg::JpegEncoder;
@@ -38,6 +42,14 @@ pub enum Refused {
     TooLarge,
     /// The crop is under `MIN_CROP` or reaches outside the image.
     Crop,
+    /// An animation with more frames than its bounds allow.
+    Frames,
+    /// An animation longer than its bounds allow.
+    Duration,
+    /// An animation with more decoded pixels over all its frames than its bounds allow.
+    AnimationPixels,
+    /// An animation whose 128 pixel file is past the bytes its bounds allow.
+    AnimationBytes,
 }
 
 /// The content type of an encoded picture.
@@ -83,7 +95,7 @@ impl Encoded {
 }
 
 /// Why an image could not be read: past the bounds the decoder was given, or not an image.
-fn unread(error: image::ImageError) -> Refused {
+pub(crate) fn unread(error: image::ImageError) -> Refused {
     match error {
         image::ImageError::Limits(_) => Refused::TooLarge,
         image::ImageError::Decoding(_)
@@ -116,8 +128,9 @@ fn decoded(bytes: &[u8]) -> Result<RgbaImage, Refused> {
     Ok(image.into_rgba8())
 }
 
-fn square(image: &RgbaImage, crop: Option<Crop>) -> Result<RgbaImage, Refused> {
-    let (width, height) = image.dimensions();
+/// The square to keep of an image of `width` by `height`: `crop`, or the centered largest
+/// square without one. Refused under `MIN_CROP` or outside the image.
+pub(crate) fn placed(width: u32, height: u32, crop: Option<Crop>) -> Result<Crop, Refused> {
     let Crop { x, y, size } = crop.unwrap_or_else(|| {
         let size = width.min(height);
         Crop {
@@ -127,9 +140,15 @@ fn square(image: &RgbaImage, crop: Option<Crop>) -> Result<RgbaImage, Refused> {
         }
     });
     let fits = |at: u32, most: u32| at.checked_add(size).is_some_and(|end| end <= most);
-    if size < MIN_CROP || !fits(x, width) || !fits(y, height) {
-        return Err(Refused::Crop);
+    match size >= MIN_CROP && fits(x, width) && fits(y, height) {
+        true => Ok(Crop { x, y, size }),
+        false => Err(Refused::Crop),
     }
+}
+
+fn square(image: &RgbaImage, crop: Option<Crop>) -> Result<RgbaImage, Refused> {
+    let (width, height) = image.dimensions();
+    let Crop { x, y, size } = placed(width, height, crop)?;
     Ok(imageops::crop_imm(image, x, y, size, size).to_image())
 }
 
@@ -190,6 +209,32 @@ pub mod samples {
             true => Rgba([255, 0, 0, 255]),
             false => Rgba([0, 0, 255, 255]),
         })
+    }
+
+    /// An animated GIF of `count` frames of `side` pixels, each shown `delay` milliseconds:
+    /// every frame one flat color, red rising with the frame.
+    pub fn gif(side: u32, count: u32, delay: u32) -> Vec<u8> {
+        use image::codecs::gif::{GifEncoder, Repeat};
+        let mut out = Vec::new();
+        {
+            let mut encoder = GifEncoder::new(&mut out);
+            let _ = encoder.set_repeat(Repeat::Infinite);
+            for at in 0..count {
+                let shade = (at * 255 / count.max(1)) as u8;
+                let image = RgbaImage::from_pixel(side, side, Rgba([shade, 0, 255 - shade, 255]));
+                let delay = image::Delay::from_numer_denom_ms(delay, 1);
+                let _ = encoder.encode_frame(image::Frame::from_parts(image, 0, 0, delay));
+            }
+        }
+        out
+    }
+
+    /// How many frames an animated GIF plays.
+    pub fn frames(file: &[u8]) -> usize {
+        use image::AnimationDecoder;
+        image::codecs::gif::GifDecoder::new(std::io::Cursor::new(file))
+            .map(|decoder| decoder.into_frames().count())
+            .unwrap_or(0)
     }
 
     /// The side and format of an encoded picture file.

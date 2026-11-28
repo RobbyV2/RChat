@@ -67,7 +67,7 @@ import { iconKind } from '../lib/server_about'
 import { serverIconColor, serverIconImage, serverIconKind } from '../lib/selectors'
 import { ServerIcon } from './server_about'
 import { PictureOver } from './avatar_picture'
-import { useAccountPicture, useAvatarView } from '../lib/avatar_view'
+import { useAccountAnimation, useAccountPicture, useAvatarView, usePlays } from '../lib/avatar_view'
 import { longPress } from './context_menu'
 import { dragScope } from './drag'
 import { InstallButton } from './pwa_register'
@@ -110,17 +110,24 @@ export function ServerGlyph({
   displayName,
   look,
   framed = false,
+  animate = false,
 }: {
   name: string
   displayName: string
   look?: { icon_kind?: string | null; icon_image?: string | null; banner_color?: string | null }
   framed?: boolean
+  // Plays an animated picture without a pointer over it: the open server's about, an invite.
+  animate?: boolean
 }) {
   const own = useOwnServer(name)
   const kind = useStore(s => (look ? iconKind(look.icon_kind) : serverIconKind(s, name)))
   const color = useStore(s => (look ? (look.banner_color ?? null) : serverIconColor(s, name)))
   const image = useStore(s => (look ? (look.icon_image ?? null) : serverIconImage(s, name)))
-  const picture = useAccountPicture(image, SERVER_PICTURE_PX, useAvatarView())
+  const view = useAvatarView()
+  const picture = useAccountPicture(image, SERVER_PICTURE_PX, view)
+  const animation = useAccountAnimation(image, SERVER_PICTURE_PX, view)
+  const box = useRef<HTMLSpanElement>(null)
+  const plays = usePlays(box, animation !== null, animate)
   return name === 'rchat' ? (
     <Surface pad="2xs" tone="plain" radius="none" place="h-full w-full">
       <img
@@ -131,7 +138,7 @@ export function ServerGlyph({
       />
     </Surface>
   ) : (
-    <PictureOver src={picture} size="fill">
+    <PictureOver src={picture} moving={plays ? animation : null} boxRef={box} size="fill">
       <ServerIcon
         seed={name}
         name={displayName}

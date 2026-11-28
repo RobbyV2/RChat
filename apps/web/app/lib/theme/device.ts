@@ -7,6 +7,8 @@ export const THEME_KEY = 'rchat_theme'
 export const STREAMER_KEY = 'rchat_streamer'
 // Where the app keeps what this device draws for people (avatar_setting.ts).
 export const AVATARS_KEY = 'rchat_avatars'
+// Where the app keeps when animated pictures play on this device (avatar_motion.ts).
+export const AVATAR_MOTION_KEY = 'rchat_avatar_motion'
 
 // The theme a kept value names: light, or dark for any other value; null when nothing is kept.
 export const parseTheme = (raw: string | null): Theme | null =>

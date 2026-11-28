@@ -71,6 +71,8 @@ import { SettingNotes, SettingSwitch } from './settings_fields'
 import { Button, LinkButton } from './controls'
 import { Row, Stack, Surface, Grid, Lift } from './layout'
 import { AVATAR_MODE_CHOICES, AVATAR_MODE_NOTES } from '../lib/avatar_setting'
+import { ANIMATE_MODE_CHOICES, ANIMATE_MODE_NOTES, REDUCED_MOTION_NOTE } from '../lib/avatar_motion'
+import { useMotionAllowed } from '../lib/motion/use_motion'
 import { NotificationsSection } from './notify_settings'
 import { ConfigSyncSection } from './config_sync'
 import { DocsEntry } from './docs_entry'
@@ -815,6 +817,28 @@ function AvatarModeSetting() {
   )
 }
 
+// When animated pictures play on this device, for people and servers.
+function AnimateModeSetting() {
+  const mode = useStore(s => s.animateMode)
+  const setMode = useStore(s => s.setAnimateMode)
+  const moves = useMotionAllowed() === 'full'
+  return (
+    <PageRow id="user_avatar_motion">
+      <Stack gap="sm">
+        <Choice
+          label="Animate pictures"
+          value={mode}
+          options={ANIMATE_MODE_CHOICES}
+          onChange={setMode}
+        />
+        <p className="text-xs text-on-surface-variant">
+          {moves ? ANIMATE_MODE_NOTES[mode] : REDUCED_MOTION_NOTE}
+        </p>
+      </Stack>
+    </PageRow>
+  )
+}
+
 const SPOILER_CHOICES = [
   { value: 'click', label: 'On click' },
   { value: 'always', label: 'Always' },
@@ -1000,6 +1024,7 @@ function GeneralSection() {
         </PageRow>
         <AnimationsSetting />
         <AvatarModeSetting />
+        <AnimateModeSetting />
       </section>
       <PageRow id="user_streamer">
         <p className={sectionCls}>Streamer mode</p>

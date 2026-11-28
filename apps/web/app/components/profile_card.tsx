@@ -593,7 +593,7 @@ function CardBody({
             <Lift by="3xl">
               <Row gap="sm" align="end" justify="between">
                 <Surface as="span" pad="xs" tone="high" radius="full" place="relative shrink-0">
-                  <UserAvatar person={placed} size={80} />
+                  <UserAvatar person={placed} size={80} animate />
                   {member && (
                     <span
                       title={member.online ? 'Online' : 'Offline'}

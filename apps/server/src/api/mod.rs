@@ -1595,6 +1595,11 @@ pub struct Settings {
     /// answers 404, and clients draw the built-in avatars. A picture can still be removed.
     #[serde(default = "yes")]
     pub profile_pictures: bool,
+    /// Whether an animated upload keeps its animation (under `profile_pictures`). Off: an
+    /// upload keeps only its first frame, `GET /api/v1/avatars/{id}/{size}/animated` answers
+    /// 404, and clients draw the stills.
+    #[serde(default = "yes")]
+    pub animated_profile_pictures: bool,
     /// Who may create an account with a password: `open`, `sso` (only through single
     /// sign-on) or `closed`. `POST /api/v1/auth/register` answers 404 unless it is `open` and
     /// `password_login` is on.
@@ -1796,6 +1801,7 @@ impl Settings {
         interactive_docs: false,
         member_lists: false,
         profile_pictures: false,
+        animated_profile_pictures: false,
         registration: Registration::Closed,
         upload_expiry_max_days: 1,
         server_creation: ServerCreation::Nobody,
@@ -1881,6 +1887,7 @@ impl Settings {
             interactive_docs: feature(Feature::InteractiveDocs),
             member_lists: feature(Feature::MemberLists),
             profile_pictures: feature(Feature::ProfilePictures),
+            animated_profile_pictures: feature(Feature::AnimatedProfilePictures),
             registration: value(Registration::KEY)
                 .map_or(Some(Registration::Open), |v| Registration::parse(&v))
                 .unwrap_or(Registration::Closed),
@@ -1973,6 +1980,7 @@ impl Settings {
             interactive_docs,
             member_lists,
             profile_pictures,
+            animated_profile_pictures,
             registration: _,
             upload_expiry_max_days: _,
             server_creation: _,
@@ -2014,6 +2022,7 @@ impl Settings {
             Feature::InteractiveDocs => interactive_docs,
             Feature::MemberLists => member_lists,
             Feature::ProfilePictures => profile_pictures,
+            Feature::AnimatedProfilePictures => animated_profile_pictures,
         }
     }
 
@@ -2569,6 +2578,7 @@ fn api_routes(
     Router::new()
         .route("/me", get(auth::me).patch(auth::patch_me))
         .route("/avatars/{id}/{size}", get(avatars::get_avatar))
+        .route("/avatars/{id}/{size}/animated", get(avatars::get_animated))
         .route("/me/sso", get(oidc::list))
         .route("/me/sso/{provider}", delete(oidc::unlink))
         // The static ticket path also matches DELETE for a provider named "ticket".

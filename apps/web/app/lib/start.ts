@@ -2,7 +2,8 @@ import { storedCredential } from './client/credentials'
 import { accountStorage } from './client/keys'
 import { awaitingInstance, readLocal } from './instances'
 import { client } from './client/client'
-import { AVATARS_KEY, STREAMER_KEY, keptTheme } from './theme/device'
+import { AVATARS_KEY, AVATAR_MOTION_KEY, STREAMER_KEY, keptTheme } from './theme/device'
+import { parseAnimateMode } from './avatar_motion'
 import { parseAvatarMode } from './avatar_setting'
 
 // The streamer mode kept in this browser, or null when nothing is readable.
@@ -27,6 +28,8 @@ export const restoreStreamer = (account = client.shown()) => {
   const st = account.store.getState()
   st.setStreamer(keptStreamer() ?? st.streamer)
   st.setAvatarMode(keptAvatarMode() ?? st.avatarMode)
+  const motion = readLocal(AVATAR_MOTION_KEY)
+  st.setAnimateMode(motion === null ? st.animateMode : parseAnimateMode(motion))
 }
 
 // A session kept in this browser for this connection: a token or a guest visit.

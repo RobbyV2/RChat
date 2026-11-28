@@ -57,6 +57,10 @@ export const mediaUrlOf = (session: Held, id: string): string => session.api.med
 export const avatarUrlOf = (session: Held, id: string, size: number): string =>
   session.api.avatarUrl(id, size)
 
+// The address of that picture's animation at `size` pixels.
+export const avatarAnimatedUrlOf = (session: Held, id: string, size: number): string =>
+  session.api.avatarAnimatedUrl(id, size)
+
 // The address the session's requests go to, and the origin it is served from (as the page at
 // `page` reaches it).
 export const apiBaseOf = (session: Held): string => session.api.base

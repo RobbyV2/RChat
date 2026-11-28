@@ -587,6 +587,15 @@ export const ADMIN_ROWS: AdminRow[] = [
     label: 'Profile pictures',
     line: 'Lets people upload a profile picture. Turning it off stops uploads and shows the built-in avatars.',
   },
+  {
+    key: 'animated_profile_pictures',
+    env: 'FEATURE_ANIMATED_PROFILE_PICTURES',
+    group: 'Accounts',
+    kind: 'switch',
+    under: 'profile_pictures',
+    label: 'Animated pictures',
+    line: 'Keeps the animation of an animated upload. Turning it off keeps and shows only the first frame.',
+  },
 ]
 
 export const adminRow = (key: string) => ADMIN_ROWS.find(r => r.key === key)
