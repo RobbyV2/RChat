@@ -121,6 +121,7 @@ pub mod held {
     pub const VIDEO: Mask = value("Video");
     pub const PIN: Mask = value("PinMessages");
     pub const BYPASS_SLOWMODE: Mask = value("BypassSlowmode");
+    pub const CHANGE_PROFILE: Mask = value("ChangeProfile");
 }
 
 /// What a viewer holds in a channel: `mask`, and its View, Send and Read history bits.

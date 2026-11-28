@@ -9,8 +9,8 @@ use utoipa::ToSchema;
 
 use crate::api::access::perms::Perm;
 use crate::api::access::{
-    Proof, ServerAccess, USER_SCOPE_SMALL, acting_on, forbidden, not_found, resolve_server,
-    timed_out, timed_out_error,
+    ProfileRight, Proof, ServerAccess, USER_SCOPE_SMALL, acting_on, forbidden, not_found,
+    resolve_server,
 };
 use crate::api::audit::{self, Details, Entry, Target};
 use crate::api::auth::{check_avatar, check_banner, clean_bio, clean_name_for, present};
@@ -633,29 +633,23 @@ async fn own(state: &AppState, user: &User, name: &str) -> Result<(User, ServerA
     Ok((user, access))
 }
 
-async fn writable(state: &AppState, access: &ServerAccess, user: &User) -> Result<(), ApiError> {
-    match timed_out(&state.db, access.name(), &user.username).await? {
-        Some(_) => Err(timed_out_error()),
-        None => Ok(()),
-    }
-}
-
 /// Applies `change` to the stored profile of `user` in `key` as it is under the membership row
 /// lock, refused while a moderator's lock runs, logs a name change and tells the server.
 async fn save(
     state: &AppState,
-    key: &str,
+    right: &ProfileRight,
     user: &User,
     change: impl FnOnce(Stored) -> Stored,
 ) -> Result<Stored, ApiError> {
-    let Some((mut tx, before)) = open_member(&state.db, key, &user.username).await? else {
+    let (key, username) = (right.server(), right.username());
+    let Some((mut tx, before)) = open_member(&state.db, key, username).await? else {
         return Err(forbidden("Not a member"));
     };
     let next = change(unlocked(&before)?);
     if before == next {
         return Ok(next);
     }
-    store(&mut tx, key, &user.username, &next).await?;
+    store(&mut tx, key, username, &next).await?;
     if before.look.name != next.look.name {
         audit::record(
             &mut tx,
@@ -664,7 +658,7 @@ async fn save(
                 &audit::Actor::of(user, false),
                 audit::Action::MemberProfileName,
             )
-            .target(Target::user(&user.username))
+            .target(Target::user(username))
             .details(
                 Details::new()
                     .set("old", before.look.name.clone())
@@ -677,7 +671,7 @@ async fn save(
     let bio = before.bio != next.bio || before.banner_color != next.banner_color;
     state
         .hub
-        .broadcast(profile_event(&state.db, key, &user.username, bio).await?);
+        .broadcast(profile_event(&state.db, key, username, bio).await?);
     Ok(next)
 }
 
@@ -722,7 +716,8 @@ pub(crate) async fn get_profile(
 /// Fields left out stay as they are and `null` goes back to the account's value. The name
 /// follows the rules of the account's display name, with the name already set here free to
 /// keep; a name equal to the account's display name is stored as `null`. Only for signed-in
-/// members who are not timed out. A name change is logged in the audit log as
+/// members who are not timed out and hold the Change server profile permission (268435456,
+/// which everyone starts with). A name change is logged in the audit log as
 /// `member.profile_name`. Emits `member_profile` to the server and the caller. General
 /// rate-limit bucket.
 /// A new name is a rare request, counted with new display names: each account may try at most
@@ -738,7 +733,7 @@ pub(crate) async fn get_profile(
         (status = 200, description = "The caller's profile in the server after the change", body = ServerProfile),
         (status = 400, description = "A name that is blank, over 32 characters, holds control, format or invisible characters (`Display name has invalid characters`), passes for the instance staff (`That name is reserved`), is blocked by the profanity filter, or is new and passes for another account's username (`Username is taken`); `Description must be at most 190 characters` or a description blocked by the profanity filter; `Invalid avatar color`; `Invalid banner color`. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "`Not a member`; `You are timed out in this server`; the server's `profiles_mode` refuses the change (`reason.kind` `off_server`, `reason.control` `profiles_mode`): `Server profiles are off in this server`, or `Server names are off in this server` for a name; or `A moderator locked your server profile` (`reason.kind` `locked`, `reason.until` when the lock ends)", body = ApiErrorBody),
+        (status = 403, description = "`Not a member`; `You are timed out in this server`; `Missing permission` (Change server profile); the server's `profiles_mode` refuses the change (`reason.kind` `off_server`, `reason.control` `profiles_mode`): `Server profiles are off in this server`, or `Server names are off in this server` for a name; or `A moderator locked your server profile` (`reason.kind` `locked`, `reason.until` when the lock ends)", body = ApiErrorBody),
         (status = 404, description = "`Not found`: the `server_profiles` switch is off, or `name` was sent while the `display_names` switch is off. `Server not found or wrong password`: no such server, or one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the general bucket", body = ApiErrorBody)
@@ -759,7 +754,7 @@ pub(crate) async fn patch_profile(
         banner_color,
     } = req;
     let (user, access) = own(&state, &user, &name).await?;
-    writable(&state, &access, &user).await?;
+    let right = access.change_profile(&state.db).await?;
     let key = access.name().to_string();
     let mode = access.lite().profiles_mode;
     match (mode, &new_name) {
@@ -798,7 +793,7 @@ pub(crate) async fn patch_profile(
         }
         None => None,
     };
-    let saved = save(&state, &key, &user, |mut next| {
+    let saved = save(&state, &right, &user, |mut next| {
         if let Some(name) = new_name {
             next.look.name = name;
         }
@@ -825,7 +820,7 @@ pub(crate) async fn patch_profile(
 /// Reset your server profile
 ///
 /// Goes back to the account's name, avatar, banner color and description in this server. Only
-/// for signed-in members who are not timed out. A removed name is logged in the audit log as
+/// for signed-in members who are not timed out and hold the Change server profile permission. A removed name is logged in the audit log as
 /// `member.profile_name`. Emits `member_profile` to the server and the caller when something
 /// changed. General rate-limit bucket.
 #[utoipa::path(
@@ -836,7 +831,7 @@ pub(crate) async fn patch_profile(
     responses(
         (status = 200, description = "The caller's profile in the server, every field `null`", body = ServerProfile),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "`Not a member`; `You are timed out in this server`; or `A moderator locked your server profile` (`reason.kind` `locked`, `reason.until` when the lock ends)", body = ApiErrorBody),
+        (status = 403, description = "`Not a member`; `You are timed out in this server`; `Missing permission` (Change server profile); or `A moderator locked your server profile` (`reason.kind` `locked`, `reason.until` when the lock ends)", body = ApiErrorBody),
         (status = 404, description = "`Not found`: the `server_profiles` switch is off. `Server not found or wrong password`: no such server, or one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
@@ -848,9 +843,9 @@ pub(crate) async fn delete_profile(
     Path(name): Path<String>,
 ) -> Result<Json<ServerProfile>, ApiError> {
     let (user, access) = own(&state, &user, &name).await?;
-    writable(&state, &access, &user).await?;
+    let right = access.change_profile(&state.db).await?;
     let key = access.name().to_string();
-    let saved = save(&state, &key, &user, |_| Stored::default()).await?;
+    let saved = save(&state, &right, &user, |_| Stored::default()).await?;
     Ok(Json(answer(
         &user,
         saved,
@@ -863,12 +858,12 @@ pub(crate) async fn delete_profile(
 /// replaces. A picture that could not be set is removed again.
 async fn set_picture(
     state: &AppState,
-    key: &str,
+    right: &ProfileRight,
     user: &User,
     id: Option<String>,
 ) -> Result<Stored, ApiError> {
     let mut replaced = None;
-    let saved = save(state, key, user, |mut next| {
+    let saved = save(state, right, user, |mut next| {
         replaced = std::mem::replace(&mut next.look.avatar_image, id.clone());
         next
     })
@@ -889,8 +884,8 @@ async fn set_picture(
 /// body, under the rules of `PUT /api/v1/me/avatar` (types, `limits.avatar_upload_bytes`,
 /// 40 megapixels, the crop `x`, `y`, `size`, the stored sizes). It shows over the avatar style
 /// of the server profile, or over the account's when the server profile has none. Only for
-/// signed-in members who are not timed out. Emits `member_profile` to the server and the
-/// caller. Requires the `server_profiles` and `profile_pictures` switches. Strict rate-limit
+/// signed-in members who are not timed out and hold the Change server profile permission.
+/// Emits `member_profile` to the server and the caller. Requires the `server_profiles` and `profile_pictures` switches. Strict rate-limit
 /// bucket.
 #[utoipa::path(
     put,
@@ -902,7 +897,7 @@ async fn set_picture(
         (status = 200, description = "The caller's profile in the server; `look.avatar_image` is the id of the picture", body = ServerProfile),
         (status = 400, description = "As `PUT /api/v1/me/avatar`: not an image of a known type, over 40 megapixels, or a crop outside the picture", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "`Not a member`; `You are timed out in this server`; `Server profiles are off in this server` (`reason.kind` `off_server`, `reason.control` `profiles_mode`); `A moderator locked your server profile` (`reason.kind` `locked`); or `Profile pictures are turned off on this site` (`reason.kind` `off_site`, `reason.control` `profile_pictures`)", body = ApiErrorBody),
+        (status = 403, description = "`Not a member`; `You are timed out in this server`; `Missing permission` (Change server profile); `Server profiles are off in this server` (`reason.kind` `off_server`, `reason.control` `profiles_mode`); `A moderator locked your server profile` (`reason.kind` `locked`); or `Profile pictures are turned off on this site` (`reason.kind` `off_site`, `reason.control` `profile_pictures`)", body = ApiErrorBody),
         (status = 404, description = "`Not found`: the `server_profiles` switch is off. `Server not found or wrong password`: no such server, or one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 408, description = "`The upload stopped sending data`", body = ApiErrorBody),
         (status = 413, description = "`Picture exceeds 8MB limit` with the configured number (`reason.control` `avatar_upload_max_mib`)", body = ApiErrorBody),
@@ -920,7 +915,7 @@ pub(crate) async fn put_profile_avatar(
     body: axum::body::Body,
 ) -> Result<Json<ServerProfile>, ApiError> {
     let (user, access) = own(&state, &user, &name).await?;
-    writable(&state, &access, &user).await?;
+    let right = access.change_profile(&state.db).await?;
     let key = access.name().to_string();
     let mode = access.lite().profiles_mode;
     match mode {
@@ -936,7 +931,7 @@ pub(crate) async fn put_profile_avatar(
         &picture,
     )
     .await?;
-    let saved = set_picture(&state, &key, &user, Some(id)).await?;
+    let saved = set_picture(&state, &right, &user, Some(id)).await?;
     Ok(Json(answer(
         &user,
         saved,
@@ -948,8 +943,8 @@ pub(crate) async fn put_profile_avatar(
 /// Remove your server profile picture
 ///
 /// Removes the picture of the caller's profile in this server; the rest of the profile stays.
-/// Only for signed-in members who are not timed out. Works while the `profile_pictures`
-/// switch is off. Emits `member_profile` to the server and the caller when a picture was
+/// Only for signed-in members who are not timed out and hold the Change server profile
+/// permission. Works while the `profile_pictures` switch is off. Emits `member_profile` to the server and the caller when a picture was
 /// removed. Strict rate-limit bucket.
 #[utoipa::path(
     delete,
@@ -959,7 +954,7 @@ pub(crate) async fn put_profile_avatar(
     responses(
         (status = 200, description = "The caller's profile in the server, without a picture", body = ServerProfile),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "`Not a member`; `You are timed out in this server`; or `A moderator locked your server profile` (`reason.kind` `locked`, `reason.until` when the lock ends)", body = ApiErrorBody),
+        (status = 403, description = "`Not a member`; `You are timed out in this server`; `Missing permission` (Change server profile); or `A moderator locked your server profile` (`reason.kind` `locked`, `reason.until` when the lock ends)", body = ApiErrorBody),
         (status = 404, description = "`Not found`: the `server_profiles` switch is off. `Server not found or wrong password`: no such server, or one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the strict bucket", body = ApiErrorBody)
     ),
@@ -971,9 +966,9 @@ pub(crate) async fn delete_profile_avatar(
     Path(name): Path<String>,
 ) -> Result<Json<ServerProfile>, ApiError> {
     let (user, access) = own(&state, &user, &name).await?;
-    writable(&state, &access, &user).await?;
+    let right = access.change_profile(&state.db).await?;
     let key = access.name().to_string();
-    let saved = set_picture(&state, &key, &user, None).await?;
+    let saved = set_picture(&state, &right, &user, None).await?;
     Ok(Json(answer(
         &user,
         saved,
@@ -1554,6 +1549,72 @@ mod tests {
         assert_eq!(
             count(&state.db, "SELECT COUNT(*) FROM member_profiles").await,
             0
+        );
+        done(state, path).await;
+    }
+
+    async fn right(state: &AppState, server: &str, user: &User) -> ProfileRight {
+        resolve_server(&state.db, server, Some(user), &Proof::none())
+            .await
+            .unwrap_or_else(|e| panic!("open {server}: {}", e.1))
+            .change_profile(&state.db)
+            .await
+            .unwrap_or_else(|e| panic!("right in {server}: {}", e.1))
+    }
+
+    #[tokio::test]
+    async fn changing_your_profile_needs_the_permission_everyone_starts_with() {
+        let (state, path) = club("profile_change_perm").await;
+        let db = &state.db;
+        let change = rchat_perms::registry::value("ChangeProfile") as i64;
+        patch(&state, "bob", json!({"bio": "before"}))
+            .await
+            .unwrap_or_else(|e| panic!("default: {}", e.1));
+        let without = rchat_perms::masks::BASE as i64 & !change;
+        exec(
+            db,
+            &format!("UPDATE servers SET everyone_perms = {without} WHERE name = 'club'"),
+        )
+        .await;
+        assert_eq!(
+            refusal(patch(&state, "bob", json!({"bio": "after"})).await),
+            (403, "Missing permission".to_string())
+        );
+        assert_eq!(
+            refusal(
+                delete_profile(State(state.clone()), who("bob"), Path("club".to_string())).await
+            ),
+            (403, "Missing permission".to_string())
+        );
+        let seen = read(&state, "club", "bob")
+            .await
+            .unwrap_or_else(|e| panic!("read: {}", e.1));
+        assert_eq!(seen.bio.as_deref(), Some("before"));
+        patch(&state, "alice", json!({"bio": "creator"}))
+            .await
+            .unwrap_or_else(|e| panic!("an admin with every permission: {}", e.1));
+
+        let role: i64 = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO roles(server, name, color, perms) VALUES('club', 'Named', '#ffffff', {change}) RETURNING id"
+        )))
+        .fetch_one(db)
+        .await
+        .expect("role")
+        .try_get(0)
+        .expect("id");
+        exec(
+            db,
+            &format!(
+                "INSERT INTO user_roles(server, username, role_id) VALUES('club', 'bob', {role})"
+            ),
+        )
+        .await;
+        patch(&state, "bob", json!({"bio": "after"}))
+            .await
+            .unwrap_or_else(|e| panic!("with the role: {}", e.1));
+        assert_eq!(
+            refusal(patch(&state, "carol", json!({"bio": "no"})).await),
+            (403, "Missing permission".to_string())
         );
         done(state, path).await;
     }
@@ -2244,10 +2305,15 @@ mod tests {
         reset_in(state, "carol", "bob", json!({"fields": ["bio"]}))
             .await
             .unwrap_or_else(|e| panic!("reset: {}", e.1));
-        let saved = save(state, "club", &bob, |mut next| {
-            next.banner_color = Some("#000000".to_string());
-            next
-        })
+        let saved = save(
+            state,
+            &right(state, "club", &bob).await,
+            &bob,
+            |mut next| {
+                next.banner_color = Some("#000000".to_string());
+                next
+            },
+        )
         .await
         .unwrap_or_else(|e| panic!("save: {}", e.1));
         assert_eq!(
@@ -2265,17 +2331,25 @@ mod tests {
         )
         .await
         .unwrap_or_else(|e| panic!("lock: {}", e.1));
-        let res = save(state, "club", &bob, |mut next| {
-            next.look.name = seen.look.name.clone();
-            next.bio = Some("new".to_string());
-            next
-        })
+        let res = save(
+            state,
+            &right(state, "club", &bob).await,
+            &bob,
+            |mut next| {
+                next.look.name = seen.look.name.clone();
+                next.bio = Some("new".to_string());
+                next
+            },
+        )
         .await;
         assert_eq!(
             refusal(res),
             (403, "A moderator locked your server profile".to_string())
         );
-        let res = save(state, "club", &bob, |_| Stored::default()).await;
+        let res = save(state, &right(state, "club", &bob).await, &bob, |_| {
+            Stored::default()
+        })
+        .await;
         assert_eq!(refusal(res).0, 403);
         let after = stored(db, "club", "bob").await.expect("read");
         assert_eq!(
@@ -2309,6 +2383,7 @@ mod tests {
                 .expect("open")
                 .is_some()
         );
+        let held = right(state, "club", &mem_user("bob", false)).await;
         assert!(
             open_member(db, "club", "dave")
                 .await
@@ -2331,7 +2406,7 @@ mod tests {
                 .expect("open")
                 .is_none()
         );
-        let res = save(state, "club", &mem_user("bob", false), |mut next| {
+        let res = save(state, &held, &mem_user("bob", false), |mut next| {
             next.bio = Some("still here".to_string());
             next
         })

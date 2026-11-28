@@ -163,10 +163,11 @@ export const previewUser = <T extends UserRef>(
 export const bioLeft = (d: ProfileDraft) => PROFILE_FIELDS.bio.max - count(cleanBio(d.bio))
 
 // Whether you may open your own profile of a P2P server: one you are in, that still takes
-// writes and shows server profiles.
+// writes and shows server profiles, where you may change yours.
 export const editsRoomProfile = (v: {
   me: string | null
   readOnly: string | null
   upgraded: boolean
   profiles: ProfilesMode
-}) => v.me === 'join' && !v.readOnly && !v.upgraded && v.profiles !== 'off'
+  changeProfile: boolean
+}) => v.me === 'join' && !v.readOnly && !v.upgraded && v.profiles !== 'off' && v.changeProfile

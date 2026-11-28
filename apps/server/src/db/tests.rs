@@ -9464,6 +9464,76 @@ async fn seal_jobs_are_added_to_an_old_database() {
 }
 
 #[tokio::test]
+async fn change_server_profile_is_given_to_stored_everyone_permissions() {
+    on_each_database("change_profile_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        let bit = rchat_perms::registry::value("ChangeProfile") as i64;
+        let old_base = (rchat_perms::masks::BASE as i64) & !bit;
+        let narrow = (rchat_perms::masks::VIEW | rchat_perms::masks::SEND) as i64;
+        for sql in [
+            format!("INSERT INTO servers(name, display_name, creator, created_at, everyone_perms) VALUES('club', 'Club', 'alice', 7, {old_base})"),
+            format!("INSERT INTO servers(name, display_name, creator, created_at, everyone_perms) VALUES('cut', 'Cut', 'alice', 8, {narrow})"),
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('den', 'Den', 'alice', 9)".to_string(),
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('club', 'bob', 0, 0, 5)".to_string(),
+            "INSERT INTO member_profiles(server, username, name, updated_at) VALUES('club', 'bob', 'Robert', 6)".to_string(),
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                .execute(&db)
+                .await
+                .expect(&sql);
+        }
+        sqlx::query("UPDATE settings SET value = $1 WHERE key = 'schema_version'")
+            .bind((super::migrate::CHANGE_PROFILE_VERSION - 1).to_string())
+            .execute(&db)
+            .await
+            .expect("version");
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            let club = match round {
+                0 => old_base | bit,
+                _ => old_base,
+            };
+            assert_eq!(
+                count(&db, "SELECT everyone_perms FROM servers WHERE name = 'club'").await,
+                club,
+                "{round}: @everyone gets Change server profile once"
+            );
+            assert_eq!(
+                count(&db, "SELECT everyone_perms FROM servers WHERE name = 'cut'").await,
+                narrow | bit,
+                "{round}"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM servers WHERE name = 'den' AND everyone_perms IS NULL").await,
+                1,
+                "{round}: a server that stores no @everyone permissions follows the defaults"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM member_profiles WHERE server = 'club' AND username = 'bob' AND name = 'Robert' AND updated_at = 6").await,
+                1,
+                "{round}: stored profiles stay"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM members WHERE server = 'club' AND username = 'bob' AND joined_at = 5").await,
+                1,
+                "{round}"
+            );
+            if round == 0 {
+                let sql = format!("UPDATE servers SET everyone_perms = {old_base} WHERE name = 'club'");
+                sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                    .execute(&db)
+                    .await
+                    .expect(&sql);
+            }
+            close(&db).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn member_list_visibility_is_added_to_an_old_database() {
     on_each_database("member_list_upgrade", |url| async move {
         let db = open_started(Some(&url)).await.expect("open");
@@ -9512,7 +9582,7 @@ async fn member_list_visibility_is_added_to_an_old_database() {
             );
             assert_eq!(
                 count(&db, "SELECT everyone_perms FROM servers WHERE name = 'cut'").await,
-                narrow | view_members,
+                narrow | view_members | rchat_perms::registry::value("ChangeProfile") as i64,
                 "{round}"
             );
             assert_eq!(

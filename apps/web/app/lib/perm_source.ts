@@ -72,6 +72,7 @@ const HOSTED_TEXT: Record<string, { label?: string; hint?: string }> = {
   ManageWebhooks: { hint: 'Create and change webhooks that post into channels' },
   ManageReports: { hint: 'See and act on reports in this server' },
   ManageProfiles: { hint: "Clear and lock other members' server profiles" },
+  ChangeProfile: { hint: 'Set their own name, avatar, banner and description for this server' },
 }
 const P2P_TEXT: Record<string, { label?: string; hint?: string }> = {
   DeleteMessages: { hint: "Delete and pin others' messages" },
@@ -89,6 +90,7 @@ const P2P_NEXT_TEXT: Record<string, { label?: string; hint?: string }> = {
   ManageRoles: { hint: 'Make and change roles below their own' },
   TimeoutMembers: { hint: 'Stop members from chatting for a while' },
   ManageProfiles: { hint: "Clear and lock other members' server profiles" },
+  ChangeProfile: { hint: 'Set their own name, avatar, banner and description for this server' },
 }
 
 export interface PermItem {

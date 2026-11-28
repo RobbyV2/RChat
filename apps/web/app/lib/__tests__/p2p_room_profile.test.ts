@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { AclWorld, devOwner, TestReplica } from './p2p_acl_world'
 import { AGREED } from '../p2p/limits'
 import {
+  CHANGE_PROFILE,
+  changesProfile,
   KICK,
   PROFILES,
   profileResetOk,
@@ -13,7 +15,7 @@ import {
   type AclEv,
 } from '../p2p/acl/rules'
 import type { FactsQ } from '../p2p/acl/facts'
-import { mayResetProfile } from '../p2p/state'
+import { mayChangeProfile, mayResetProfile } from '../p2p/state'
 import { FOREVER, hiddenFields, roomLock, settleIntent, shownExtras } from '../profile_reset'
 import { applySummary, diffSummary, emptySummary } from '../p2p/acl/summary'
 import { cleanName } from '../p2p/keys'
@@ -70,6 +72,86 @@ describe('room profile extras', () => {
     expect(sameExtras(extrasOf(w, 'A'), roomExtras(mine))).toBe(false)
     w.ok('A1', 'profile', { ...mine, name: 'Alfred' })
     expect(sameExtras(extrasOf(w, 'A'), roomExtras(mine))).toBe(true)
+  })
+})
+
+describe('Change server profile: who may set a room profile, read at display', () => {
+  const next = (everyone = 0) => {
+    const w = new AclWorld({ model: false, agreed: AGREED })
+    w.genesisNext('O1', ['O'], everyone)
+    return w
+  }
+  const mine = (w: AclWorld, dev: string, nick: string) => ({
+    name: 'Al',
+    nick,
+    in: join(w, dev).id,
+  })
+  const shown = (w: AclWorld, who: string) => {
+    const c = F(w).profile.get(who)
+    return [c?.name, c?.in === undefined ? {} : roomExtras(c, cleanName)]
+  }
+
+  test('the bit has its wire value and is asked for from the next rules version on', () => {
+    expect(CHANGE_PROFILE).toBe(4194304)
+    const none = { owners: new Set<string>(), bits: new Map(), holds: new Map() }
+    expect([2, RULES_VERSION, null, undefined].map(r => changesProfile(r, none, 'A'))).toEqual(
+      Array(4).fill(true)
+    )
+    expect(changesProfile(RULES_NEXT, none, 'A')).toBe(false)
+    expect(changesProfile(RULES_NEXT, { ...none, owners: new Set(['A']) }, 'A')).toBe(true)
+  })
+
+  test('a write of a member without it shows the global name only; with it, the room profile', () => {
+    const w = next()
+    const a = mine(w, 'A1', 'Ali')
+    w.ok('A1', 'profile', a)
+    expect(shown(w, 'A')).toEqual(['Al', {}])
+    w.ok('O1', 'role_bits', { role: 'everyone', bit: CHANGE_PROFILE, on: true })
+    expect(shown(w, 'A')).toEqual(['Al', {}])
+    w.ok('A1', 'profile', { ...a, nick: 'Again' })
+    expect(shown(w, 'A')).toEqual(['Al', { nick: 'Again' }])
+  })
+
+  test('everyone holding it sets a room profile, and a role gives it to its holders', () => {
+    const w = next(CHANGE_PROFILE)
+    const a = mine(w, 'A1', 'Ali')
+    w.ok('A1', 'profile', a)
+    expect(shown(w, 'A')).toEqual(['Al', { nick: 'Ali' }])
+    w.ok('O1', 'role_bits', { role: 'everyone', bit: CHANGE_PROFILE, on: false })
+    expect(shown(w, 'A')).toEqual(['Al', { nick: 'Ali' }])
+    w.ok('A1', 'profile', { ...a, nick: 'Later' })
+    expect(shown(w, 'A')).toEqual(['Al', {}])
+    const r = role(w, 5, CHANGE_PROFILE)
+    w.ok('O1', 'assign', { to: 'A', role: r })
+    w.ok('A1', 'profile', { ...a, nick: 'Named' })
+    expect(shown(w, 'A')).toEqual(['Al', { nick: 'Named' }])
+  })
+
+  test('earlier rules keep showing what every member set', () => {
+    const w = world()
+    w.ok('A1', 'profile', mine(w, 'A1', 'Ali'))
+    expect(shown(w, 'A')).toEqual(['Al', { nick: 'Ali' }])
+  })
+
+  test('the page offers the editor to those whose write would show', () => {
+    const member = (perms: number) => ({
+      m: 'join' as const,
+      rank: [-1, ''] as [number, string],
+      perms,
+      roles: [] as string[],
+      devs: [] as string[],
+      profile: null,
+    })
+    const s = (rules: number, perms: number) => ({
+      ...emptySummary(),
+      rules,
+      owners: ['O'],
+      members: { O: member(0x7fffffff), A: member(perms) },
+    })
+    expect(mayChangeProfile(s(RULES_NEXT, 768), 'O')).toBe(true)
+    expect(mayChangeProfile(s(RULES_NEXT, 768), 'A')).toBe(false)
+    expect(mayChangeProfile(s(RULES_NEXT, 768 | CHANGE_PROFILE), 'A')).toBe(true)
+    expect(mayChangeProfile(s(RULES_VERSION, 768), 'A')).toBe(true)
   })
 })
 

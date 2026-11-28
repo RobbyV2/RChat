@@ -433,7 +433,9 @@ for (const [name, build] of builds)
       await load()
       const view = bit('ViewChannels')
       const send = bit('SendMessages')
-      expect(everyoneStage(baseBits(), { restrictView: true }, 0)).toBe(baseBits() - view)
+      expect(everyoneStage(baseBits(), { restrictView: true }, 0)).toBe(
+        baseBits() - view - bit('ChangeProfile')
+      )
       expect(everyoneStage(view, { everyone: { allow: send, deny: view } }, 0)).toBe(send)
       for (const [name, value] of Object.entries(ChannelPermBit)) {
         const found = registry().find(b => b.name === name)

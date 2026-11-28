@@ -32,7 +32,7 @@ import { signRevocation2, headerOk, type WireV2 } from '../event_v2'
 import { CANT_TEXT, VOUCH_WAIT_TEXT } from '../flows'
 import { memberBindingDue } from '../badge'
 import { cleanName, keyId } from '../keys'
-import { can, mayResetProfile, memberOf, P } from '../state'
+import { can, mayChangeProfile, mayResetProfile, memberOf, P } from '../state'
 import { MOVED_TEXT } from '../dm'
 import type { ServerCtx } from './context'
 import { ServerError, sizeOfWire } from './types'
@@ -403,8 +403,10 @@ export function profileContent(cx: ServerCtx, room?: string) {
   const binding = cx.deps.node.binding
   if (binding) c.binding = binding
   if (!room) return c
+  const s = cx.sumOf(room)
+  if (!mayChangeProfile(s, cx.me)) return c
   const extras = roomExtras(cx.rooms.get(room)?.profile, cleanName)
-  const join = memberOf(cx.sumOf(room), cx.me)?.joinId
+  const join = memberOf(s, cx.me)?.joinId
   return join && Object.keys(extras).length ? { ...c, ...extras, in: join } : c
 }
 
@@ -425,7 +427,7 @@ export async function writeProfile(cx: ServerCtx, room: string) {
 // empty intent goes back to the global profile.
 export async function setRoomProfile(cx: ServerCtx, room: string, intent: RoomExtras) {
   const m = memberOf(cx.sumOf(room), cx.me)
-  if (m?.m !== 'join') throw new ServerError(CANT_TEXT)
+  if (m?.m !== 'join' || !mayChangeProfile(cx.sumOf(room), cx.me)) throw new ServerError(CANT_TEXT)
   if (roomLock(m.reset, Math.floor(cx.clock.now() / 1000)).locked)
     throw new ServerError(PROFILE_LOCKED_TEXT)
   const next = roomExtras(intent, cleanName)

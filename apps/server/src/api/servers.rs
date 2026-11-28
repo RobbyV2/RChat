@@ -7930,8 +7930,9 @@ pub struct EveryonePerms {
 /// Changes the permission bits every member of the server holds: 131072 View channels, 262144
 /// Send messages, 524288 Read history, 1048576 Add reactions, 2097152 Attach files, 4194304
 /// Embed links, 8388608 Create polls, 16777216 Start threads, 33554432 Connect, 67108864 Speak,
-/// 134217728 Video and 34359738368 View members. Other bits are left as they are. Requires the Manage roles permission,
-/// and you can only add bits you hold yourself. Emits `roles_changed` to the server and removes
+/// 134217728 Video, 268435456 Change server profile and 34359738368 View members. Other bits
+/// are left as they are. Requires the Manage roles permission, and you can only add bits you
+/// hold yourself. Emits `roles_changed` to the server and removes
 /// users from voice rooms they can no longer view. General rate-limit bucket.
 #[utoipa::path(
     patch,

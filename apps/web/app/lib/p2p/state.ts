@@ -1,6 +1,7 @@
 import { bytesOf } from './canonical'
 import { bit, fromWire, hasBit, maskAnd, maskNot, maskOr, outranks as above } from '../perms'
 import {
+  CHANGE_PROFILE,
   channelPerms,
   textOnlyChannel,
   cmp,
@@ -130,6 +131,11 @@ export const mayResetProfile = (s: Summary, ik: string, other: string) =>
   s.members[other]?.m === 'join' &&
   !isOwner(s, other) &&
   (isOwner(s, ik) || (can(s, ik, resetBit(s.rules)) && outranks(s, ik, other)))
+
+// Whether `ik` may set a room profile of their own: from the rules that read Change server
+// profile, a member who holds it.
+export const mayChangeProfile = (s: Summary, ik: string) =>
+  isOwner(s, ik) || s.rules === null || s.rules < RULES_NEXT || can(s, ik, CHANGE_PROFILE)
 
 export const membersOf = (s: Summary) => Object.entries(s.members).map(([ik, m]) => ({ ik, ...m }))
 

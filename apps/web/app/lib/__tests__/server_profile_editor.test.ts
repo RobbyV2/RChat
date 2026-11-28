@@ -191,7 +191,13 @@ test('the preview is the account under the draft', () => {
 })
 
 test('your profile of a P2P server opens while you are in it, it takes writes and shows profiles', () => {
-  const v = { me: 'join', readOnly: null, upgraded: false, profiles: 'all' as const }
+  const v = {
+    me: 'join',
+    readOnly: null,
+    upgraded: false,
+    profiles: 'all' as const,
+    changeProfile: true,
+  }
   expect(editsRoomProfile(v)).toBe(true)
   expect(editsRoomProfile({ ...v, profiles: 'no_names' })).toBe(true)
   expect(editsRoomProfile({ ...v, profiles: 'off' })).toBe(false)
@@ -199,4 +205,5 @@ test('your profile of a P2P server opens while you are in it, it takes writes an
   expect(editsRoomProfile({ ...v, me: null })).toBe(false)
   expect(editsRoomProfile({ ...v, readOnly: 'Newer rules' })).toBe(false)
   expect(editsRoomProfile({ ...v, upgraded: true })).toBe(false)
+  expect(editsRoomProfile({ ...v, changeProfile: false })).toBe(false)
 })

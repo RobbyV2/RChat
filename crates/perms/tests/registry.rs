@@ -42,13 +42,13 @@ fn bits_are_distinct_single_bits_below_2_pow_53() {
 
 #[test]
 fn masks_have_their_values() {
-    assert_eq!(masks::BASE, 34628042752);
+    assert_eq!(masks::BASE, 34896478208);
     assert_eq!(masks::CHANNEL, 36238655522);
     assert_eq!(masks::MOD_CHANNEL, 1610612770);
     assert_eq!(masks::SEND_GROUP, 32768000);
     assert_eq!(masks::MANAGER_PASS, 35701784576);
     assert_eq!(masks::TIMED_OUT_KEEP, 34360393792);
-    assert_eq!(masks::ALL, 36238783487);
+    assert_eq!(masks::ALL, 36507218943);
     assert_eq!(ALL_HOSTED, masks::BASE | masks::MGMT);
     assert_eq!(masks::BASE & masks::MGMT, 0);
     assert_eq!(masks::MGMT, 127999 | 1 << 29 | 1 << 30);

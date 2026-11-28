@@ -336,7 +336,9 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// the stored @everyone permissions of every server.
 /// 69: uploaded pictures (`avatar_images`, `users.avatar_image`,
 /// `member_profiles.avatar_image`, `servers.icon_image`).
-pub const SCHEMA_VERSION: i64 = 69;
+/// 70: the Change server profile permission, given to the stored @everyone permissions of every
+/// server.
+pub const SCHEMA_VERSION: i64 = 70;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;
@@ -355,6 +357,9 @@ pub(super) const CATEGORY_PERMS_VERSION: i64 = 59;
 pub(super) const SEPARATORS_VERSION: i64 = 67;
 /// The schema version whose init gives View members to the stored @everyone permissions.
 pub(super) const VIEW_MEMBERS_VERSION: i64 = 68;
+/// The schema version whose init gives Change server profile to the stored @everyone
+/// permissions.
+pub(super) const CHANGE_PROFILE_VERSION: i64 = 70;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 22] {
@@ -790,6 +795,9 @@ pub(super) async fn init_schema(
     if version < VIEW_MEMBERS_VERSION {
         grant_view_members(conn).await?;
     }
+    if version < CHANGE_PROFILE_VERSION {
+        grant_change_profile(conn).await?;
+    }
     if stored_setting(conn, BUILTIN_STATE).await?.is_none() {
         let t = now();
         sqlx::query("INSERT INTO servers(name, display_name, creator, created_at, roles_order_confirmed) VALUES('rchat', 'RChat', NULL, $1, 1) ON CONFLICT(name) DO NOTHING")
@@ -894,6 +902,21 @@ async fn grant_split_bits(conn: &mut AnyConnection) -> anyhow::Result<()> {
         tracing::info!(
             "gave Pin messages and Bypass slow mode to {n} admin and role permission sets"
         );
+    }
+    Ok(())
+}
+
+/// Gives Change server profile to the @everyone permissions every server stores, so every member
+/// who could set their profile in a server before still can.
+async fn grant_change_profile(conn: &mut AnyConnection) -> anyhow::Result<()> {
+    let bit = rchat_perms::registry::value("ChangeProfile") as i64;
+    let n = sqlx::query("UPDATE servers SET everyone_perms = everyone_perms | $1 WHERE everyone_perms IS NOT NULL AND (everyone_perms & $1) = 0")
+        .bind(bit)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+    if n > 0 {
+        tracing::info!("gave Change server profile to the @everyone permissions of {n} servers");
     }
     Ok(())
 }

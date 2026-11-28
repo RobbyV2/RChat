@@ -340,6 +340,8 @@ export interface ServerView {
   // What members may set in their profile here, what we set for ourselves, and whether a
   // moderator's lock on it runs.
   profiles: ProfilesMode
+  // Whether we may set a profile of our own here.
+  changeProfile: boolean
   profile: RoomExtras
   profileLock: LockState
   // The room's "Encrypt stored messages" switch as admitted here.

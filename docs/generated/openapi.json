@@ -16915,7 +16915,7 @@
           "Roles"
         ],
         "summary": "Set what everyone may do",
-        "description": "Changes the permission bits every member of the server holds: 131072 View channels, 262144\nSend messages, 524288 Read history, 1048576 Add reactions, 2097152 Attach files, 4194304\nEmbed links, 8388608 Create polls, 16777216 Start threads, 33554432 Connect, 67108864 Speak,\n134217728 Video and 34359738368 View members. Other bits are left as they are. Requires the Manage roles permission,\nand you can only add bits you hold yourself. Emits `roles_changed` to the server and removes\nusers from voice rooms they can no longer view. General rate-limit bucket.",
+        "description": "Changes the permission bits every member of the server holds: 131072 View channels, 262144\nSend messages, 524288 Read history, 1048576 Add reactions, 2097152 Attach files, 4194304\nEmbed links, 8388608 Create polls, 16777216 Start threads, 33554432 Connect, 67108864 Speak,\n134217728 Video, 268435456 Change server profile and 34359738368 View members. Other bits\nare left as they are. Requires the Manage roles permission, and you can only add bits you\nhold yourself. Emits `roles_changed` to the server and removes\nusers from voice rooms they can no longer view. General rate-limit bucket.",
         "operationId": "set_everyone_perms",
         "parameters": [
           {
@@ -20217,7 +20217,7 @@
           "Servers"
         ],
         "summary": "Reset your server profile",
-        "description": "Goes back to the account's name, avatar, banner color and description in this server. Only\nfor signed-in members who are not timed out. A removed name is logged in the audit log as\n`member.profile_name`. Emits `member_profile` to the server and the caller when something\nchanged. General rate-limit bucket.",
+        "description": "Goes back to the account's name, avatar, banner color and description in this server. Only\nfor signed-in members who are not timed out and hold the Change server profile permission. A removed name is logged in the audit log as\n`member.profile_name`. Emits `member_profile` to the server and the caller when something\nchanged. General rate-limit bucket.",
         "operationId": "delete_profile",
         "parameters": [
           {
@@ -20271,7 +20271,7 @@
             }
           },
           "403": {
-            "description": "`Not a member`; `You are timed out in this server`; or `A moderator locked your server profile` (`reason.kind` `locked`, `reason.until` when the lock ends)",
+            "description": "`Not a member`; `You are timed out in this server`; `Missing permission` (Change server profile); or `A moderator locked your server profile` (`reason.kind` `locked`, `reason.until` when the lock ends)",
             "content": {
               "application/json": {
                 "schema": {
@@ -20322,7 +20322,7 @@
           "Servers"
         ],
         "summary": "Update your server profile",
-        "description": "Sets the name, avatar, banner color and/or description the caller shows in this server.\nFields left out stay as they are and `null` goes back to the account's value. The name\nfollows the rules of the account's display name, with the name already set here free to\nkeep; a name equal to the account's display name is stored as `null`. Only for signed-in\nmembers who are not timed out. A name change is logged in the audit log as\n`member.profile_name`. Emits `member_profile` to the server and the caller. General\nrate-limit bucket.\nA new name is a rare request, counted with new display names: each account may try at most\n`RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day by default,\ntaken or free; your own username and the name you have here don't count.",
+        "description": "Sets the name, avatar, banner color and/or description the caller shows in this server.\nFields left out stay as they are and `null` goes back to the account's value. The name\nfollows the rules of the account's display name, with the name already set here free to\nkeep; a name equal to the account's display name is stored as `null`. Only for signed-in\nmembers who are not timed out and hold the Change server profile permission (268435456,\nwhich everyone starts with). A name change is logged in the audit log as\n`member.profile_name`. Emits `member_profile` to the server and the caller. General\nrate-limit bucket.\nA new name is a rare request, counted with new display names: each account may try at most\n`RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day by default,\ntaken or free; your own username and the name you have here don't count.",
         "operationId": "patch_profile",
         "parameters": [
           {
@@ -20386,7 +20386,7 @@
             }
           },
           "403": {
-            "description": "`Not a member`; `You are timed out in this server`; the server's `profiles_mode` refuses the change (`reason.kind` `off_server`, `reason.control` `profiles_mode`): `Server profiles are off in this server`, or `Server names are off in this server` for a name; or `A moderator locked your server profile` (`reason.kind` `locked`, `reason.until` when the lock ends)",
+            "description": "`Not a member`; `You are timed out in this server`; `Missing permission` (Change server profile); the server's `profiles_mode` refuses the change (`reason.kind` `off_server`, `reason.control` `profiles_mode`): `Server profiles are off in this server`, or `Server names are off in this server` for a name; or `A moderator locked your server profile` (`reason.kind` `locked`, `reason.until` when the lock ends)",
             "content": {
               "application/json": {
                 "schema": {
@@ -20449,7 +20449,7 @@
           "Servers"
         ],
         "summary": "Upload your server profile picture",
-        "description": "Sets the profile picture the caller shows in this server from the image in the request\nbody, under the rules of `PUT /api/v1/me/avatar` (types, `limits.avatar_upload_bytes`,\n40 megapixels, the crop `x`, `y`, `size`, the stored sizes). It shows over the avatar style\nof the server profile, or over the account's when the server profile has none. Only for\nsigned-in members who are not timed out. Emits `member_profile` to the server and the\ncaller. Requires the `server_profiles` and `profile_pictures` switches. Strict rate-limit\nbucket.",
+        "description": "Sets the profile picture the caller shows in this server from the image in the request\nbody, under the rules of `PUT /api/v1/me/avatar` (types, `limits.avatar_upload_bytes`,\n40 megapixels, the crop `x`, `y`, `size`, the stored sizes). It shows over the avatar style\nof the server profile, or over the account's when the server profile has none. Only for\nsigned-in members who are not timed out and hold the Change server profile permission.\nEmits `member_profile` to the server and the caller. Requires the `server_profiles` and `profile_pictures` switches. Strict rate-limit\nbucket.",
         "operationId": "put_profile_avatar",
         "parameters": [
           {
@@ -20561,7 +20561,7 @@
             }
           },
           "403": {
-            "description": "`Not a member`; `You are timed out in this server`; `Server profiles are off in this server` (`reason.kind` `off_server`, `reason.control` `profiles_mode`); `A moderator locked your server profile` (`reason.kind` `locked`); or `Profile pictures are turned off on this site` (`reason.kind` `off_site`, `reason.control` `profile_pictures`)",
+            "description": "`Not a member`; `You are timed out in this server`; `Missing permission` (Change server profile); `Server profiles are off in this server` (`reason.kind` `off_server`, `reason.control` `profiles_mode`); `A moderator locked your server profile` (`reason.kind` `locked`); or `Profile pictures are turned off on this site` (`reason.kind` `off_site`, `reason.control` `profile_pictures`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -20632,7 +20632,7 @@
           "Servers"
         ],
         "summary": "Remove your server profile picture",
-        "description": "Removes the picture of the caller's profile in this server; the rest of the profile stays.\nOnly for signed-in members who are not timed out. Works while the `profile_pictures`\nswitch is off. Emits `member_profile` to the server and the caller when a picture was\nremoved. Strict rate-limit bucket.",
+        "description": "Removes the picture of the caller's profile in this server; the rest of the profile stays.\nOnly for signed-in members who are not timed out and hold the Change server profile\npermission. Works while the `profile_pictures` switch is off. Emits `member_profile` to the server and the caller when a picture was\nremoved. Strict rate-limit bucket.",
         "operationId": "delete_profile_avatar",
         "parameters": [
           {
@@ -20686,7 +20686,7 @@
             }
           },
           "403": {
-            "description": "`Not a member`; `You are timed out in this server`; or `A moderator locked your server profile` (`reason.kind` `locked`, `reason.until` when the lock ends)",
+            "description": "`Not a member`; `You are timed out in this server`; `Missing permission` (Change server profile); or `A moderator locked your server profile` (`reason.kind` `locked`, `reason.until` when the lock ends)",
             "content": {
               "application/json": {
                 "schema": {

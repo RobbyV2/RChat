@@ -337,12 +337,12 @@
   },
   {
     "everyone": true,
-    "hosted": "reserved",
+    "hosted": "live",
     "label": "Change server profile",
     "name": "ChangeProfile",
     "p2p": {
       "since": 5,
-      "state": "reserved",
+      "state": "live",
       "value": 4194304
     },
     "scope": "server",

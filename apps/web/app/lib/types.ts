@@ -48,8 +48,11 @@ export const ChannelPermBit = {
   ViewMembers: 34359738368,
 } as const
 
+// Change server profile: everyone starts with it, and a role can hold it. No channel rule does.
+export const CHANGE_PROFILE = 268435456
+
 // Every bit a role may hold: the management bits and the ones everyone starts with.
-export const ROLE_BITS = 36238783487
+export const ROLE_BITS = 36507218943
 
 export const hasPerm = (perms: number, perm: number) => hasBit(perms, perm)
 

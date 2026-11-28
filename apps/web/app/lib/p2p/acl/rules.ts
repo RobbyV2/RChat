@@ -62,6 +62,8 @@ export const VIEW = P.ViewChannel
 // Reset server profiles: read from rules RULES_NEXT on. Up to rules 4, Kick stands in for it.
 export const PROFILES = 8388608
 export const TIMEOUT = P.TimeoutMembers
+// Change server profile: read from rules RULES_NEXT on. Before, every member may.
+export const CHANGE_PROFILE = 4194304
 export const ALL = 0x7fffffff
 export const MODBITS = KICK | BAN | ROLES | CHANNELS | SERVER | MESSAGES
 export const EVERYONE = 'everyone'
@@ -76,6 +78,12 @@ export const knownRules = (rules: unknown) => rules === 2 || rules === RULES_VER
 // The bit a moderator needs to reset another member's room profile under `rules`.
 export const resetBit = (rules: unknown) =>
   typeof rules === 'number' && rules >= RULES_NEXT ? PROFILES : KICK
+// Whether `a` may set a room profile of their own under `rules`, holding what `F` says.
+export const changesProfile = (
+  rules: unknown,
+  F: Pick<FactsQ, 'owners' | 'bits' | 'holds'>,
+  a: string
+) => !atNext(rules) || (permsQ(F, a) & CHANGE_PROFILE) !== 0
 export function textOnlyChannel(rules: unknown, channel: AclContent | undefined) {
   return (
     rules === RULES_VERSION && (channel?.kind ?? 'text') === 'text' && channel?.text_only === true
@@ -786,7 +794,7 @@ export const profileResetOk = (e: AclEv, St: FactsQ, bit: number) =>
   St.mem.has(e.c.to) &&
   !St.owners.has(e.c.to) &&
   (St.owners.has(e.a) ||
-    (St.mem.has(e.a) && (permsQ(St, e.a) & bit) !== 0 && gt(rank(St, e.a), rank(St, e.c.to))))
+    (St.mem.has(e.a) && (permsQ(St, e.a) & bit) !== 0 && outranksIn(St, e.a, e.c.to)))
 
 // about (the server's description and icon) is a register on the role_meta pattern: admitted,
 // cut and live by the generic rule, with its Authority read only at display. A write counts when

@@ -14284,6 +14284,13 @@
         "ev": { "allow": ["SendMessages"] },
         "out": ["ViewChannels", "ReadHistory", "SendMessages"]
       },
+      {
+        "name": "a channel rule never carries Change server profile",
+        "who": "member",
+        "everyone": ["OPEN", "ChangeProfile"],
+        "ev": { "allow": ["ChangeProfile"] },
+        "out": ["OPEN"]
+      },
       { "name": "a private channel hides everything", "who": "member", "restrict": 1, "out": [] },
       {
         "name": "a read-only channel clears the send group",
@@ -14711,6 +14718,30 @@
         "before": ["ViewChannels"],
         "after": ["ViewChannels", "SendMessages"],
         "out": 1
+      },
+      {
+        "name": "giving everyone Change server profile needs holding it",
+        "actor": ["OPEN", "ManageRoles"],
+        "exempt": false,
+        "before": ["OPEN"],
+        "after": ["OPEN", "ChangeProfile"],
+        "out": 1
+      },
+      {
+        "name": "taking Change server profile from everyone",
+        "actor": ["ManageRoles"],
+        "exempt": false,
+        "before": ["OPEN", "ChangeProfile"],
+        "after": ["OPEN"],
+        "out": 0
+      },
+      {
+        "name": "a holder gives Reset server profiles",
+        "actor": ["ManageRoles", "ManageProfiles"],
+        "exempt": false,
+        "before": [],
+        "after": ["ManageProfiles"],
+        "out": 0
       },
       {
         "name": "removing bits is always allowed",

@@ -89,6 +89,23 @@ pub fn acting_on(user: &User, target: &str) -> User {
     }
 }
 
+/// A member's right to change their own profile in a server. Only
+/// `ServerAccess::change_profile` makes one.
+pub struct ProfileRight {
+    server: String,
+    username: String,
+}
+
+impl ProfileRight {
+    pub fn server(&self) -> &str {
+        &self.server
+    }
+
+    pub fn username(&self) -> &str {
+        &self.username
+    }
+}
+
 pub fn timed_out_error() -> ApiError {
     forbidden(TIMED_OUT)
 }
@@ -995,6 +1012,27 @@ impl ServerAccess {
         match self.is_member() {
             true => Ok(()),
             false => Err(forbidden("Not a member")),
+        }
+    }
+
+    /// The viewer's right to change their own profile in this server: a member who is not timed
+    /// out and holds Change server profile, from everyone or one of their roles.
+    pub async fn change_profile(&self, db: &Db) -> Result<ProfileRight, ApiError> {
+        let (Some(user), true) = (&self.user, self.is_member()) else {
+            return Err(forbidden("Not a member"));
+        };
+        if timed_out(db, self.name(), &user.username).await?.is_some() {
+            return Err(timed_out_error());
+        }
+        let who = self.standing(db).await?.who;
+        let everyone = self.everyone(db).await?;
+        let bits = rchat_perms::eval::server_bits(&who, everyone, &rchat_perms::rules::HOSTED);
+        match bits & held::CHANGE_PROFILE {
+            0 => Err(forbidden("Missing permission")),
+            _ => Ok(ProfileRight {
+                server: self.name().to_string(),
+                username: user.username.clone(),
+            }),
         }
     }
 

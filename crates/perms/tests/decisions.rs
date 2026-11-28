@@ -9,8 +9,8 @@ use rchat_perms::hier::{
     outranks,
 };
 use rchat_perms::masks::{
-    ALL, ASSIGN_ROLES, BASE, HISTORY, MANAGE_CHANNELS, MANAGE_ROLES, MANAGER_PASS, MGMT, SEND,
-    SEND_GROUP, TIMED_OUT_KEEP, VIEW,
+    ALL, ASSIGN_ROLES, BASE, CHANNEL, HISTORY, MANAGE_CHANNELS, MANAGE_ROLES, MANAGER_PASS, MGMT,
+    SEND, SEND_GROUP, TIMED_OUT_KEEP, VIEW,
 };
 use rchat_perms::order::{moved, reorder};
 use rchat_perms::registry::value;
@@ -86,7 +86,7 @@ fn hosted_channel_masks_apply_overwrites_in_order() {
     let member = Who::Member { roles: 0 };
     let mask =
         |ch: &Channel, who: &Who| channel_mask(who, DEFAULT_EVERYONE, ch, false, true, &HOSTED);
-    assert_eq!(mask(&OPEN, &member), BASE);
+    assert_eq!(mask(&OPEN, &member), BASE & CHANNEL);
     let closed = Channel {
         restrict_view: true,
         ..OPEN
@@ -125,12 +125,12 @@ fn hosted_channel_masks_apply_overwrites_in_order() {
     };
     assert_eq!(mask(&own, &manager), MANAGER_PASS);
     let moderator = Who::Member { roles: 2 };
-    assert_eq!(mask(&OPEN, &moderator), BASE | 2);
+    assert_eq!(mask(&OPEN, &moderator), BASE & CHANNEL | 2);
     let no_mod = Channel {
         everyone: Some(Ow { allow: 0, deny: 2 }),
         ..OPEN
     };
-    assert_eq!(mask(&no_mod, &moderator), BASE);
+    assert_eq!(mask(&no_mod, &moderator), BASE & CHANNEL);
     assert_eq!(
         mask(&no_mod, &Who::Admin { mask: 2, roles: 0 }) & 2,
         2,
@@ -143,7 +143,7 @@ fn hosted_channel_masks_apply_overwrites_in_order() {
     );
     assert_eq!(
         channel_mask(&member, BASE, &OPEN, true, false, &HOSTED),
-        BASE
+        BASE & CHANNEL
     );
     assert_eq!(
         channel_mask(&member, VIEW, &OPEN, true, true, &P2P_V4),

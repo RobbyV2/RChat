@@ -184,6 +184,7 @@ const server = (over: Partial<ServerView> = {}): ServerView => ({
   everyone: 0,
   history: 'shared',
   profiles: 'all',
+  changeProfile: true,
   profile: {},
   profileLock: { locked: false },
   store: { on: false, earlier: false },

@@ -23,7 +23,7 @@ import {
 } from './group_pings'
 import { lockState } from './profile_reset'
 import { CAN_ALL, canOf, hostedMask, type ChannelCan } from './channel_perms'
-import { maskAnd, type Rank } from './perms'
+import { hasBit, maskAnd, type Rank } from './perms'
 import { STAFF, memberRank, outranks, outranksKnown, roleRank } from './hierarchy'
 import { canChangeRole, memberPerms, rolePerms, type Order } from './rules'
 import { shownParts } from './server_profile'
@@ -33,7 +33,7 @@ import { iconKind } from './server_about'
 import type { RChatState } from './store_types'
 import { badgePings as p2pBadgePings, dmUnread as p2pDmUnread, listedPeers } from './p2p/alerts'
 import type { P2pState } from './p2p/app/store'
-import { ALL_PERMS, Perm } from './types'
+import { ALL_PERMS, CHANGE_PROFILE, Perm } from './types'
 import type { Member, Message, Role, ServerSummary, UserRef } from './types'
 import { hostedShown, lookOf, type Look } from './role_looks'
 import { time } from './platform/time'
@@ -535,14 +535,16 @@ export const voiceHushedIn = (s: Pick<RChatState, 'voiceHushed'>, channelId: num
 
 const EMPTY_NAMES: string[] = []
 
-// Whether you may open your own profile of `server`: a signed-in member who is not timed out,
-// while the site and the server show server profiles.
+// Whether you may open your own profile of `server`: a signed-in member who is not timed out
+// and holds Change server profile there (as far as the server's details say), while the site
+// and the server show server profiles.
 export const mayEditProfile = (s: RChatState, server: string) =>
   !!s.me &&
   !s.guest &&
   s.me.servers.some(x => x.name === server) &&
   shownParts(s, server).rest &&
-  myTimeoutEnds(s, server) === null
+  myTimeoutEnds(s, server) === null &&
+  hasBit(s.servers[server]?.my_perms ?? CHANGE_PROFILE, CHANGE_PROFILE)
 
 // Whether a moderator with the right may reset server profiles in `server` at all.
 export const profilesShown = (s: RChatState, server: string) => shownParts(s, server).rest

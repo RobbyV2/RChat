@@ -321,8 +321,8 @@ pub const BITS: &[Bit] = &[
         1 << 28,
         Server,
         true,
-        Reserved,
-        wire(1 << 22, Reserved, 5),
+        Live,
+        wire(1 << 22, Live, 5),
     ),
     bit(
         "PinMessages",

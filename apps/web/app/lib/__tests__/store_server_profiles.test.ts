@@ -6,6 +6,7 @@ import { sessionMark } from '../slices/ctx'
 import { resetSessionCaches, useStore } from '../store'
 import { mayEditProfile, profileLockedFor } from '../selectors'
 import type { Member, MemberLook, Profile, ProfilesMode, ServerProfile, WsEvent } from '../types'
+import { CHANGE_PROFILE } from '../types'
 import { me, member, paged, serverDetail, until } from './fixtures'
 
 const st = () => useStore.getState()
@@ -195,6 +196,15 @@ describe('your own server profile', () => {
     dispatch({ type: 'member_profile', server: 's', username: 'bob', profile: null, bio: true })
     expect(st().profile).toEqual({ ...card, rev: 1 })
     useStore.setState({ profile: null })
+  })
+
+  test('the editor stays shut for a member the server says may not change their profile', () => {
+    const before = st().servers
+    useStore.setState({ servers: { s: serverDetail('s', { my_perms: CHANGE_PROFILE | 131072 }) } })
+    expect(mayEditProfile(st(), 's')).toBe(true)
+    useStore.setState({ servers: { s: serverDetail('s', { my_perms: 131072 }) } })
+    expect(mayEditProfile(st(), 's')).toBe(false)
+    useStore.setState({ servers: before })
   })
 
   test('the editor opens for a signed-in member while profiles show and no timeout runs', () => {

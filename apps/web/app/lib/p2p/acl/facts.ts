@@ -14,6 +14,7 @@ import {
   RULES_VERSION,
   ALL,
   BOT,
+  changesProfile,
   cmp,
   EVERYONE,
   gt,
@@ -787,9 +788,17 @@ export abstract class View {
     )
     return w === undefined ? undefined : timeoutEnd(this.ix.ev[w])
   }
+  // T's latest profile write. One whose author, in its own admission state, may not set a room
+  // profile under the room's rules shows nothing set for the room: it reads as a write of no
+  // membership.
   profileOf(T: string): AclContent | undefined {
-    const r = this.register(this.ix.profileBy.get(T) ?? EMPTY)
-    return r && this.ix.ev[r.win].c
+    const ix = this.ix
+    const r = this.register(ix.profileBy.get(T) ?? EMPTY)
+    if (!r) return undefined
+    const c = ix.ev[r.win].c
+    if (changesProfile(ix.ev[ix.genesis]?.c.rules, ix.rec[r.win].local.facts, T)) return c
+    const { in: _in, ...rest } = c
+    return rest
   }
   setting(): AclContent | undefined {
     const r = this.register(this.ix.settingsEv)

@@ -110,6 +110,7 @@ export function createServersPart(
       rank: [-Infinity, ''],
       history: 'shared',
       profiles: sum?.profiles ?? 'all',
+      changeProfile: false,
       profile: r.profile ?? {},
       profileLock: { locked: false },
       store: { on: false, earlier: false },
