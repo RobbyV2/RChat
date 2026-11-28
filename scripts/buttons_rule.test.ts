@@ -19,6 +19,8 @@ tester.run('buttons', rule, {
     { code: '<a href="/docs" className="underline">Docs</a>' },
     { code: 'createElement(as, props)' },
     { code: "document.createElement('button')" },
+    { code: '<a href={url} className="truncate underline">{name}</a>' },
+    { code: '<div className={tileLook("idle")} />' },
   ],
   invalid: [
     { code: '<button onClick={save}>Save</button>', errors: [{ messageId: 'raw' }] },
@@ -30,6 +32,18 @@ tester.run('buttons', rule, {
     { code: "<Row as={'button'} gap='sm' />", errors: [{ messageId: 'raw' }] },
     { code: "createElement('button', { onClick: save })", errors: [{ messageId: 'raw' }] },
     { code: "React.createElement('button', null)", errors: [{ messageId: 'raw' }] },
+    {
+      code: "<a href={url} className={`inline-flex ${iconButtonLook('plain', 'sm')}`} />",
+      errors: [{ messageId: 'anchor' }],
+    },
+    {
+      code: "<Link href=\"/login\" className={buttonLook('danger', 'sm')}>Log out</Link>",
+      errors: [{ messageId: 'anchor' }],
+    },
+    {
+      code: '<Row as="a" href="/docs" className={cls(chipLook(true))} />',
+      errors: [{ messageId: 'anchor' }],
+    },
   ],
 })
 

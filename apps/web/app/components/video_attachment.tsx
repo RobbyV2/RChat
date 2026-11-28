@@ -1,6 +1,5 @@
 'use client'
 
-import { iconButtonLook } from '../lib/controls'
 import {
   useCallback,
   useEffect,
@@ -25,7 +24,7 @@ import { longPress } from './context_menu'
 import { useFileMenu, type FilePrimary } from './file_card'
 import { time } from '../lib/platform/time'
 import type { Cancel } from '../lib/clock'
-import { IconButton } from './controls'
+import { IconButton, IconLink } from './controls'
 import { FUNCTIONAL } from '../lib/motion/functional'
 
 interface VideoProps {
@@ -181,15 +180,16 @@ export function VideoAttachmentBody({
               shape="square"
             />
           ) : primary.href !== undefined ? (
-            <a
+            <IconLink
               href={primary.href}
               download={primary.download}
-              title={title}
-              aria-label={label}
-              className={`inline-flex ${iconButtonLook('inherit', 'lg', 'square')}`}
-            >
-              <Download size={20} aria-hidden />
-            </a>
+              icon={Download}
+              label={label}
+              tooltip={title}
+              tone="inherit"
+              size="lg"
+              shape="square"
+            />
           ) : (
             <IconButton
               icon={Download}

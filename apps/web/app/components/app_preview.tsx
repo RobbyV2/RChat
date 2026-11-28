@@ -14,7 +14,6 @@ import {
 import { savedPreviews } from '../lib/apps/preview_files'
 import type { Node } from '../lib/apps/ui/types'
 import { Button } from './controls'
-import { buttonLook } from '../lib/controls'
 import { Row, Stack, Surface } from './layout'
 import { CloseButton, fieldCls, Masked, TopDialog } from './ui'
 
@@ -185,6 +184,7 @@ export function AppPreview() {
 
 function Launcher({ where }: { where: string }) {
   const owner = useAccount()
+  const chooser = useRef<HTMLInputElement>(null)
   const { canView, useViewing } = owner.viewing
   const {
     usePreview,
@@ -309,22 +309,21 @@ function Launcher({ where }: { where: string }) {
               {app ? 'Open preview' : 'Open Field notes example'}
             </Button>
           )}
-          <label
-            className={`relative inline-flex items-center overflow-hidden ${buttonLook('text', 'md')}`}
-          >
+          <Button size="md" onClick={() => chooser.current?.click()}>
             Choose app definition
-            <input
-              aria-label="Choose app definition"
-              type="file"
-              accept=".json,application/json"
-              className="absolute inset-0 w-full cursor-pointer opacity-0"
-              onChange={e => {
-                const file = e.target.files?.[0]
-                e.target.value = ''
-                if (file) void launchPreview(where, fileSource(file))
-              }}
-            />
-          </label>
+          </Button>
+          <input
+            ref={chooser}
+            aria-label="App definition file"
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={e => {
+              const file = e.target.files?.[0]
+              e.target.value = ''
+              if (file) void launchPreview(where, fileSource(file))
+            }}
+          />
           {app && (
             <Button size="md" onClick={forgetPreview}>
               Forget app approval

@@ -1,5 +1,4 @@
 'use client'
-import { buttonLook } from '../lib/controls'
 import { OwnLoadNotice } from './own_load'
 import { Name } from './name'
 import { instanceAddress, instanceName, personCalled, handleName, serverName } from '../lib/names'
@@ -20,7 +19,6 @@ import { useAccount } from '../lib/client/react'
 import { AnnouncementSetting } from './announcements'
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import Link from 'next/link'
 import {
   Bell,
   Command,
@@ -68,7 +66,8 @@ import { InstanceDetails, useInstanceLabel } from './instance_badge'
 import { UserAvatar } from './user_avatar'
 import { AnimationsSetting } from './animations_setting'
 import { SettingNotes, SettingSwitch } from './settings_fields'
-import { Button, LinkButton } from './controls'
+import { Button, ButtonLink, LinkButton } from './controls'
+import Link from 'next/link'
 import { Row, Stack, Surface, Grid, Lift } from './layout'
 import { AVATAR_MODE_CHOICES, AVATAR_MODE_NOTES } from '../lib/avatar_setting'
 import { ANIMATE_MODE_CHOICES, ANIMATE_MODE_NOTES, REDUCED_MOTION_NOTE } from '../lib/avatar_motion'
@@ -730,18 +729,19 @@ function SignInSection() {
       <p className={sectionCls}>Sign-in</p>
       <Stack gap="xl" align="start">
         {signedIn && <AccountMethods key={accountKey} />}
-        <Link
+        <ButtonLink
+          as={Link}
           href="/login"
           replace
+          variant="danger"
           data-settings-logout
           onClick={() => {
             closeDialog()
             logout()
           }}
-          className={`inline-flex items-center ${buttonLook('danger', 'sm')}`}
         >
           {signedIn ? 'Log out' : 'Exit guest mode'}
-        </Link>
+        </ButtonLink>
       </Stack>
     </section>
   )

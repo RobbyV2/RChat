@@ -1,14 +1,16 @@
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { Pin, Trash2, X } from 'lucide-react'
+import { Download, Pin, Trash2, X } from 'lucide-react'
 import {
   Badge,
   Button,
+  ButtonLink,
   CallButton,
   Chip,
   EmojiCell,
   Hotspot,
   IconButton,
+  IconLink,
   LinkButton,
   ListRow,
   Pill,
@@ -23,7 +25,14 @@ import {
   WindowButton,
 } from '../../components/controls'
 import { CloseButton, PanelHeader, sectionCls } from '../../components/ui'
-import { buttonLook, chipLook, iconBoxLook, rowLook, sectionHeadingLook } from '../controls'
+import {
+  buttonLook,
+  chipLook,
+  iconBoxLook,
+  iconButtonLook,
+  rowLook,
+  sectionHeadingLook,
+} from '../controls'
 
 const attr = (html: string, name: string) => new RegExp(`${name}="([^"]*)"`).exec(html)?.[1]
 
@@ -311,5 +320,33 @@ describe('the shared class names and close buttons', () => {
     )
     expect(attr(header, 'aria-label')).toBe('Close pins')
     expect(attr(header, 'title')).toBe('Close pins')
+  })
+})
+
+describe('links that look like controls', () => {
+  test('a ButtonLink is a link with the look of the Button of its variant and size', () => {
+    const html = renderToStaticMarkup(
+      <ButtonLink href="/files/a.txt" download="a.txt" variant="danger">
+        Get it
+      </ButtonLink>
+    )
+    expect(html.startsWith('<a ')).toBe(true)
+    expect(attr(html, 'href')).toBe('/files/a.txt')
+    expect(attr(html, 'download')).toBe('a.txt')
+    expect(attr(html, 'class')).toContain(buttonLook('danger', 'sm'))
+  })
+
+  test('an IconLink is named by its label, which is also its tooltip unless one is given', () => {
+    const html = renderToStaticMarkup(
+      <IconLink href="/f" icon={Download} label="Download" tone="filled" size="xl" shape="square" />
+    )
+    expect(html.startsWith('<a ')).toBe(true)
+    expect(attr(html, 'aria-label')).toBe('Download')
+    expect(attr(html, 'title')).toBe('Download')
+    expect(attr(html, 'class')).toContain(iconButtonLook('filled', 'xl', 'square'))
+    const tipped = renderToStaticMarkup(
+      <IconLink href="/f" icon={Download} label="Download" tooltip="Download a.txt" />
+    )
+    expect(attr(tipped, 'title')).toBe('Download a.txt')
   })
 })

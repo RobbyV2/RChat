@@ -1,6 +1,6 @@
 'use client'
 
-import { IconButton, CardButton, MediaButton } from './controls'
+import { IconButton, IconLink, CardButton, MediaButton } from './controls'
 import { ask, mediaUrlOf, sendTo } from '../lib/asks'
 import { Name, useNameLabel, useNameLabels } from './name'
 import { handleName, labelWith, personCalled, unnamed } from '../lib/names'
@@ -113,7 +113,6 @@ import { altText } from '../lib/alt_text'
 import { cause, logError } from '../lib/log'
 import { Row, Surface, Inset } from './layout'
 import { time } from '../lib/platform/time'
-import { iconButtonLook } from '../lib/controls'
 import { embedNoteLook } from '../lib/controls'
 import { FUNCTIONAL } from '../lib/motion/functional'
 import { plays } from '../lib/motion/play'
@@ -1103,15 +1102,14 @@ export function MediaAttachment({
                     onClick={save}
                   />
                 ) : (
-                  <a
+                  <IconLink
                     href={mediaUrlOf(account, id)}
                     download={filename}
-                    title={`Download ${filename}`}
-                    aria-label="Download"
-                    className={`inline-flex ${iconButtonLook('plain', 'sm')}`}
-                  >
-                    <Download size={16} aria-hidden />
-                  </a>
+                    icon={Download}
+                    label="Download"
+                    tooltip={`Download ${filename}`}
+                    size="sm"
+                  />
                 )
               }
               footer={

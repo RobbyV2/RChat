@@ -1,6 +1,5 @@
 'use client'
 
-import { iconButtonLook } from '../lib/controls'
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Download,
@@ -41,7 +40,7 @@ import { useLiveNow } from './timestamp'
 import { MaskedText, MaskedTogether } from './ui'
 import { Row, Surface } from './layout'
 import { time } from '../lib/platform/time'
-import { IconButton } from './controls'
+import { IconButton, IconLink } from './controls'
 
 const ICONS: Record<FileKind, LucideIcon> = {
   archive: FileArchive,
@@ -161,15 +160,16 @@ export function FileCardBody({
         shape="square"
       />
     ) : primary.href !== undefined ? (
-      <a
+      <IconLink
         href={primary.href}
         download={primary.download}
-        title={title}
-        aria-label={label}
-        className={`inline-flex ${iconButtonLook('filled', 'xl', 'square')}`}
-      >
-        <Download size={24} aria-hidden />
-      </a>
+        icon={Download}
+        label={label}
+        tooltip={title}
+        tone="filled"
+        size="xl"
+        shape="square"
+      />
     ) : (
       <IconButton
         icon={Download}

@@ -1,6 +1,14 @@
 'use client'
 
-import type { ButtonHTMLAttributes, CSSProperties, HTMLAttributes, ReactNode, Ref } from 'react'
+import type {
+  AnchorHTMLAttributes,
+  ButtonHTMLAttributes,
+  ComponentType,
+  CSSProperties,
+  HTMLAttributes,
+  ReactNode,
+  Ref,
+} from 'react'
 import { Check, ChevronRight, Eye, LoaderCircle, type LucideIcon } from 'lucide-react'
 import {
   BUTTON_ICON,
@@ -139,6 +147,100 @@ export function Button<const S extends string = never>({
         {children}
       </Busy>
     </button>
+  )
+}
+
+type NativeAnchor = Omit<
+  AnchorHTMLAttributes<HTMLAnchorElement>,
+  'className' | 'style' | 'title' | 'aria-label' | 'children' | 'href'
+>
+
+type AnchorProps = NativeAnchor & {
+  href: string
+  replace?: boolean
+  title?: string
+  'aria-label'?: string
+  className: string
+  children: ReactNode
+}
+
+// A link that looks like a `Button` (a download, a page). `as` is the link element (the router's
+// own link, which also takes `replace`), a plain `<a>` unless given.
+export function ButtonLink<const S extends string = never>({
+  as: Anchor = 'a',
+  href,
+  replace,
+  variant = 'text',
+  size = 'sm',
+  icon: Icon,
+  title,
+  label,
+  place,
+  children,
+  ...rest
+}: NativeAnchor &
+  Placed<S> & {
+    as?: 'a' | ComponentType<AnchorProps>
+    href: string
+    replace?: boolean
+    variant?: ButtonVariant
+    size?: ButtonSize
+    icon?: LucideIcon
+    title?: string
+    label?: string
+    children: ReactNode
+  }) {
+  return (
+    <Anchor
+      href={href}
+      {...rest}
+      {...(replace === undefined ? {} : { replace })}
+      title={title}
+      aria-label={label}
+      className={placed(
+        'inline-flex',
+        `items-center justify-center gap-1.5 ${buttonLook(variant, size)}`,
+        place
+      )}
+    >
+      {Icon && <Icon size={BUTTON_ICON[size]} aria-hidden className="shrink-0" />}
+      {children}
+    </Anchor>
+  )
+}
+
+// A link that shows only an icon, like an `IconButton`: `label` names it and is its tooltip
+// unless `tooltip` says otherwise.
+export function IconLink<const S extends string = never>({
+  href,
+  icon: Icon,
+  label,
+  tooltip,
+  tone = 'plain',
+  size = 'md',
+  shape = 'round',
+  place,
+  ...rest
+}: NativeAnchor &
+  Placed<S> & {
+    href: string
+    icon: LucideIcon
+    label: string
+    tooltip?: string
+    tone?: IconButtonTone
+    size?: IconButtonSize
+    shape?: IconButtonShape
+  }) {
+  return (
+    <a
+      href={href}
+      {...rest}
+      title={tooltip ?? label}
+      aria-label={label}
+      className={placed('inline-flex', iconButtonLook(tone, size, shape), place)}
+    >
+      <Icon size={ICON_SIZE[size]} aria-hidden />
+    </a>
   )
 }
 
