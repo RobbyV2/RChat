@@ -966,6 +966,8 @@ body {
 @custom-variant expanded (&[aria-expanded='true'][aria-haspopup]);
 @custom-variant current (&:is([aria-current='true'], [aria-current='page']));
 @custom-variant selected (&[aria-selected='true']);
+@custom-variant checked (&[aria-checked='true']);
+@custom-variant soft-off (&[aria-disabled='true']);
 @custom-variant hover-idle {
   @media (hover: hover) {
     &:hover:not(
@@ -973,7 +975,9 @@ body {
         [aria-pressed='true'],
         [aria-current='true'],
         [aria-current='page'],
-        [aria-selected='true']
+        [aria-selected='true'],
+        [aria-checked='true'],
+        [aria-disabled='true']
       ) {
       @slot;
     }

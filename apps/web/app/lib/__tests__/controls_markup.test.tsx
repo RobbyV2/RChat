@@ -4,13 +4,23 @@ import { Pin, Trash2, X } from 'lucide-react'
 import {
   Badge,
   Button,
+  CallButton,
   Chip,
+  EmojiCell,
+  Hotspot,
   IconButton,
   LinkButton,
   ListRow,
   Pill,
   SectionHeading,
+  SideRow,
+  Swatch,
+  SwitchRow,
   Tab,
+  Tick,
+  Tile,
+  TriButton,
+  WindowButton,
 } from '../../components/controls'
 import {
   CloseButton,
@@ -202,7 +212,7 @@ describe('Chip', () => {
     const on = renderToStaticMarkup(<Chip on>Mods</Chip>)
     expect(on).toContain('aria-pressed="true"')
     expect(on).not.toContain('role=')
-    expect(attr(on, 'class')).toBe(`inline-block ${chipLook(true)}`)
+    expect(attr(on, 'class')).toBe(`inline-flex ${chipLook(true)}`)
     expect(renderToStaticMarkup(<Chip on={false}>Mods</Chip>)).toContain('aria-pressed="false"')
   })
 
@@ -214,7 +224,87 @@ describe('Chip', () => {
     )
     expect(html).toContain('role="radio" aria-checked="true"')
     expect(html).not.toContain('aria-pressed')
-    expect(html).toContain('>Week</button>')
+    expect(html).toContain('<span class="truncate">Week</span></button>')
+  })
+
+  test('a chip can be a switch or a tab, and a reaction keeps what it holds as given', () => {
+    const sw = renderToStaticMarkup(
+      <Chip on as="switch">
+        Show
+      </Chip>
+    )
+    expect(sw).toContain('role="switch" aria-checked="true"')
+    const tab = renderToStaticMarkup(
+      <Chip on={false} as="tab" variant="reaction" plain label="2 reactions">
+        <span>2</span>
+      </Chip>
+    )
+    expect(tab).toContain('role="tab"')
+    expect(tab).toContain('aria-selected="false"')
+    expect(tab).toContain('aria-label="2 reactions"')
+    expect(tab).toContain('<span>2</span></button>')
+    expect(attr(tab, 'class')).toBe(`inline-flex ${chipLook(false, 'reaction')}`)
+  })
+})
+
+describe('controls that show no words', () => {
+  test('each has a name and a tooltip', () => {
+    for (const html of [
+      renderToStaticMarkup(<Tile label="Home">H</Tile>),
+      renderToStaticMarkup(<CallButton icon={Trash2} label="Home" />),
+      renderToStaticMarkup(<Hotspot label="Home" />),
+      renderToStaticMarkup(<Swatch color="#fff" ink="#000" on label="Home" />),
+      renderToStaticMarkup(
+        <WindowButton kind="dot" label="Home">
+          x
+        </WindowButton>
+      ),
+      renderToStaticMarkup(<TriButton icon={Trash2} tone="allow" on label="Home" />),
+      renderToStaticMarkup(<Tick checked label="Home" />),
+      renderToStaticMarkup(<IconButton glyph="x" label="Home" />),
+    ]) {
+      expect(html).toContain('aria-label="Home"')
+      expect(html).toContain('title="Home"')
+      expect(html).toContain('type="button"')
+    }
+  })
+
+  test('a tooltip that differs from the name replaces it', () => {
+    const html = renderToStaticMarkup(
+      <Tile label="alice" tooltip="Account">
+        A
+      </Tile>
+    )
+    expect(html).toContain('aria-label="alice"')
+    expect(html).toContain('title="Account"')
+  })
+
+  test('a switch row says whether it is on and is described by its hint', () => {
+    const html = renderToStaticMarkup(<SwitchRow checked label="Sounds" hint="Plays" hintId="h" />)
+    expect(html).toContain(
+      'role="switch" aria-checked="true" aria-label="Sounds" aria-describedby="h"'
+    )
+    expect(html).toContain('<span id="h"')
+  })
+
+  test('a sidebar row marks the open one and a heading says whether it is unfolded', () => {
+    expect(renderToStaticMarkup(<SideRow current>general</SideRow>)).toContain(
+      'aria-current="page"'
+    )
+    const heading = renderToStaticMarkup(
+      <SideRow tone="heading" open={false}>
+        Text
+      </SideRow>
+    )
+    expect(heading).toContain('aria-expanded="false"')
+    expect(heading).not.toContain('aria-current')
+  })
+
+  test('an emoji cell is an unselected option the keys move over', () => {
+    const html = renderToStaticMarkup(<EmojiCell label="grin">g</EmojiCell>)
+    expect(html).toContain('role="option"')
+    expect(html).toContain('tabindex="-1"')
+    expect(html).toContain('aria-selected="false"')
   })
 })
 

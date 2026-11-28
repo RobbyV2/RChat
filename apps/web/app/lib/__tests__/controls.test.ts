@@ -2,15 +2,23 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
+  appButtonStyleLook,
   badgeLook,
   buttonLook,
+  callButtonLook,
+  cardButtonLook,
   chipLook,
   coverLook,
   iconButtonLook,
+  linkLook,
   pillLook,
   placed,
   rowLook,
+  sideRowButtonLook,
+  switchRowLook,
   tabLook,
+  tileLook,
+  triLook,
   type ButtonSize,
   type ButtonVariant,
   type IconButtonSize,
@@ -19,7 +27,16 @@ import {
   type Place,
 } from '../controls'
 
-const VARIANTS: ButtonVariant[] = ['filled', 'tonal', 'text', 'danger', 'filled-danger']
+const VARIANTS: ButtonVariant[] = [
+  'filled',
+  'tonal',
+  'text',
+  'danger',
+  'filled-danger',
+  'accept',
+  'inverse',
+  'inherit',
+]
 const SIZES: ButtonSize[] = ['sm', 'md']
 const TONES: IconButtonTone[] = [
   'plain',
@@ -27,11 +44,13 @@ const TONES: IconButtonTone[] = [
   'primary',
   'danger',
   'error',
+  'tonal',
+  'raised',
   'filled',
   'filled-danger',
   'overlay',
 ]
-const ICON_SIZES: IconButtonSize[] = ['xs', 'sm', 'md', 'lg']
+const ICON_SIZES: IconButtonSize[] = ['xs', 'sm', 'md', 'lg', 'xl']
 
 const classes = (s: string) => s.split(/\s+/).filter(Boolean)
 
@@ -68,9 +87,24 @@ describe('button looks', () => {
       rowLook('plain'),
       rowLook('muted'),
       rowLook('plain', 'card'),
+      rowLook('plain', 'menu'),
       chipLook(false),
+      chipLook(false, 'reaction'),
       tabLook,
       coverLook,
+      linkLook('muted'),
+      tileLook('idle'),
+      tileLook('add'),
+      tileLook('p2p'),
+      sideRowButtonLook('plain'),
+      sideRowButtonLook('heading'),
+      callButtonLook('idle', 'lg'),
+      callButtonLook('quiet', 'sm'),
+      cardButtonLook('low', 'md', false),
+      cardButtonLook('p2p', 'lg', false),
+      switchRowLook,
+      appButtonStyleLook('plain', false),
+      triLook('allow'),
     ]
     for (const look of looks)
       expect(classes(look).filter(c => c.startsWith('hover:') || c.includes(':hover:'))).toEqual([])
@@ -83,6 +117,8 @@ describe('button looks', () => {
       "[aria-current='true']",
       "[aria-current='page']",
       "[aria-selected='true']",
+      "[aria-checked='true']",
+      "[aria-disabled='true']",
     ])
       expect(idle).toContain(state)
   })
@@ -96,7 +132,7 @@ describe('button looks', () => {
 
 describe('icon button looks', () => {
   test('every size is a fixed square that grows to 44 px on a coarse pointer', () => {
-    const box = { xs: 'size-5', sm: 'size-7', md: 'size-8', lg: 'size-9' }
+    const box = { xs: 'size-5', sm: 'size-7', md: 'size-8', lg: 'size-9', xl: 'size-11' }
     for (const t of TONES)
       for (const s of ICON_SIZES) {
         const c = classes(iconButtonLook(t, s))
@@ -160,6 +196,60 @@ describe('rows, chips, badges', () => {
       pillLook('neutral'),
     ]
     for (const look of all) expect(look.includes('text-[')).toBe(false)
+  })
+})
+
+describe('the other controls', () => {
+  test('each shows focus', () => {
+    for (const look of [
+      linkLook(),
+      tileLook('idle'),
+      sideRowButtonLook('plain'),
+      sideRowButtonLook('heading'),
+      callButtonLook('idle', 'lg'),
+      cardButtonLook('plain', 'md', false),
+      switchRowLook,
+      appButtonStyleLook('plain', false),
+      triLook('deny'),
+      chipLook(false, 'reaction'),
+    ])
+      has(look, 'focus-visible:outline-2', 'focus-visible:outline-primary')
+  })
+
+  test('each reaches 44 px on a coarse pointer', () => {
+    has(tileLook('idle'), 'size-12')
+    has(sideRowButtonLook('plain'), 'pointer-coarse:min-h-11')
+    has(sideRowButtonLook('heading'), 'pointer-coarse:min-h-11')
+    has(callButtonLook('idle', 'sm'), 'pointer-coarse:size-11')
+    has(callButtonLook('idle', 'md'), 'pointer-coarse:size-11')
+    has(callButtonLook('idle', 'lg'), 'size-11')
+    has(callButtonLook('idle', 'bar'), 'pointer-coarse:h-11')
+    has(cardButtonLook('plain', 'sm', true), 'pointer-coarse:min-h-11')
+    has(switchRowLook, 'pointer-coarse:min-h-11')
+    has(appButtonStyleLook('primary', true), 'min-h-11')
+    has(triLook('neutral'), 'pointer-coarse:size-11')
+    has(chipLook(true, 'reaction'), 'pointer-coarse:h-11', 'pointer-coarse:min-w-11')
+    has(linkLook('error'), 'pointer-coarse:py-3.5', 'pointer-coarse:min-w-11')
+  })
+
+  test('a chosen row, tile or card is filled through its ARIA state', () => {
+    has(
+      sideRowButtonLook('plain'),
+      'current:bg-secondary-container',
+      'pressed:bg-secondary-container'
+    )
+    has(cardButtonLook('low', 'md', true), 'pressed:bg-secondary-container')
+    has(
+      rowLook('plain', 'menu'),
+      'selected:bg-secondary-container',
+      'checked:bg-secondary-container'
+    )
+    has(tileLook('active'), 'bg-primary', 'text-on-primary')
+  })
+
+  test('a muted sidebar row fades', () => {
+    expect(classes(sideRowButtonLook('plain', true))).toContain('opacity-60')
+    expect(classes(sideRowButtonLook('plain'))).not.toContain('opacity-60')
   })
 })
 

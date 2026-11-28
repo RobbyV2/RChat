@@ -5,14 +5,48 @@
 // type, so every control of a kind looks the same. On a coarse pointer every control is at least
 // 44 px high (and an icon button 44 px wide); with a mouse it keeps its size.
 
-export type ButtonVariant = 'filled' | 'tonal' | 'text' | 'danger' | 'filled-danger'
+export type ButtonVariant =
+  'filled' | 'tonal' | 'text' | 'danger' | 'filled-danger' | 'accept' | 'inverse' | 'inherit'
 export type ButtonSize = 'sm' | 'md'
 export type IconButtonTone =
-  'plain' | 'inherit' | 'primary' | 'danger' | 'error' | 'filled' | 'filled-danger' | 'overlay'
-export type IconButtonSize = 'xs' | 'sm' | 'md' | 'lg'
+  | 'plain'
+  | 'inherit'
+  | 'primary'
+  | 'danger'
+  | 'error'
+  | 'tonal'
+  | 'raised'
+  | 'filled'
+  | 'filled-danger'
+  | 'overlay'
+export type IconButtonSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl'
 export type IconButtonShape = 'round' | 'square'
 export type RowTone = 'plain' | 'muted' | 'primary' | 'danger'
-export type RowVariant = 'plain' | 'card'
+export type RowVariant = 'plain' | 'card' | 'menu' | 'menu-touch'
+export type LinkTone = 'primary' | 'error' | 'muted' | 'strong' | 'inherit'
+export type ChipVariant = 'pill' | 'reaction'
+export type TileTone =
+  | 'idle'
+  | 'active'
+  | 'add'
+  | 'preview'
+  | 'folder'
+  | 'folder-open'
+  | 'p2p'
+  | 'p2p-active'
+  | 'p2p-server'
+  | 'p2p-server-active'
+  | 'p2p-folder'
+  | 'p2p-folder-open'
+export type SideRowTone = 'plain' | 'strong' | 'primary' | 'heading'
+export type CallTone = 'idle' | 'on' | 'off' | 'danger' | 'accept' | 'quiet'
+export type CallSize = 'sm' | 'md' | 'lg' | 'bar' | 'wide'
+export type CardTone = 'plain' | 'low' | 'base' | 'outlined' | 'p2p'
+export type CardPad = 'none' | 'sm' | 'md' | 'lg'
+export type MediaShape = 'card' | 'round' | 'inherit'
+export type WindowButtonKind = 'bar' | 'bar-close' | 'dot'
+export type AppButtonStyle = 'plain' | 'primary' | 'danger'
+export type TriTone = 'allow' | 'deny' | 'neutral'
 export type BadgeTone = 'danger' | 'primary' | 'tertiary' | 'neutral' | 'outline' | 'error'
 
 type Sign = '' | '-'
@@ -174,6 +208,14 @@ export const placed = (base: string, look: string, place?: string) => {
 
 const FOCUS = 'outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary'
 const HOVER = 'hover-idle:bg-on-surface/8'
+// The state layer on a colored surface (a banner): a tint of the text color it inherits.
+const HOVER_OWN = 'hover-idle:bg-current/10'
+// What a control that is on shows, whichever ARIA attribute says so.
+const ON =
+  'pressed:bg-secondary-container pressed:text-on-secondary-container current:bg-secondary-container current:text-on-secondary-container selected:bg-secondary-container selected:text-on-secondary-container checked:bg-secondary-container checked:text-on-secondary-container'
+// A control that stays focusable while it cannot be used (`aria-disabled`) is dimmed like a
+// disabled one.
+const OFF = 'disabled:opacity-40 soft-off:cursor-not-allowed soft-off:opacity-40'
 
 const BUTTON_TONE: Record<ButtonVariant, string> = {
   filled: 'bg-primary text-on-primary hover-idle:opacity-90',
@@ -181,6 +223,9 @@ const BUTTON_TONE: Record<ButtonVariant, string> = {
   text: `text-primary ${HOVER}`,
   danger: `text-error ${HOVER}`,
   'filled-danger': 'bg-error text-on-error hover-idle:opacity-90',
+  accept: 'bg-status-green text-surface hover-idle:brightness-110',
+  inverse: 'bg-inverse-surface text-inverse-on-surface hover-idle:opacity-90',
+  inherit: HOVER_OWN,
 }
 
 const BUTTON_SIZE: Record<ButtonSize, string> = {
@@ -204,6 +249,10 @@ const ICON_TONE: Record<IconButtonTone, string> = {
   primary: `text-primary ${HOVER}`,
   danger: `text-on-surface-variant ${HOVER} hover-idle:text-error`,
   error: `text-error ${HOVER}`,
+  tonal:
+    'bg-surface-container-high text-on-surface-variant hover-idle:bg-surface-container-highest hover-idle:text-on-surface',
+  raised:
+    'bg-surface-container-highest text-on-surface shadow-elevation-2 hover-idle:bg-surface-bright',
   filled: 'bg-primary text-on-primary hover-idle:opacity-90',
   'filled-danger': 'bg-error text-on-error hover-idle:opacity-90',
   overlay: 'bg-scrim/70 text-on-scrim hover-idle:bg-scrim/85',
@@ -214,16 +263,26 @@ const ICON_BOX: Record<IconButtonSize, string> = {
   sm: 'size-7',
   md: 'size-8',
   lg: 'size-9',
+  xl: 'size-11',
 }
 
-export const ICON_SIZE: Record<IconButtonSize, number> = { xs: 12, sm: 16, md: 18, lg: 20 }
+export const ICON_SIZE: Record<IconButtonSize, number> = { xs: 12, sm: 16, md: 18, lg: 20, xl: 24 }
+
+// The type step of an emoji shown in place of the icon.
+export const GLYPH_TEXT: Record<IconButtonSize, string> = {
+  xs: 'font-emoji text-xs leading-none',
+  sm: 'font-emoji text-sm leading-none',
+  md: 'font-emoji text-base leading-none',
+  lg: 'font-emoji text-xl leading-none',
+  xl: 'font-emoji text-2xl leading-none',
+}
 
 // The box an icon button has with a mouse: what sits over the icon (a badge) is placed in it, so
 // it stays by the icon when the button grows on a coarse pointer.
 export const iconBoxLook = (size: IconButtonSize) =>
   `${ICON_BOX[size]} relative flex items-center justify-center`
 
-// An icon only button: a 20 (inside a chip), 28, 32 or 36 px circle (or rounded square) with its
+// An icon only button: a 20 (inside a chip), 28, 32, 36 or 44 px circle (or rounded square) with its
 // icon in the middle. On a coarse pointer it grows to 44 px; the one inside a chip grows into the
 // chip's margin, so the chip keeps its size. `aria-pressed` shows it on, `aria-expanded` on
 // a button with a popup shows the popup open (the `pressed:` and `expanded:` variants of
@@ -235,7 +294,7 @@ export const iconButtonLook = (
   shape: IconButtonShape = 'round',
   tight = false
 ) =>
-  `${ICON_BOX[size]} shrink-0 items-center justify-center ${shape === 'round' ? 'rounded-full' : 'rounded-lg'} ${ICON_TONE[tone]} ${FOCUS} expanded:bg-on-surface/8 pressed:bg-secondary-container pressed:text-on-secondary-container disabled:opacity-40 pointer-coarse:size-11${size === 'xs' ? ' pointer-coarse:-m-3' : ''}${tight ? ' pointer-coarse:-mx-1.5' : ''}`
+  `${ICON_BOX[size]} shrink-0 items-center justify-center ${shape === 'round' ? 'rounded-full' : 'rounded-lg'} ${ICON_TONE[tone]} ${FOCUS} expanded:bg-on-surface/8 ${ON} ${OFF} pointer-coarse:size-11${size === 'xs' ? ' pointer-coarse:-m-3' : ''}${tight ? ' pointer-coarse:-mx-1.5' : ''}`
 
 const ROW_TONE: Record<RowTone, string> = {
   plain: 'text-on-surface',
@@ -244,14 +303,18 @@ const ROW_TONE: Record<RowTone, string> = {
   danger: 'text-error',
 }
 
+const ROW_VARIANT: Record<RowVariant, string> = {
+  plain: `gap-3 rounded-lg px-3 py-2 text-sm ${HOVER} pointer-coarse:min-h-11`,
+  card: 'min-h-11 gap-3 rounded-xl bg-surface-container px-3 py-2 text-sm hover-idle:bg-surface-container-highest',
+  menu: `gap-3 px-4 py-2 text-sm ${HOVER} focus-visible:bg-on-surface/8 expanded:bg-on-surface/8`,
+  'menu-touch': 'min-h-13 gap-3 px-6 py-3 text-base active:bg-on-surface/8',
+}
+
 // A row of a list or menu: leading icon, label, trailing slot. A `card` row sits on its own
-// surface and is 44 px high with any pointer. `aria-current` marks the open one.
+// surface and is 44 px high with any pointer; a `menu` row is an item of a menu (`menu-touch`: of
+// a menu shown as a sheet). `aria-current`, `aria-selected` or `aria-pressed` marks the open one.
 export const rowLook = (tone: RowTone, variant: RowVariant = 'plain') =>
-  `w-full min-w-0 items-center gap-3 px-3 py-2 text-left text-sm ${ROW_TONE[tone]} ${
-    variant === 'card'
-      ? 'min-h-11 rounded-xl bg-surface-container hover-idle:bg-surface-container-highest'
-      : `rounded-lg ${HOVER}`
-  } ${FOCUS} current:bg-secondary-container current:text-on-secondary-container selected:bg-secondary-container selected:text-on-secondary-container disabled:opacity-40 pointer-coarse:min-h-11`
+  `w-full min-w-0 items-center text-left ${ROW_TONE[tone]} ${ROW_VARIANT[variant]} ${FOCUS} ${ON} ${OFF}`
 
 // A banner under the header (a notice, an error, a toast).
 export const bannerLook =
@@ -268,15 +331,30 @@ export const composerTextLook =
 
 // A button inside a line of text (with an icon before its words, if any): it reads as a link and
 // keeps the line's height; on a coarse pointer it is 44 px to tap, grown into its margins.
-export const linkLook = `inline-flex items-center gap-1 rounded-sm font-medium text-primary underline-offset-2 hover-idle:underline ${FOCUS} disabled:opacity-40 pointer-coarse:-my-3.5 pointer-coarse:min-w-11 pointer-coarse:justify-center pointer-coarse:py-3.5`
+const LINK_TONE: Record<LinkTone, string> = {
+  primary: 'font-medium text-primary',
+  error: 'font-medium text-error',
+  muted: 'text-on-surface-variant hover-idle:text-on-surface',
+  strong: 'font-semibold text-on-surface',
+  inherit: 'font-medium',
+}
+
+export const linkLook = (tone: LinkTone = 'primary', underlined = false) =>
+  `max-w-full min-w-0 items-center gap-1 rounded-sm text-left ${LINK_TONE[tone]} underline-offset-2 ${underlined ? 'underline' : 'hover-idle:underline'} ${FOCUS} disabled:opacity-40 pointer-coarse:-my-3.5 pointer-coarse:min-w-11 pointer-coarse:py-3.5`
 
 // One choice of a few, as a chip: the chosen one is filled.
-export const chipLook = (on: boolean) =>
-  `max-w-full truncate rounded-full border px-3 py-1.5 text-sm ${FOCUS} disabled:opacity-50 pointer-coarse:min-h-11 pointer-coarse:min-w-11 ${
-    on
-      ? 'border-transparent bg-secondary-container text-on-secondary-container'
-      : `border-outline text-on-surface-variant ${HOVER}`
-  }`
+export const chipLook = (on: boolean, variant: ChipVariant = 'pill') =>
+  variant === 'reaction'
+    ? `h-7 max-w-full min-w-0 items-center justify-center gap-1.5 rounded-lg border px-2 text-sm font-medium tabular-nums select-none ${FOCUS} ${OFF} pointer-coarse:h-11 pointer-coarse:min-w-11 ${
+        on
+          ? 'border-primary bg-primary/15 text-primary'
+          : 'border-transparent bg-surface-container-high text-on-surface-variant hover-idle:border-outline-variant hover-idle:text-on-surface'
+      }`
+    : `max-w-full min-w-0 items-center justify-center gap-1.5 rounded-full border px-3 py-1.5 text-sm ${FOCUS} disabled:opacity-50 pointer-coarse:min-h-11 pointer-coarse:min-w-11 ${
+        on
+          ? 'border-transparent bg-secondary-container text-on-secondary-container'
+          : `border-outline text-on-surface-variant ${HOVER}`
+      }`
 
 // A tab of a tab list: the selected one is filled.
 export const tabLook = `items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-on-surface-variant ${HOVER} ${FOCUS} selected:bg-secondary-container selected:text-on-secondary-container disabled:opacity-40 pointer-coarse:min-h-11 pointer-coarse:min-w-11`
@@ -375,3 +453,159 @@ export const coverBoxLook =
 
 // What a preview row holds, on one line.
 export const inlineRowLook = 'flex min-w-0 items-center gap-1.5'
+
+// Shared controls with a look of their own.
+
+const TILE_TONE: Record<TileTone, string> = {
+  idle: 'bg-surface-container-high text-on-surface hover-idle:bg-primary-container hover-idle:text-on-primary-container',
+  active: 'bg-primary text-on-primary',
+  add: 'bg-primary-container text-on-primary-container shadow-elevation-1 hover-idle:bg-primary hover-idle:text-on-primary',
+  preview: 'border-2 border-dashed border-primary bg-surface-container-high text-on-surface',
+  folder: 'folder-tile',
+  'folder-open': 'folder-icon',
+  p2p: 'bg-surface-container-high text-tertiary hover-idle:bg-tertiary-container hover-idle:text-on-tertiary-container',
+  'p2p-active': 'bg-tertiary text-on-tertiary',
+  'p2p-server':
+    'border-2 border-dashed border-tertiary bg-surface-container-high text-on-surface hover-idle:bg-primary-container hover-idle:text-on-primary-container',
+  'p2p-server-active': 'border-2 border-dashed border-on-primary bg-primary text-on-primary',
+  'p2p-folder': 'folder-tile border-2 border-dashed border-tertiary',
+  'p2p-folder-open': 'folder-icon-p2p',
+}
+
+// A tile of the rail: a 48 px rounded square holding a glyph, an avatar or an icon, with its
+// badges on its corners.
+export const tileLook = (tone: TileTone) =>
+  `relative size-12 shrink-0 items-center justify-center rounded-2xl text-lg font-semibold transition-colors ${TILE_TONE[tone]} ${FOCUS}`
+
+// A small toggle of the rail that folds a group of tiles: a chip (`chip`) or whatever it holds
+// (an avatar).
+export const railToggleLook = (chip: boolean) =>
+  `relative shrink-0 items-center justify-center ${chip ? 'h-5 w-10 rounded bg-surface-container-high text-xs pointer-coarse:h-11 pointer-coarse:w-11' : 'rounded-full'} ${FOCUS}`
+
+const SIDE_TONE: Record<SideRowTone, string> = {
+  plain: 'text-on-surface-variant',
+  strong: 'font-semibold text-on-surface',
+  primary: 'font-medium text-primary',
+  heading: 'text-on-surface-variant',
+}
+
+// A row of the channel sidebar one can press: the open one is filled, a `dim` one (muted) fades.
+// A `heading` folds the rows under it.
+export const sideRowButtonLook = (tone: SideRowTone, dim = false) =>
+  tone === 'heading'
+    ? `min-w-0 flex-1 items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs font-medium ${SIDE_TONE.heading} -outline-offset-2 hover-idle:text-on-surface focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11`
+    : `${sideRowLook} shrink-0 text-left ${SIDE_TONE[tone]} -outline-offset-2 transition-colors hover-idle:bg-surface-container hover-idle:text-on-surface focus-visible:outline-2 focus-visible:outline-primary ${ON} ${dim ? 'opacity-60' : ''}`
+
+const CALL_TONE: Record<CallTone, string> = {
+  idle: 'bg-surface-container-highest text-on-surface hover-idle:bg-surface-bright',
+  on: 'bg-on-surface text-surface hover-idle:bg-on-surface/85',
+  off: 'bg-mute text-on-mute hover-idle:bg-mute-hover',
+  danger: 'bg-danger text-on-danger hover-idle:brightness-110',
+  accept: 'bg-status-green text-surface hover-idle:brightness-110',
+  quiet: 'text-on-surface-variant hover-idle:bg-error/15 hover-idle:text-error',
+}
+
+const CALL_SIZE: Record<CallSize, string> = {
+  sm: 'size-8 pointer-coarse:size-11',
+  md: 'size-9 pointer-coarse:size-11',
+  lg: 'size-11 sm:size-12',
+  bar: 'h-8 flex-1 pointer-coarse:h-11',
+  wide: 'h-11 w-16 sm:h-12 sm:w-18',
+}
+
+export const CALL_ICON: Record<CallSize, number> = { sm: 18, md: 16, lg: 20, bar: 16, wide: 20 }
+
+// A round control of a call: mute, camera, share, leave, accept, decline.
+export const callButtonLook = (tone: CallTone, size: CallSize) =>
+  `shrink-0 items-center justify-center rounded-full transition-colors ${CALL_SIZE[size]} ${CALL_TONE[tone]} ${FOCUS} disabled:cursor-not-allowed disabled:opacity-60`
+
+const CARD_TONE: Record<CardTone, string> = {
+  plain: HOVER,
+  low: 'bg-surface-container-low hover-idle:bg-surface-container-high',
+  base: 'bg-surface-container hover-idle:bg-surface-container-highest',
+  outlined: `border border-outline-variant ${HOVER} pressed:border-primary`,
+  p2p: 'border-2 border-dashed border-tertiary/70 bg-surface-container-low hover-idle:bg-tertiary-container hover-idle:text-on-tertiary-container',
+}
+
+const CARD_PAD: Record<CardPad, string> = {
+  none: '',
+  sm: 'gap-2 p-2',
+  md: 'gap-3 p-3',
+  lg: 'gap-3 px-4 py-3',
+}
+
+// A card one can press: what it holds side by side (or one under the other, centered, when
+// `column`), on a surface of its tone. `aria-pressed` and `aria-current` show it chosen.
+export const cardButtonLook = (tone: CardTone, pad: CardPad, column: boolean) =>
+  `min-w-0 rounded-xl text-sm text-on-surface ${column ? 'flex-col items-center text-center' : 'items-center text-left'} ${CARD_PAD[pad]} ${CARD_TONE[tone]} ${FOCUS} ${ON} disabled:opacity-40 pointer-coarse:min-h-11`
+
+const MEDIA_SHAPE: Record<MediaShape, string> = {
+  card: 'overflow-hidden rounded-xl',
+  round: 'rounded-full',
+  inherit: 'rounded-inherit',
+}
+
+// A picture one can press (an image that opens, a covered image, an avatar): the picture is the
+// button, which adds only its focus ring.
+export const mediaButtonLook = (shape: MediaShape, zoom: boolean) =>
+  `relative w-fit max-w-full ${MEDIA_SHAPE[shape]} ${zoom ? 'cursor-zoom-in' : 'cursor-pointer'} ${FOCUS}`
+
+// A button with nothing to show that covers its positioned parent: pressing the parent anywhere
+// presses it. A `tint` one shades the parent under the mouse.
+export const hotspotLook = (tint: boolean) =>
+  `absolute inset-0 cursor-pointer rounded-inherit -outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary ${tint ? 'transition-colors hover-idle:bg-on-surface/5' : ''}`
+
+// A color one can pick: a 32 px circle of that color, ringed when it is the chosen one.
+export const swatchLook =
+  'size-8 items-center justify-center rounded-full border border-outline-variant outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-container-high pressed:ring-2 pressed:ring-primary pressed:ring-offset-2 pressed:ring-offset-surface-container-high pointer-coarse:size-11'
+
+// A switch with its label (and a hint under it) as one row to press.
+export const switchRowLook = `w-full min-w-0 items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm ${HOVER} ${FOCUS} disabled:opacity-50 pointer-coarse:min-h-11`
+export const switchTrackLook =
+  'h-6 w-10 shrink-0 items-center rounded-full border border-outline bg-surface-container-highest p-0.5 transition-colors group-checked/switch:justify-end group-checked/switch:border-transparent group-checked/switch:bg-primary'
+export const switchThumbLook = 'size-4.5 rounded-full bg-outline group-checked/switch:bg-on-primary'
+
+// The box one ticks to select a row: it fills the row's leading edge, so the whole edge ticks it.
+export const tickLook = 'group/tick shrink-0 items-start p-3 outline-none'
+export const tickBoxLook =
+  'size-5 items-center justify-center rounded-md border-2 border-outline bg-surface group-hover/tick:border-primary group-focus-visible/tick:outline-2 group-focus-visible/tick:outline-primary group-checked/tick:border-primary group-checked/tick:bg-primary group-checked/tick:text-on-primary'
+
+const WINDOW_KIND: Record<WindowButtonKind, string> = {
+  bar: 'h-full w-11.5 text-on-surface hover:bg-on-surface/10 active:bg-on-surface/20',
+  'bar-close':
+    'h-full w-11.5 text-on-surface hover:bg-window-close hover:text-on-window-close active:bg-window-close/80 active:text-on-window-close',
+  dot: 'size-6 rounded-full bg-on-surface/10 text-on-surface hover:bg-on-surface/20 active:bg-on-surface/30',
+}
+
+// A button of the window's title bar (minimize, maximize, close).
+export const windowButtonLook = (kind: WindowButtonKind) =>
+  `items-center justify-center -outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary ${WINDOW_KIND[kind]}`
+
+// An emoji of the picker's grid: it fills its cell; the one the keys are on is ringed.
+export const emojiCellLook = (touch: boolean) =>
+  `aspect-square scroll-mt-9 scroll-mb-1 items-center justify-center rounded-xl font-emoji leading-none select-none ${touch ? 'text-3xl active:bg-surface-container-highest' : 'text-2xl'} selected:bg-secondary-container selected:ring-2 selected:ring-primary selected:ring-inset hover-idle:bg-surface-container-highest`
+
+const APP_STYLE: Record<AppButtonStyle, string> = {
+  plain: 'border border-outline text-on-surface hover-idle:bg-surface-container-highest',
+  primary: 'bg-primary text-on-primary hover-idle:opacity-90',
+  danger: 'bg-error text-on-error hover-idle:opacity-90',
+}
+
+// A button an app puts under its message, in the color of its style; `wide` is the closed face of
+// a select menu.
+export const appButtonStyleLook = (style: AppButtonStyle, wide: boolean) =>
+  `min-h-11 max-w-full cursor-pointer items-center gap-1.5 px-3 py-1.5 text-sm font-medium ${wide ? 'w-full justify-between rounded-xl' : 'rounded-full'} ${APP_STYLE[style]} ${FOCUS} pressed:border pressed:border-transparent pressed:bg-secondary-container pressed:text-on-secondary-container disabled:cursor-default disabled:opacity-40`
+
+const TRI_TONE: Record<TriTone, string> = {
+  allow: 'pressed:bg-primary pressed:text-on-primary',
+  deny: 'pressed:bg-error pressed:text-on-error',
+  neutral: 'pressed:bg-surface-container-highest pressed:text-on-surface',
+}
+
+// One of the three states of a permission (allow, inherit, deny), side by side in one frame.
+export const triLook = (tone: TriTone) =>
+  `h-8 w-9 items-center justify-center text-on-surface-variant hover-idle:bg-on-surface/8 ${TRI_TONE[tone]} -outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-40 pointer-coarse:size-11`
+
+// An option of a poll one can vote for: `pollOptionLook`, its border darker under the mouse and
+// primary when it is the vote.
+export const pollChoiceLook = `${pollOptionLook} border-outline-variant hover-idle:border-outline pressed:border-primary ${FOCUS}`
