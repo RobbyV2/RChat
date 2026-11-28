@@ -1592,7 +1592,7 @@ export interface Reason {
   until: number | null
 }
 
-export type ReasonKind = 'off_site' | 'off_account' | 'off_server' | 'off_app' | 'app' | 'limit' | 'capacity' | 'invalid' | 'rate' | 'conflict' | 'sign_in' | 'unavailable' | 'locked' | 'confirm' | 'forced' | 'keys'
+export type ReasonKind = 'off_site' | 'off_account' | 'off_server' | 'off_app' | 'app' | 'limit' | 'capacity' | 'invalid' | 'rate' | 'conflict' | 'sign_in' | 'unavailable' | 'perm' | 'locked' | 'confirm' | 'forced' | 'keys'
 
 export interface RecoverReq {
   new: Secret
