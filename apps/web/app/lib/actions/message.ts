@@ -1,6 +1,7 @@
 // A message's menu in the message list and the thread panel, and the menus of its embeds, of
 // timestamps in its text, and of inbox rows. The author's rows are the member actions.
 
+import { ask, sendTo } from '../asks'
 import {
   AtSign,
   Check,
@@ -178,13 +179,9 @@ export const messageActions: Action[] = [
         body: 'Stops this guest and new guest sessions from their address from posting here for 10 minutes.',
         confirm: 'Pause posting',
         action: () => {
-          void ctx.acct.api
-            .req('POST', `/messages/${m.id}/pause-guest`)
-            .catch(
-              ctx.acct.lifetime.inSession((e: Error) =>
-                ctx.acct.store.getState().setError(e.message)
-              )
-            )
+          void sendTo(ctx.acct, ask.pauseGuestPosting(m.id)).catch(
+            ctx.acct.lifetime.inSession((e: Error) => ctx.acct.store.getState().setError(e.message))
+          )
         },
       })
     ),

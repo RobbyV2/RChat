@@ -1,3 +1,4 @@
+import { ask, sendTo } from './asks'
 import { background, missing, refusalOf, statusOf, type Refusal } from './api_errors'
 import type { AccountSession } from './client/session'
 import { InstanceError, type InstanceConnection } from './instances'
@@ -67,8 +68,8 @@ export const fetchInvite = (
   const hit = cache.get(key)
   if (hit && time().now() - hit.at < maxAge) return hit.promise
   const promise = code
-    ? owner.api.inviteByCode(code)
-    : owner.api.getInvite(server, password, 'metadata')
+    ? sendTo(owner, ask.inviteByCode(code))
+    : sendTo(owner, ask.getInvite(server, password, 'metadata'))
   cache.delete(key)
   cache.set(key, { at: time().now(), promise })
   const oldest = cache.keys().next().value
@@ -85,7 +86,7 @@ export const tryInvitePassword = (
   server: string,
   password: string
 ): Promise<string | null> =>
-  owner.api.getInvite(server, password, 'metadata').then(
+  sendTo(owner, ask.getInvite(server, password, 'metadata')).then(
     () => null,
     (error: unknown) =>
       needsPassword(error)
@@ -121,7 +122,7 @@ export const fetchPreview = (
   const revision = { revision: `${id}.${label ? 1 : 0}` }
   const asked = access
     ? access.read(conn, server, password, revision)
-    : conn.api.getInvite(server, password, revision)
+    : sendTo(conn, ask.getInvite(server, password, revision))
   return asked.then(data => {
     if (access && !access.current()) return never
     const answer = pinnedPreview({ id, label }, data)

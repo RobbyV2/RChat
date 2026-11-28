@@ -1,3 +1,4 @@
+import { ask, sendTo } from './asks'
 import { ApiError, type Api } from './api'
 import type { AccountSession } from './client/session'
 import type { RChatState } from './store_types'
@@ -120,7 +121,9 @@ export const locateOnce = (owner: AccountSession, id: number): Promise<void> => 
   if (all.size >= LOOKUPS_MAX) all.delete(all.keys().next().value!)
   all.set(key, fresh)
   const session = owner.lifetime.sessionMark()
-  fresh.pending = locateSource(id, owner.api).then(found => {
+  fresh.pending = locateSource(id, {
+    messagePlace: at => sendTo(owner, ask.messagePlace(at)),
+  }).then(found => {
     fresh.pending = undefined
     if (session !== owner.lifetime.sessionMark()) return
     if (!found) {

@@ -1,6 +1,7 @@
 // The menus of a server icon on the rail, of the previewed server's icon and of a rail folder.
 // Marking read, muting and leaving a server are the server's palette commands (place.ts).
 
+import { ask, sendTo } from '../asks'
 import { Bell, BellOff, CheckCheck } from 'lucide-react'
 import { inviteUrl, sharedByCode, shareLink } from '../invite'
 import { muteEnd, mutedText } from '../notify'
@@ -87,7 +88,7 @@ export const serverActions: Action[] = [
       if (!server) return
       const mode = ctx.acct.store.getState().servers[server]?.join_mode
       if (!sharedByCode(mode)) return copy(inviteUrl(server, null, ctx.acct.shareOrigin))
-      void ctx.acct.api.standingInvite(server).then(
+      void sendTo(ctx.acct, ask.standingInvite(server)).then(
         ctx.acct.lifetime.inSession(link => {
           const url = shareLink(server, mode, link, ctx.acct.shareOrigin)
           if (url) copy(url)

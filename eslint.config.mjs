@@ -145,11 +145,34 @@ const motionSyntax = [
   { selector: 'Property[key.value=/^data-motion/]', message: SLOT_MESSAGE },
 ]
 const clockSyntax = { 'no-restricted-syntax': ['error', DATE_SYNTAX, ...motionSyntax] }
-// A component names a request and hands it on; it never holds the client that sends it.
+// App code names a request and hands it on; only the code that owns requests holds the client
+// that sends them.
 const ASK_MESSAGE =
-  'Components name a request with ask (app/lib/asks) and give it to a load (components/loaded.tsx) or to sendTo. They never hold the API client.'
+  'Name a request with ask (app/lib/asks) and give it to a load (components/loaded.tsx) or to sendTo. Only the API client, the stores and the sessions hold the client.'
+const askSyntax = [
+  { selector: "MemberExpression[computed=false][property.name='api']", message: ASK_MESSAGE },
+  { selector: "ObjectPattern > Property[key.name='api']", message: ASK_MESSAGE },
+]
 const NETWORK_FILES = ['apps/web/app/lib/api.ts', 'apps/web/app/lib/api/**']
 const CLOCK_FILES = ['apps/web/app/lib/clock.ts', 'apps/web/app/lib/platform/time.ts']
+// What holds the API client: the client and its connections, the request names, the stores and
+// their actions, the sessions, and the three that speak to the client in its own terms (media
+// addresses and blobs, the guest session, the API console).
+const API_HOLDERS = [
+  'apps/web/app/lib/api.ts',
+  'apps/web/app/lib/api/**',
+  'apps/web/app/lib/ws.ts',
+  'apps/web/app/lib/instances.ts',
+  'apps/web/app/lib/widget_connection.ts',
+  'apps/web/app/lib/asks.ts',
+  'apps/web/app/lib/store.ts',
+  'apps/web/app/lib/*_store.ts',
+  'apps/web/app/lib/slices/**',
+  'apps/web/app/lib/client/**',
+  'apps/web/app/lib/media_src.ts',
+  'apps/web/app/lib/guest_chat.ts',
+  'apps/web/app/lib/api_console.ts',
+]
 
 export default tseslint.config(
   ...excluded(),
@@ -236,14 +259,20 @@ export default tseslint.config(
     rules: { 'no-console': 'error' },
   },
   {
+    files: ['apps/web/app/**/*.{ts,tsx}'],
+    ignores: [...API_HOLDERS, ...CLOCK_FILES, ...TEST_FILES],
+    rules: {
+      'no-restricted-syntax': [...clockSyntax['no-restricted-syntax'], ...askSyntax],
+    },
+  },
+  {
+    files: CLOCK_FILES,
+    rules: { 'no-restricted-syntax': ['error', ...askSyntax] },
+  },
+  {
     files: ['apps/web/app/components/**'],
     ignores: TEST_FILES,
     rules: {
-      'no-restricted-syntax': [
-        ...clockSyntax['no-restricted-syntax'],
-        { selector: "MemberExpression[computed=false][property.name='api']", message: ASK_MESSAGE },
-        { selector: "ObjectPattern > Property[key.name='api']", message: ASK_MESSAGE },
-      ],
       '@typescript-eslint/no-restricted-imports': [
         'error',
         {
@@ -262,7 +291,10 @@ export default tseslint.config(
   {
     files: MOTION_FILES,
     ignores: TEST_FILES,
-    rules: { ...clockOnly, ...sinkRule([], true) },
+    rules: {
+      'no-restricted-syntax': [...clockOnly['no-restricted-syntax'], ...askSyntax],
+      ...sinkRule([], true),
+    },
   },
   { files: REQUEST_SINKS, rules: sinkRule(['TO_REQUEST']) },
   { files: STORE_SINKS, rules: sinkRule(['TO_STORE']) },

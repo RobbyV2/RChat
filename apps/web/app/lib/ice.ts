@@ -1,3 +1,4 @@
+import { ask, sendTo } from './asks'
 import type { Cancel } from './clock'
 import { sessionStore, type InstanceConnection } from './instances'
 import type { IceServers, InstanceIce } from './types'
@@ -243,7 +244,7 @@ const forcedPolicy = (): RTCIceTransportPolicy | null => {
 export function createIceCache(conn: InstanceConnection) {
   const cache = new IceCache({
     info: () => conn.info?.ice,
-    fetch: () => conn.api.p2pIce(),
+    fetch: () => sendTo(conn, ask.p2pIce()),
     now: () => time().now(),
   })
   cache.policy = forcedPolicy()

@@ -1254,6 +1254,8 @@ export const endpoints = (c: ApiClient) => ({
   removeAnnouncement: (id: string) => c.req('DELETE', `/admin/announcements/${seg(id)}`),
   adminOverview: () => c.req<AdminOverview>('GET', '/admin/overview'),
   adminConfig: () => c.req<AdminConfig>('GET', '/admin/config'),
+  pauseGuestPosting: (messageId: number) =>
+    c.req<unknown>('POST', `/messages/${messageId}/pause-guest`),
   adminEncryption: () => c.req<unknown>('GET', '/admin/encryption'),
   adminRequireEncryption: (on: boolean) =>
     c.req<{ on: boolean; pinned: boolean }>('PUT', '/admin/encryption/required', { on }),

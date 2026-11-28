@@ -1,3 +1,4 @@
+import { apiBaseOf } from './asks'
 import { clientConsent } from './api/public'
 import { apiRoot } from './api_version'
 import { challengeOf, errorText, INTENT_TTL_MS, newVerifier, parseReturn } from './sso'
@@ -60,7 +61,7 @@ export function clientLogin(owner: AccountSession, provider: string, signal: Abo
         if (settled) return
         challenge = value
         const start = new URL(
-          apiRoot(owner.api.base) + '/auth/oidc/' + encodeURIComponent(provider) + '/start',
+          apiRoot(apiBaseOf(owner)) + '/auth/oidc/' + encodeURIComponent(provider) + '/start',
           origin
         )
         start.search = new URLSearchParams({

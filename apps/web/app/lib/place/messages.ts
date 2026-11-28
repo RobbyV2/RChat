@@ -1,3 +1,4 @@
+import { ask, sendTo } from '../asks'
 import type { AccountSession } from '../client/session'
 import { identityScopeKey } from '../p2p/app/host'
 import { chatKey, chatScope } from '../p2p/app/store'
@@ -180,7 +181,7 @@ const hosted = (account: AccountSession): Messages => {
       const scope = scopeOf(false)
       return scope === null
         ? Promise.resolve(null)
-        : account.api.getUnreadCount(scope, marked().after)
+        : sendTo(account, ask.getUnreadCount(scope, marked().after))
     }
   )
   const unread = built(

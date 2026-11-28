@@ -29,7 +29,7 @@ test('a component cannot import the API client, only its types', async () => {
   ).toBe(0)
 }, 60_000)
 
-test('a component cannot reach the API client of a session, only name requests', async () => {
+test('app code cannot reach the API client of a session, only name requests', async () => {
   const held = (code: string, file = 'apps/web/app/components/x.tsx') =>
     found(file, code, 'no-restricted-syntax')
   const call = 'export const x = (account: { api: { me(): unknown } }) => account.api.me()\n'
@@ -43,6 +43,15 @@ test('a component cannot reach the API client of a session, only name requests',
   expect(await held(handed)).toBe(1)
   expect(await held(named)).toBe(0)
   expect(await held(call, 'apps/web/app/components/admin/x.tsx')).toBe(1)
-  expect(await held(call, 'apps/web/app/lib/x.ts')).toBe(0)
+  expect(await held(call, 'apps/web/app/lib/x.ts')).toBe(1)
+  expect(await held(call, 'apps/web/app/lib/place/x.ts')).toBe(1)
+  expect(await held(call, 'apps/web/app/lib/actions/x.ts')).toBe(1)
+  expect(await held(call, 'apps/web/app/lib/motion/x.ts')).toBe(1)
+  expect(await held(call, 'apps/web/app/lib/clock.ts')).toBe(1)
+  expect(await held(call, 'apps/web/app/widget/page.tsx')).toBe(1)
+  expect(await held(call, 'apps/web/app/login/page.tsx')).toBe(1)
+  expect(await held(taken, 'apps/web/app/lib/x.ts')).toBe(1)
+  for (const owner of ['api.ts', 'asks.ts', 'store.ts', 'slices/x.ts', 'x_store.ts', 'client/x.ts'])
+    expect(await held(call, `apps/web/app/lib/${owner}`)).toBe(0)
   expect(await held('export const x = () => new Date()\n', 'apps/web/app/components/x.tsx')).toBe(1)
 }, 60_000)

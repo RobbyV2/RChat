@@ -1,3 +1,4 @@
+import { ask, sendTo } from '../../asks'
 import { persistently } from '../../own_loads'
 import { BADGE_NOT_SPREAD } from './badge'
 import { client } from '../../client/client'
@@ -498,7 +499,7 @@ export function createAccountPart(
       checkable: () =>
         peersCanCheck(shareOrigin(null, undefined, connection()), parts.badge.badgeLocal),
       label: homeLabel,
-      request: (ik, ts, proof) => account.api.p2pBinding(ik, ts, proof),
+      request: (ik, ts, proof) => sendTo(account, ask.p2pBinding(ik, ts, proof)),
       sub: parts.badge.accountSub,
       onIssued: () =>
         void persistently(time(), () => sv.refreshBadge()).catch(() =>

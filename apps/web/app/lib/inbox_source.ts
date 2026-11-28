@@ -1,3 +1,4 @@
+import { ask, sendTo } from './asks'
 import type { InboxQuery } from './api'
 import { client } from './client/client'
 import type { AccountSession } from './client/session'
@@ -44,7 +45,7 @@ export const itemNotifies = (prefs: NotifyPrefs, item: InboxItem) => {
 const EMPTY_PAGES_MAX = 5
 
 export function createInboxSources(acct: AccountSession) {
-  const { api, store } = acct
+  const { store } = acct
   const { canView, instanceTarget } = acct.viewing
   const { live, sessionMark } = acct.lifetime
   let disposed = false
@@ -75,7 +76,7 @@ export function createInboxSources(acct: AccountSession) {
       const mark = sessionMark()
       let at = cursor
       for (let i = 0; ; i++) {
-        const page = await live(api.inbox(queryOf(view), at))
+        const page = await live(sendTo(acct, ask.inbox(queryOf(view), at)))
         if (disposed || sessionMark() !== mark) throw new Ended()
         if (page.until) shownUntil().set(viewKey(view), page.until)
         for (const server of new Set(page.items.map(item => item.server))) {
@@ -95,12 +96,12 @@ export function createInboxSources(acct: AccountSession) {
     markRead: async entry => {
       if (disposed) throw new Ended()
       const item = entry.raw as InboxItem
-      await live(api.inboxRead(item.source, item.id))
+      await live(sendTo(acct, ask.inboxRead(item.source, item.id)))
     },
     markAll: async (view, shown) => {
       if (disposed) throw new Ended()
       const until = untilFor(shownUntil().get(viewKey(view)), shown)
-      await live(api.inboxReadAll(until, queryOf(view)))
+      await live(sendTo(acct, ask.inboxReadAll(until, queryOf(view))))
     },
     open: entry => {
       if (disposed) return

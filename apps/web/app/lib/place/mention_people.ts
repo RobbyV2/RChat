@@ -1,3 +1,4 @@
+import { ask, sendTo } from '../asks'
 import { refusalOf, type Refusal } from '../api_errors'
 import type { AccountSession } from '../client/session'
 import {
@@ -62,7 +63,7 @@ export const hostedPeople = (
   where: { server: string } | { dmId: number } | null,
   list: ListKind
 ): MentionPeople => {
-  const { store, api } = account
+  const { store } = account
   const server = where !== null && 'server' in where ? where.server : null
   const dmId = where !== null && 'dmId' in where ? where.dmId : null
   const cache = new Map<string, UserRef[]>()
@@ -180,7 +181,7 @@ export const hostedPeople = (
       const stop = time().after(SUGGEST_DEBOUNCE, () => {
         const view = store.getState().view
         const channelId = view?.kind === 'channel' && view.server === server ? view.channelId : null
-        api.suggestMembers(server, query, channelId).then(
+        sendTo(account, ask.suggestMembers(server, query, channelId)).then(
           found => {
             if (cache.size >= CACHE_MAX) cache.clear()
             cache.set(key, found)

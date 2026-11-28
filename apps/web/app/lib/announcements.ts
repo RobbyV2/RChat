@@ -1,3 +1,4 @@
+import { ask, sendTo } from './asks'
 import { orMissing } from './api_errors'
 import type { Cancel } from './clock'
 import type { AccountSession } from './client/session'
@@ -105,9 +106,9 @@ export const announcementSource = (
       })
     )
   }
-  const ask = async (): Promise<ShownFeed> => {
+  const fetchFeed = async (): Promise<ShownFeed> => {
     const received = time.elapsed()
-    const data = await account.api.announcements().catch(orMissing(null))
+    const data = await sendTo(account, ask.announcements()).catch(orMissing(null))
     if (!current()) return never
     if (data === null) return { announcements: [], serverTime: 0, received }
     const elapsed = time.elapsed() - received
@@ -123,7 +124,7 @@ export const announcementSource = (
   const source = fromRequest<ShownFeed>(
     time,
     () =>
-      persistently(time, ask, { firstMs: 5000, live: current }).then(
+      persistently(time, fetchFeed, { firstMs: 5000, live: current }).then(
         feed => {
           watchEnds(feed)
           return feed
@@ -161,7 +162,7 @@ export const announcementSource = (
           JSON.stringify({ ...hidden, [announcement.id]: announcement.ends_at })
         )
         if (!saved) throw new Error('Could not save the dismissal.')
-      } else await account.api.dismissAnnouncement(announcement.id)
+      } else await sendTo(account, ask.dismissAnnouncement(announcement.id))
       if (!current()) return
       source.change(shown => ({
         ...shown,

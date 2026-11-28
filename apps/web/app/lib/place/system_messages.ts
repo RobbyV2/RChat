@@ -1,3 +1,4 @@
+import { ask, sendTo } from '../asks'
 import { viewCan } from '../p2p/roles'
 import { P } from '../p2p/state'
 import { ownsP2pServer } from '../p2p/server/types'
@@ -51,7 +52,7 @@ const LOADING: SystemState = { state: 'loading' }
 const FAILED: SystemState = { state: 'failed' }
 
 const hosted = ({ account, server }: HostedServer): SystemMessagesAt => {
-  const { store, api } = account
+  const { store } = account
   type Saved = HostedSettings | 'loading' | 'failed'
   type Channels = { id: number; name: string; kind?: string }[] | undefined
   let saved = 'loading' as Saved
@@ -91,7 +92,7 @@ const hosted = ({ account, server }: HostedServer): SystemMessagesAt => {
   const load = () => {
     const mine = ++turn
     if (typeof saved === 'string') set('loading')
-    api.systemMessages(server).then(
+    sendTo(account, ask.systemMessages(server)).then(
       account.lifetime.inSession((s: HostedSettings) => {
         if (mine === turn) set(s)
       }),
@@ -110,7 +111,7 @@ const hosted = ({ account, server }: HostedServer): SystemMessagesAt => {
     const mine = ++turn
     if (typeof before !== 'string') set({ ...before, ...body })
     try {
-      const next = await api.updateSystemMessages(server, body)
+      const next = await sendTo(account, ask.updateSystemMessages(server, body))
       if (mine === turn) set(next)
     } catch (err) {
       if (mine === turn) set(before)

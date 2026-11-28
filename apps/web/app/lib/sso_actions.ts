@@ -1,3 +1,4 @@
+import { ask, sendTo } from './asks'
 import type { Action, ActionCtx } from './actions/types'
 import type { AccountSession } from './client/session'
 import { canUnlink, linkable } from './sso'
@@ -13,8 +14,7 @@ export function loadSignInChoices(acct: AccountSession) {
     username = state.me!.username
   let live = true
   acct.store.setState({ signInChoices: undefined })
-  acct.api
-    .ssoLinks()
+  sendTo(acct, ask.ssoLinks())
     .then(links => {
       if (
         live &&

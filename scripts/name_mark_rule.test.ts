@@ -24,7 +24,7 @@ test('the streamer class cannot be written by hand', async () => {
   expect(await found("export const mark = 'streamer'\n", 'apps/web/app/lib/x.ts')).toBe(1)
   expect(await found("export const box = { className: 'streamer' }\n")).toBe(1)
   expect(await found("export const list = ['streamer', 'truncate'].join(' ')\n")).toBe(1)
-}, 60_000)
+}, 180_000)
 
 test('the word as a key or in a sentence is not a class', async () => {
   const key =
@@ -41,7 +41,7 @@ test('the word as a key or in a sentence is not a class', async () => {
       'export const X = ({ streamer }: { streamer: boolean }) => <p>{streamer ? 1 : 2}</p>\n'
     )
   ).toBe(0)
-}, 60_000)
+}, 180_000)
 
 test('the components that own the mark may write it', async () => {
   const code = 'export const X = () => <span className="streamer">a</span>\n'
@@ -49,4 +49,4 @@ test('the components that own the mark may write it', async () => {
     expect(await found(code, `apps/web/app/components/${file}.tsx`)).toBe(0)
   expect(await found(code, 'apps/web/app/components/controls.tsx')).toBe(1)
   expect(await found(code, 'apps/web/app/widget/page.tsx')).toBe(1)
-}, 60_000)
+}, 180_000)

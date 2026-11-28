@@ -1,3 +1,4 @@
+import { ask, sendTo } from './asks'
 import { time } from './platform/time'
 import { allowsAccountOrigin } from './client/hosted_policy'
 import { client } from './client/client'
@@ -116,7 +117,7 @@ export function createInviteCache(account: AccountSession) {
         conn.origin !== origin
       )
         throw new Ended()
-      const load = () => conn.api.getInvite(server, password, part)
+      const load = () => sendTo(conn, ask.getInvite(server, password, part))
       const result =
         !target && part === 'metadata'
           ? await bounded(

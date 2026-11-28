@@ -6,6 +6,7 @@
 // Sources: this instance's channels and DMs are the built-in source. Other sources (P2P chats)
 // register an adapter with `registerIndexSource` and feed their own documents.
 
+import { ask, sendTo } from './asks'
 import { create } from 'zustand'
 import { channelTarget } from './viewing'
 import { ApiError } from './api'
@@ -114,7 +115,7 @@ export const memberDoc = (server: string, u: UserRef): IndexDoc => ({
 })
 
 export function createPaletteIndexer(acct: AccountSession) {
-  const { conn: home, api, store } = acct
+  const { conn: home, store } = acct
   const { tapWs } = store
   const { canView } = acct.viewing
   const { loadPalettePrefs, usePaletteUi } = acct.palettePrefs
@@ -461,7 +462,7 @@ export function createPaletteIndexer(acct: AccountSession) {
 
   const verifyServer = async (server: string, g: number) => {
     try {
-      const d = await api.getServer(server)
+      const d = await sendTo(acct, ask.getServer(server))
       if (g !== gen || !index) return
       const ids = new Set(d.channels.map(c => c.id))
       verified.set(server, new Map(d.channels.map(c => [c.id, c])))
@@ -506,7 +507,7 @@ export function createPaletteIndexer(acct: AccountSession) {
       let channels = s.servers[server]?.channels
       if (!channels) {
         try {
-          channels = (await api.getServer(server)).channels
+          channels = (await sendTo(acct, ask.getServer(server))).channels
           if (!live()) return
           verified.set(server, new Map(channels.map(c => [c.id, c])))
         } catch {
@@ -529,14 +530,14 @@ export function createPaletteIndexer(acct: AccountSession) {
                 !canView(channelTarget(st.me?.username ?? null, 'instance', server, channel, home))
               )
                 throw new Error('Channel is hidden')
-              return api.channelMessages(c.id)
+              return sendTo(acct, ask.channelMessages(c.id))
             },
           })
     }
     if (!live()) return
     for (const dm of s.dms)
       if (!dm.closed && !Object.hasOwn(s.blocked, dm.other.username))
-        jobs.push({ bucket: `d${dm.id}`, load: () => api.dmMessages(dm.id) })
+        jobs.push({ bucket: `d${dm.id}`, load: () => sendTo(acct, ask.dmMessages(dm.id)) })
     const now = acct.time.now()
     const todo = jobs.filter(j => !index || now - (index.filled[j.bucket] ?? 0) > REFILL_MS)
     report({ state: 'backfilling', done: 0, total: todo.length })

@@ -1,6 +1,7 @@
 // A DM's menu, in the sidebar and on Home's pinned DMs. Marking read, muting and closing are the
 // open place's commands (place.ts), and adding or blocking the other person are member actions.
 
+import { ask, sendTo } from '../asks'
 import { ArrowDownUp, AtSign, ExternalLink, ListFilter, Lock, PinOff, X } from 'lucide-react'
 import { DM_SORTS, clearDmFilters, dmListPrefs, filtersOn, type DmListPrefs } from '../dm_list'
 import type { NotifyScope } from '../notify'
@@ -120,11 +121,9 @@ const sealActions: Action[] = [
       const st = sealOf(ctx)
       const dm = dmAt(ctx, null)
       if (!st?.available || !dm) return
-      void ctx.acct.api
-        .setDmSeal(dm.id, !st.on)
-        .catch(
-          ctx.acct.lifetime.inSession((e: Error) => ctx.acct.store.getState().setError(e.message))
-        )
+      void sendTo(ctx.acct, ask.setDmSeal(dm.id, !st.on)).catch(
+        ctx.acct.lifetime.inSession((e: Error) => ctx.acct.store.getState().setError(e.message))
+      )
     },
   },
   {

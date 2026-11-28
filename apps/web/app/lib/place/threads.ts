@@ -1,7 +1,14 @@
 import type { AccountSession } from '../client/session'
 import { chatKey } from '../p2p/app/store'
 import { asMessage, looseNumber } from '../p2p/shown_message'
-import { hostedThreadPage, pageThreads, pingedRows, type ThreadRow } from '../thread_list'
+import { ask, sendTo } from '../asks'
+import {
+  hostedThreadPage,
+  pageThreads,
+  pingedRows,
+  type ThreadLists,
+  type ThreadRow,
+} from '../thread_list'
 import { viewKey } from '../view'
 import { defineFeature } from './feature'
 import { built, type Live } from './live'
@@ -38,7 +45,11 @@ export interface Threads {
 }
 
 const hosted = (account: AccountSession): Threads => {
-  const { store, api } = account
+  const { store } = account
+  const lists: ThreadLists = {
+    channelThreads: (id, q, cursor) => sendTo(account, ask.channelThreads(id, q, cursor)),
+    dmThreads: (id, q, cursor) => sendTo(account, ask.dmThreads(id, q, cursor)),
+  }
   const state = (initial: boolean) =>
     built(
       () => {
@@ -67,7 +78,7 @@ const hosted = (account: AccountSession): Threads => {
     close: () => store.getState().closeThreads(),
     page: async (query, cursor) => {
       const key = store.getState().threads
-      return key === null ? { items: [], next: null } : hostedThreadPage(api, key, query, cursor)
+      return key === null ? { items: [], next: null } : hostedThreadPage(lists, key, query, cursor)
     },
     openThread: row => {
       store.getState().closeThreads()

@@ -1,3 +1,4 @@
+import { ask, sendTo } from '../asks'
 import { client } from '../client/client'
 // Commands on the open place: its conversation (the open thread, else the channel or DM), the
 // channel, the DM and the server.
@@ -219,7 +220,7 @@ const jumpToDate = async ({ acct, s }: ActionCtx, date: string) => {
   if (v?.kind !== 'channel' || end === null) return
   try {
     const page = await acct.lifetime.live(
-      acct.api.search({ server: v.server, channel_id: v.channelId, before_ts: end })
+      sendTo(acct, ask.search({ server: v.server, channel_id: v.channelId, before_ts: end }))
     )
     const hit = page.items[0]
     if (!hit) {

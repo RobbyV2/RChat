@@ -1,3 +1,4 @@
+import { apiBaseOf } from './asks'
 import { watchProviderConfirmation } from './provider_confirmation'
 import type { AccountSession } from './client/session'
 import { allowsAccountOrigin } from './client/hosted_policy'
@@ -209,7 +210,7 @@ async function begin(
   }
   return {
     intent,
-    url: startUrl(owner.api.base, provider, authBrowser().returnTo, challenge, ticket, confirm),
+    url: startUrl(apiBaseOf(owner), provider, authBrowser().returnTo, challenge, ticket, confirm),
   }
 }
 export async function beginLogin(
