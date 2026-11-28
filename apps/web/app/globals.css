@@ -916,6 +916,7 @@ body {
 
 @media (width < 40rem) {
   .call-card {
+    width: 100%;
     flex-direction: row;
     border-radius: 1rem;
     padding: var(--space-md) var(--space-lg);
