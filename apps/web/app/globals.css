@@ -613,6 +613,50 @@ body {
   font-weight: 500;
 }
 
+/* Under the header bar of the app. */
+@utility top-below-bar {
+  top: calc(var(--safe-top) + 4rem);
+}
+
+/* The banners of every signed-in account: one column under the header, centered on wide screens. */
+.banner-stack {
+  pointer-events: none;
+  position: fixed;
+  inset-inline: var(--space-lg);
+  top: calc(var(--safe-top) + 4rem);
+  z-index: var(--z-index-banner);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.banner-stack > div {
+  display: contents;
+}
+
+@media (width >= 40rem) {
+  .banner-stack {
+    display: contents;
+  }
+
+  .banner-stack > div {
+    pointer-events: none;
+    position: fixed;
+    top: calc(var(--safe-top) + 4rem);
+    left: 50%;
+    z-index: var(--z-index-banner);
+    display: flex;
+    transform: translateX(-50%);
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+}
+
+.banner-toast [data-view-actor] {
+  margin-inline-end: var(--space-xs);
+  color: inherit;
+}
+
 /* A row of the channel sidebar as wide as the sidebar inside its side inset. */
 @utility w-side-row {
   width: calc(100% - 2 * var(--space-sm));

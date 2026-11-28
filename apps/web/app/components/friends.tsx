@@ -60,10 +60,11 @@ import { longPress } from './context_menu'
 import { profileTrigger } from './profile_card'
 import { PingBadge } from './ping_badge'
 import { Button, IconButton, ListRow, Chip, Tab, LinkButton } from './controls'
-import { Dialog, fieldCls, FieldError, PanelHeader, Sentinel, useEscape } from './ui'
+import { Dialog, fieldCls, FieldError, PanelHeader, Sentinel, useEscape, smallFieldCls } from './ui'
 import { RowsSkeleton } from './skeletons'
-import { Row, Stack, Surface } from './layout'
+import { Row, Stack, Surface, Inset, Lift } from './layout'
 import { time } from '../lib/platform/time'
+import { sideRowLook } from '../lib/controls'
 
 // The unseen friend pings (requests and accepted requests), for badges.
 export const useFriendPings = () => useStore(s => scopePings(badgePings(s), FRIENDS_SCOPE))
@@ -392,7 +393,7 @@ export function AddFriendBox({
         <Row as="label" gap="sm">
           <span className="text-sm">As</span>
           <NameSelect
-            className="rounded-lg bg-surface-container px-2 py-1 text-sm"
+            className={smallFieldCls}
             value={account?.renderKey ?? ''}
             onChange={e => {
               setPicked(entries.find(x => String(x.account.renderKey) === e.target.value)!.account)
@@ -599,7 +600,7 @@ export function FriendsEntry({ incomingTotal }: { incomingTotal?: number } = {})
     <button
       onClick={() => (active ? closePanel() : openFriends(incoming > 0 ? 'pending' : 'online'))}
       aria-pressed={active}
-      className={`mx-2 mt-2 flex shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 text-sm pointer-coarse:min-h-11 ${
+      className={`${sideRowLook} shrink-0 ${
         active
           ? 'bg-secondary-container text-on-secondary-container'
           : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
@@ -750,10 +751,12 @@ export function FriendPreview({
         className="h-8"
         style={{ background: bannerColor(profile.user, profile.banner_color) }}
       />
-      <div className="flex items-start gap-3 px-3 pb-3">
-        <span className="-mt-4 rounded-full border-4 border-surface-container">
-          <Avatar user={profile.user} size={40} />
-        </span>
+      <Inset row pad="md" gap="md" align="start">
+        <Lift by="lg">
+          <span className="block rounded-full border-4 border-surface-container">
+            <Avatar user={profile.user} size={40} />
+          </span>
+        </Lift>
         <Surface tone="plain" radius="none" pad="2xs" gap="2xs" place="flex-1">
           <FriendName user={profile.user} />
           {profile.bio && (
@@ -763,7 +766,7 @@ export function FriendPreview({
           )}
           {statusLine}
         </Surface>
-      </div>
+      </Inset>
     </div>
   )
 }

@@ -2,7 +2,7 @@
 
 import { useId, useState } from 'react'
 import { Check, ChevronDown, ExternalLink } from 'lucide-react'
-import { Stack } from '../layout'
+import { Stack, Row, Surface, Inset } from '../layout'
 
 // The buttons and menus under an automation's message, as the shared rules write them.
 export type ButtonStyle = 'plain' | 'primary' | 'danger'
@@ -171,7 +171,7 @@ function SelectView({
         <ChevronDown size={16} className="shrink-0" aria-hidden="true" />
       </button>
       {open && !off && (
-        <div className="rounded-xl border border-outline-variant bg-surface-container p-1">
+        <Surface pad="2xs" tone="base" radius="lg" border>
           <div
             id={listId}
             role="listbox"
@@ -185,17 +185,21 @@ function SelectView({
             {c.options.map(o => {
               const on = shown.includes(o.value)
               return (
-                <button
+                <Surface
                   key={o.value}
                   type="button"
                   role="option"
                   aria-selected={on}
                   onClick={() => choose(o.value)}
-                  className={`flex min-h-11 cursor-pointer items-center gap-3 rounded-lg px-3 py-1.5 text-left text-sm ${
-                    on
-                      ? 'bg-secondary-container text-on-secondary-container'
-                      : 'text-on-surface hover:bg-surface-container-highest'
-                  }`}
+                  as="button"
+                  row
+                  pad="md"
+                  inset="chip"
+                  gap="md"
+                  tone="plain"
+                  radius="md"
+                  text="sm"
+                  look={`min-h-11 cursor-pointer text-left ${on ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface hover:bg-surface-container-highest'}`}
                 >
                   {o.emoji && <span aria-hidden="true">{o.emoji}</span>}
                   <span className="min-w-0 flex-1">
@@ -205,26 +209,33 @@ function SelectView({
                     )}
                   </span>
                   {on && <Check size={16} className="shrink-0" aria-hidden="true" />}
-                </button>
+                </Surface>
               )
             })}
           </div>
           {many && (
-            <div className="flex justify-end px-1 pt-1">
-              <button
+            <Inset row pad="2xs" justify="end">
+              <Surface
                 type="button"
                 disabled={!picksOk(c, shown)}
                 onClick={() => {
                   close()
                   onPick(c.cid, [...shown])
                 }}
-                className="cursor-pointer rounded-full bg-primary px-4 py-2 text-sm font-medium text-on-primary hover:opacity-90 disabled:cursor-default disabled:opacity-40"
+                as="button"
+                pad="lg"
+                inset="chip"
+                tone="plain"
+                radius="full"
+                align="center"
+                text="sm"
+                look="cursor-pointer bg-primary font-medium text-on-primary hover:opacity-90 disabled:cursor-default disabled:opacity-40"
               >
                 Done
-              </button>
-            </div>
+              </Surface>
+            </Inset>
           )}
-        </div>
+        </Surface>
       )}
     </Stack>
   )
@@ -258,12 +269,14 @@ export function ComponentsView({
   const shared = { reason: disabled, reasonId, waiting }
   if (!rows.some(row => row.length)) return null
   return (
-    <div className="mt-1 flex max-w-full flex-col gap-1.5">
+    <Stack gap="xs" look="msg-part" place="max-w-full">
       {rows.map((row, i) => (
-        <div
+        <Row
           key={i}
           role="group"
-          className={row.some(c => c.type === 'button') ? 'flex flex-wrap gap-1.5' : 'flex'}
+          gap="xs"
+          wrap={row.some(c => c.type === 'button')}
+          align="stretch"
         >
           {row.map(c =>
             c.type === 'button' ? (
@@ -285,13 +298,13 @@ export function ComponentsView({
               />
             )
           )}
-        </div>
+        </Row>
       ))}
       {disabled && (
         <p id={reasonId} className="text-xs text-on-surface-variant">
           {disabled}
         </p>
       )}
-    </div>
+    </Stack>
   )
 }

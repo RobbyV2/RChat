@@ -9,17 +9,21 @@ import { ROUTE_LABEL, routeFor, type CallRoute } from '../lib/call_choice'
 import { fmtDuration } from '../lib/voice_layout'
 import { useStore } from '../lib/store'
 import type { DmSummary } from '../lib/types'
-import { Row } from './layout'
+import { Row, Inset } from './layout'
 import { time } from '../lib/platform/time'
 
 export function DirectBadge({ label = 'Direct' }: { label?: string }) {
   return (
-    <span
+    <Inset
       title="Direct (P2P) call"
-      className="shrink-0 rounded bg-tertiary-container px-1 py-0.5 text-3xs leading-none font-bold whitespace-nowrap text-on-tertiary-container"
+      as="span"
+      pad="2xs"
+      inset="bar"
+      look="rounded bg-tertiary-container text-3xs leading-none font-bold whitespace-nowrap text-on-tertiary-container"
+      place="shrink-0"
     >
       {label}
-    </span>
+    </Inset>
   )
 }
 
@@ -59,9 +63,15 @@ export function CallType({
         (p2p ? (
           <DirectBadge label={ROUTE_LABEL.p2p} />
         ) : (
-          <span className="shrink-0 rounded bg-surface-container-highest px-1 py-0.5 text-3xs leading-none font-bold whitespace-nowrap text-on-surface-variant">
+          <Inset
+            as="span"
+            pad="2xs"
+            inset="bar"
+            look="rounded bg-surface-container-highest text-3xs leading-none font-bold whitespace-nowrap text-on-surface-variant"
+            place="shrink-0"
+          >
             {ROUTE_LABEL.server}
-          </span>
+          </Inset>
         ))}
     </Row>
   )
@@ -105,24 +115,30 @@ function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
       data-call-split={video ? 'video' : 'voice'}
       className={`flex items-center rounded-full ${busy ? 'opacity-40' : ''}`}
     >
-      <button
+      <Inset
         title={title}
         aria-label={title}
         disabled={busy}
         onClick={() => start(route)}
-        className="relative rounded-l-full py-1.5 pr-1 pl-1.5 outline-offset-2 hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary disabled:hover:bg-transparent"
+        as="button"
+        pad="xs"
+        look="relative rounded-l-full outline-offset-2 hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary disabled:hover:bg-transparent"
       >
         <Icon size={20} />
         {route === 'p2p' && (
-          <span
+          <Inset
             aria-hidden
-            className="absolute -bottom-0.5 left-3 rounded bg-tertiary-container px-0.5 text-3xs leading-tight font-bold text-on-tertiary-container"
+            as="span"
+            pad="3xs"
+            inset="sides"
+            look="rounded bg-tertiary-container text-3xs leading-tight font-bold text-on-tertiary-container"
+            place="absolute -bottom-0.5 left-3"
           >
             P2P
-          </span>
+          </Inset>
         )}
-      </button>
-      <button
+      </Inset>
+      <Inset
         title={`${kind} options`}
         aria-label={`${kind} options`}
         aria-haspopup="menu"
@@ -132,10 +148,15 @@ function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
           const r = e.currentTarget.getBoundingClientRect()
           menu(r.left - 24, r.bottom + 4)
         }}
-        className="flex h-8 items-center rounded-r-full pr-1 pl-0.5 text-on-surface-variant [@media(pointer:coarse)]:h-10 [@media(pointer:coarse)]:min-w-10 [@media(pointer:coarse)]:justify-center outline-offset-2 hover:bg-surface-container-high hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary disabled:hover:bg-transparent"
+        as="button"
+        row
+        pad="3xs"
+        inset="sides"
+        justify="center"
+        look="h-8 rounded-r-full text-on-surface-variant pointer-coarse:h-10 pointer-coarse:min-w-10 outline-offset-2 hover:bg-surface-container-high hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary disabled:hover:bg-transparent"
       >
         <ChevronDown size={14} />
-      </button>
+      </Inset>
     </div>
   )
 }

@@ -39,7 +39,7 @@ import { BannerPicker } from './settings_menu'
 import { useLook } from './shown_user'
 import { useNow } from './timeout_dialog'
 import { Button, Chip } from './controls'
-import { Grid, Row, Stack, Surface } from './layout'
+import { Grid, Row, Stack, Surface, Inset, Lift } from './layout'
 import { Dialog, FieldError, Masked, fieldCls } from './ui'
 import { UserAvatar } from './user_avatar'
 
@@ -101,7 +101,7 @@ function Preview({ source, draft }: { source: ProfileEditorSource; draft: Profil
   return (
     <Grid data-profile-preview aria-label="Preview" role="group" cols={{ base: 1, sm: 2 }} gap="md">
       <Surface pad="md" gap="md" row tone="plain" align="stretch" look="bg-surface" place="min-w-0">
-        <span className="shrink-0 pt-0.5">{source.avatar(asAccount(user, 'editor'), 36)}</span>
+        <span className="shrink-0">{source.avatar(asAccount(user, 'editor'), 36)}</span>
         <div className="min-w-0">
           {name}
           <p className="text-sm text-on-surface-variant">How you look in messages here</p>
@@ -109,15 +109,28 @@ function Preview({ source, draft }: { source: ProfileEditorSource; draft: Profil
       </Surface>
       <div className="min-w-0 overflow-hidden rounded-2xl bg-surface">
         <div aria-hidden style={{ background: banner }} className="h-10" />
-        <div className="-mt-5 flex min-w-0 items-end gap-2 px-3">
-          <span className="shrink-0 rounded-full bg-surface p-1">{source.avatar(user, 40)}</span>
-          <span className="streamer truncate pb-1 text-sm font-semibold text-on-surface">
-            <Masked text={user.display_name} own />
-          </span>
-        </div>
-        <p className="streamer line-clamp-3 min-h-5 px-3 pt-1 pb-3 text-xs break-words whitespace-pre-wrap text-on-surface-variant">
-          {bio ? <Masked text={bio} own /> : null}
-        </p>
+        <Lift by="lg">
+          <Inset row pad="md" inset="sides" gap="sm" align="end" place="min-w-0">
+            <Surface
+              as="span"
+              pad="2xs"
+              tone="plain"
+              radius="full"
+              look="bg-surface"
+              place="shrink-0"
+            >
+              {source.avatar(user, 40)}
+            </Surface>
+            <span className="streamer truncate text-sm font-semibold text-on-surface">
+              <Masked text={user.display_name} own />
+            </span>
+          </Inset>
+        </Lift>
+        <Inset pad="md" inset="bar">
+          <p className="streamer line-clamp-3 min-h-5 text-xs break-words whitespace-pre-wrap text-on-surface-variant">
+            {bio ? <Masked text={bio} own /> : null}
+          </p>
+        </Inset>
       </div>
     </Grid>
   )
@@ -216,7 +229,7 @@ export function ProfileEditor({
             radius="lg"
           >
             <Row as="span" gap="sm" align="start">
-              <Lock size={16} className="mt-0.5 shrink-0" aria-hidden />
+              <Lock size={16} className="shrink-0" aria-hidden />
               <span className="text-sm">{line}</span>
             </Row>
           </Surface>
@@ -518,7 +531,7 @@ export function ProfileReset({
           </Surface>
         )}
         <Stack as="fieldset" gap="2xs">
-          <legend className="pb-1 text-xs font-medium tracking-wide text-on-surface-variant uppercase">
+          <legend className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
             Reset
           </legend>
           {RESET_FIELDS.map(f => (

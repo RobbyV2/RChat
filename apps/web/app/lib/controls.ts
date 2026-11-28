@@ -247,6 +247,10 @@ export const rowLook = (tone: RowTone, variant: RowVariant = 'plain') =>
       : `rounded-lg ${HOVER}`
   } ${FOCUS} current:bg-secondary-container current:text-on-secondary-container selected:bg-secondary-container selected:text-on-secondary-container disabled:opacity-40 pointer-coarse:min-h-11`
 
+// A banner under the header (a notice, an error, a toast).
+export const bannerLook =
+  'pointer-events-auto max-w-full self-center rounded-xl px-4 py-2 text-center text-sm shadow-elevation-2 sm:w-max sm:max-w-screen-inset'
+
 // A row of the channel sidebar (a channel, a voice channel, a link): inset from the sidebar's sides.
 export const sideRowLook =
   'mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm pointer-coarse:min-h-11'

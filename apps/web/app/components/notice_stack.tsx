@@ -178,7 +178,7 @@ export function NoticeStack({ sessions }: { sessions: readonly AccountSession[] 
       onBlur={(e: FocusEvent) => {
         if (!region.current?.contains(e.relatedTarget as Node | null)) setFocus(false)
       }}
-      className="flex w-full flex-col gap-2 sm:fixed sm:top-[calc(var(--safe-top)+4rem)] sm:right-[max(1rem,env(safe-area-inset-right))] sm:z-top sm:w-80 sm:max-w-screen-inset pointer-events-auto empty:pointer-events-none"
+      className="flex w-full flex-col gap-2 sm:fixed sm:top-below-bar sm:right-safe-4 sm:z-top sm:w-80 sm:max-w-screen-inset pointer-events-auto empty:pointer-events-none"
     >
       {sessions.map(session => (
         <AccountProvider key={session.renderKey} session={session}>

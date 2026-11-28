@@ -49,8 +49,8 @@ import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
 import { MessageTime } from './timestamp'
 import { Button, Chip, IconButton, ListRow, Tab } from './controls'
-import { Row, Stack, Surface } from './layout'
-import { Masked, Sentinel, Sheet, useEscape, useOwnServer } from './ui'
+import { Row, Stack, Surface, Inset } from './layout'
+import { Masked, Sentinel, Sheet, useEscape, useOwnServer, smallFieldCls } from './ui'
 import { RowsSkeleton } from './skeletons'
 import { useShown } from './shown_user'
 import { INSTANCE_INBOX } from '../lib/inbox_source'
@@ -366,52 +366,54 @@ function EntryRow({
         data-inbox-item={entry.key}
         data-unread={entry.unread ? 'true' : undefined}
         onOpen={() => onOpen(entry)}
-        className="w-full rounded-xl px-3 py-2.5 text-left hover:bg-surface-container-high"
-        contentClassName="flex gap-3"
+        className="w-full rounded-xl text-left hover:bg-surface-container-high"
+        contentClassName="flex"
       >
-        <span className="relative mt-0.5 shrink-0">
-          <UserAvatar person={actor} size={32} />
-          {entry.unread && (
-            <span
-              aria-hidden
-              className="absolute -top-0.5 -left-0.5 size-2.5 rounded-full border-2 border-surface-container-low bg-danger"
-            />
-          )}
-        </span>
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5 pr-8">
-          <Row as="span" gap="xs" align="baseline">
-            <span className="min-w-0 truncate text-sm">
-              <Name
-                of={personName(actor)}
-                withUsername
-                look={entry.unread ? 'font-semibold' : 'font-medium'}
-              />{' '}
-              {isWebhookAuthor(entry.actor.username) && (
-                <>
-                  <WebhookBadge />{' '}
-                </>
-              )}
-              <InboxAction entry={entry} />
-            </span>
-            <MessageTime
-              ts={entry.created_at}
-              className="ml-auto shrink-0 text-xs text-on-surface-variant"
-            />
-          </Row>
-          <span className="flex min-w-0 text-xs text-on-surface-variant">
-            <Place entry={entry} />
+        <Inset row pad="md" inset="bar" gap="md" align="stretch">
+          <span className="relative shrink-0">
+            <UserAvatar person={actor} size={32} />
+            {entry.unread && (
+              <span
+                aria-hidden
+                className="absolute -top-0.5 -left-0.5 size-2.5 rounded-full border-2 border-surface-container-low bg-danger"
+              />
+            )}
           </span>
-          {snippet && (
-            <span className="line-clamp-2 text-sm break-words text-on-surface">
-              {snippet.kind === 'text' ? (
-                <SpoilerLine parts={snippet.parts} />
-              ) : (
-                <PreviewFilename name={snippet.name} spoiler={snippet.spoiler} />
-              )}
+          <Stack as="span" gap="3xs" place="min-w-0 flex-1">
+            <Row as="span" gap="xs" align="baseline">
+              <span className="min-w-0 truncate text-sm">
+                <Name
+                  of={personName(actor)}
+                  withUsername
+                  look={entry.unread ? 'font-semibold' : 'font-medium'}
+                />{' '}
+                {isWebhookAuthor(entry.actor.username) && (
+                  <>
+                    <WebhookBadge />{' '}
+                  </>
+                )}
+                <InboxAction entry={entry} />
+              </span>
+              <MessageTime
+                ts={entry.created_at}
+                className="ml-auto shrink-0 text-xs text-on-surface-variant"
+              />
+            </Row>
+            <span className="flex min-w-0 text-xs text-on-surface-variant">
+              <Place entry={entry} />
             </span>
-          )}
-          {entry.unread && <span className="sr-only">Unread</span>}
-        </span>
+            {snippet && (
+              <span className="line-clamp-2 text-sm break-words text-on-surface">
+                {snippet.kind === 'text' ? (
+                  <SpoilerLine parts={snippet.parts} />
+                ) : (
+                  <PreviewFilename name={snippet.name} spoiler={snippet.spoiler} />
+                )}
+              </span>
+            )}
+            {entry.unread && <span className="sr-only">Unread</span>}
+          </Stack>
+        </Inset>
       </PreviewRow>
       {entry.unread && (
         <IconButton
@@ -510,10 +512,12 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
             </Tab>
           ))}
         </Row>
-        <div
+        <Row
           role="group"
           aria-label="Filter by kind"
-          className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-0.5"
+          gap="xs"
+          align="stretch"
+          place="overflow-x-auto"
         >
           {KIND_FILTERS.map(f => (
             <Chip
@@ -525,13 +529,13 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
               {f.label}
             </Chip>
           ))}
-        </div>
+        </Row>
         {!streamer && (
           <select
             aria-label="Filter by place"
             value={view.place ?? ''}
             onChange={e => set({ place: e.target.value || null })}
-            className="self-start rounded-full border border-outline bg-transparent px-2 py-1 text-base text-on-surface-variant outline-none focus:border-primary md:text-xs"
+            className={`${smallFieldCls} self-start text-on-surface-variant`}
           >
             <option value="">Everywhere</option>
             <option value={DM_PLACE}>Direct messages</option>

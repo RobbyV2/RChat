@@ -312,10 +312,10 @@ describe('the settings dialog', () => {
     expect(extraAnchors(guest, settingsSections({ signedIn: false, p2p: false }))).toEqual([])
   })
 
-  test('the way to the profile is a full size touch target on phones', () => {
+  test('the way to the profile is a full size touch target on a coarse pointer', () => {
     const html = signedIn({ kind: 'settings' })
     const button = /<button[^>]*>(<svg[^>]*>.*?<\/svg>)?Edit your profile/.exec(html)?.[0] ?? ''
-    expect(button).toContain('min-h-11')
-    expect(button).toContain('md:min-h-0')
+    expect(button).toContain('pointer-coarse:py-3.5')
+    expect(button).toContain('pointer-coarse:min-w-11')
   })
 })

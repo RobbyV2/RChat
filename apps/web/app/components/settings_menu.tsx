@@ -64,8 +64,8 @@ import { ColorField } from './color_field'
 import { InstanceDetails, useInstanceLabel } from './instance_badge'
 import { UserAvatar } from './user_avatar'
 import { SettingNotes, SettingSwitch } from './settings_fields'
-import { Button } from './controls'
-import { Row, Stack, Surface } from './layout'
+import { Button, LinkButton } from './controls'
+import { Row, Stack, Surface, Grid, Lift } from './layout'
 import { MOTION_CHOICES, animHeldBack } from '../lib/motion/setting'
 import { useReducedMotion } from '../lib/motion/use_motion'
 import { NotificationsSection } from './notify_settings'
@@ -128,24 +128,24 @@ export function BannerPicker({
       <span className="text-sm text-on-surface-variant">Banner</span>
       <div className="overflow-hidden rounded-2xl bg-surface-container-high" aria-hidden>
         <div style={{ background: shown }} className="h-14" />
-        <div className="-mt-11">
+        <Lift by="3xl">
           <Surface pad="md" tone="plain">
             <Row gap="md" align="end">
-              <span className="shrink-0 rounded-full bg-surface-container-high p-1">
+              <Surface as="span" pad="2xs" tone="high" radius="full" place="shrink-0">
                 {avatar ?? (
                   <UserAvatar
                     person={pictured(username, { kind, color: avatarColor }, 'editor')}
                     size={56}
                   />
                 )}
-              </span>
+              </Surface>
               <Name
                 of={personCalled(displayName, null, true)}
                 look="truncate font-medium text-on-surface"
               />
             </Row>
           </Surface>
-        </div>
+        </Lift>
       </div>
       <ColorField
         label="Banner color"
@@ -380,14 +380,10 @@ function NavAccount({
             />
           )}
           {me && (
-            <button
-              type="button"
-              onClick={onProfile}
-              className="mt-0.5 inline-flex min-h-11 items-center gap-1 rounded-md text-xs font-medium text-primary hover:underline md:min-h-0"
-            >
+            <LinkButton onClick={onProfile}>
               <Pencil size={12} />
               Edit your profile
-            </button>
+            </LinkButton>
           )}
         </div>
       </Row>
@@ -1074,13 +1070,21 @@ const WHERE: Record<Shortcut['where'], string> = {
 
 function ShortcutList() {
   return (
-    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+    <Grid as="dl" cols="pair" gap="lg" lineGap="xs">
       {SHORTCUTS.map(sc => (
         <div key={`${sc.keys} ${sc.where}`} className="contents">
           <dt>
-            <kbd className="rounded-md border border-outline-variant bg-surface-container px-1.5 py-0.5 font-mono text-xs text-on-surface">
+            <Surface
+              as="kbd"
+              pad="xs"
+              inset="chip"
+              tone="base"
+              radius="none"
+              text="xs"
+              look="rounded-md border border-outline-variant font-mono"
+            >
               {shortcutLabel(sc.keys)}
-            </kbd>
+            </Surface>
           </dt>
           <dd>
             {sc.action}
@@ -1090,7 +1094,7 @@ function ShortcutList() {
           </dd>
         </div>
       ))}
-    </dl>
+    </Grid>
   )
 }
 

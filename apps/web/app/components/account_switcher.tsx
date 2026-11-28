@@ -38,8 +38,8 @@ import { useAddingAllowed } from './add_instance'
 import { longPress, useMedia } from './context_menu'
 import { RailInstance } from './instance_badge'
 import { Button, IconButton, ListRow } from './controls'
-import { Row, Stack, Surface } from './layout'
-import { Masked, Sheet, useEscape } from './ui'
+import { Row, Stack, Surface, Inset } from './layout'
+import { Masked, Sheet, useEscape, smallFieldCls } from './ui'
 import { obj, opt, parseJson, str, type Schema } from '../lib/schema'
 
 function useRows() {
@@ -70,33 +70,45 @@ export function AccountSwitcherTile() {
       ').' +
       (model.otherBadge ? ' ' + model.otherBadge + ' mentions on other accounts' : '')
   return (
-    <button
+    <Surface
       type="button"
       aria-haspopup="dialog"
       title={title}
       aria-label={title}
       data-switcher-tile
       onClick={() => account.store.getState().openDialog({ kind: 'account_switcher' })}
-      className="flex w-16 flex-col items-center gap-0.5 rounded-xl py-1.5 text-center hover:bg-surface-container-high"
+      as="button"
+      pad="xs"
+      gap="3xs"
+      tone="plain"
+      radius="lg"
+      align="center"
+      look="w-16 text-center hover:bg-surface-container-high"
     >
-      <span className="relative mb-1">
+      <span className="relative">
         <ActorAvatar row={row} size={36} />
         <span className="absolute -right-2 -bottom-1">
           <InstanceTag origin={group.origin} name={group.name} />
         </span>
         {model.otherBadge > 0 && (
-          <span className="absolute -left-2 -top-1 rounded-full bg-danger px-1 text-3xs font-bold text-on-danger">
+          <Inset
+            as="span"
+            pad="2xs"
+            inset="sides"
+            look="rounded-full bg-danger text-3xs font-bold text-on-danger"
+            place="absolute -left-2 -top-1"
+          >
             {model.otherBadge}
-          </span>
+          </Inset>
         )}
       </span>
-      <span className="streamer w-full truncate px-0.5 text-xs font-semibold">
+      <span className="streamer w-full truncate text-xs font-semibold">
         <Masked text={row.display} />
       </span>
-      <span className="streamer w-full truncate px-0.5 text-3xs text-on-surface-variant">
+      <span className="streamer w-full truncate text-3xs text-on-surface-variant">
         <Masked text={group.name} />
       </span>
-    </button>
+    </Surface>
   )
 }
 
@@ -117,7 +129,7 @@ export function SettingsAccountPicker({ section }: { section: SettingsSection | 
       <span className="text-xs text-on-surface-variant">Settings for</span>
       <NameSelect
         value={current ? keyOf(current.row) : ''}
-        className="min-w-28 max-w-full rounded-lg bg-surface-container-high px-2 py-1 text-sm text-on-surface"
+        className={`max-w-full min-w-28 ${smallFieldCls} text-on-surface`}
         onChange={e => {
           const next = rows.find(({ row }) => keyOf(row) === e.target.value)?.row
           if (!next) return
@@ -366,10 +378,11 @@ function AccountList({
                 }
                 const opened = actions === key
                 return (
-                  <div
+                  <Inset
                     key={key}
-                    className={r.local ? 'pl-5' : ''}
                     {...(manage && own && r.saved ? drag(target, index) : {})}
+                    pad={r.local ? 'lg' : 'none'}
+                    inset="sides"
                   >
                     <Surface tone="plain" radius="none" pad="2xs" inset="bar">
                       <Row gap="2xs">
@@ -408,9 +421,16 @@ function AccountList({
                             <span className="text-xs text-primary">Sign in</span>
                           )}
                           {r.badge > 0 && (
-                            <span className="rounded-full bg-secondary-container px-2 text-xs text-on-secondary-container">
+                            <Surface
+                              as="span"
+                              pad="sm"
+                              inset="sides"
+                              tone="secondary"
+                              radius="full"
+                              text="xs"
+                            >
                               {r.badge}
-                            </span>
+                            </Surface>
                           )}
                           {r.unread && (
                             <span aria-label="Unread" className="size-2 rounded-full bg-primary" />
@@ -497,7 +517,7 @@ function AccountList({
                         </Surface>
                       </Surface>
                     )}
-                  </div>
+                  </Inset>
                 )
               })}
               <Surface tone="plain" radius="none" pad="2xs">
