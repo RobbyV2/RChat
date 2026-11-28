@@ -17,7 +17,6 @@ import {
   HIGHER_ROLES_TEXT,
   OFFLINE_TEXT,
   OWNER_TEXT,
-  UNBAN_TEXT,
   VOUCH_INVITER_TEXT,
 } from '../../lib/p2p/flows'
 import { P } from '../../lib/p2p/state'
@@ -49,8 +48,7 @@ import {
   upgradeChanges,
   upgradeOffered,
 } from '../../lib/p2p_upgrade'
-import { banStateText, timedBan } from '../../lib/p2p/ban_expiry'
-import { PeerTimeoutBadge, useNow } from '../timeout_dialog'
+import { PeerTimeoutBadge } from '../timeout_dialog'
 import { hex, nameColor } from '../../lib/p2p/roles'
 import { openActionMenu } from '../../lib/actions/menu'
 import {
@@ -71,6 +69,7 @@ import type { LogPage } from '../../lib/p2p/server/modlog'
 import { usePermissionRules } from '../use_permission_rules'
 import { time } from '../../lib/platform/time'
 import { Button, IconButton } from '../controls'
+import { BanList } from '../ban_list'
 import { P2pChannelMemberList, P2pMemberListSettings } from './p2p_member_list'
 
 // Settings of a P2P server. Every change is a signed state event that members check against
@@ -532,28 +531,6 @@ function History({ v }: { v: ServerView }) {
   )
 }
 
-function MemberLine({ v, m, children }: { v: ServerView; m: MemberView; children?: ReactNode }) {
-  const me = useP2p(s => s.me)
-  return (
-    <Surface as="li" data-p2p-member-line={m.name} pad="sm" tone="plain" radius="lg">
-      <Row gap="md" wrap lineGap="2xs">
-        <MemberAvatar members={v.members} ik={m.ik} size={32} />
-        <Name
-          of={p2pName(m.name, m.ik === me)}
-          color={nameColor(m, v.roles)}
-          look="min-w-0 flex-1 truncate text-sm"
-        />
-        {m.owner && (
-          <span title="Owner" aria-label="Owner" role="img" className="flex text-tertiary">
-            <Crown size={14} />
-          </span>
-        )}
-        {children}
-      </Row>
-    </Surface>
-  )
-}
-
 const byLocale = (a: string, b: string) => a.localeCompare(b)
 
 function PeerMemberRow({ v, m, dated }: { v: ServerView; m: MemberView; dated: boolean }) {
@@ -671,37 +648,6 @@ function Members({ v }: { v: ServerView }) {
           <Note>{OFFLINE_TEXT}</Note>
         </Stack>
       )}
-    </Stack>
-  )
-}
-
-function Bans({ v }: { v: ServerView }) {
-  const identity = useP2pApp()!
-  const { p2pServer } = identity
-
-  const lift = can(v, P.Ban)
-  const now = useNow(v.members.some(timedBan), 30_000)
-  const list = v.members.filter(m => m.m === 'ban').sort((a, b) => a.name.localeCompare(b.name))
-  const [shown, setShown] = useState(PAGE)
-  const more = useCallback(() => setShown(n => n + PAGE), [])
-  if (!list.length) return <Note>Nobody is banned.</Note>
-  const paged = page(list, shown)
-  return (
-    <Stack gap="md">
-      <Stack as="ul" data-p2p-bans-tab gap="none">
-        {paged.items.map(m => (
-          <MemberLine key={m.ik} v={v} m={m}>
-            {m.unban && <Button onClick={() => void p2pServer.unban(v.id, m.ik)}>Lift ban</Button>}
-            {(timedBan(m) || (lift && m.banReason)) && (
-              <span className="basis-full text-xs break-words text-on-surface-variant">
-                {[banStateText(m, now), lift ? m.banReason : null].filter(Boolean).join(' · ')}
-              </span>
-            )}
-          </MemberLine>
-        ))}
-      </Stack>
-      {paged.more && <Sentinel key={shown} onVisible={more} />}
-      {lift && <Note>{UNBAN_TEXT}</Note>}
     </Stack>
   )
 }
@@ -888,6 +834,7 @@ function Leave({ v }: { v: ServerView }) {
 }
 
 function TabBody({ v, room, tab }: { v: ServerView; room: string; tab: string }) {
+  const identity = useP2pApp()!
   return (
     <Surface pad="2xs" tone="plain" radius="none">
       {tab === 'overview' && <Overview key={v.name} v={v} />}
@@ -897,7 +844,7 @@ function TabBody({ v, room, tab }: { v: ServerView; room: string; tab: string })
       {tab === 'system' && <System room={room} />}
       {tab === 'history' && <History v={v} />}
       {tab === 'members' && <Members v={v} />}
-      {tab === 'bans' && <Bans v={v} />}
+      {tab === 'bans' && <BanList place={P2pRoom.open(identity, room)} />}
       {tab === 'modlog' && <ModerationLog v={v} />}
       {tab === 'leave' && <Leave v={v} />}
     </Surface>

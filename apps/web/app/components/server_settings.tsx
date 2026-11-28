@@ -2,8 +2,8 @@
 import { ask, asked, sendTo } from '../lib/asks'
 import { Loaded, useAccountSource } from './loaded'
 
-import { asAccount } from '../lib/people'
-import { personCalled, personName } from '../lib/names'
+import { BanList } from './ban_list'
+import { personName } from '../lib/names'
 import { Name, NameInput } from './name'
 import { ViewActorTag } from './view_actor'
 import { ServerStorage } from './server_storage'
@@ -120,7 +120,6 @@ import { Row, Stack, Surface, Inset } from './layout'
 import { serverCalled } from '../lib/names'
 import { Dialog, FieldError, Sentinel, fieldCls, sectionCls, useOwnServer } from './ui'
 import { LabelText } from './instance_badge'
-import { endsText } from '../lib/durations'
 import { ServerSettingsPage } from './server_settings_page'
 import { HostedServer } from '../lib/place/place'
 import { type ServerSettingsSection } from '../lib/server_settings_sections'
@@ -1227,51 +1226,6 @@ export function AdminPermsEditor({
   )
 }
 
-export function BanList({ server }: { server: string }) {
-  const cache = useStore(s => s.bans[server])
-  const loadBans = useStore(s => s.loadBans)
-  const unbanMember = useStore(s => s.unbanMember)
-  useEffect(() => {
-    void loadBans(server, true)
-  }, [server, loadBans])
-  const more = useCallback(() => void loadBans(server), [server, loadBans])
-  const list = cache?.list ?? []
-  return (
-    <Stack gap="2xs">
-      {list.map(b => (
-        <Surface key={b.username} pad="sm" inset="bar" tone="plain" radius="lg">
-          <Row gap="sm">
-            <UserAvatar person={asAccount(b, 'unknown')} size={28} />
-            <span className="min-w-0 flex-1 text-sm">
-              <span className="block truncate">
-                <Name of={personCalled(b.display_name, b.username)} />
-                <span className="text-xs text-on-surface-variant">
-                  {' '}
-                  · banned {new Date(b.banned_at * 1000).toLocaleDateString()}
-                </span>
-              </span>
-              {(b.expires_at || b.reason) && (
-                <span className="block text-xs break-words text-on-surface-variant">
-                  {[b.expires_at ? `Ends ${endsText(b.expires_at * 1000)}` : '', b.reason ?? '']
-                    .filter(Boolean)
-                    .join(' · ')}
-                </span>
-              )}
-            </span>
-            <Button onClick={() => void unbanMember(server, b.username)}>Unban</Button>
-          </Row>
-        </Surface>
-      ))}
-      {cache && !cache.loading && list.length === 0 && (
-        <Surface pad="sm" inset="bar" tone="plain" radius="none">
-          <p className="text-sm text-on-surface-variant">No one is banned.</p>
-        </Surface>
-      )}
-      {(cache?.hasMore ?? false) && <Sentinel key={list.length} onVisible={more} />}
-    </Stack>
-  )
-}
-
 export function ConfirmDialog() {
   const request = useStore(s => s.confirm)
   const seq = useStore(s => s.confirmSeq)
@@ -1725,7 +1679,7 @@ function Settings({ server, section }: { server: string; section: ServerSettings
         )}
       </>
     ),
-    bans: () => <BanList server={server} />,
+    bans: () => <BanList place={HostedServer.open(acct, server)} />,
     integrations: () => (
       <>
         <Row gap="md" wrap>

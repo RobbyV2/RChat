@@ -6,6 +6,7 @@ import { asAccount } from '../../lib/people'
 import { askKick } from '../../lib/place/moderation'
 import { HostedServer } from '../../lib/place/place'
 import { useAccount } from '../../lib/client/react'
+import { BanList } from '../ban_list'
 import { useCallback, useEffect, useState } from 'react'
 import { Trash2 } from 'lucide-react'
 import type { ServerDetail } from '../../lib/types'
@@ -15,7 +16,6 @@ import { canDeleteChannel } from '../../lib/rules'
 import { UserAvatar } from '../user_avatar'
 import {
   AdminPermsEditor,
-  BanList,
   ChannelControls,
   RolesEditor,
   ServerAppearance,
@@ -207,7 +207,7 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
         onSubmit={v => run(() => createChannel(name, v))}
       />
       <SectionHeading as="p">Bans</SectionHeading>
-      <BanList server={name} />
+      <BanList place={HostedServer.open(ownerSession, name)} />
       <SectionHeading as="p">Members ({detail.member_count})</SectionHeading>
       <MemberSearchField value={q} onChange={setQ} />
       {found.active && !found.loading && found.list.length === 0 && (
