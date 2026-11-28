@@ -202,6 +202,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("scheduled_messages", "media_name TEXT"),
     ("scheduled_messages", "media_alt TEXT"),
     ("scheduled_messages", "poll TEXT"),
+    ("avatar_images", "seal_key {INT}"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -352,7 +353,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 72: files and polls of scheduled messages (`scheduled_messages.media_id`, `media_spoiler`,
 /// `media_name`, `media_alt`, `poll`).
 /// 73: sealed descriptions of server profiles (`member_profiles.bio_sealed`).
-pub const SCHEMA_VERSION: i64 = 73;
+/// 74: sealed pictures (`avatar_images.seal_key`).
+pub const SCHEMA_VERSION: i64 = 74;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;
@@ -377,10 +379,14 @@ pub(super) const CHANGE_PROFILE_VERSION: i64 = 70;
 /// The schema version that adds sealed descriptions of server profiles.
 #[cfg(test)]
 pub(super) const SERVER_BIOS_VERSION: i64 = 73;
+/// The schema version that adds sealed pictures.
+#[cfg(test)]
+pub(super) const SEALED_PICTURES_VERSION: i64 = 74;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
-pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 24] {
+pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 25] {
     [
+        "CREATE INDEX IF NOT EXISTS idx_avatar_images_seal_key ON avatar_images(seal_key) WHERE seal_key IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_users_avatar_image ON users(avatar_image) WHERE avatar_image IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_member_profiles_avatar_image ON member_profiles(avatar_image) WHERE avatar_image IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_scheduled_media ON scheduled_messages(media_id) WHERE media_id IS NOT NULL",

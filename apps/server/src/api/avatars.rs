@@ -21,12 +21,13 @@ use crate::api::auth::MeUpdated;
 use crate::api::features::Feature;
 use crate::api::media::{declared_length, read_raw, reading_slot, reserve};
 use crate::api::{ApiError, ApiErrorBody, Authed, ServerSummaryLite, Settings};
-use crate::db::{Db, User, now};
+use crate::db::{Db, User};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
 use rchat_avatar::{ANIMATED_SIZES, Animated, Bounds, Crop, Encoded, Mime, Refused, SIZES};
 
+pub(crate) mod stored;
 #[cfg(test)]
 mod tests;
 
@@ -34,9 +35,6 @@ mod tests;
 const DECODES: usize = 2;
 /// Seconds a stored picture that nothing names is kept before the sweep removes it.
 const UNUSED_KEEP: i64 = 3600;
-
-/// The columns of `avatar_images` that hold a picture's files, in the order of `SIZES`.
-const FILES: [&str; 3] = ["s64", "s128", "s512"];
 
 static DECODING: LazyLock<Arc<tokio::sync::Semaphore>> =
     LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(DECODES)));
@@ -186,8 +184,10 @@ pub(crate) async fn uploaded(
 const ANIMATED: &str = "-a";
 
 /// Stores `picture` for `owner`, in `server` or for the account, and gives its new id: 32 hex
-/// characters, with `-a` after them when the picture has an animation.
+/// characters, with `-a` after them when the picture has an animation. Its files are stored
+/// encrypted when its server, or for an account the site, stores content encrypted.
 pub(crate) async fn store(
+    db: &Db,
     conn: &mut sqlx::AnyConnection,
     owner: &str,
     server: Option<&str>,
@@ -201,19 +201,17 @@ pub(crate) async fn store(
         None => hex::encode(bytes),
     };
     let [small, medium, large] = still.files();
-    sqlx::query("INSERT INTO avatar_images(id, owner, server, mime, s64, s128, s512, a128, a512, created_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)")
-        .bind(&id)
-        .bind(owner)
-        .bind(server)
-        .bind(still.mime().as_str())
-        .bind(small.clone())
-        .bind(medium.clone())
-        .bind(large.clone())
-        .bind(animated.as_ref().map(|a| a.small().to_vec()))
-        .bind(animated.as_ref().and_then(|a| a.large().map(<[u8]>::to_vec)))
-        .bind(now())
-        .execute(&mut *conn)
-        .await?;
+    let files = [
+        Some(small.clone()),
+        Some(medium.clone()),
+        Some(large.clone()),
+        animated.as_ref().map(|a| a.small().to_vec()),
+        animated
+            .as_ref()
+            .and_then(|a| a.large().map(<[u8]>::to_vec)),
+    ];
+    let mime = still.mime().as_str();
+    stored::insert(db, conn, &id, owner, server, mime, files).await?;
     Ok(id)
 }
 
@@ -252,7 +250,7 @@ async fn replace(
         .transpose()?
         .flatten();
     let id = match next {
-        Some(picture) => Some(store(&mut tx, username, None, picture).await?),
+        Some(picture) => Some(store(&state.db, &mut tx, username, None, picture).await?),
         None => None,
     };
     sqlx::query("UPDATE users SET avatar_image = $1 WHERE username = $2")
@@ -336,7 +334,7 @@ async fn replace_icon(
         .transpose()?
         .flatten();
     let id = match next {
-        Some(picture) => Some(store(&mut tx, &user.username, Some(key), picture).await?),
+        Some(picture) => Some(store(&state.db, &mut tx, &user.username, Some(key), picture).await?),
         None => None,
     };
     sqlx::query("UPDATE servers SET icon_image = $1 WHERE name = $2")
@@ -468,11 +466,9 @@ fn fresh(headers: &HeaderMap, etag: &str) -> bool {
         .is_some_and(|v| v.split(',').any(|t| t.trim() == etag || t.trim() == "*"))
 }
 
-fn column(size: &str) -> Option<&'static str> {
-    SIZES
-        .iter()
-        .position(|side| side.to_string() == size)
-        .map(|at| FILES[at])
+/// Where the still of `size` pixels is among a picture's files.
+fn still_at(size: &str) -> Option<usize> {
+    SIZES.iter().position(|side| side.to_string() == size)
 }
 
 /// Get a profile picture
@@ -489,23 +485,17 @@ pub(crate) async fn get_avatar(
     headers: HeaderMap,
     Path((id, size)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
-    let column = column(&size).ok_or_else(not_found)?;
+    let at = still_at(&size).ok_or_else(not_found)?;
     let db = state.read();
     if !well_formed(&id) || !Settings::cached(&db).await.on(Feature::ProfilePictures) {
         return Err(not_found());
     }
-    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT mime, {column} FROM avatar_images WHERE id = $1"
-    )))
-    .bind(&id)
-    .fetch_optional(&db)
-    .await?
-    .ok_or_else(not_found)?;
-    let mime = Mime::parse(&row.try_get::<String, _>(0)?).ok_or_else(not_found)?;
+    let (mime, file) = stored::file(&db, &id, at).await?.ok_or_else(not_found)?;
+    let mime = Mime::parse(&mime).ok_or_else(not_found)?;
     let etag = format!("\"{id}-{size}\"");
     let mut res = match fresh(&headers, &etag) {
         true => StatusCode::NOT_MODIFIED.into_response(),
-        false => row.try_get::<Vec<u8>, _>(1)?.into_response(),
+        false => file.into_response(),
     };
     picture_headers(res.headers_mut(), mime.as_str(), &etag);
     Ok(res)
@@ -524,10 +514,10 @@ pub(crate) async fn get_animated(
     headers: HeaderMap,
     Path((id, size)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
-    let column = ANIMATED_SIZES
+    let at = ANIMATED_SIZES
         .iter()
         .position(|side| side.to_string() == size)
-        .map(|at| ["a128", "a512"][at])
+        .map(|at| SIZES.len() + at)
         .ok_or_else(not_found)?;
     let db = state.read();
     let settings = Settings::cached(&db).await;
@@ -541,17 +531,11 @@ pub(crate) async fn get_animated(
     let etag = format!("\"{id}-{size}-animated\"");
     let mut res = match fresh(&headers, &etag) {
         true => StatusCode::NOT_MODIFIED.into_response(),
-        false => sqlx::query(sqlx::AssertSqlSafe(format!(
-            "SELECT {column} FROM avatar_images WHERE id = $1"
-        )))
-        .bind(&id)
-        .fetch_optional(&db)
-        .await?
-        .map(|row| row.try_get::<Option<Vec<u8>>, _>(0))
-        .transpose()?
-        .flatten()
-        .ok_or_else(not_found)?
-        .into_response(),
+        false => stored::file(&db, &id, at)
+            .await?
+            .ok_or_else(not_found)?
+            .1
+            .into_response(),
     };
     picture_headers(res.headers_mut(), Animated::MIME, &etag);
     Ok(res)

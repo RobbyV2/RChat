@@ -53,6 +53,30 @@ pub const BACKUPS: Column = Column {
     table: "p2p_backups",
     column: "data_sealed",
 };
+/// `avatar_images`: the files of a stored picture, by picture id: the stills of 64, 128 and 512
+/// pixels, then the animations of 128 and 512. `seal_key` of the row names the key of them all.
+pub const PICTURES: [Column; 5] = [
+    Column {
+        table: "avatar_images",
+        column: "s64",
+    },
+    Column {
+        table: "avatar_images",
+        column: "s128",
+    },
+    Column {
+        table: "avatar_images",
+        column: "s512",
+    },
+    Column {
+        table: "avatar_images",
+        column: "a128",
+    },
+    Column {
+        table: "avatar_images",
+        column: "a512",
+    },
+];
 
 /// The binding of the server profile of `username` in `server`.
 pub fn server_bio_binding(server: &str, username: &str) -> String {

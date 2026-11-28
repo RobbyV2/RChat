@@ -52,9 +52,10 @@ enum Step {
     Hooks,
     Grams,
     ServerBios,
+    Pictures,
 }
 
-const STEPS: [Step; 14] = [
+const STEPS: [Step; 15] = [
     Step::Messages,
     Step::Polls,
     Step::Options,
@@ -69,6 +70,7 @@ const STEPS: [Step; 14] = [
     Step::Hooks,
     Step::Grams,
     Step::ServerBios,
+    Step::Pictures,
 ];
 
 impl Step {
@@ -83,6 +85,7 @@ impl Step {
             | Step::Deliveries
             | Step::Bios
             | Step::ServerBios
+            | Step::Pictures
             | Step::Backups => Purpose::Content,
             Step::Files => Purpose::Media,
             Step::Settings | Step::Hooks => Purpose::Secrets,
@@ -482,6 +485,13 @@ pub async fn names(db: &Db, id: u32, purpose: Purpose) -> Result<i64, ApiError> 
             .fetch_one(db)
             .await?;
     }
+    if purpose == Purpose::Content {
+        named +=
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM avatar_images WHERE seal_key = $1")
+                .bind(i64::from(id))
+                .fetch_one(db)
+                .await?;
+    }
     if purpose == Purpose::Secrets {
         named += crate::crypt::secrets::settings_under(db, id)
             .await
@@ -587,6 +597,7 @@ async fn one(state: &AppState, step: Step, retiring: &[u32], at: &str) -> Result
         Step::Bios => bios(db, retiring, at).await,
         Step::ServerBios => server_bios(db, retiring, at).await,
         Step::Backups => backups(db, retiring, at).await,
+        Step::Pictures => pictures(db, retiring, at).await,
         Step::Files => files(state, retiring, at).await,
         Step::Settings => crate::crypt::secrets::reseal_settings(db, retiring)
             .await
@@ -921,6 +932,46 @@ async fn backups(db: &Db, retiring: &[u32], at: &str) -> Result<Tally, ApiError>
         }
         _ => None,
     };
+    Ok(tally)
+}
+
+/// Stored pictures, whose row names the one key of all its files.
+async fn pictures(db: &Db, retiring: &[u32], at: &str) -> Result<Tally, ApiError> {
+    use crate::api::avatars::stored;
+    let rows: Vec<(String, i64)> = sqlx::query_as("SELECT id, seal_key FROM avatar_images WHERE seal_key IS NOT NULL AND id > $1 ORDER BY id LIMIT $2")
+        .bind(at)
+        .bind(BATCH)
+        .fetch_all(db)
+        .await?;
+    let ring = crate::db::ring(db);
+    let mut tally = Tally::default();
+    for (id, key) in &rows {
+        if !u32::try_from(*key).is_ok_and(|key| retiring.contains(&key)) {
+            continue;
+        }
+        let Some(row) = stored::kept(db, id).await? else {
+            continue;
+        };
+        if !row.key().is_some_and(|key| retiring.contains(&key)) {
+            continue;
+        }
+        let Some(plain) = row.plain(db, id).await? else {
+            tally.add(Outcome::Lost);
+            continue;
+        };
+        let mut tx = write_tx(db).await?;
+        let sealer = copies::Sealer::of(&ring, &mut tx)
+            .await
+            .map_err(ApiError::internal)?;
+        let Some(sealer) = sealer.filter(|s| !retiring.contains(&s.key_id())) else {
+            tally.add(Outcome::Left);
+            continue;
+        };
+        row.rewrite(&mut tx, id, &plain, Some(&sealer)).await?;
+        tx.commit().await?;
+        tally.add(Outcome::Moved);
+    }
+    tally.next = next_of(&rows, |r| r.0.clone());
     Ok(tally)
 }
 

@@ -314,6 +314,96 @@ async fn a_rotation_seals_every_record_again_and_the_old_keys_retire_then_go() {
     }
 }
 
+/// The picture file of `size` pixels as it is served, or the status that refuses it.
+async fn picture(state: &AppState, id: &str, size: &str) -> Result<Vec<u8>, u16> {
+    use axum::response::IntoResponse;
+    let served = crate::api::avatars::get_avatar(
+        State(state.clone()),
+        HeaderMap::new(),
+        Path((id.to_string(), size.to_string())),
+    )
+    .await
+    .map_err(|e| e.0.as_u16())?
+    .into_response();
+    Ok(axum::body::to_bytes(served.into_body(), usize::MAX)
+        .await
+        .expect("body")
+        .to_vec())
+}
+
+#[tokio::test]
+async fn a_rotation_seals_stored_pictures_again_and_the_old_key_goes() {
+    no_settle();
+    for (state, temp) in each_db_keyed("rotate_pictures").await {
+        let db = &state.db;
+        place(&state).await;
+        let image = rchat_avatar::samples::png(&rchat_avatar::samples::halves(90, 90));
+        let id = crate::api::avatars::put_server_icon(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Path("rchat".to_string()),
+            Query(serde_json::from_value(json!({})).expect("crop")),
+            HeaderMap::new(),
+            axum::body::Body::from(image),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("picture: {}", e.1))
+        .0
+        .icon_image
+        .expect("a picture id");
+        let old = active(db, Purpose::Content).await;
+        let under = |key: u32| format!("SELECT COUNT(*) FROM avatar_images WHERE seal_key = {key}");
+        assert_eq!(count(db, &under(old)).await, 1, "stored encrypted");
+        for column in ["s64", "s128", "s512"] {
+            let sql = format!("SELECT {column} FROM avatar_images");
+            assert_eq!(key_ids(db, &sql).await, [old], "{column}");
+        }
+        assert_eq!(
+            super::names(db, old, Purpose::Content)
+                .await
+                .unwrap_or_else(|e| panic!("names: {}", e.1)),
+            1,
+            "the picture holds its key"
+        );
+        let before = picture(&state, &id, "128").await.expect("served");
+        assert!(rchat_avatar::samples::read(&before).is_some(), "an image");
+
+        begin(&state, &[Purpose::Content]).await.expect("begin");
+        assert!(run(&state).await.expect("run"));
+        let new = active(db, Purpose::Content).await;
+        assert_ne!(new, old);
+        assert_eq!(count(db, &under(new)).await, 1);
+        for column in ["s64", "s128", "s512"] {
+            let sql = format!("SELECT {column} FROM avatar_images");
+            assert_eq!(key_ids(db, &sql).await, [new], "{column}");
+        }
+        assert_eq!(
+            super::names(db, old, Purpose::Content)
+                .await
+                .unwrap_or_else(|e| panic!("names: {}", e.1)),
+            0
+        );
+        destroy_due(&state, now() + 1).await.expect("destroy");
+        assert_eq!(
+            picture(&state, &id, "128").await.as_ref(),
+            Ok(&before),
+            "it reads the same after the old key is gone"
+        );
+
+        sqlx::query("UPDATE avatar_images SET s128 = s64")
+            .execute(db)
+            .await
+            .expect("move");
+        assert_eq!(
+            picture(&state, &id, "128").await,
+            Err(404),
+            "a file moved to another size does not open"
+        );
+        assert!(picture(&state, &id, "64").await.is_ok());
+        temp.done(state).await;
+    }
+}
+
 #[tokio::test]
 async fn a_record_that_does_not_open_does_not_hold_the_old_key_back() {
     no_settle();

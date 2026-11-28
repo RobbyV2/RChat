@@ -7,6 +7,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use super::*;
 use crate::api::error::ReasonKind;
 use crate::api::test_util::{done, mem_user, temp_state};
+use crate::db::now;
 use crate::limits::Limits;
 use crate::ws::WsEvent;
 use rchat_avatar::samples::{halves, png, read};
@@ -308,10 +309,10 @@ async fn the_sweep_removes_only_old_pictures_nothing_names() {
         animated: None,
     };
     let mut conn = state.db.acquire().await.expect("conn");
-    let old = store(&mut conn, "alice", None, &picture)
+    let old = store(&state.db, &mut conn, "alice", None, &picture)
         .await
         .expect("old");
-    let fresh = store(&mut conn, "alice", None, &picture)
+    let fresh = store(&state.db, &mut conn, "alice", None, &picture)
         .await
         .expect("fresh");
     drop(conn);

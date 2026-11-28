@@ -9597,6 +9597,64 @@ async fn sealed_server_profile_descriptions_are_added_to_an_old_database() {
 }
 
 #[tokio::test]
+async fn sealed_pictures_are_added_to_an_old_database() {
+    on_each_database("sealed_pictures_upgrade", |url| async move {
+        let sqlite = !url.starts_with("postgres");
+        let db = open_started(Some(&url)).await.expect("open");
+        for sql in [
+            "INSERT INTO servers(name, display_name, creator, created_at, icon_image) VALUES('club', 'Club', 'alice', 7, 'aa')",
+            "DROP INDEX idx_avatar_images_seal_key",
+            "ALTER TABLE avatar_images DROP COLUMN seal_key",
+        ] {
+            sqlx::query(sql).execute(&db).await.expect(sql);
+        }
+        sqlx::query("INSERT INTO avatar_images(id, owner, server, mime, s64, s128, s512, created_at) VALUES('aa', 'alice', 'club', 'image/png', $1, $1, $1, 5)")
+            .bind(vec![1u8, 2, 3])
+            .execute(&db)
+            .await
+            .expect("picture");
+        sqlx::query("UPDATE settings SET value = $1 WHERE key = 'schema_version'")
+            .bind((super::migrate::SEALED_PICTURES_VERSION - 1).to_string())
+            .execute(&db)
+            .await
+            .expect("version");
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            let bytes: Vec<u8> = sqlx::query_scalar("SELECT s128 FROM avatar_images WHERE id = 'aa' AND owner = 'alice' AND server = 'club' AND mime = 'image/png' AND created_at = 5")
+                .fetch_one(&db)
+                .await
+                .expect("the old picture");
+            assert_eq!(bytes, [1, 2, 3], "{round}: the old picture keeps its files");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM avatar_images WHERE id = 'aa' AND seal_key IS NULL").await,
+                i64::from(round == 0),
+                "{round}: an old picture is stored plain"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM avatar_images WHERE id = 'aa' AND seal_key = 7").await,
+                i64::from(round == 1),
+                "{round}: a key named after the upgrade survives a restart"
+            );
+            let index = match sqlite {
+                true => "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_avatar_images_seal_key'",
+                false => "SELECT COUNT(*) FROM pg_indexes WHERE indexname = 'idx_avatar_images_seal_key'",
+            };
+            assert_eq!(count(&db, index).await, 1, "{round}");
+            if round == 0 {
+                sqlx::query("UPDATE avatar_images SET seal_key = 7 WHERE id = 'aa'")
+                    .execute(&db)
+                    .await
+                    .expect("key");
+            }
+            close(&db).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn change_server_profile_is_given_to_stored_everyone_permissions() {
     on_each_database("change_profile_upgrade", |url| async move {
         let db = open_started(Some(&url)).await.expect("open");

@@ -1000,13 +1000,10 @@ pub(crate) async fn put_profile_avatar(
     }
     unlocked(&stored(&state.db, &key, &user.username).await?)?;
     let picture = crate::api::avatars::uploaded(&state, &user, &headers, crop, body).await?;
-    let id = crate::api::avatars::store(
-        &mut *state.db.acquire().await?,
-        &user.username,
-        Some(&key),
-        &picture,
-    )
-    .await?;
+    let mut tx = state.db.begin().await?;
+    let id = crate::api::avatars::store(&state.db, &mut tx, &user.username, Some(&key), &picture)
+        .await?;
+    tx.commit().await?;
     let saved = set_picture(&state, &right, &user, Some(id)).await?;
     Ok(Json(answer(
         &user,

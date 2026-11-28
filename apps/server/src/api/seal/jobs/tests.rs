@@ -349,6 +349,143 @@ async fn a_server_job_covers_the_descriptions_of_its_server_profiles() {
     }
 }
 
+/// The id of a picture and whether its files are stored encrypted.
+async fn pictures(db: &Db, place: &str) -> Vec<(String, bool)> {
+    let sql = format!(
+        "SELECT id, CASE WHEN seal_key IS NULL THEN 0 ELSE 1 END FROM avatar_images WHERE {place} ORDER BY id"
+    );
+    let rows: Vec<(String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .fetch_all(db)
+        .await
+        .expect("pictures");
+    rows.into_iter().map(|(id, key)| (id, key == 1)).collect()
+}
+
+async fn served(state: &AppState, id: &str) -> Vec<u8> {
+    use axum::response::IntoResponse;
+    let res = crate::api::avatars::get_avatar(
+        State(state.clone()),
+        HeaderMap::new(),
+        Path((id.to_string(), "64".to_string())),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("picture: {}", e.1))
+    .into_response();
+    axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .expect("body")
+        .to_vec()
+}
+
+#[tokio::test]
+async fn a_server_job_covers_the_stored_pictures_of_its_server() {
+    for (state, temp) in each_db_keyed("seal_jobs_pictures").await {
+        let db = &state.db;
+        people(db).await;
+        let image = || {
+            axum::body::Body::from(rchat_avatar::samples::png(&rchat_avatar::samples::halves(
+                90, 90,
+            )))
+        };
+        let crop = || Query(serde_json::from_value(json!({})).expect("crop"));
+        let icon = crate::api::avatars::put_server_icon(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Path("rchat".to_string()),
+            crop(),
+            HeaderMap::new(),
+            image(),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("icon: {}", e.1))
+        .0
+        .icon_image
+        .expect("a picture id");
+        let own = crate::api::avatars::put_my_avatar(
+            State(state.clone()),
+            Authed(mem_user("bob", false)),
+            crop(),
+            HeaderMap::new(),
+            image(),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("own: {}", e.1))
+        .0
+        .user
+        .avatar_image
+        .expect("a picture id");
+        let before = served(&state, &icon).await;
+        assert_eq!(
+            pictures(db, "server = 'rchat'").await,
+            [(icon.clone(), false)]
+        );
+
+        switch(&state, true).await;
+        let job = start(&state, "alice", "s:rchat", Direction::Seal, PASSWORD)
+            .await
+            .expect("start");
+        assert_eq!(ended(&state, job.id).await.state, JobState::Done);
+        assert_eq!(
+            pictures(db, "server = 'rchat'").await,
+            [(icon.clone(), true)]
+        );
+        assert_eq!(
+            pictures(db, "server IS NULL").await,
+            [(own.clone(), false)],
+            "an account's picture follows the site, not a server"
+        );
+        let stored: Vec<u8> = sqlx::query_scalar("SELECT s64 FROM avatar_images WHERE id = $1")
+            .bind(&icon)
+            .fetch_one(db)
+            .await
+            .expect("file");
+        assert_ne!(stored, before, "no plain file is left");
+        assert_eq!(served(&state, &icon).await, before);
+        assert_eq!(
+            super::still_sealed(db, &Target::Server("rchat".to_string()))
+                .await
+                .unwrap_or_else(|e| panic!("count: {}", e.1)),
+            1,
+            "the picture counts as stored encrypted"
+        );
+
+        let next = crate::api::avatars::put_server_icon(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Path("rchat".to_string()),
+            crop(),
+            HeaderMap::new(),
+            image(),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("icon: {}", e.1))
+        .0
+        .icon_image
+        .expect("a picture id");
+        assert_eq!(
+            pictures(db, "server = 'rchat'").await,
+            [(next.clone(), true)],
+            "a picture set while the server is encrypted is stored encrypted at once"
+        );
+
+        let back = start(&state, "carol", "s:rchat", Direction::Unseal, PASSWORD)
+            .await
+            .expect("unseal");
+        assert_eq!(ended(&state, back.id).await.state, JobState::Done);
+        assert_eq!(
+            pictures(db, "server = 'rchat'").await,
+            [(next.clone(), false)]
+        );
+        let plain: Vec<u8> = sqlx::query_scalar("SELECT s64 FROM avatar_images WHERE id = $1")
+            .bind(&next)
+            .fetch_one(db)
+            .await
+            .expect("file");
+        assert_eq!(served(&state, &next).await, plain);
+        temp.done(state).await;
+    }
+}
+
 #[tokio::test]
 async fn a_dm_job_is_for_its_participants() {
     for (state, temp) in each_db_keyed("seal_jobs_dm").await {

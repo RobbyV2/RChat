@@ -599,6 +599,7 @@ async fn step(state: &AppState, id: i64) -> Result<bool, ApiError> {
         }
     }
     server_bios(db, &target, job.direction).await?;
+    pictures(db, &target, job.direction).await?;
     if target == Target::All {
         extras(state, job.direction).await?;
     }
@@ -867,6 +868,7 @@ pub(crate) async fn still_sealed(db: &Db, target: &Target) -> Result<i64, ApiErr
                 "SELECT COUNT(*) FROM media WHERE seal_key IS NOT NULL",
                 "SELECT COUNT(*) FROM users WHERE bio_sealed IS NOT NULL",
                 "SELECT COUNT(*) FROM member_profiles WHERE bio_sealed IS NOT NULL",
+                "SELECT COUNT(*) FROM avatar_images WHERE seal_key IS NOT NULL",
                 "SELECT COUNT(*) FROM reports WHERE sealed IS NOT NULL",
                 "SELECT COUNT(*) FROM report_events WHERE detail_sealed IS NOT NULL",
                 "SELECT COUNT(*) FROM webhook_deliveries WHERE payload_sealed IS NOT NULL",
@@ -879,9 +881,12 @@ pub(crate) async fn still_sealed(db: &Db, target: &Target) -> Result<i64, ApiErr
         )),
     }
     if let Target::Server(_) = target {
-        sqls.push(
-            "SELECT COUNT(*) FROM member_profiles WHERE bio_sealed IS NOT NULL AND server = $1"
-                .to_string(),
+        sqls.extend(
+            [
+                "SELECT COUNT(*) FROM member_profiles WHERE bio_sealed IS NOT NULL AND server = $1",
+                "SELECT COUNT(*) FROM avatar_images WHERE seal_key IS NOT NULL AND server = $1",
+            ]
+            .map(str::to_string),
         );
     }
     let mut left = crate::api::scheduled::still_sealed(db, target).await?;
@@ -978,6 +983,49 @@ async fn server_bios(db: &Db, target: &Target, direction: Direction) -> Result<(
             Some((server, username, ..)) if rows.len() as i64 == COPIES_BATCH => {
                 after = (server.clone(), username.clone());
             }
+            _ => return Ok(()),
+        }
+    }
+}
+
+/// What a job does to the stored pictures of its place once its messages are done: the pictures
+/// of a server (its own and those of its server profiles), and over every place the pictures of
+/// accounts too. It encrypts the plain ones whose place is stored encrypted, or stores the
+/// encrypted ones plain again. One that does not open stays.
+async fn pictures(db: &Db, target: &Target, direction: Direction) -> Result<(), ApiError> {
+    use crate::api::avatars::stored;
+    let place = match target {
+        Target::Server(_) => "server = $3",
+        Target::All => "$3 = ''",
+        Target::Dm(_) => return Ok(()),
+    };
+    let name = match target {
+        Target::Server(name) => name.as_str(),
+        Target::All | Target::Dm(_) => "",
+    };
+    let form = match direction {
+        Direction::Seal => "seal_key IS NULL",
+        Direction::Unseal => "seal_key IS NOT NULL",
+    };
+    let sql = format!(
+        "SELECT id, server FROM avatar_images WHERE {form} AND {place} AND id > $1 ORDER BY id LIMIT $2"
+    );
+    let mut after = String::new();
+    loop {
+        let rows: Vec<(String, Option<String>)> = sqlx::query_as(sqlx::AssertSqlSafe(sql.clone()))
+            .bind(&after)
+            .bind(COPIES_BATCH)
+            .bind(name)
+            .fetch_all(db)
+            .await?;
+        for (id, server) in &rows {
+            match direction {
+                Direction::Seal => stored::seal_plain(db, id, server.as_deref()).await?,
+                Direction::Unseal => stored::unseal(db, id).await?,
+            }
+        }
+        match rows.last() {
+            Some((last, _)) if rows.len() as i64 == COPIES_BATCH => after = last.clone(),
             _ => return Ok(()),
         }
     }
