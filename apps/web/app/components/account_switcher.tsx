@@ -7,7 +7,6 @@ import {
   instanceAddress,
   instanceName,
   labelWith,
-  personCalled,
   type NameValue,
 } from '../lib/names'
 import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
@@ -100,7 +99,7 @@ export function AccountSwitcherTile() {
             </Inset>
           )}
         </span>
-        <Name of={personCalled(row.display)} look="w-full truncate text-xs font-semibold" />
+        <Name of={accountLabel(row.display)} look="w-full truncate text-xs font-semibold" />
         <Name
           of={instanceName(group.name)}
           look="w-full truncate text-3xs text-on-surface-variant"
