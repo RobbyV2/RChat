@@ -1,6 +1,14 @@
 // The browser tab's (and the desktop window's) title: the place on screen, a leading dot while
 // something is unread or waits, and the count of unseen notifications. Pure.
 import { badgeText } from './pings'
+import {
+  labelWith,
+  notAName,
+  personCalled,
+  serverCalled,
+  type Label,
+  type NameLabeller,
+} from './names'
 import type { TabMark } from './platform/notifications'
 import type { DmSummary, Me, ServerDetail } from './types'
 
@@ -79,17 +87,27 @@ export const conversationPlace = (name: string | null): TabPlace =>
   name === null ? APP_PLACE : { kind: 'dm', name, own: false }
 
 // "#general · Club", "Lounge · Club" (voice), "@Alice", "Club", or the app's name. Streamer mode
-// names no server, channel or person.
-export const placeText = (place: TabPlace, app: string, streamer: boolean) => {
+// names no server, channel or person; the viewer's filter masks what is not their own.
+export const placeText = (place: TabPlace, app: string, say: NameLabeller): Label => {
   switch (place.kind) {
-    case 'channel':
-      return streamer ? 'Server' : `${place.voice ? '' : '#'}${place.channel} · ${place.server}`
+    case 'channel': {
+      const { channel, voice, own } = place
+      const server = serverCalled(place.server, own)
+      return say.line('Server', () =>
+        voice
+          ? labelWith`${say.covered(channel, 'Channel', own)} · ${say(server)}`
+          : labelWith`#${say.covered(channel, 'Channel', own)} · ${say(server)}`
+      )
+    }
     case 'dm':
-      return streamer ? 'Direct message' : `@${place.name}`
+      return say.line(
+        'Direct message',
+        () => labelWith`@${say(personCalled(place.name, null, place.own))}`
+      )
     case 'server':
-      return streamer ? 'Server' : place.server
+      return say(serverCalled(place.server, place.own), 'Server')
     case 'app':
-      return app
+      return notAName(app)
   }
 }
 
@@ -97,11 +115,11 @@ export const placeText = (place: TabPlace, app: string, streamer: boolean) => {
 export const tabTitle = (
   place: TabPlace,
   app: string,
-  streamer: boolean,
+  say: NameLabeller,
   pings: number,
   unread: boolean
 ) => {
-  const text = placeText(place, app, streamer)
+  const text = placeText(place, app, say)
   const count = pings > 0 ? `(${badgeText(pings)}) ` : ''
   return `${count}${tabMark(pings, unread) === 'none' ? '' : '• '}${text}`
 }

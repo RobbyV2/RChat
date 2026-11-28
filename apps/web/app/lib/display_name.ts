@@ -3,6 +3,7 @@ import type { RChatState } from './store_types'
 import type { UserRef } from './types'
 import { isGuestName } from './guest_voice'
 import { isWebhookAuthor } from './webhooks'
+import { handleName, labelWith, unnamed, type Label, type NameLabeller } from './names'
 
 export const DISPLAY_NAME_MAX = 32
 
@@ -40,11 +41,13 @@ export const tileName = (u: Named, p2p: boolean, mask: (text: string) => string)
 // What a mention pill shows: the handle that resolves.
 export const mentionHandle = (u: Named) => (showsUsername(u) ? u.username : u.display_name)
 
-export const dmPlaceholder = (
-  other: Named | undefined,
-  streamer: boolean,
-  mask: (text: string) => string = t => t
-) => (streamer || !other ? 'Send a direct message' : `Message @${mask(other.username)}`)
+export const dmPlaceholder = (other: Named | undefined, say: NameLabeller): Label =>
+  other
+    ? say.line(
+        'Send a direct message',
+        () => labelWith`Message @${say(handleName(other.username))}`
+      )
+    : unnamed('Send a direct message')
 
 export const canEditDisplayName = (s: RChatState) =>
   s.me !== null && !s.guest && s.settings.display_names

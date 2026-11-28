@@ -1,3 +1,4 @@
+import type { Label } from './names'
 import { TIMEOUT_MAX_MS } from './p2p/acl/rules'
 import { actParts } from './p2p/flows'
 import { hasBit, moved } from './perms'
@@ -81,7 +82,8 @@ export interface LogLine {
 }
 
 export interface LogNames {
-  member: (ik: string) => string
+  // A member's name as a label, which applies streamer mode and the viewer's filter.
+  member: (ik: string) => Label
   // A role's or a channel's (or category's) name as shown here, or null when it is gone.
   role: (id: string) => string | null
   channel: (id: string) => string | null

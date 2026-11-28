@@ -1,3 +1,4 @@
+import { notAName } from '../names'
 import { beforeAll, describe, expect, test } from 'bun:test'
 import {
   REASON_MAX,
@@ -97,7 +98,7 @@ describe('permission diffs', () => {
 })
 
 const names: LogNames = {
-  member: ik => ({ IK_B: 'bob', IK_A: 'alice' })[ik] ?? 'someone',
+  member: ik => notAName({ IK_B: 'bob', IK_A: 'alice' }[ik] ?? 'someone'),
   role: id => ({ R1: 'Mods', R3: 'Greeters' })[id] ?? null,
   channel: id => ({ c1: '#general', k1: 'Team' })[id] ?? null,
   text: t => t.replace('darn', '****'),

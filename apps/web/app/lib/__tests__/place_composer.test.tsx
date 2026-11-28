@@ -1,3 +1,4 @@
+import { nameText, unnamed } from '../names'
 import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ComposerField, fits } from '../../components/composer_field'
@@ -264,7 +265,7 @@ placeContract(composer, (kind, world) => {
             <ComposerField
               compose={main}
               listKey={null}
-              placeholder="Message"
+              placeholder={unnamed('Message')}
               slowLeft={0}
               bar={null}
               later={() => null}
@@ -492,11 +493,11 @@ placeContract(composer, (kind, world) => {
     expect(main.state.get().to).toBe(to)
     expect(peer).toBe(!hosted)
     expect(listKey).not.toBeNull()
-    expect(to.hidden).toBe(
+    expect<string | null>(to.hidden).toBe(
       hosted ? (kind === 'hostedDm' ? 'Send a direct message' : null) : 'Send a P2P message'
     )
     if (kind === 'hostedServer' || kind === 'p2pRoom') expect(to.what?.kind).toBe('channel')
-    if (kind === 'p2pDm') expect(to.what).toEqual({ kind: 'person', handle: 'Bob' })
+    if (kind === 'p2pDm' && to.what?.kind === 'person') expect(nameText(to.what.name)).toBe('Bob')
     expect(thread.state.get().to.what).toEqual({ kind: 'thread' })
     if (!hosted) expect(isUnsupported(poll) && poll.line).toBe('Polls are not available in P2P')
     if (kind === 'hostedServer') expect(poll).toEqual({ kind: 'channel', id: 1 })

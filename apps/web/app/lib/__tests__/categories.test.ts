@@ -1,3 +1,4 @@
+import { notAName } from '../names'
 import { describe, expect, test } from 'bun:test'
 import {
   applyLayout,
@@ -240,7 +241,10 @@ describe('groups of P2P rooms and the sync texts', () => {
     expect(namesText(['@everyone'])).toBe('@everyone')
     expect(namesText(['@everyone', 'Mods', 'bob'])).toBe('@everyone, Mods and bob')
     const names: Record<string, string> = { 'r:1': 'Mods', 'r:2': 'Muted', 'u:bob': 'bob' }
-    expect(subjectNames(['r:1+r:2', 'u:bob'], s => names[s])).toEqual(['Mods with Muted', 'bob'])
+    expect(subjectNames(['r:1+r:2', 'u:bob'], s => notAName(names[s]))).toEqual([
+      'Mods with Muted',
+      'bob',
+    ])
     expect(syncConfirmText('Team', '#plans', ['Mods'])).toBe(
       'Syncing with Team lets Mods see or send in #plans.'
     )

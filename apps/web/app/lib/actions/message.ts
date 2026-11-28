@@ -41,6 +41,7 @@ import { isWebhookMessage, webhookIdOf } from '../webhooks'
 import { messageFlags } from '../place/rows'
 import { signedIn } from './global'
 import type { Action, ActionCtx } from './types'
+import { unnamed } from '../names'
 
 const copy = (text: string) => void sharing().copyText(text)
 
@@ -405,9 +406,11 @@ export const embedActions: Action[] = [
     id: 'inbox_open',
     title: 'Jump to message',
     label: ({ target }) =>
-      target.kind === 'inbox' && target.entry.where.kind === 'friends'
-        ? 'Open friends'
-        : 'Jump to message',
+      unnamed(
+        target.kind === 'inbox' && target.entry.where.kind === 'friends'
+          ? 'Open friends'
+          : 'Jump to message'
+      ),
     icon: ExternalLink,
     scope: 'message',
     targets: ['inbox'],

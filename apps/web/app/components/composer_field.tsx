@@ -28,6 +28,7 @@ import { FormatToolbar, useFormatting } from './format_toolbar'
 import { useTextAssist } from './text_assist'
 import { Surface } from './layout'
 import { time } from '../lib/platform/time'
+import { type Label } from '../lib/names'
 
 // Whether `text` can be sent as far as its size goes.
 export const fits = (compose: Compose, text: string, max: number) =>
@@ -65,7 +66,7 @@ export function ComposerField({
   compose: Compose
   // The list whose people and messages the completions draw on.
   listKey: string | null
-  placeholder: string
+  placeholder: Label
   // Seconds until slow mode lets the next message through.
   slowLeft: number
   // Sending is held back for a reason the caller shows.

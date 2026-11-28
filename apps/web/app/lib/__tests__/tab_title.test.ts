@@ -9,6 +9,18 @@ import {
   tabMark,
   tabTitle,
 } from '../tab_title'
+import { labellerFor } from '../names'
+
+const shown = labellerFor(
+  false,
+  t => t.replace(/darn/g, '****'),
+  () => false
+)
+const hidden = labellerFor(
+  true,
+  t => t,
+  () => false
+)
 
 const channel = {
   kind: 'channel',
@@ -20,25 +32,40 @@ const channel = {
 
 describe('the tab title', () => {
   test('names the place: a channel with its server, a DM, a server, or the app', () => {
-    expect(placeText(channel, 'Chat', false)).toBe('#general · Club')
-    expect(placeText({ kind: 'dm', name: 'Alice', own: false }, 'Chat', false)).toBe('@Alice')
-    expect(placeText({ kind: 'server', server: 'Club', own: false }, 'Chat', false)).toBe('Club')
-    expect(placeText({ kind: 'app' }, 'Chat', false)).toBe('Chat')
+    expect<string>(placeText(channel, 'Chat', shown)).toBe('#general · Club')
+    expect<string>(placeText({ kind: 'dm', name: 'Alice', own: false }, 'Chat', shown)).toBe(
+      '@Alice'
+    )
+    expect<string>(placeText({ kind: 'server', server: 'Club', own: false }, 'Chat', shown)).toBe(
+      'Club'
+    )
+    expect<string>(placeText({ kind: 'app' }, 'Chat', shown)).toBe('Chat')
+  })
+
+  test('masks the names the viewer does not own', () => {
+    const darn = { ...channel, channel: 'darn talk', server: 'darn club' }
+    expect<string>(placeText(darn, 'Chat', shown)).toBe('#**** talk · **** club')
+    expect<string>(placeText({ ...darn, own: true }, 'Chat', shown)).toBe('#darn talk · darn club')
+    expect<string>(placeText({ kind: 'dm', name: 'darn dee', own: false }, 'Chat', shown)).toBe(
+      '@**** dee'
+    )
   })
 
   test('names no server, channel or person in streamer mode', () => {
-    expect(placeText(channel, 'Chat', true)).toBe('Server')
-    expect(placeText({ kind: 'dm', name: 'Alice', own: false }, 'Chat', true)).toBe(
+    expect<string>(placeText(channel, 'Chat', hidden)).toBe('Server')
+    expect<string>(placeText({ kind: 'dm', name: 'Alice', own: false }, 'Chat', hidden)).toBe(
       'Direct message'
     )
-    expect(placeText({ kind: 'server', server: 'Club', own: false }, 'Chat', true)).toBe('Server')
+    expect<string>(placeText({ kind: 'server', server: 'Club', own: false }, 'Chat', hidden)).toBe(
+      'Server'
+    )
   })
 
   test('leads with a dot while something is unread, and the count of notifications', () => {
-    expect(tabTitle(channel, 'Chat', false, 0, false)).toBe('#general · Club')
-    expect(tabTitle(channel, 'Chat', false, 0, true)).toBe('• #general · Club')
-    expect(tabTitle(channel, 'Chat', false, 3, false)).toBe('(3) • #general · Club')
-    expect(tabTitle({ kind: 'app' }, 'Chat', false, 250, true)).toBe('(99+) • Chat')
+    expect<string>(tabTitle(channel, 'Chat', shown, 0, false)).toBe('#general · Club')
+    expect<string>(tabTitle(channel, 'Chat', shown, 0, true)).toBe('• #general · Club')
+    expect<string>(tabTitle(channel, 'Chat', shown, 3, false)).toBe('(3) • #general · Club')
+    expect<string>(tabTitle({ kind: 'app' }, 'Chat', shown, 250, true)).toBe('(99+) • Chat')
   })
 
   test('the favicon mark', () => {
@@ -84,7 +111,7 @@ describe('the name of a place', () => {
       voice: false,
       own: true,
     })
-    expect(placeText(serverPlace(account, 'club', 2), 'A', false)).toBe('Lounge · Club')
+    expect<string>(placeText(serverPlace(account, 'club', 2), 'A', shown)).toBe('Lounge · Club')
     expect(serverPlace(account, 'club', 99)).toEqual({ kind: 'server', server: 'Club', own: true })
     expect(serverPlace(account, 'club', null)).toEqual({
       kind: 'server',

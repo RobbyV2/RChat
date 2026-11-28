@@ -42,7 +42,9 @@ import { EVERYONE_SUBJECT } from '../rules'
 import type { Page } from '../lists'
 import { HOSTED, baseBits, widened } from '../perms'
 import { loadPermissionRules } from '../perms_load'
-import { subjectNames, syncConfirmText } from '../categories'
+import { subjectLabel, subjectNames, syncConfirmText, type SubjectNames } from '../categories'
+import { personCalled } from '../names'
+import { stateLabels } from '../state_labels'
 import type { Paged, RChatState } from '../store_types'
 import { groupFor, groupKey, mapGroups, regroup, serverGroups } from '../member_groups'
 import { type RolePlaces, placeRoles, withRole, withRoleEvents } from '../role_looks'
@@ -1394,15 +1396,19 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
             return ask(null)
           }
         }
-        const nameOf = (subject: string) =>
-          subject === EVERYONE_SUBJECT
-            ? '@everyone'
-            : subject.startsWith('r:')
-              ? (detail.roles.find(r => `r:${r.id}` === subject)?.name ?? 'a role')
-              : get().streamer
-                ? 'a member'
-                : (memberState(get(), server, subject.slice(2))?.display_name ?? subject.slice(2))
-        ask(subjectNames(subjects, nameOf))
+        const s = get()
+        const creator = s.me?.servers.find(x => x.name === server)?.creator ?? detail.creator
+        const of: SubjectNames = {
+          everyone: EVERYONE_SUBJECT,
+          role: id => detail.roles.find(r => String(r.id) === id)?.name ?? null,
+          member: username => {
+            const m = memberState(s, server, username)
+            return m ? personCalled(m.display_name, username) : null
+          },
+          own: !!s.me && creator === s.me.username,
+        }
+        const say = stateLabels(s)
+        ask(subjectNames(subjects, subject => subjectLabel(subject, say, of)))
       }),
     adminDeleteUser: username => act(async () => void (await api.adminDeleteUser(username))),
     adminRemovePhrase: username =>

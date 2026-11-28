@@ -4,12 +4,14 @@ import { userRefFor } from '../store'
 import type { UserRef } from '../types'
 import { signedIn, username, usernameStep } from './global'
 import type { Action, ActionCtx, Expansion } from './types'
+import { markedLabelsOf } from './ctx'
+import { unnamed, labelWith, personCalled, type Said } from '../names'
 
 const member = ({ s }: ActionCtx) => signedIn(s)
 
-const person = (u: UserRef, label: string): Expansion => ({
+const person = <const V extends string>(ctx: ActionCtx, u: UserRef, verb: Said<V>): Expansion => ({
   key: u.username,
-  label,
+  label: labelWith`${unnamed(verb)} ${markedLabelsOf(ctx)(personCalled(u.display_name, u.username))}`,
   subtitle: `@${u.username}`,
   subtitleName: true,
   name: true,
@@ -64,10 +66,8 @@ export const friendActions: Action[] = [
     group: 'friends',
     icon: UserPlus,
     available: member,
-    expand: ({ s }) =>
-      s.incomingRequests.list.map(r =>
-        person(r.user, `Accept friend request: ${r.user.display_name}`)
-      ),
+    expand: ctx =>
+      ctx.s.incomingRequests.list.map(r => person(ctx, r.user, 'Accept friend request:')),
     run: ({ acct, s }, { user }) => {
       const u = s.incomingRequests.list.find(r => r.user.username === user)?.user
       if (u) void acct.store.getState().acceptFriend(u)
@@ -80,10 +80,8 @@ export const friendActions: Action[] = [
     group: 'friends',
     icon: UserMinus,
     available: member,
-    expand: ({ s }) =>
-      s.incomingRequests.list.map(r =>
-        person(r.user, `Deny friend request: ${r.user.display_name}`)
-      ),
+    expand: ctx =>
+      ctx.s.incomingRequests.list.map(r => person(ctx, r.user, 'Deny friend request:')),
     run: ({ acct, s }, { user }) => {
       if (s.incomingRequests.list.some(r => r.user.username === user))
         void acct.store.getState().denyFriend(user)
@@ -97,8 +95,7 @@ export const friendActions: Action[] = [
     icon: UserMinus,
     danger: true,
     available: member,
-    expand: ({ s }) =>
-      s.friends.list.map(f => person(f.user, `Remove friend: ${f.user.display_name}`)),
+    expand: ctx => ctx.s.friends.list.map(f => person(ctx, f.user, 'Remove friend:')),
     run: ({ acct, s }, { user }) => {
       const u = s.friends.list.find(f => f.user.username === user)?.user
       if (u) acct.store.getState().askRemoveFriend(u)
@@ -111,7 +108,7 @@ export const friendActions: Action[] = [
     group: 'friends',
     icon: ShieldOff,
     available: member,
-    expand: ({ s }) => s.blockList.list.map(b => person(b.user, `Unblock ${b.user.display_name}`)),
+    expand: ctx => ctx.s.blockList.list.map(b => person(ctx, b.user, 'Unblock')),
     run: ({ acct, s }, { user }) => {
       const u = s.blockList.list.find(b => b.user.username === user)?.user
       if (u) void acct.store.getState().unblockUser(u.username, u.display_name)

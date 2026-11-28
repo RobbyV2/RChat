@@ -1,3 +1,4 @@
+import { notAName } from '../names'
 import { describe, expect, test } from 'bun:test'
 import { joinWithCode, makeMember, pump } from './p2p_server_net'
 import { Hub, ManualClock } from './p2p_net'
@@ -57,7 +58,7 @@ describe('the moderation log', () => {
     expect(third.next).toBeNull()
 
     const lines = logLines(all.events, {
-      member: ik => (ik === bob ? 'Bob' : 'Alice'),
+      member: ik => notAName(ik === bob ? 'Bob' : 'Alice'),
       role: id => (id === mods ? 'Mods' : null),
       channel: id => (id === general ? '#general' : null),
       text: t => t,

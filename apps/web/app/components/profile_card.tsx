@@ -303,7 +303,6 @@ function CardBody({
   const me = useStore(s => s.me)
   const messageMax = useStore(s => limitsOf(s.instance).message_chars)
   const guest = useStore(s => s.guest)
-  const streamer = useStore(s => s.streamer)
   const actor = useViewActor()
   const suffix = useActorSuffix(actor)
   const homeHost = useStore(s => s.instanceHost)
@@ -787,7 +786,7 @@ function CardBody({
                         }
                       }}
                       aria-label="Send a direct message"
-                      placeholder={dmPlaceholder(user, streamer) + suffix}
+                      placeholder={labelWith`${dmPlaceholder(user, say)}${suffix}`}
                       className={`w-full ${fieldCls} bg-surface-container-low text-on-surface`}
                     />
                   )}

@@ -18,6 +18,7 @@ import {
 } from '../notify'
 import type { Action, ActionCtx, ArgChoice, ArgStep, Scope, Target } from './types'
 import { time } from '../platform/time'
+import { unnamed, notAName } from '../names'
 
 const SUPPRESS: Suppress[] = ['everyone', 'roles']
 
@@ -26,7 +27,10 @@ export const muteStep: ArgStep = {
   name: 'value',
   prompt: 'For how long',
   choices: () =>
-    MUTE_CHOICES.map(c => ({ value: c.ms === null ? 'forever' : String(c.ms), label: c.label })),
+    MUTE_CHOICES.map(c => ({
+      value: c.ms === null ? 'forever' : String(c.ms),
+      label: notAName(c.label),
+    })),
 }
 
 export const muteUntil = (value: string): MuteUntil =>
@@ -40,7 +44,7 @@ const levelChoices = (p: NotifyPrefs, scope: NotifyScope): ArgChoice[] => {
   const level = levelOf(p, scope)
   const radios = LEVELS.map(l => ({
     value: l.level,
-    label: l.label,
+    label: notAName(l.label),
     radio: true,
     checked: inherits(scope) ? own === l.level : level === l.level,
   }))
@@ -48,7 +52,7 @@ const levelChoices = (p: NotifyPrefs, scope: NotifyScope): ArgChoice[] => {
     return [
       {
         value: 'default',
-        label: 'Use server default',
+        label: unnamed('Use server default'),
         subtitle: levelLabel(inheritedLevel(p, scope)),
         radio: true,
         checked: !own,
@@ -60,7 +64,7 @@ const levelChoices = (p: NotifyPrefs, scope: NotifyScope): ArgChoice[] => {
     ...radios,
     ...SUPPRESS.map(which => ({
       value: `suppress_${which}`,
-      label: SUPPRESS_LABELS[which],
+      label: notAName(SUPPRESS_LABELS[which]),
       checked: suppressedOf(p, scope.name, which),
     })),
   ]

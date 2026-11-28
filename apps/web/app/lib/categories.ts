@@ -1,3 +1,4 @@
+import { unnamed, type Label, type NameLabeller, type NameValue } from './names'
 import type { CategoryView, ChannelView, SeparatorView, ServerView } from './p2p/server/types'
 import type {
   Category,
@@ -212,8 +213,25 @@ export const namesText = (names: readonly string[]) =>
   names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
 
 // The names of the subjects a sync lets in; a pair of roles (`a+b`) reads "A with B".
-export const subjectNames = (subjects: readonly string[], nameOf: (subject: string) => string) =>
+export const subjectNames = (subjects: readonly string[], nameOf: (subject: string) => Label) =>
   subjects.map(s => s.split('+').map(nameOf).join(' with '))
+
+// What a permission subject is called in a sentence: @everyone, a role's name or a member's.
+export interface SubjectNames {
+  everyone: string
+  role: (id: string) => string | null
+  member: (id: string) => NameValue | null
+  // The viewer owns the place: role names are their own text.
+  own: boolean
+}
+
+export const subjectLabel = (subject: string, say: NameLabeller, of: SubjectNames): Label => {
+  if (subject === of.everyone) return unnamed('@everyone')
+  if (subject.startsWith('r:'))
+    return say.covered(of.role(subject.slice(2)) ?? 'a role', 'a role', of.own)
+  const member = of.member(subject.slice(2))
+  return member ? say(member, 'a member') : unnamed('a member')
+}
 
 // What syncing a channel with its category asks before it lets more people in.
 export const syncConfirmText = (category: string, channel: string, names: readonly string[]) =>

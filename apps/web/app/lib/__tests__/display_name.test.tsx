@@ -12,7 +12,7 @@ import { Row } from '../../components/layout'
 import type { Look } from '../role_looks'
 import { DisplayNameField, nameRevealKey } from '../../components/display_name'
 import { Name } from '../../components/name'
-import { personName } from '../names'
+import { labellerFor, personName } from '../names'
 import { shownUser } from '../people'
 import { MaskedWords } from '../../components/ui'
 import { MarkdownMessage } from '../../components/markdown_message'
@@ -229,10 +229,22 @@ test('DM headers and sidebar rows show the username next to a display name', () 
 })
 
 test('DM composers address the username', () => {
-  expect(dmPlaceholder(impostor, false)).toBe('Message @bob')
-  expect(dmPlaceholder(user('alice', { display_name: 'Alice' }), false)).toBe('Message @alice')
-  expect(dmPlaceholder(impostor, true)).toBe('Send a direct message')
-  expect(dmPlaceholder(undefined, false)).toBe('Send a direct message')
+  const shown = labellerFor(
+    false,
+    t => t,
+    () => false
+  )
+  const hidden = labellerFor(
+    true,
+    t => t,
+    () => false
+  )
+  expect<string>(dmPlaceholder(impostor, shown)).toBe('Message @bob')
+  expect<string>(dmPlaceholder(user('alice', { display_name: 'Alice' }), shown)).toBe(
+    'Message @alice'
+  )
+  expect<string>(dmPlaceholder(impostor, hidden)).toBe('Send a direct message')
+  expect<string>(dmPlaceholder(undefined, shown)).toBe('Send a direct message')
 })
 
 test('the typing line names the account too', () => {

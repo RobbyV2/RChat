@@ -59,7 +59,9 @@ import { signedIn, username, usernameStep } from './global'
 import { muteStep, muteUntil } from './notify'
 import { railServer } from './server'
 import type { Action, ActionCtx, ArgChoice, ArgStep, Scope, Target } from './types'
+import { labelsOf, markedLabelsOf } from './ctx'
 import { time } from '../platform/time'
+import { unnamed, labelWith, personCalled, type Label, type Said, notAName } from '../names'
 
 const copy = (text: string, done: string, acct = client.shown()) =>
   void sharing()
@@ -72,8 +74,27 @@ const copy = (text: string, done: string, acct = client.shown()) =>
       )
     )
 
-const what = ({ channel, dm }: ActionCtx) =>
-  channel ? `#${channel.name}` : dm ? 'this DM' : 'this conversation'
+const ownServerOf = ({ s, server }: ActionCtx) =>
+  server !== null &&
+  !!s.me &&
+  (s.me.servers.find(x => x.name === server)?.creator ?? s.servers[server]?.creator) ===
+    s.me.username
+
+// "Call Alice": the DM's other person through the viewer's filter; the row is marked as a name.
+const called = <const V extends string>(ctx: ActionCtx, verb: Said<V>): Label =>
+  ctx.dm
+    ? labelWith`${unnamed(verb)} ${markedLabelsOf(ctx)(personCalled(ctx.dm.other.display_name, ctx.dm.other.username))}`
+    : unnamed(verb)
+
+const what = (ctx: ActionCtx): Label => {
+  const { channel } = ctx
+  if (!channel) return unnamed(ctx.dm ? 'this DM' : 'this conversation')
+  const say = labelsOf(ctx)
+  return say.line(
+    'this channel',
+    () => labelWith`#${say.covered(channel.name, 'this channel', ownServerOf(ctx))}`
+  )
+}
 
 // The open channel or DM, as the view names it (its details may not have loaded yet).
 const notifyHere = ({ s }: ActionCtx): NotifyScope | null => {
@@ -111,8 +132,8 @@ const mutedNow = (s: RChatState, scope: NotifyScope) => {
 }
 
 const levelChoices: ArgChoice[] = [
-  ...LEVELS.map(l => ({ value: l.level, label: l.label })),
-  { value: 'default', label: 'Default' },
+  ...LEVELS.map(l => ({ value: l.level, label: notAName(l.label) })),
+  { value: 'default', label: unnamed('Default') },
 ]
 
 interface NotifyPlace {
@@ -120,7 +141,7 @@ interface NotifyPlace {
   scope: Scope
   of(ctx: ActionCtx): NotifyScope | null
   // In titles: a fixed name, or one from the context.
-  name: string | ((ctx: ActionCtx) => string)
+  name: string | ((ctx: ActionCtx) => Label)
   // The menus mute and unmute join, which name the place by its noun ("Mute DM").
   menu?: { targets: readonly Target['kind'][]; noun(ctx: ActionCtx): string }
 }
@@ -129,7 +150,7 @@ const named = (p: NotifyPlace, verb: string, alone: string) => {
   const name = p.name
   return typeof name === 'string'
     ? { title: `${verb} ${name}` }
-    : { title: alone, label: (ctx: ActionCtx) => `${verb} ${name(ctx)}` }
+    : { title: alone, label: (ctx: ActionCtx) => labelWith`${notAName(verb)} ${name(ctx)}` }
 }
 
 // Mute and unmute in the menus `p.menu` names, labelled there by the place's noun.
@@ -138,7 +159,9 @@ const inMenus = (p: NotifyPlace, verb: string, alone: string) => {
   const { menu } = p
   if (!menu) return plain
   const label = (ctx: ActionCtx) =>
-    ctx.via === 'menu' ? `${verb} ${menu.noun(ctx)}` : (plain.label?.(ctx) ?? plain.title)
+    ctx.via === 'menu'
+      ? notAName(`${verb} ${menu.noun(ctx)}`)
+      : (plain.label?.(ctx) ?? notAName(plain.title))
   return { ...plain, label, targets: menu.targets, order: 120 }
 }
 
@@ -260,7 +283,8 @@ export const placeActions: Action[] = [
   {
     id: 'mark_read_here',
     title: 'Mark as read',
-    label: ctx => (ctx.via === 'menu' ? 'Mark as read' : `Mark ${what(ctx)} as read`),
+    label: ctx =>
+      ctx.via === 'menu' ? unnamed('Mark as read') : labelWith`Mark ${what(ctx)} as read`,
     scope: 'channel',
     icon: Check,
     iconFor: ({ via }) => (via === 'menu' ? CheckCheck : Check),
@@ -327,7 +351,7 @@ export const placeActions: Action[] = [
   {
     id: 'copy_link_here',
     title: 'Copy link',
-    label: ctx => `Copy link to ${what(ctx)}`,
+    label: ctx => labelWith`Copy link to ${what(ctx)}`,
     scope: 'channel',
     icon: Link,
     keywords: ['share', 'url'],
@@ -367,7 +391,7 @@ export const placeActions: Action[] = [
   {
     id: 'mark_server_read',
     title: 'Mark this server as read',
-    label: ({ via }) => (via === 'menu' ? 'Mark as read' : 'Mark this server as read'),
+    label: ({ via }) => unnamed(via === 'menu' ? 'Mark as read' : 'Mark this server as read'),
     scope: 'server',
     icon: Check,
     iconFor: ({ via }) => (via === 'menu' ? CheckCheck : Check),
@@ -461,15 +485,18 @@ export const placeActions: Action[] = [
     scope: 'server',
     icon: TimerOff,
     available: may(Perm.TimeoutMembers),
-    expand: ({ s, server }) =>
-      server === null
+    expand: ctx => {
+      const { s, server } = ctx
+      const say = markedLabelsOf(ctx)
+      return server === null
         ? []
         : Object.keys(s.timeouts[server] ?? {}).map(name => ({
             key: `${server}_${name}`,
-            label: `Remove timeout: ${userRefFor(s, name).display_name}`,
+            label: labelWith`Remove timeout: ${say(personCalled(userRefFor(s, name).display_name, name))}`,
             name: true,
             args: { server, user: name },
-          })),
+          }))
+    },
     run: ({ acct, s, server: here }, { server, user }) => {
       if (server === here && Object.keys(s.timeouts[server] ?? {}).includes(user))
         void acct.store.getState().removeTimeout(server, user)
@@ -478,7 +505,7 @@ export const placeActions: Action[] = [
   {
     id: 'leave_server',
     title: 'Leave this server',
-    label: ({ via }) => (via === 'menu' ? 'Leave Server' : 'Leave this server'),
+    label: ({ via }) => unnamed(via === 'menu' ? 'Leave Server' : 'Leave this server'),
     scope: 'server',
     icon: LogOut,
     danger: true,
@@ -518,7 +545,7 @@ export const placeActions: Action[] = [
   {
     id: 'call',
     title: 'Call',
-    label: ({ dm }) => `Call ${dm?.other.display_name ?? ''}`,
+    label: ctx => called(ctx, 'Call'),
     scope: 'dm',
     icon: Phone,
     name: true,
@@ -530,7 +557,7 @@ export const placeActions: Action[] = [
   {
     id: 'video_call',
     title: 'Video call',
-    label: ({ dm }) => `Video call ${dm?.other.display_name ?? ''}`,
+    label: ctx => called(ctx, 'Video call'),
     scope: 'dm',
     icon: Video,
     name: true,
@@ -542,7 +569,7 @@ export const placeActions: Action[] = [
   {
     id: 'close_dm',
     title: 'Close this DM',
-    label: ({ via }) => (via === 'menu' ? 'Close DM' : 'Close this DM'),
+    label: ({ via }) => unnamed(via === 'menu' ? 'Close DM' : 'Close this DM'),
     scope: 'dm',
     icon: X,
     targets: ['dm'],

@@ -8,7 +8,16 @@ import { peerServer } from '../actions/p2p_server'
 import { canOf, p2pMask } from '../channel_perms'
 import { guestPostingStatus, postGuest } from '../guest_chat'
 import { outgoing } from '../link_safety'
-import { p2pName, personCalled, type P2pName, type PersonName } from '../names'
+import {
+  handleName,
+  nameText,
+  p2pName,
+  personCalled,
+  unnamed,
+  type Label,
+  type P2pName,
+  type PersonName,
+} from '../names'
 import { displayName } from '../p2p/contacts'
 import { TRANSFERRED_TEXT } from '../p2p/flows'
 import { channelCan } from '../selectors'
@@ -77,16 +86,16 @@ export interface ComposeState {
 
 // What a field says it writes to.
 export interface WriteTo {
-  // The thread, a channel by its name, or a person by their handle; null while not known.
+  // The thread, a channel by its name, or a person; null while not known.
   what:
     | { kind: 'thread' }
     | { kind: 'channel'; name: string }
-    | { kind: 'person'; handle: string }
+    | { kind: 'person'; name: PersonName | P2pName }
     | null
   // Your own place: its names are yours to read unmasked.
   own: boolean
   // What stands there while names are hidden; null where the name stays.
-  hidden: string | null
+  hidden: Label | null
 }
 
 const sameTo = (a: WriteTo, b: WriteTo) =>
@@ -94,7 +103,9 @@ const sameTo = (a: WriteTo, b: WriteTo) =>
   a.hidden === b.hidden &&
   a.what?.kind === b.what?.kind &&
   (a.what?.kind === 'channel' && b.what?.kind === 'channel' ? a.what.name === b.what.name : true) &&
-  (a.what?.kind === 'person' && b.what?.kind === 'person' ? a.what.handle === b.what.handle : true)
+  (a.what?.kind === 'person' && b.what?.kind === 'person'
+    ? nameText(a.what.name) === nameText(b.what.name)
+    : true)
 
 // `read`, keeping the last value while it says the same.
 const keptTo = (read: () => WriteTo) => {
@@ -286,7 +297,7 @@ export interface Compose {
   // Where a forward sent from this list goes; null with nothing to write to.
   forwardTo: Live<ForwardTo | null>
   // Says that a forward went out to what the screen calls `title`.
-  forwarded: (title: string) => void
+  forwarded: (title: Label) => void
   // Sends the message on the forward clipboard here. `showSource`: whether the copy names where
   // it is from (null: the place decides). True once the copy went out.
   forward: (showSource: boolean | null) => Promise<boolean>
@@ -346,9 +357,9 @@ const hosted = (account: AccountSession): Composer =>
         }
         const dm = v?.kind === 'dm' ? s.dms.find(d => d.id === v.dmId) : undefined
         return {
-          what: dm ? { kind: 'person', handle: `@${dm.other.username}` } : null,
+          what: dm ? { kind: 'person', name: handleName(dm.other.username, dm.is_self) } : null,
           own: dm?.is_self === true,
-          hidden: 'Send a direct message',
+          hidden: unnamed('Send a direct message'),
         }
       })
     const state = (initial: boolean) => {
@@ -834,7 +845,7 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
     const toOf = (initial: boolean) =>
       keptTo((): WriteTo => {
         const s = initial ? useP2p.getInitialState() : useP2p.getState()
-        const hidden = 'Send a P2P message'
+        const hidden = unnamed('Send a P2P message')
         if (list === 'thread') return { what: { kind: 'thread' }, own: false, hidden }
         if (place.kind === 'p2pRoom') {
           const v = s.servers[room]
@@ -849,7 +860,10 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
         const peerIk = s.chat?.room === room ? s.chat.peer : s.rooms[room]?.peer
         const contact = s.contacts.find(c => c.ik === peerIk)
         return {
-          what: { kind: 'person', handle: contact ? displayName(contact) : 'Contact' },
+          what: {
+            kind: 'person',
+            name: contact ? p2pName(displayName(contact)) : p2pName('Contact', true),
+          },
           own: false,
           hidden,
         }

@@ -2,14 +2,21 @@
 import { isUnsupported } from '../lib/place/feature'
 import { OwnLoadNotice } from './own_load'
 
-import { Name } from './name'
-import { instanceName, notAName } from '../lib/names'
+import { Name, useNameLabels } from './name'
+import {
+  instanceName,
+  labelWith,
+  notAName,
+  unnamed,
+  type Label,
+  type NameLabeller,
+} from '../lib/names'
 import { Button, IconButton } from './controls'
 import { PeerCodeButton } from './p2p/peer_code_button'
 import { useActorSuffix, usePlaceActor } from './view_actor'
 import { useEffect, useState } from 'react'
 import { ChartColumn, Clock, ShieldAlert } from 'lucide-react'
-import { useMask, useStore } from '../lib/store'
+import { useStore } from '../lib/store'
 import { useAccount } from '../lib/client/react'
 import { useLive } from '../lib/place/react'
 import { clock } from '../lib/slowmode'
@@ -136,21 +143,23 @@ function SiteFilterNote() {
 }
 
 // What a list is called where a sentence names it.
-const titleOf = (to: WriteTo, mask: (text: string) => string) =>
+const titleOf = (to: WriteTo, say: NameLabeller): Label =>
   to.what === null
-    ? ''
+    ? unnamed('')
     : to.what.kind === 'thread'
-      ? 'the thread'
+      ? unnamed('the thread')
       : to.what.kind === 'channel'
-        ? `#${mask(to.what.name)}`
-        : mask(to.what.handle)
+        ? labelWith`#${say.covered(to.what.name, 'this channel', to.own)}`
+        : to.what.name.kind === 'person'
+          ? labelWith`@${say(to.what.name, 'this person')}`
+          : say(to.what.name, 'this contact')
 
-const placeholderOf = (to: WriteTo, hide: boolean, mask: (text: string) => string) =>
-  to.what === null || (hide && to.hidden !== null)
-    ? (to.hidden ?? 'Message')
+const placeholderOf = (to: WriteTo, say: NameLabeller): Label =>
+  to.what === null || (say.hiding && to.hidden !== null)
+    ? (to.hidden ?? unnamed('Message'))
     : to.what.kind === 'thread'
-      ? 'Message thread'
-      : `Message ${titleOf(to, mask)}`
+      ? unnamed('Message thread')
+      : labelWith`Message ${titleOf(to, say)}`
 
 // Where a message is written, in whichever place is around: the conversation on screen, or its
 // open thread.
@@ -163,8 +172,7 @@ export function Composer({ list = 'main' }: { list?: ComposerList }) {
   const { stuck } = useLive(compose.files)
   const later = useLive(compose.later)
   const forwarding = useForwardClip() !== null
-  const streamer = useStore(s => s.streamer)
-  const mask = useMask(to.own)
+  const say = useNameLabels()
   const suffix = useActorSuffix(usePlaceActor())
   const [expiryOpen, setExpiryOpen] = useState(false)
   const [pollOpen, setPollOpen] = useState(false)
@@ -178,11 +186,11 @@ export function Composer({ list = 'main' }: { list?: ComposerList }) {
   if (shut) return <ComposerGate compose={compose} list={list} />
   if (key === null) return null
 
-  const hidden = streamer && to.hidden !== null
+  const hidden = say.hiding && to.hidden !== null
   const bar = replying ? (
     <ReplyBar list={list} />
   ) : forwarding ? (
-    <ForwardBar list={list} sent={() => compose.forwarded(titleOf(to, mask))} />
+    <ForwardBar list={list} sent={() => compose.forwarded(titleOf(to, say))} />
   ) : null
 
   return (
@@ -242,7 +250,9 @@ export function Composer({ list = 'main' }: { list?: ComposerList }) {
       <ComposerField
         compose={compose}
         listKey={listKey}
-        placeholder={placeholderOf(to, hidden, mask) + (hidden ? '' : suffix)}
+        placeholder={
+          hidden ? placeholderOf(to, say) : labelWith`${placeholderOf(to, say)}${suffix}`
+        }
         slowLeft={slowLeft}
         blocked={stuck}
         bar={bar}

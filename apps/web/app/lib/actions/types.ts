@@ -1,3 +1,4 @@
+import type { Label } from '../names'
 import type { P2pApp } from '../p2p/app/runtime'
 import type { AccountSession } from '../client/session'
 import type { LucideIcon } from 'lucide-react'
@@ -176,7 +177,7 @@ export interface ActionCtx {
 
 export interface ArgChoice {
   value: string
-  label: string
+  label: Label
   subtitle?: string
   icon?: LucideIcon
   // A #rrggbb dot before the label.
@@ -208,7 +209,7 @@ export type ArgStep =
 // fill the action's steps.
 export interface Expansion {
   key: string
-  label: string
+  label: Label
   subtitle?: string
   name?: boolean
   subtitleName?: boolean
@@ -233,7 +234,7 @@ export interface Action<A extends Args = Args> {
   // The menus, palette contexts and row lists it joins; none: the palette and keys only.
   targets?: readonly Target['kind'][]
   // Text for this context; `title` stays the static, searchable name.
-  label?(ctx: ActionCtx): string
+  label?(ctx: ActionCtx): Label
   subtitle?(ctx: ActionCtx): string | undefined
   // The icon for this context; `icon` stays the static one.
   iconFor?(ctx: ActionCtx): LucideIcon

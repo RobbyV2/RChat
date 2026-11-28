@@ -46,7 +46,9 @@ import { messageStampToken } from '../timestamps'
 import type { Message } from '../types'
 import { hidesIp } from './voice'
 import type { Action, ActionCtx, ArgChoice } from './types'
+import { markedLabelsOf } from './ctx'
 import { identityActions } from './identity'
+import { unnamed, notAName, p2pName } from '../names'
 export const peerChat = identityActions(identity => {
   const copy = (text: string) => void sharing().copyText(text)
 
@@ -232,13 +234,13 @@ export const peerChat = identityActions(identity => {
   const forwardChoices = (ctx: ActionCtx): ArgChoice[] => {
     const t = rowOf(ctx)
     if (!t) return []
-    const mask = maskOf(ctx.s)
+    const say = markedLabelsOf(ctx)
     return [
       ...identity()
         .useP2p.getState()
         .contacts.filter(c => c.state === 'mutual' && c.ik !== t.chat.forwardSkip)
-        .map(c => ({ value: c.ik, label: mask(displayName(c)), name: true })),
-      { value: COPY, label: 'Copy for forwarding', icon: Copy },
+        .map(c => ({ value: c.ik, label: say(p2pName(displayName(c))), name: true })),
+      { value: COPY, label: unnamed('Copy for forwarding'), icon: Copy },
     ]
   }
 
@@ -323,7 +325,7 @@ export const peerChat = identityActions(identity => {
     {
       id: 'p2p_message_thread',
       title: 'Open thread',
-      label: ctx => rowOf(ctx)?.row.thread ?? 'Open thread',
+      label: ctx => notAName(rowOf(ctx)?.row.thread ?? 'Open thread'),
       icon: MessageSquareText,
       ...onMessage,
       order: 130,
@@ -380,7 +382,7 @@ export const peerChat = identityActions(identity => {
       // One attachment: "Save attachment", "Download attachment" or "Cancel download attachment".
       id: 'p2p_message_file',
       title: 'Attachment',
-      label: ctx => `${oneFile(ctx)?.verb ?? 'Download'} attachment`,
+      label: ctx => notAName(`${oneFile(ctx)?.verb ?? 'Download'} attachment`),
       subtitle: ctx => oneFile(ctx)?.name,
       icon: Download,
       iconFor: ctx => oneFile(ctx)?.icon ?? Download,
@@ -407,7 +409,7 @@ export const peerChat = identityActions(identity => {
           choices: ctx =>
             filesOf(ctx).map(f => ({
               value: f.h,
-              label: f.name,
+              label: notAName(f.name),
               subtitle: f.verb,
               icon: f.icon,
               disabled: f.disabled,
@@ -495,7 +497,7 @@ export const peerChat = identityActions(identity => {
     {
       id: 'p2p_call_direct',
       title: 'Call direct (P2P)',
-      label: () => ROUTE_LABEL.p2p,
+      label: () => notAName(ROUTE_LABEL.p2p),
       ...onCall,
       order: 100,
       radio: true,
@@ -517,7 +519,7 @@ export const peerChat = identityActions(identity => {
       expand: ({ s }) =>
         manualRelays(s.relayPrefs).map(r => ({
           key: r.url,
-          label: `Direct through ${displayHost(hostOf(r.url) ?? r.url)}`,
+          label: notAName(`Direct through ${displayHost(hostOf(r.url) ?? r.url)}`),
           wrap: true,
           args: { relay: r.url },
         })),

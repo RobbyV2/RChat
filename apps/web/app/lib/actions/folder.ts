@@ -6,6 +6,7 @@ import type { Folder } from '../nav_layout'
 
 import type { Action, ActionCtx, ArgChoice } from './types'
 import { identityActions } from './identity'
+import { unnamed, notAName } from '../names'
 export const peerFolder = identityActions(identity => {
   const CUSTOM = 'custom'
   const DEFAULT = 'default'
@@ -33,19 +34,19 @@ export const peerFolder = identityActions(identity => {
     return [
       ...FOLDER_PRESETS.map(p => ({
         value: p.color,
-        label: p.label,
+        label: notAName(p.label),
         swatch: p.color,
         radio: true,
         checked: p.color === color,
       })),
       {
         value: CUSTOM,
-        label: 'Custom color',
+        label: unnamed('Custom color'),
         ...(custom ? { swatch: color } : {}),
         radio: true,
         checked: custom,
       },
-      { value: DEFAULT, label: 'Default', radio: true, checked: color === null },
+      { value: DEFAULT, label: unnamed('Default'), radio: true, checked: color === null },
     ]
   }
 

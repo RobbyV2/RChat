@@ -3,6 +3,7 @@ import type { Action, ActionCtx } from './actions/types'
 import type { AccountSession } from './client/session'
 import { canUnlink, linkable } from './sso'
 import type { RChatState } from './store_types'
+import { unnamed, notAName } from './names'
 
 export const mayManageSignIns = (s: RChatState) =>
   !!s.me && !s.guest && s.me.password_temporary?.change !== 'required'
@@ -40,7 +41,7 @@ function choices({ s, mark }: ActionCtx, mode: 'link' | 'unlink') {
       : seen.links
           .filter(l => canUnlink(s.me!, seen.links, l.provider))
           .map(l => ({ id: l.provider, name: l.name }))
-  return options.map(p => ({ value: p.id, label: p.name }))
+  return options.map(p => ({ value: p.id, label: notAName(p.name) }))
 }
 
 export const ssoActions: Action[] = (['link', 'unlink'] as const).map(mode => ({
@@ -77,7 +78,8 @@ export const signInRowActions: Action[] = [
     danger: true,
     targets: ['sign_in'],
     available: ({ s, target }) => target.kind === 'sign_in' && mayManageSignIns(s),
-    label: ({ target }) => (target.kind === 'sign_in' ? 'Unlink ' + target.name : 'Unlink'),
+    label: ({ target }) =>
+      target.kind === 'sign_in' ? notAName('Unlink ' + target.name) : unnamed('Unlink'),
     disabled: ({ target }) => target.kind === 'sign_in' && !target.allowed,
     run: ({ target }) => {
       if (target.kind === 'sign_in') target.unlink()

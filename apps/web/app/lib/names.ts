@@ -234,6 +234,19 @@ export const nameLabeller = (
   return made
 }
 
+// The labeller of a viewer: `mine` says whether a username or identity key is their own.
+export const labellerFor = (
+  streamer: boolean,
+  mask: Mask,
+  mine: (who: string | null) => boolean
+): NameLabeller =>
+  nameLabeller(streamer, mask, name => {
+    const own =
+      name.kind === 'account' ||
+      (name.kind !== 'instance' && (name.own ?? (name.kind === 'person' ? mine(name.who) : false)))
+    return { streamer, mask, own }
+  })
+
 // What the masked words of one name open under, so a reveal shows the whole of it.
 export const revealKeyOf = (name: NameValue): string =>
   name.kind === 'person' ? `name:${name.username ?? name.display}` : `${name.kind}:${name.text}`

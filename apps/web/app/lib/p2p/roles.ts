@@ -1,3 +1,5 @@
+import { subjectLabel } from '../categories'
+import { p2pName, type Label, type NameLabeller } from '../names'
 import { cmp, EVERYONE, P, type Rank } from './acl/rules'
 import { actParts, roleMoveWarns } from './flows'
 import { type MemberView, type RoleView, type ServerView } from './server'
@@ -40,16 +42,18 @@ export const mayWriteRow = (v: Pick<ServerView, 'rank' | 'roles' | 'members'>, s
 export const subjectName = (
   v: Pick<ServerView, 'roles' | 'members'>,
   subj: string,
-  mask: (text: string) => string = text => text,
-  streamer = false
-) =>
-  subj === `r:${EVERYONE}`
-    ? '@everyone'
-    : subj.startsWith('r:')
-      ? mask(v.roles.find(r => r.id === subj.slice(2))?.name ?? 'a role')
-      : streamer
-        ? 'a member'
-        : (v.members.find(m => m.ik === subj.slice(2))?.name ?? 'someone')
+  say: NameLabeller,
+  own: boolean
+): Label =>
+  subjectLabel(subj, say, {
+    everyone: `r:${EVERYONE}`,
+    role: id => v.roles.find(r => r.id === id)?.name ?? null,
+    member: ik => {
+      const m = v.members.find(x => x.ik === ik)
+      return m ? p2pName(m.name) : null
+    },
+    own,
+  })
 
 export const PERM_ITEMS: { label: string; bit: number; hint?: string }[] = [
   { label: 'Manage channels', bit: P.ManageChannels },

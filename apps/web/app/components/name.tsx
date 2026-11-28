@@ -11,7 +11,7 @@ import type { LayoutPlace, Look } from '../lib/controls'
 import {
   masksName,
   nameLabel,
-  nameLabeller,
+  labellerFor,
   nameParts,
   nameTitle,
   revealKeyOf,
@@ -63,12 +63,7 @@ export function useNameLabels(): NameLabeller {
   const streamer = useStore(s => s.streamer)
   const mask = useMask()
   const mine = useOwnCheck()
-  return nameLabeller(streamer, mask, name => {
-    const own =
-      name.kind === 'account' ||
-      (name.kind !== 'instance' && (name.own ?? (name.kind === 'person' ? mine(name.who) : false)))
-    return { streamer, mask, own }
-  })
+  return labellerFor(streamer, mask, mine)
 }
 
 function Body({ of, withUsername, fit }: { of: NameValue; withUsername: boolean; fit: boolean }) {

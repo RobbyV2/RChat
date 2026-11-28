@@ -4,6 +4,7 @@ import { Copy, Download, ExternalLink, Images, Link, Maximize2, Trash2, X } from
 import { EXTRAS, type FileExtra } from '../file_card'
 import { sharing } from '../platform'
 import type { Action, ActionCtx } from './types'
+import { unnamed } from '../names'
 
 const copy = (text: string) => void sharing().copyText(text)
 
@@ -29,7 +30,7 @@ export const fileActions: Action[] = [
   {
     id: 'file_download',
     title: 'Download',
-    label: ctx => cardOf(ctx)?.verb ?? 'Download',
+    label: ctx => unnamed(cardOf(ctx)?.verb ?? 'Download'),
     icon: Download,
     ...file,
     order: 100,

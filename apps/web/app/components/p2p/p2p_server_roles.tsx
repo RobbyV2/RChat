@@ -13,7 +13,7 @@ import { client } from '../../lib/client/client'
 
 import { useState, type ReactNode, type SyntheticEvent } from 'react'
 import { Crown, GripVertical, Trash2, X } from 'lucide-react'
-import { useMask, useStore } from '../../lib/store'
+import { useMask } from '../../lib/store'
 
 import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { registerAppActions } from '../../lib/actions'
@@ -631,12 +631,10 @@ function ChannelAccessBody({
   const { p2pServer } = identity
   const acct = useAccount()
   const ready = usePermissionRules()
-  const streamer = useStore(s => s.streamer)
   const [picking, setPicking] = useState(false)
   const me = useP2p(s => s.me)
   const own = useP2p(s => ownsP2pServer(v, s.me))
   const maskRole = useMask(own)
-  const mask = useMask()
   const say = useNameLabels()
   if (!ready) return null
   const over = (channel ?? cat)?.over ?? ({} as ChannelView['over'])
@@ -716,7 +714,7 @@ function ChannelAccessBody({
       body: syncConfirmText(
         category.name,
         `#${channel.name}`,
-        subjectNames(widens, subj => subjectName(v, subj, mask, streamer))
+        subjectNames(widens, subj => subjectName(v, subj, say, own))
       ),
       confirm: 'Sync',
       action: go,

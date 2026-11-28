@@ -1,3 +1,4 @@
+import { unnamed } from '../names'
 import assert from 'node:assert/strict'
 import { test, expect } from 'bun:test'
 import {
@@ -420,7 +421,7 @@ test('sign-in commands target their account and require a member and configured 
         },
       })
       expect(step.choices(paletteCtx(owner.store.getState(), owner), '')).toEqual([
-        { value: 'kc', label: 'Keycloak' },
+        { value: 'kc', label: unnamed('Keycloak') },
       ])
     }
     const fresh = paletteCtx(owner.store.getState(), owner)
@@ -455,11 +456,13 @@ test('a linked sign-in row menu unlinks it only while another sign-in stays', as
     )
   const [row] = rows(true)
   expect(rows(true)).toHaveLength(1)
-  expect(row).toMatchObject({ label: 'Unlink Work', danger: true, disabled: false })
+  expect(row).toMatchObject({ label: unnamed('Unlink Work'), danger: true, disabled: false })
   row.action!()
   await Promise.resolve()
   expect(asked).toBe(1)
-  expect(rows(false)).toMatchObject([{ label: 'Unlink Work', danger: true, disabled: true }])
+  expect(rows(false)).toMatchObject([
+    { label: unnamed('Unlink Work'), danger: true, disabled: true },
+  ])
   owner.store.setState({ me: null, guest: true })
   expect(rows(true)).toEqual([])
 })

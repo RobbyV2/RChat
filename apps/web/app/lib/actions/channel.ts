@@ -20,6 +20,8 @@ import { notifySettings } from './notify'
 import { HostedServer } from '../place/place'
 import { systemChannelAction } from './system_channel'
 import type { Action, ActionCtx } from './types'
+import { markedLabelsOf } from './ctx'
+import { unnamed, notAName } from '../names'
 
 const copy = (text: string) => void sharing().copyText(text)
 
@@ -117,7 +119,8 @@ export const channelActions: Action[] = [
   {
     id: 'channel_text_only',
     title: 'Enable text only',
-    label: ctx => (channelOf(ctx)?.channel.text_only ? 'Disable text only' : 'Enable text only'),
+    label: ctx =>
+      unnamed(channelOf(ctx)?.channel.text_only ? 'Disable text only' : 'Enable text only'),
     ...onChannel,
     order: 890,
     available: ctx => {
@@ -289,7 +292,7 @@ export const channelActions: Action[] = [
         choices: ctx =>
           CATEGORY_STYLES.map(value => ({
             value,
-            label: STYLE_NAMES[value],
+            label: notAName(STYLE_NAMES[value]),
             radio: true,
             checked: categoryStyleOf(categoryOf(ctx)?.category.style) === value,
           })),
@@ -369,10 +372,11 @@ export const channelActions: Action[] = [
           if (!at) return []
           const now = at.separator.category_id
           return [
-            { value: '', label: 'No category', radio: true, checked: now === null },
+            { value: '', label: unnamed('No category'), radio: true, checked: now === null },
             ...(ctx.s.servers[at.server]?.categories ?? []).map(c => ({
               value: String(c.id),
-              label: c.name,
+              label: markedLabelsOf(ctx).covered(c.name, 'Category', true),
+              name: true,
               radio: true,
               checked: now === c.id,
             })),

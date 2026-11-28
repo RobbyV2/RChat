@@ -36,12 +36,13 @@ import type { RChatState } from '../store_types'
 import { isNotice } from '../system_messages'
 import { Perm, hasPerm, type Member, type UserRef } from '../types'
 import { isWebhookAuthor, isWebhookMessage } from '../webhooks'
-import { ctxFor } from './ctx'
+import { ctxFor, markedLabelsOf } from './ctx'
 import { signedIn } from './global'
 import { itemFor } from './menu'
 import { copiesAll } from './message'
 import { noLongerAvailable } from './registry'
 import type { Action, ActionCtx, MemberWhere } from './types'
+import { unnamed, labelWith } from '../names'
 
 // The person on a row of one of `where`; a sidebar DM counts as `dm`.
 const person = (ctx: ActionCtx, ...where: MemberWhere[]): UserRef | null => {
@@ -202,9 +203,11 @@ const roleChoices = (ctx: ActionCtx) => {
   const held = seat.row?.role_ids ?? []
   return changeableRoles(ctx.s, seat.server, seat.user.username).map(r => {
     const remove = held.includes(r.id)
+    const role = markedLabelsOf(ctx).covered(r.name, 'this role', true)
     return {
       value: `${remove ? '-' : '+'}${r.id}`,
-      label: `${remove ? 'Remove' : 'Assign'} ${r.name}`,
+      label: remove ? labelWith`Remove ${role}` : labelWith`Assign ${role}`,
+      name: true,
       danger: remove,
     }
   })
@@ -290,7 +293,7 @@ export const memberActions: Action[] = [
   {
     id: 'member_timeout',
     title: 'Time Out',
-    label: ctx => (timedOut(ctx) ? 'Change Timeout' : 'Time Out'),
+    label: ctx => unnamed(timedOut(ctx) ? 'Change Timeout' : 'Time Out'),
     danger: true,
     dangerFor: ctx => !timedOut(ctx),
     ...onMemberOrAuthor,

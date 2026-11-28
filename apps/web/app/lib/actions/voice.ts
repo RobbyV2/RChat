@@ -13,6 +13,7 @@ import { displayHost, hostOf, manualRelays, ownTurn } from '../relays'
 import type { RChatState } from '../store_types'
 import type { DmSummary } from '../types'
 import type { Action, ActionCtx } from './types'
+import { notAName } from '../names'
 
 // Whether a call with the DM's other person can go direct (P2P) now.
 export const p2pCallOk = (s: RChatState, dm: DmSummary) =>
@@ -47,7 +48,7 @@ export const voiceActions: Action[] = [
   {
     id: 'call_route_server',
     title: 'Call through the server',
-    label: () => ROUTE_LABEL.server,
+    label: () => notAName(ROUTE_LABEL.server),
     ...onCall,
     order: 100,
     radio: true,
@@ -63,7 +64,7 @@ export const voiceActions: Action[] = [
   {
     id: 'call_route_p2p',
     title: 'Call direct (P2P)',
-    label: () => ROUTE_LABEL.p2p,
+    label: () => notAName(ROUTE_LABEL.p2p),
     ...onCall,
     order: 110,
     radio: true,
@@ -89,7 +90,7 @@ export const voiceActions: Action[] = [
     expand: ({ s }) =>
       manualRelays(s.relayPrefs).map(r => ({
         key: r.url,
-        label: `Direct through ${displayHost(hostOf(r.url) ?? r.url)}`,
+        label: notAName(`Direct through ${displayHost(hostOf(r.url) ?? r.url)}`),
         wrap: true,
         args: { relay: r.url },
       })),

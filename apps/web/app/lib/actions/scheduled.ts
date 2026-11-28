@@ -26,6 +26,7 @@ import {
 } from '../scheduled'
 import { signedIn } from './global'
 import type { Action, ActionCtx, ArgChoice } from './types'
+import { unnamed, notAName } from '../names'
 
 const PICK = 'pick'
 
@@ -58,14 +59,14 @@ const at = (kind: PresetKind, now: number) => presetTime(kind, new Date(now))
 const choices = (blocked: string | null, now: number): ArgChoice[] => [
   ...PRESET_KINDS.map(kind => ({
     value: kind,
-    label: presetLabel(kind, new Date(now)),
+    label: notAName(presetLabel(kind, new Date(now))),
     subtitle: blocked ?? whenText(at(kind, now), now),
     icon: PRESET_ICONS[kind],
     disabled: blocked !== null,
   })),
   {
     value: PICK,
-    label: 'Pick a date and time',
+    label: unnamed('Pick a date and time'),
     subtitle: blocked ?? undefined,
     icon: CalendarClock,
     disabled: blocked !== null,
@@ -82,7 +83,7 @@ const preset = (kind: PresetKind, order: number): Action => ({
   icon: PRESET_ICONS[kind],
   ...composer,
   order,
-  label: ctx => presetLabel(kind, new Date(ctx.acct.time.now())),
+  label: ctx => notAName(presetLabel(kind, new Date(ctx.acct.time.now()))),
   subtitle: ctx =>
     draftOf(ctx)?.blocked ?? whenText(at(kind, ctx.acct.time.now()), ctx.acct.time.now()),
   available: ctx => draftOf(ctx) !== null,
@@ -166,7 +167,7 @@ export const scheduledActions: Action[] = [
     order: 110,
     label: ctx => {
       const r = rowOf(ctx)
-      return r && isUnsent(r.item) ? 'Retry' : 'Send now'
+      return unnamed(r && isUnsent(r.item) ? 'Retry' : 'Send now')
     },
     iconFor: ctx => {
       const r = rowOf(ctx)

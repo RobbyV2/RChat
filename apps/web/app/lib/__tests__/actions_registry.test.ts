@@ -1,3 +1,4 @@
+import { unnamed, type Label } from '../names'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test'
 import { Copy, Trash2 } from 'lucide-react'
 import { ctxFor, currentList, paletteCtx, refreshCtx } from '../actions/ctx'
@@ -206,8 +207,8 @@ test('menu rows: targets pick the menu; order, disabled, danger, icon; one choic
         name: 'level',
         prompt: 'Level',
         choices: () => [
-          { value: 'all', label: 'All', radio: true, checked: true },
-          { value: 'none', label: 'Nothing', radio: true, checked: false },
+          { value: 'all', label: unnamed('All'), radio: true, checked: true },
+          { value: 'none', label: unnamed('Nothing'), radio: true, checked: false },
         ],
       },
     ],
@@ -237,7 +238,7 @@ test('a choice in a submenu runs with its value', async () => {
         kind: 'choice',
         name: 'level',
         prompt: 'Level',
-        choices: () => [{ value: 'all', label: 'All' }],
+        choices: () => [{ value: 'all', label: unnamed('All') }],
       },
     ],
   })
@@ -270,8 +271,8 @@ test('a button for one action runs it, or shows its choices where it is pressed'
         name: 'to',
         prompt: 'To',
         choices: () => [
-          { value: 'a', label: 'A' },
-          { value: 'b', label: 'B' },
+          { value: 'a', label: unnamed('A') },
+          { value: 'b', label: unnamed('B') },
         ],
       },
     ],
@@ -600,7 +601,7 @@ test('palette rows come from the registry, without duplicates', () => {
   def({
     id: 't_theme',
     title: 'Theme',
-    label: () => 'Switch to dark theme',
+    label: () => unnamed('Switch to dark theme'),
     group: 'settings',
     scope: 'global',
     ...on,
@@ -629,7 +630,7 @@ test('palette rows come from the registry, without duplicates', () => {
     group: 'settings',
     scope: 'global',
     ...on,
-    expand: () => [{ key: 'theme', label: 'Later theme' }],
+    expand: () => [{ key: 'theme', label: unnamed('Later theme') }],
   })
   expect(titles()).toEqual(['Switch to dark theme'])
 })
@@ -653,8 +654,8 @@ test('palette rows: one step is the argument, a confirm step asks before the run
         name: 'for',
         prompt: 'For how long',
         choices: () => [
-          { value: '1h', label: 'An hour', subtitle: 'Until 5' },
-          { value: 'x', label: 'Off', disabled: true },
+          { value: '1h', label: unnamed('An hour'), subtitle: 'Until 5' },
+          { value: 'x', label: unnamed('Off'), disabled: true },
         ],
       },
     ],
@@ -676,7 +677,7 @@ test('palette rows: one step is the argument, a confirm step asks before the run
   const rows = Object.fromEntries(paletteCommands(ctx('palette')).map(r => [r.id, r]))
   expect(rows.t_mute.arg).toEqual({
     placeholder: 'For how long',
-    choices: [{ value: '1h', label: 'An hour', subtitle: 'Until 5' }],
+    choices: [{ value: '1h', label: unnamed('An hour'), subtitle: 'Until 5' }],
   })
   expect(rows.t_name.arg?.placeholder).toBe('New name')
   expect([rows.t_name.arg?.check?.(''), rows.t_name.arg?.check?.('x')]).toEqual([
@@ -735,7 +736,7 @@ test('an open action menu keeps its state when a registry change leaves its rows
   expect([second === first, second?.items.map(i => i.label)]).toEqual([false, ['Copy', 'Late']])
   def({ id: 't_glob2', title: 'Other', scope: 'global', ...on })
   expect(useStore.getState().contextMenu).toBe(second)
-  useStore.setState({ contextMenu: menuOf(2, 2, [{ label: 'Legacy' }]) })
+  useStore.setState({ contextMenu: menuOf(2, 2, [{ label: unnamed('Legacy') }]) })
   const legacy = useStore.getState().contextMenu
   def({ id: 't_later', title: 'Later', ...msgAction })
   expect(useStore.getState().contextMenu).toBe(legacy)
@@ -743,7 +744,7 @@ test('an open action menu keeps its state when a registry change leaves its rows
 
 test('a throwing label, subtitle, body, parse or choices, and a choice step with nothing to pick', () => {
   const msgAction = { scope: 'message' as const, targets: ['message'] as const, ...on }
-  const level = (choices: { value: string; label: string; disabled?: boolean }[]) => ({
+  const level = (choices: { value: string; label: Label; disabled?: boolean }[]) => ({
     ...msgAction,
     args: [{ kind: 'choice' as const, name: 'level', prompt: 'Level', choices: () => choices }],
   })
@@ -770,14 +771,18 @@ test('a throwing label, subtitle, body, parse or choices, and a choice step with
       ...msgAction,
     })
     def({ id: 't_none', title: 'None', ...level([]) })
-    def({ id: 't_off', title: 'Off', ...level([{ value: 'a', label: 'A', disabled: true }]) })
+    def({
+      id: 't_off',
+      title: 'Off',
+      ...level([{ value: 'a', label: unnamed('A'), disabled: true }]),
+    })
     def({
       id: 't_two',
       title: 'Two',
       ...level([]),
       args: [...level([]).args, { kind: 'text', name: 'why', prompt: 'Why' }],
     })
-    def({ id: 't_ok', title: 'Ok', ...level([{ value: 'a', label: 'A' }]) })
+    def({ id: 't_ok', title: 'Ok', ...level([{ value: 'a', label: unnamed('A') }]) })
     def({
       id: 't_body',
       title: 'Body',
@@ -827,7 +832,7 @@ test('a throwing label, subtitle, body, parse or choices, and a choice step with
 })
 
 test('a disabled choice with nothing to pick keeps its row, open to its dimmed choices', () => {
-  const off = [{ value: 'a', label: 'A', disabled: true }]
+  const off = [{ value: 'a', label: unnamed('A'), disabled: true }]
   const files = {
     scope: 'message' as const,
     targets: ['message'] as const,
@@ -867,7 +872,7 @@ test('an action with more than one value step has no row and never runs short of
     kind: 'choice' as const,
     name: 'level',
     prompt: 'Level',
-    choices: () => [{ value: 'a', label: 'A' }],
+    choices: () => [{ value: 'a', label: unnamed('A') }],
   }
   const why = { kind: 'text' as const, name: 'why', prompt: 'Why' }
   def({ id: 't_two', title: 'Two', ...steps, args: [level, why] })
@@ -911,8 +916,8 @@ test('row fields reach menus and the palette: wrap, checked, radio, choice dange
         name: 'how',
         prompt: 'How',
         choices: () => [
-          { value: 'a', label: 'Wipe', danger: true },
-          { value: 'b', label: 'Later', disabled: true },
+          { value: 'a', label: unnamed('Wipe'), danger: true },
+          { value: 'b', label: unnamed('Later'), disabled: true },
         ],
       },
     ],

@@ -18,6 +18,7 @@ import { invoke, mobileOs } from '../lib/platform/desktop'
 import { watchIncomingShares } from '../lib/platform/incoming_share'
 import {
   attachShare,
+  shareLabels,
   shareRooms,
   type SharedContent,
   type ShareOwner,
@@ -26,18 +27,15 @@ import { Button } from './controls'
 import { Row, Stack } from './layout'
 import { Dialog, fieldCls } from './ui'
 import { time } from '../lib/platform/time'
-import { useNameLabels } from './name'
-import { accountLabel, instanceName, serverName } from '../lib/names'
+import { serverName, notAName } from '../lib/names'
 
 function Destinations({
   owner,
-  streamer,
   content,
   close,
   valid,
 }: {
   owner: ShareOwner
-  streamer: boolean
   content: SharedContent
   close: () => void
   valid: () => boolean
@@ -60,8 +58,8 @@ function Destinations({
   }, [])
   const files =
     owner.identity || content.files.length < 2 ? content.files : [content.files[fileIndex]]
-  const say = useNameLabels()
-  const rooms = shareRooms(owner, files, say, streamer)
+  const say = shareLabels(state)
+  const rooms = shareRooms(owner, files)
   const dest = rooms.find(r => r.key === room)
   const joined = state.me?.servers ?? []
   const [loading, setLoading] = useState('')
@@ -138,8 +136,7 @@ function Destinations({
           .filter(s => !state.servers[s.name])
           .map((s, i) => (
             <Button key={s.name} disabled={!!loading || busy} onClick={() => void load(s.name)}>
-              Load channels in{' '}
-              {streamer ? 'Server ' + (i + 1) : say(serverName(s), 'Server ' + (i + 1))}
+              Load channels in {say.line(notAName('Server ' + (i + 1)), () => say(serverName(s)))}
             </Button>
           ))}
       {!owner.identity && state.serversMore && (
@@ -206,8 +203,6 @@ function Picker({
   const [error, setError] = useState('')
   const selection = useRef(0)
   const mark = selection.current
-  const streamer = useStore(s => s.streamer)
-  const say = useNameLabels()
   const ready =
     prepared &&
     selected?.ready?.account === prepared.account &&
@@ -257,28 +252,13 @@ function Picker({
                 onChange={e => void select(e.target.value)}
               >
                 <option value="">Choose an account or identity</option>
-                {[...new Set(owners.map(o => o.origin))].map((origin, i) => (
-                  <optgroup
-                    key={origin}
-                    label={
-                      owners.some(o => o.origin === origin && o.streamer)
-                        ? 'Instance ' + (i + 1)
-                        : say(
-                            instanceName(owners.find(o => o.origin === origin)!.group),
-                            'Instance ' + (i + 1)
-                          )
-                    }
-                  >
+                {[...new Set(owners.map(o => o.origin))].map(origin => (
+                  <optgroup key={origin} label={owners.find(o => o.origin === origin)!.group}>
                     {owners
                       .filter(o => o.origin === origin)
-                      .map((o, n) => (
+                      .map(o => (
                         <option key={o.key} value={o.key}>
-                          {o.streamer
-                            ? (o.local ? 'P2P identity ' : 'Account ') + (n + 1)
-                            : say(
-                                accountLabel(o.label),
-                                (o.local ? 'P2P identity ' : 'Account ') + (n + 1)
-                              )}
+                          {o.label}
                         </option>
                       ))}
                   </optgroup>
@@ -291,7 +271,6 @@ function Picker({
                   <Destinations
                     key={key + ready.account.renderKey}
                     owner={ready}
-                    streamer={streamer}
                     content={content}
                     close={close}
                     valid={() =>

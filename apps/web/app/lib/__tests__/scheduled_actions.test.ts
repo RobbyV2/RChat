@@ -36,7 +36,7 @@ describe('send later rows', () => {
       'send_later_pick',
     ])
     const at = new Date()
-    expect(rows[0].label?.(ctx({ kind: 'none' }))).toBe('In 1 hour')
+    expect<string | undefined>(rows[0].label?.(ctx({ kind: 'none' }))).toBe('In 1 hour')
     expect(rows[1].label?.(ctx({ kind: 'none' }))?.startsWith('Tomorrow at ')).toBe(true)
     expect(rows[2].label?.(ctx({ kind: 'none' }))?.startsWith('Next Monday at ')).toBe(true)
     expect(presetTime('tomorrow', at)).toBeGreaterThan(at.getTime())
@@ -117,11 +117,11 @@ describe('send later rows', () => {
     })
     const t: Target = { kind: 'scheduled', now: row }
     const send = action('scheduled_send_now')
-    expect(send.label?.(ctx(t))).toBe('Send now')
+    expect<string | undefined>(send.label?.(ctx(t))).toBe('Send now')
     state = 'failed'
-    expect(send.label?.(ctx(t))).toBe('Retry')
+    expect<string | undefined>(send.label?.(ctx(t))).toBe('Retry')
     state = 'missed'
-    expect(send.label?.(ctx(t))).toBe('Retry')
+    expect<string | undefined>(send.label?.(ctx(t))).toBe('Retry')
     action('scheduled_reschedule').run(ctx(t), { when: 'pick' })
     action('scheduled_reschedule').run(ctx(t), { when: 'hour' })
     action('scheduled_edit').run(ctx(t), {})

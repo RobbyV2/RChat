@@ -34,6 +34,7 @@ import { signInRowActions, ssoActions } from '../sso_actions'
 import { signedIn } from './global'
 import { p2pLimitActions } from './p2p_limits'
 import type { Action } from './types'
+import { unnamed, notAName } from '../names'
 
 // Settings that guests keep on this device too.
 const local = (s: RChatState) => s.me !== null || s.guest
@@ -82,7 +83,8 @@ export const settingsActions: Action[] = [
   {
     id: 'theme',
     title: 'Theme',
-    label: ({ s }) => (s.theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'),
+    label: ({ s }) =>
+      unnamed(s.theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'),
     scope: 'global',
     group: 'settings',
     icon: Moon,
@@ -94,7 +96,7 @@ export const settingsActions: Action[] = [
   {
     id: 'streamer',
     title: 'Streamer mode',
-    label: ({ s }) => (s.streamer ? 'Turn off streamer mode' : 'Turn on streamer mode'),
+    label: ({ s }) => unnamed(s.streamer ? 'Turn off streamer mode' : 'Turn on streamer mode'),
     scope: 'global',
     group: 'settings',
     icon: EyeOff,
@@ -119,7 +121,7 @@ export const settingsActions: Action[] = [
         choices: ({ s }) =>
           AVATAR_MODES.map(mode => ({
             value: mode,
-            label: AVATAR_MODE_LABELS[mode],
+            label: notAName(AVATAR_MODE_LABELS[mode]),
             radio: true,
             checked: parseAvatarMode(s.avatarMode) === mode,
           })),
@@ -131,7 +133,8 @@ export const settingsActions: Action[] = [
   {
     id: 'typing',
     title: 'Typing indicators',
-    label: ({ s }) => (s.typingOn ? 'Turn off typing indicators' : 'Turn on typing indicators'),
+    label: ({ s }) =>
+      unnamed(s.typingOn ? 'Turn off typing indicators' : 'Turn on typing indicators'),
     scope: 'global',
     group: 'settings',
     icon: Type,
@@ -141,7 +144,7 @@ export const settingsActions: Action[] = [
   {
     id: 'animations',
     title: 'Animations',
-    label: ({ s }) => (s.anim.on ? 'Turn off animations' : 'Turn on animations'),
+    label: ({ s }) => unnamed(s.anim.on ? 'Turn off animations' : 'Turn on animations'),
     scope: 'global',
     group: 'settings',
     icon: Sparkles,
@@ -156,7 +159,7 @@ export const settingsActions: Action[] = [
     id: 'animation_style',
     title: 'Animation style',
     label: ({ s }) =>
-      s.anim.style === 'lively' ? 'Use subtle animations' : 'Use lively animations',
+      unnamed(s.anim.style === 'lively' ? 'Use subtle animations' : 'Use lively animations'),
     scope: 'global',
     group: 'settings',
     icon: Sparkles,
@@ -183,7 +186,7 @@ export const settingsActions: Action[] = [
         choices: ({ s }) =>
           MOTION_CHOICES.map(c => ({
             value: c.value,
-            label: c.label,
+            label: notAName(c.label),
             radio: true,
             checked: s.anim.motion === c.value,
           })),
@@ -200,7 +203,7 @@ export const settingsActions: Action[] = [
     id: 'profanity',
     title: 'Profanity filter',
     label: ({ s }) =>
-      filterNow(s).on ? 'Turn off the profanity filter' : 'Turn on the profanity filter',
+      unnamed(filterNow(s).on ? 'Turn off the profanity filter' : 'Turn on the profanity filter'),
     subtitle: ({ s }) => (filterNow(s).note ? UNAVAILABLE : undefined),
     scope: 'global',
     group: 'settings',
@@ -217,7 +220,7 @@ export const settingsActions: Action[] = [
     id: 'spoilers',
     title: 'Show spoilers',
     label: ({ s }) =>
-      s.showSpoilers === 'always' ? 'Show spoilers on click' : 'Always show spoilers',
+      unnamed(s.showSpoilers === 'always' ? 'Show spoilers on click' : 'Always show spoilers'),
     scope: 'global',
     group: 'settings',
     icon: Eye,
@@ -230,7 +233,7 @@ export const settingsActions: Action[] = [
   {
     id: 'appear_offline',
     title: 'Appear offline',
-    label: ({ s }) => (s.me?.appear_offline ? 'Stop appearing offline' : 'Appear offline'),
+    label: ({ s }) => unnamed(s.me?.appear_offline ? 'Stop appearing offline' : 'Appear offline'),
     scope: 'global',
     group: 'settings',
     icon: EyeOff,

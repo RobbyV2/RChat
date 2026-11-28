@@ -1,3 +1,4 @@
+import { unnamed, notAName } from '../names'
 import { peerStorage } from '../client/keys'
 import { HostedServer } from '../place/place'
 import { shownPeer } from './shown_peer'
@@ -543,7 +544,7 @@ const OTHER_LOOKS: Record<string, string[][]> = {
     ['deafen', 'Toggle deafen', 'commands', 'Phone', '', '', ''],
   ],
   mutedState: [
-    ['unmute_here', 'Unmute #general', 'commands', 'Bell', '', '', ''],
+    ['unmute_here', 'Unmute this channel', 'commands', 'Bell', '', '', ''],
     ['unmute_server', 'Unmute this server', 'commands', 'Bell', '', '', ''],
     ['theme', 'Switch to dark theme', 'settings', 'Moon', '', '', ''],
     ['streamer', 'Turn off streamer mode', 'settings', 'Eye', '', '', ''],
@@ -1054,13 +1055,20 @@ test('expand: a row per entry, `<id>_<key>`, in the palette and in the menus the
     expand: () => [
       {
         key: 'a',
-        label: 'Relay A',
+        label: unnamed('Relay A'),
         subtitle: 'a.example',
         checked: true,
         radio: true,
         args: { relay: 'a' },
       },
-      { key: 'b', label: 'Relay B', icon: Trash2, danger: true, name: true, args: { relay: 'b' } },
+      {
+        key: 'b',
+        label: unnamed('Relay B'),
+        icon: Trash2,
+        danger: true,
+        name: true,
+        args: { relay: 'b' },
+      },
     ],
   })
   const st = useStore.getState()
@@ -1095,7 +1103,7 @@ test('an entry gone by the time its row runs runs nothing and says so', async ()
     available: () => true,
     run: (_c, a) => void got.push(a),
     expand: ({ s }) =>
-      Object.keys(s.timeouts.s ?? {}).map(key => ({ key, label: key, args: { key } })),
+      Object.keys(s.timeouts.s ?? {}).map(key => ({ key, label: notAName(key), args: { key } })),
   })
   const until = { ends: Date.now() + HOUR, reason: null }
   reset({ timeouts: { s: { bob: until, carol: until } } })
@@ -1238,7 +1246,7 @@ test('an expansion row whose id is taken keeps the first row', () => {
     scope: 'global',
     available: () => true,
     run: () => {},
-    expand: () => [{ key: 'x', label: 'From expand' }],
+    expand: () => [{ key: 'x', label: unnamed('From expand') }],
   })
   const offB = defineAction({
     id: 't_dup_x',

@@ -9,6 +9,7 @@ import { startMode } from '../attachments'
 import { readOnly } from '../reactions'
 import { sourceAccess } from '../forward_viewing'
 import { client } from './client'
+import { stateLabels } from '../state_labels'
 import { allowsAccountOrigin } from './hosted_policy'
 import { time } from '../platform/time'
 import {
@@ -21,6 +22,7 @@ import {
   type NameLabel,
   type NameLabeller,
   notAName,
+  type Label,
 } from '../names'
 
 // Keep a one-use worker ticket through the normal signed-out startup redirect.
@@ -39,17 +41,22 @@ type Room =
   | { kind: 'channel'; server: string; id: number }
   | { kind: 'peer'; ik: string }
   | { kind: 'peer_channel'; server: string; id: string }
-export type ShareRoom = Room & { label: string; key: string; reason: string | null }
+export type ShareRoom = Room & { label: Label; key: string; reason: string | null }
+
+type Viewer = Parameters<typeof stateLabels>[0]
+
+// The labels of a share's choices for one account: its filter, and streamer mode while that
+// account or this device has it on (a room is then called by its kind and a number).
+export const shareLabels = (s: Viewer, device = client.device.streamer): NameLabeller =>
+  stateLabels({ ...s, streamer: s.streamer || device })
 
 export function shareRooms(
   { account, identity }: ShareOwner,
   files: readonly File[],
-  // Makes the labels. Without it, or in streamer mode on this device or that account, a room is
-  // called by its kind and a number.
-  say: NameLabeller | null = null,
-  streamer = client.device.streamer
+  device = client.device.streamer
 ): ShareRoom[] {
   const s = account.store.getState()
+  const say = shareLabels(s, device)
   if (!s.me || s.guest || !allowsAccountOrigin(account.conn.origin)) return []
   const rooms: ShareRoom[] = []
   const counts = { dm: 0, channel: 0, peer: 0, peer_channel: 0 }
@@ -61,7 +68,7 @@ export function shareRooms(
   }
   const add = (room: Room, named: (say: NameLabeller) => NameLabel, reason: string | null) => {
     const numbered = notAName(names[room.kind] + ' ' + ++counts[room.kind])
-    const label = say === null || s.streamer || streamer ? numbered : named(say)
+    const label = say.line(numbered, () => named(say))
     rooms.push({ ...room, key: JSON.stringify(room), label, reason })
   }
   if (!identity) {

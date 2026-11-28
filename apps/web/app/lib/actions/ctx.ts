@@ -1,3 +1,5 @@
+import type { NameLabeller } from '../names'
+import { markedStateLabels, stateLabels } from '../state_labels'
 import type { P2pApp } from '../p2p/app/runtime'
 import { actionElement } from '../masked_reveal'
 import { memberState, messageServer } from '../selectors'
@@ -359,3 +361,9 @@ bindActionHost({
       ctx.acct.store.getState().showToast("That's no longer available")
   },
 })
+
+// Labels for the names an action shows: streamer mode and the viewer's filter of this account.
+export const labelsOf = (ctx: Pick<ActionCtx, 's'>): NameLabeller => stateLabels(ctx.s)
+
+// Labels of rows the menus draw marked as a name (`name: true`).
+export const markedLabelsOf = (ctx: Pick<ActionCtx, 's'>): NameLabeller => markedStateLabels(ctx.s)

@@ -1,6 +1,7 @@
 // Every action the menus, sheets and the palette show. This module loads without the store
 // (ctx.ts binds it), so a page without the app can still define actions.
 
+import { notAName, type Label } from '../names'
 import type { Action, ActionCtx, Args, Scope } from './types'
 import { cause, label, logError } from '../log'
 
@@ -147,8 +148,8 @@ export const targetActions = (ctx: ActionCtx): Action[] =>
     ctx
   )
 
-export const labelOf = (a: Action, ctx: ActionCtx): string =>
-  a.label ? guardAction(a, () => a.label!(ctx), a.title) : a.title
+export const labelOf = (a: Action, ctx: ActionCtx): Label =>
+  a.label ? guardAction(a, () => a.label!(ctx), notAName(a.title)) : notAName(a.title)
 
 // The action and its context on fresh state, or null (said once) when it is no longer there.
 export const recheckAction = (

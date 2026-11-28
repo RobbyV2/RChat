@@ -19,6 +19,8 @@ import { openPalette } from '../palette_store'
 import { allMarkTargets } from '../store'
 import type { RChatState } from '../store_types'
 import type { Action, ArgStep } from './types'
+import { markedLabelsOf } from './ctx'
+import { unnamed, labelWith, accountLabel, instanceName } from '../names'
 
 export const signedIn = (s: RChatState) => s.me !== null && !s.guest
 
@@ -84,14 +86,15 @@ export const globalActions: Action[] = [
     group: 'navigation',
     icon: Command,
     available: () => true,
-    expand: () => {
+    expand: ctx => {
+      const say = markedLabelsOf(ctx)
       const groups = switchGroups()
       return groups.flatMap(g =>
         g.rows
           .filter(r => r.status !== 'Signed out')
           .map(r => ({
             key: JSON.stringify([r.origin, r.username, r.local]),
-            label: 'Switch to ' + r.display + ' on ' + instanceLabel(g, g.host, groups),
+            label: labelWith`Switch to ${say(accountLabel(r.display))} on ${say(instanceName(instanceLabel(g, g.host, groups)))}`,
             name: true,
             subtitle: r.local ? 'P2P · ' + r.username : (r.username ?? 'Guest'),
             subtitleName: true,
@@ -143,7 +146,7 @@ export const globalActions: Action[] = [
   {
     id: 'mark_all_read',
     title: 'Mark everything as read',
-    label: ({ via }) => (via === 'menu' ? 'Mark all as read' : 'Mark everything as read'),
+    label: ({ via }) => unnamed(via === 'menu' ? 'Mark all as read' : 'Mark everything as read'),
     scope: 'global',
     icon: CheckCheck,
     hint: 'Shift+Escape',

@@ -18,6 +18,7 @@ import { muteStep, muteUntil, notifySettings } from './notify'
 import type { Action, ActionCtx } from './types'
 import { identityActions } from './identity'
 import { time } from '../platform/time'
+import { unnamed } from '../names'
 export const peerContact = identityActions(identity => {
   // The contact as it is now; none once it is gone.
   const contactOf = ({ target }: ActionCtx): Contact | null =>
@@ -209,7 +210,7 @@ export const peerContact = identityActions(identity => {
       icon: Trash2,
       ...onContact,
       order: 810,
-      label: ctx => (contactOf(ctx)?.state === 'blocked' ? 'Remove block' : 'Remove'),
+      label: ctx => unnamed(contactOf(ctx)?.state === 'blocked' ? 'Remove block' : 'Remove'),
       dangerFor: ctx => contactOf(ctx)?.state !== 'blocked',
       available: ctx => contactOf(ctx) !== null,
       run: ctx => {

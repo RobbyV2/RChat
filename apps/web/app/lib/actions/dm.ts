@@ -12,6 +12,7 @@ import { client } from '../client/client'
 import { signedIn } from './global'
 import { notifySettings } from './notify'
 import type { Action, ActionCtx } from './types'
+import { unnamed, notAName } from '../names'
 
 const dmAt = ({ s, target }: ActionCtx, where: 'sidebar' | 'home' | null): DmSummary | null =>
   signedIn(s) && target.kind === 'dm' && (where === null || target.where === where)
@@ -48,7 +49,7 @@ const LIST_KEYWORDS = ['direct messages', 'sort', 'order', 'filter']
 const sortActions: Action[] = DM_SORTS.map(({ sort, label }) => ({
   id: `dms_sort_${sort}`,
   title: SORT_TITLES[sort],
-  label: ctx => (onList(ctx) ? label : SORT_TITLES[sort]),
+  label: ctx => notAName(onList(ctx) ? label : SORT_TITLES[sort]),
   subtitle: ctx => (onList(ctx) && sort === 'custom' ? 'Drag to reorder' : undefined),
   ...forList,
   icon: ArrowDownUp,
@@ -67,7 +68,7 @@ const toggle = (
 ): Action => ({
   id: `dms_${key === 'unreadTop' ? 'unread_top' : `${key}_only`}`,
   title,
-  label: ctx => (onList(ctx) ? row : listPrefs(ctx)[key] ? off : title),
+  label: ctx => notAName(onList(ctx) ? row : listPrefs(ctx)[key] ? off : title),
   ...forList,
   icon: ListFilter,
   keywords: LIST_KEYWORDS,
@@ -84,7 +85,7 @@ export const dmListActions: Action[] = [
   {
     id: 'dms_clear_filters',
     title: 'Clear DM filters',
-    label: ctx => (onList(ctx) ? 'Clear filters' : 'Clear DM filters'),
+    label: ctx => unnamed(onList(ctx) ? 'Clear filters' : 'Clear DM filters'),
     ...forList,
     icon: ListFilter,
     iconFor: ctx => (onList(ctx) ? X : ListFilter),

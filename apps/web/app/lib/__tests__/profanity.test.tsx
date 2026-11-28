@@ -30,7 +30,7 @@ import { MarkdownMessage } from '../../components/markdown_message'
 import { MaskControl, Masked, MaskedWords } from '../../components/ui'
 import { nameRevealKey } from '../../components/display_name'
 import { Name } from '../../components/name'
-import { personName } from '../names'
+import { labellerFor, personName } from '../names'
 import { shownUser } from '../people'
 import { ProfileHandle } from '../../components/profile_card'
 import { dmPlaceholder } from '../display_name'
@@ -464,8 +464,13 @@ describe('in messages', () => {
     expect(peerTile.includes('(alice)')).toBe(false)
     expect(peerTile).toContain('data-masked-word')
     const mask = (t: string) => t.replace(/shit/g, '****')
-    expect(dmPlaceholder(user('shit'), false, mask)).toBe('Message @****')
-    expect(dmPlaceholder(user('shit'), true, mask)).toBe('Send a direct message')
+    const notMine = () => false
+    expect<string>(dmPlaceholder(user('shit'), labellerFor(false, mask, notMine))).toBe(
+      'Message @****'
+    )
+    expect<string>(dmPlaceholder(user('shit'), labellerFor(true, mask, notMine))).toBe(
+      'Send a direct message'
+    )
   })
 
   test('a name pair is revealed whole: one reveal opens the display name and the username', async () => {

@@ -51,9 +51,11 @@ import { maskOf } from '../store'
 import type { ConfirmRequest } from '../store_types'
 import { muteStep, muteUntil, notifySettings } from './notify'
 import type { Action, ActionCtx, ArgChoice, Target } from './types'
+import { labelsOf, markedLabelsOf } from './ctx'
 import { identityActions } from './identity'
 import { time } from '../platform/time'
 import { systemChannelAction } from './system_channel'
+import { unnamed, labelWith, p2pName, type Label, type Said, notAName } from '../names'
 export const peerServer = identityActions(identity => {
   const copy = (text: string) => void sharing().copyText(text)
 
@@ -202,11 +204,14 @@ export const peerServer = identityActions(identity => {
     const t = memberOf(ctx)
     if (!t || t.m.m !== 'join') return []
     const { v, m } = t
-    const mask = roleMask(v, ctx.acct)
+    const say = markedLabelsOf(ctx)
+    const own = ownsP2pServer(v, me())
     return v.roles.flatMap(r => {
       const holds = m.roles.includes(r.id)
       if (holds ? !mayTakeRole(v, m, r, me()) : !mayGive(v, m, r)) return []
-      return [{ value: r.id, label: mask(r.name), checked: holds }]
+      return [
+        { value: r.id, label: say.covered(r.name, 'this role', own), name: true, checked: holds },
+      ]
     })
   }
 
@@ -598,9 +603,16 @@ export const peerServer = identityActions(identity => {
     if (t) openTimeout(P2pRoom.open(identity(), t.v.id), t.m.ik)
   }
 
-  const named = (ctx: ActionCtx, verb: string, alone: string) => {
+  const named = <const V extends string, const A extends string>(
+    ctx: ActionCtx,
+    verb: Said<V>,
+    alone: Said<A>
+  ): Label => {
     const t = memberOf(ctx)
-    return ctx.s.streamer || !t ? alone : `${verb} ${maskOf(ctx.s)(t.m.name)}`
+    const say = labelsOf(ctx)
+    return t
+      ? say.line(alone, () => labelWith`${unnamed(verb)} ${say(p2pName(t.m.name))}`)
+      : unnamed(alone)
   }
 
   const memberActions: Action[] = [
@@ -744,7 +756,7 @@ export const peerServer = identityActions(identity => {
     {
       id: 'p2p_member_timeout',
       title: 'Time Out',
-      label: ctx => (timedOut(ctx) ? 'Change Timeout' : 'Time Out'),
+      label: ctx => unnamed(timedOut(ctx) ? 'Change Timeout' : 'Time Out'),
       danger: true,
       dangerFor: ctx => !timedOut(ctx),
       ...onMember,
@@ -929,7 +941,7 @@ export const peerServer = identityActions(identity => {
           choices: ctx =>
             CATEGORY_STYLES.map(value => ({
               value,
-              label: STYLE_NAMES[value],
+              label: notAName(STYLE_NAMES[value]),
               radio: true,
               checked: categoryOf(ctx)?.cat.style === value,
             })),
@@ -990,10 +1002,11 @@ export const peerServer = identityActions(identity => {
             const t = managed(ctx)
             if (!t) return []
             return [
-              { value: '', label: 'No category', checked: t.ch.cat === null },
+              { value: '', label: unnamed('No category'), checked: t.ch.cat === null },
               ...t.v.categories.map(c => ({
                 value: c.id,
-                label: c.name,
+                label: markedLabelsOf(ctx).covered(c.name, 'Category', ownsP2pServer(t.v, me())),
+                name: true,
                 checked: t.ch.cat === c.id,
               })),
             ]
@@ -1035,7 +1048,7 @@ export const peerServer = identityActions(identity => {
             cat.name,
             `#${t.ch.name}`,
             subjectNames(widens, subj =>
-              subjectName(t.v, subj, roleMask(t.v, ctx.acct), ctx.s.streamer)
+              subjectName(t.v, subj, labelsOf(ctx), ownsP2pServer(t.v, me()))
             )
           ),
           confirm: 'Sync',
@@ -1140,10 +1153,16 @@ export const peerServer = identityActions(identity => {
             const t = managedSeparator(ctx)
             if (!t) return []
             return [
-              { value: '', label: 'No category', radio: true, checked: t.sep.cat === null },
+              {
+                value: '',
+                label: unnamed('No category'),
+                radio: true,
+                checked: t.sep.cat === null,
+              },
               ...t.v.categories.map(c => ({
                 value: c.id,
-                label: c.name,
+                label: markedLabelsOf(ctx).covered(c.name, 'Category', ownsP2pServer(t.v, me())),
+                name: true,
                 radio: true,
                 checked: t.sep.cat === c.id,
               })),
