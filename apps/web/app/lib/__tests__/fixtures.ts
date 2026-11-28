@@ -1,3 +1,4 @@
+import { activeClock, flush } from './helpers/test_clock'
 import { jest } from 'bun:test'
 import type {
   Embed,
@@ -30,16 +31,24 @@ export const drain = async () => {
 }
 
 // Polls `done` every tick for up to `ms` of real time, so a fetch chain can finish on a loaded
-// runner. The caller asserts afterwards.
+// runner. Under a test clock it also runs the timers due within `ms`, one per tick. The caller
+// asserts afterwards.
 export const until = async (done: () => boolean, ms = 2000) => {
   const end = Date.now() + ms
-  while (!done() && Date.now() < end) await new Promise(r => setTimeout(r, 0))
+  const clock = activeClock()
+  const from = clock?.elapsed() ?? 0
+  while (!done() && Date.now() < end) {
+    await flush()
+    if (clock && !done()) clock.step(from + ms - clock.elapsed())
+  }
 }
 
-// Moves the fake clock (jest.useFakeTimers) `ms` forward one due timer at a time and runs `idle`
+// Moves the test clock, or the fake clock (jest.useFakeTimers), `ms` forward one due timer at a time and runs `idle`
 // after each, stopping early once `done` holds. A busy machine can't change the outcome, and
 // the work is per timer, not per millisecond. A timer that keeps re-arming fails the test.
 export const advance = async (ms: number, done = () => false, idle = drain) => {
+  const clock = activeClock()
+  if (clock) return clock.pass(ms, done, idle)
   let reached = false
   const end = setTimeout(() => (reached = true), ms)
   await idle()

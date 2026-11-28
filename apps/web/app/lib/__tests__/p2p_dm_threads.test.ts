@@ -1,3 +1,4 @@
+import { waitUntil } from './helpers/test_clock'
 import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { Hub, makeNode, ManualClock, waitFor } from './p2p_net'
 import type { P2pNode } from '../p2p/node'
@@ -43,13 +44,8 @@ const makePeer = async (hub: Hub, name: string, clock: ManualClock): Promise<Pee
   return { ...n, dms }
 }
 
-const eventually = async (ok: () => Promise<boolean>, what: string, ms = 50_000) => {
-  const end = Date.now() + ms
-  while (!(await ok())) {
-    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)
-    await new Promise(r => setTimeout(r, 2))
-  }
-}
+const eventually = (ok: () => Promise<boolean>, what: string, ms = 50_000) =>
+  waitUntil(ok, what, ms)
 
 const failure = (p: Promise<unknown>) =>
   p.then(

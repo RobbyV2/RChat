@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { resetSessionCaches, useStore } from '../store'
 import { channelGroups } from '../categories'
@@ -7,7 +8,7 @@ import { me, serverDetail, until } from './fixtures'
 
 const dispatch = (ev: WsEvent) => useStore.getState().applyWsEvent(ev)
 const st = () => useStore.getState()
-const tick = () => new Promise(r => setTimeout(r, 0))
+const tick = () => flush()
 
 const ch = (id: number, position: number, category_id: number | null = null): Channel => ({
   id,

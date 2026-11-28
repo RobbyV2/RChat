@@ -1,7 +1,13 @@
+import { testClock, type ManualTime } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { resetSessionCaches, useStore } from '../store'
 import { Perm, type Member, type Role, type ServerDetail, type WsEvent } from '../types'
 import { me, member, role, serverDetail, until } from './fixtures'
+
+let clock: ManualTime
+beforeEach(() => {
+  clock = testClock()
+})
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -91,7 +97,7 @@ afterEach(() => {
 })
 
 const names = (key: string) => st().hoisted.s[key].list.map(m => m.username)
-const settle = () => new Promise(r => setTimeout(r, 20))
+const settle = () => clock.pass(20)
 
 describe("one member's roles", () => {
   test('change that member only: their rows and the group they show in, with nothing reloaded', async () => {

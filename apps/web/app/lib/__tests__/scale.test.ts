@@ -1,3 +1,4 @@
+import { ManualTime } from './helpers/test_clock'
 import { describe, expect, test } from 'bun:test'
 import {
   BACKOFF_CAP,
@@ -7,7 +8,6 @@ import {
   due,
   nextAttempt,
 } from '../backoff'
-import { ManualTime } from '../clock'
 import { createReadQueue } from '../reads'
 import {
   createLru,

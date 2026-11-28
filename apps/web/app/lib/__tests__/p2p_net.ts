@@ -1,3 +1,4 @@
+import { flush, waitUntil } from './helpers/test_clock'
 import 'fake-indexeddb/auto'
 import { own } from './helpers/fixture'
 import { P2pStore } from '../p2p/db'
@@ -114,7 +115,7 @@ for (const name of ['encrypt', 'decrypt', 'digest', 'sign', 'verify', 'importKey
 // Runs `rounds` turns of the event loop after the last WebCrypto call has finished.
 export const settle = async (rounds = 30) => {
   for (let i = 0; i < rounds; i += 1) {
-    await new Promise(r => setTimeout(r, 0))
+    await flush()
     if (inFlight > 0) i = -1
   }
 }
@@ -122,11 +123,7 @@ export const settle = async (rounds = 30) => {
 // Waits until `ok()` holds, however slow the machine is (WebCrypto and fake-indexeddb under a
 // loaded test run). Fails with `what` after `ms` of real time (within the DM suites' 60 s test budget).
 export const waitFor = async (ok: () => boolean, what = 'condition', ms = 50_000) => {
-  const end = Date.now() + ms
-  while (!ok()) {
-    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)
-    await new Promise(r => setTimeout(r, 1))
-  }
+  await waitUntil(ok, what, ms)
   await settle(5)
 }
 

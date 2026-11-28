@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { describe, expect, test } from 'bun:test'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -196,7 +197,7 @@ describe('IceCache', () => {
     const tick = async () => {
       const job = pending.shift()
       job?.fn()
-      await new Promise(r => setTimeout(r, 0))
+      await flush()
     }
     await tick()
     expect(calls.fetch).toBe(2)

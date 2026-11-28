@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { createTestMedia } from './test_media'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
@@ -153,7 +154,7 @@ function call() {
   return { m, x, conn, sending }
 }
 
-const settle = () => new Promise(r => setTimeout(r, 0))
+const settle = () => flush()
 
 describe('p2p mute state', () => {
   test("muting is announced to the peer, and the peer's mute is shown until the call ends", () => {

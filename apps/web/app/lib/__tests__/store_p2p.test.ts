@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { home } from './home_instance'
 import { getHomeSession, attachModes, siteSettings, startMode, useStore } from '../store'
@@ -19,7 +20,7 @@ let removed: string[] = []
 let realSettings = useStore.getState().settings
 const tick = async () => {
   for (let i = 0; i < 10; i += 1) await Promise.resolve()
-  await new Promise(r => setTimeout(r, 0))
+  await flush()
 }
 
 const hosted = (id: string, hoster: string): MessageMedia => ({

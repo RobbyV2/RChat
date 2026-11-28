@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { cachedProfile, profileKey, rememberProfile } from '../profile'
 import { lookOf } from '../server_profile'
@@ -9,7 +10,7 @@ import { me, member, paged, serverDetail, until } from './fixtures'
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
-const tick = () => new Promise(r => setTimeout(r, 0))
+const tick = () => flush()
 const robert: MemberLook = { name: 'Robert', avatar_kind: 'color', avatar_color: '#112233' }
 const shown = () => lookOf(st(), { server: 's' }, 'bob')
 

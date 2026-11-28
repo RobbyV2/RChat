@@ -1,7 +1,13 @@
-import { expect, test } from 'bun:test'
+import { testClock, type ManualTime } from './helpers/test_clock'
+import { expect, test, beforeEach } from 'bun:test'
 import { watchIncomingShares } from '../platform/incoming_share'
 import type { SharedContent } from '../client/share_target'
 import type { Invoke } from '../platform/desktop'
+
+let clock: ManualTime
+beforeEach(() => {
+  clock = testClock()
+})
 
 test('mobile startup and live deliveries consume once, with bounded native errors and stale results discarded', async () => {
   const w = new EventTarget(),
@@ -25,7 +31,7 @@ test('mobile startup and live deliveries consume once, with bounded native error
     e => errors.push(e),
     () => rev
   )
-  const next = () => new Promise(r => setTimeout(r, 5))
+  const next = () => clock.pass(5)
   try {
     await next()
     w.dispatchEvent(new Event('rchat-incoming-share'))

@@ -1,6 +1,12 @@
+import { flush, testClock, type ManualTime } from './helpers/test_clock'
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { useStore } from '../store'
 import { me, msg, serverDetail, textChannel } from './fixtures'
+
+let clock: ManualTime
+beforeEach(() => {
+  clock = testClock()
+})
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch
@@ -83,7 +89,7 @@ test('confirming sends the reason, opens the channel and loads it', async () => 
   expect(st().staffAsk).toBeNull()
   expect(st().staffShut).toBeNull()
   expect(st().staffOpen).toEqual([7])
-  await new Promise(done => setTimeout(done, 0))
+  await flush()
   expect((st().messages.c7 ?? []).map(m => m.id)).toEqual([1, 2])
 })
 
@@ -130,7 +136,7 @@ test('a refused action anywhere asks for its channel instead of showing an error
 
 test('a refused pins read asks too', async () => {
   st().openPins()
-  await new Promise(done => setTimeout(done, 0))
+  await flush()
   expect(calls.some(c => c.url.endsWith('/channels/7/pins'))).toBe(true)
   expect(st().staffAsk).toBe(7)
   expect(st().pins?.failed).toBe(true)
@@ -142,7 +148,7 @@ test('the view closes when the confirmation runs out', async () => {
   await st().confirmStaffView({ password: 'pw' }, '')
   useStore.setState({ panel: { kind: 'thread', root: msg(1, { channel_id: 7 }) } as never })
   expect(st().staffShut).toBeNull()
-  await new Promise(done => setTimeout(done, 120))
+  await clock.pass(120)
   expect(st().staffShut).toBe(view)
   expect(st().staffOpen).toEqual([])
   expect(st().panel).toBeNull()
@@ -155,7 +161,7 @@ test('a confirmation that runs out elsewhere leaves the view as it is', async ()
   await st().confirmStaffView({ password: 'pw' }, '')
   const other = { kind: 'channel', server: 's', channelId: 1 } as const
   useStore.setState({ view: other })
-  await new Promise(done => setTimeout(done, 120))
+  await clock.pass(120)
   expect(st().staffShut).toBeNull()
   expect(st().staffOpen).toEqual([])
 })

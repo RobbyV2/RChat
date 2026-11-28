@@ -1,3 +1,4 @@
+import { flush, waitUntil } from './helpers/test_clock'
 import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { Hub, makeNode, ManualClock, settle, waitFor } from './p2p_net'
@@ -42,13 +43,8 @@ afterEach(() => {
 })
 
 // Waits for the state, for most of the test budget (a loaded run is slow, not wrong).
-const eventually = async (ok: () => Promise<boolean>, what: string, ms = 50_000) => {
-  const end = Date.now() + ms
-  while (!(await ok())) {
-    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)
-    await new Promise(r => setTimeout(r, 2))
-  }
-}
+const eventually = (ok: () => Promise<boolean>, what: string, ms = 50_000) =>
+  waitUntil(ok, what, ms)
 
 // Deterministic bytes, different per seed.
 const bytes = (n: number, seed = 1) => {
@@ -1609,23 +1605,23 @@ describe('object URLs of shown files', () => {
     }
     // Three tiles on screen at once: none is revoked, though past the cap.
     for (const h of ['a', 'b', 'c']) await cache.use(h, make(h))
-    await new Promise(r => setTimeout(r, 0))
+    await flush()
     expect(revoked).toEqual([])
     // The same file again is one URL, used twice.
     expect(await cache.use('a', make('a'))).toBe('blob:a')
     expect(made).toBe(3)
     cache.unuse('a')
-    await new Promise(r => setTimeout(r, 0))
+    await flush()
     expect(revoked).toEqual([])
     cache.unuse('b')
-    await new Promise(r => setTimeout(r, 0))
+    await flush()
     expect(revoked).toEqual(['blob:b'])
     cache.unuse('a')
     cache.unuse('c')
-    await new Promise(r => setTimeout(r, 0))
+    await flush()
     expect(revoked).toEqual(['blob:b'])
     cache.drop('a')
-    await new Promise(r => setTimeout(r, 0))
+    await flush()
     expect(revoked).toEqual(['blob:b', 'blob:a'])
   })
 })

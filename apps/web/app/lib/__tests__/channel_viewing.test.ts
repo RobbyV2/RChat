@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import {
   channelTarget,
   canView,
@@ -169,7 +170,7 @@ test('a disconnected channel rail refreshes metadata before admission', async ()
     return Response.json({ ...club, channels: [channels[0], { ...channels[1], sensitive: true }] })
   }) as typeof fetch
   const opened = useStore.getState().openChannel('club', 2)
-  await new Promise(r => setTimeout(r, 0))
+  await flush()
   expect(useViewing.getState().prompt?.target.name).toBe(channels[1].name)
   useViewing.getState().prompt!.answer(false, false)
   await opened

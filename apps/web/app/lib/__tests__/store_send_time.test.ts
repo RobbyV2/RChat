@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import { messagePlaces } from '../message_groups'
@@ -10,7 +11,7 @@ const realFetch = globalThis.fetch
 const realWindow = (globalThis as { window?: unknown }).window
 const tick = async () => {
   for (let i = 0; i < 10; i += 1) await Promise.resolve()
-  await new Promise(r => setTimeout(r, 0))
+  await flush()
   for (let i = 0; i < 10; i += 1) await Promise.resolve()
 }
 

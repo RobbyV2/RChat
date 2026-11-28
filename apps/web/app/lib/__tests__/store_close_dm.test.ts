@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { dmView, useStore, resetSessionCaches } from '../store'
 import { emptyLayout, type Layout } from '../nav_layout'
@@ -16,7 +17,7 @@ const dm = (id: number, other: string, is_self = false, closed = false): DmSumma
 })
 const dmIds = () => st().dms.map(d => d.id)
 const pinned = () => dmView(st()).pinned.map(d => d.id)
-const tick = () => new Promise(r => setTimeout(r, 0))
+const tick = () => flush()
 
 const storage = new Map<string, string>()
 const saved = (): Layout | null => {

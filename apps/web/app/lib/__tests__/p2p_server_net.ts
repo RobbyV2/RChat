@@ -1,3 +1,4 @@
+import { waitUntil } from './helpers/test_clock'
 import { own } from './helpers/fixture'
 import { Hub, makeNode, ManualClock, prng, waitFor } from './p2p_net'
 import { CHANNEL_CONTENT } from '../p2p/event_v2'
@@ -97,17 +98,8 @@ export const restart = async (hub: Hub, m: Member, clock: ManualClock) => {
 // A member's running limits, to change while a test runs.
 export const limits = (m: Member) => m.servers.local as Local
 
-export const eventually = async (
-  ok: () => Promise<boolean> | boolean,
-  what: string,
-  ms = 20_000
-) => {
-  const end = Date.now() + ms
-  while (!(await ok())) {
-    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)
-    await new Promise(r => setTimeout(r, 2))
-  }
-}
+export const eventually = (ok: () => Promise<boolean> | boolean, what: string, ms = 20_000) =>
+  waitUntil(ok, what, ms)
 
 // Advances the manual clock in steps while waiting, so gossip ticks and dials run.
 export const pump = async (

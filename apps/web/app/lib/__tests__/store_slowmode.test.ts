@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore } from '../store'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
@@ -9,7 +10,7 @@ const realWindow = (globalThis as { window?: unknown }).window
 let reply: { status: number; body: unknown } = { status: 200, body: null }
 const tick = async () => {
   for (let i = 0; i < 10; i += 1) await Promise.resolve()
-  await new Promise(r => setTimeout(r, 0))
+  await flush()
   for (let i = 0; i < 10; i += 1) await Promise.resolve()
 }
 

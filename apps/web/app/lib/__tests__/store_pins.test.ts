@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { useStore } from '../store'
 import type { Message, WsEvent } from '../types'
@@ -12,7 +13,7 @@ let requests: { method: string; url: string }[] = []
 let pinsReply: Message[] = []
 const tick = async () => {
   for (let i = 0; i < 10; i += 1) await Promise.resolve()
-  await new Promise(r => setTimeout(r, 0))
+  await flush()
   for (let i = 0; i < 10; i += 1) await Promise.resolve()
 }
 const scoped = { server: 's', channel_id: 1, dm_id: null, dm_users: null }

@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { peerStorage } from '../client/keys'
 import { peerChat } from '../actions/p2p_chat'
 import { ForwardBar } from '../../components/forwards'
@@ -1256,7 +1257,7 @@ describe('forwarding', () => {
       list!.rowMenu(row.p, row.m, 0, 0)
       const fwdItem = items.find(x => x.label === 'Forward')!
       await fwdItem.submenu!.find(x => x.label === 'Carol')!.action!()
-      await new Promise(r => setTimeout(r, 0))
+      await flush()
       expect(sent.map(f => f.name)).toEqual(['Shitlord'])
       // The forward clipboard carries the same name.
       fwdItem.submenu!.find(x => x.label === 'Copy for forwarding')!.action!()

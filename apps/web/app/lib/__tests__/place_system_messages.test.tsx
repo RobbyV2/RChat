@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { beforeAll, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { SystemMessagesSection } from '../../components/system_messages'
@@ -117,7 +118,7 @@ const seat = (
   return place
 }
 
-const settle = () => new Promise(r => setTimeout(r, 0))
+const settle = () => flush()
 
 const ready = async (place: SystemPlace) => {
   const at = systemMessagesOf(place)

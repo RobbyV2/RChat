@@ -1,3 +1,4 @@
+import { testClock, type ManualTime } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   PRESENCE_LOG_MAX,
@@ -19,9 +20,14 @@ import { useStore, resetSessionCaches } from '../store'
 import type { Member, WsEvent } from '../types'
 import { member, paged, serverDetail } from './fixtures'
 
+let clock: ManualTime
+beforeEach(() => {
+  clock = testClock()
+})
+
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
-const frame = () => new Promise(r => setTimeout(r, 20))
+const frame = () => clock.pass(20)
 const presence = (username: string, online: boolean): WsEvent => ({
   type: 'presence_changed',
   server: 's',

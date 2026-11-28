@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { afterEach, expect, test } from 'bun:test'
 import example from '../../../public/app-examples/field-notes.json'
 import { serverActions } from '../actions/server'
@@ -219,7 +220,7 @@ test('remembered file installs are accessible by revision after a session reset 
     'garden',
     fileSource(new File([raw.replace('Field club', 'Hill  club')], file.name))
   )
-  await new Promise(r => setTimeout(r, 0))
+  await flush()
   answer(false)
   await changed
   resetSessionCaches()

@@ -1,3 +1,4 @@
+import { flush, testClock, type ManualTime } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { home, api } from './home_instance'
 import { secretsKey } from '../passwords'
@@ -7,6 +8,11 @@ import { historyKey } from '../openapi'
 import { useStore, resetSessionCaches } from '../store'
 import { me, serverDetail } from './fixtures'
 import { Secret } from '../secret'
+
+let clock: ManualTime
+beforeEach(() => {
+  clock = testClock()
+})
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch
@@ -46,7 +52,7 @@ describe('session', () => {
   test('logout sends the last read marks, then revokes the token it used', async () => {
     useStore.setState({ token: null })
     st().logout()
-    await new Promise(r => setTimeout(r, 0))
+    await flush()
     calls = []
     api.setToken(Secret.of('tok'))
     useStore.setState({ token: Secret.of('tok'), me: me('bob'), authExpired: false, reads: {} })
@@ -54,7 +60,7 @@ describe('session', () => {
     st().logout()
     expect(st().token).toBeNull()
     api.setToken(Secret.of('next'))
-    await new Promise(r => setTimeout(r, 10))
+    await clock.pass(10)
     const posts = calls.filter(c => c.method === 'POST')
     expect(posts.map(c => [c.url.replace(/^.*\/api/, ''), c.auth])).toEqual([
       ['/read', 'Bearer tok'],

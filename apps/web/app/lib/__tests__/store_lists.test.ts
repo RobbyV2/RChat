@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { dmsUnread, serverUnread, useStore } from '../store'
 import type { DmSummary, Message, ServerSummary, WsEvent } from '../types'
@@ -37,7 +38,7 @@ const hold = () => {
       )
     })) as typeof fetch
 }
-const tick = () => new Promise(r => setTimeout(r, 0))
+const tick = () => flush()
 const cursorOf = (url: string) => new URL(url, 'http://localhost').searchParams.get('cursor')
 const srv = (name: string): ServerSummary => ({
   name,

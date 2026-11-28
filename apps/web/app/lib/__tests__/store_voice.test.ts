@@ -1,3 +1,4 @@
+import { testClock, type ManualTime } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { client } from '../client/client'
 import { home } from './home_instance'
@@ -7,6 +8,11 @@ import { ChannelPermBit, type VoiceMsg } from '../types'
 import { TIMED_OUT_CAMERA, TIMED_OUT_SHARE } from '../timeouts'
 import { drain, me, serverDetail, until } from './fixtures'
 import { AUDIO_SEND_MS } from '../slices/rtc'
+
+let clock: ManualTime
+beforeEach(() => {
+  clock = testClock()
+})
 
 const { rtc } = getHomeSession()
 
@@ -1027,7 +1033,7 @@ describe('what people in voice say about their own audio', () => {
       deafened,
     })
   const audioSent = () => sent.filter(m => m.type === 'voice_audio')
-  const settle = () => new Promise(r => setTimeout(r, AUDIO_SEND_MS + 150))
+  const settle = () => clock.pass(AUDIO_SEND_MS + 150)
   const listed = (
     channel_id: number,
     users: string[],

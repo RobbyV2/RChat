@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { BanDialog } from '../../components/ban_dialog'
@@ -83,7 +84,7 @@ const seated = (world: ContractWorld, calls: Call[], until?: number) => {
   return place
 }
 
-const settle = () => new Promise(r => setTimeout(r, 0))
+const settle = () => flush()
 
 placeContract(moderation, (kind, world) => {
   if (kind === 'hostedDm' || kind === 'p2pDm') {

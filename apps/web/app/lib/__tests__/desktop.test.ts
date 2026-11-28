@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { testClock, type ManualTime } from './helpers/test_clock'
+import { afterEach, describe, expect, test, beforeEach } from 'bun:test'
 import {
   desktopInfo,
   inShell,
@@ -15,6 +16,11 @@ import { confirmGate, deepLinkTarget, openDeepLink, type LinkEnv } from '../deep
 import { shareOrigin } from '../instances'
 import { home } from './home_instance'
 import { parsePath } from '../view'
+
+let clock: ManualTime
+beforeEach(() => {
+  clock = testClock()
+})
 
 type Call = { cmd: string; args?: unknown; headers?: Record<string, string> }
 
@@ -192,7 +198,7 @@ describe('desktop sharing', () => {
     desktopSharing(cancel.call, m => void reported.push(m)).saveFile('b.txt', 'x', 'text/plain')
     const ok = fakeInvoke({ save_begin: () => 4 })
     desktopSharing(ok.call, m => void reported.push(m)).saveBlob('c.bin', new Blob(['y']))
-    await new Promise(r => setTimeout(r, 20))
+    await clock.pass(20)
     expect(reported).toEqual([SAVE_FAILED])
   })
 

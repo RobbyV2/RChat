@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { describe, expect, test } from 'bun:test'
 import { PRIORITIES, SolveCancelled, SolveQueue, type Priority, type Turn } from '../trust/queue'
 
@@ -8,7 +9,7 @@ const deferred = <T = void>() => {
   })
   return { promise, resolve }
 }
-const settle = () => new Promise<void>(r => setTimeout(r, 0))
+const settle = () => flush()
 const failure = (p: Promise<unknown>) =>
   p.then(
     () => null,

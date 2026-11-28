@@ -1,3 +1,4 @@
+import { flush, testClock, type ManualTime } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { memberOf, serverAdminPerms, useStore, resetSessionCaches } from '../store'
 import { Perm, type Member, type WsEvent } from '../types'
@@ -5,9 +6,14 @@ import { PRESENCE_LOG_MAX, byCodePoint, onlineRows, onlineSection, onlineTotals 
 import { advance, me, member, paged, role, serverDetail, until } from './fixtures'
 import { home } from './home_instance'
 
+let clock: ManualTime
+beforeEach(() => {
+  clock = testClock()
+})
+
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
-const tick = () => new Promise(r => setTimeout(r, 0))
+const tick = () => flush()
 
 const realFetch = globalThis.fetch
 let requests: string[] = []
@@ -78,7 +84,7 @@ describe('member lookups for authors', () => {
     await st().ensureMembers('s', ['bob', 'carol', 'zed'])
     dispatch({ type: 'admin_changed', server: 's', username: 'bob', is_admin: true, perms: 4 })
     dispatch({ type: 'presence_changed', server: 's', username: 'bob', online: true })
-    await new Promise(r => setTimeout(r, 20))
+    await clock.pass(20)
     expect(memberOf(st(), 's', 'bob')).toEqual({
       ...member('bob', { role_ids: [1] }),
       is_admin: true,
@@ -131,7 +137,7 @@ describe('the online section', () => {
     username,
     online: on,
   })
-  const frame = () => new Promise(r => setTimeout(r, 20))
+  const frame = () => clock.pass(20)
   const shown = () => onlineRows(st().members.s.list, st().memberInfo.s).map(m => m.username)
   const json = (body: unknown, next?: string) =>
     new Response(JSON.stringify(body), {

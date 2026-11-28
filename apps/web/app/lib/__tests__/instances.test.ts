@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test'
+import { testClock, type ManualTime } from './helpers/test_clock'
+import { describe, expect, test, beforeEach } from 'bun:test'
 import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -39,6 +40,11 @@ import { InstanceRegistry } from '../client/instance_registry'
 import { ApiClient, createApi } from '../api'
 import type { InstanceInfo } from '../types'
 import { Secret } from '../secret'
+
+let clock: ManualTime
+beforeEach(() => {
+  clock = testClock()
+})
 
 const info = (over: Partial<InstanceInfo> = {}): InstanceInfo => ({
   software: 'rchat',
@@ -740,14 +746,19 @@ describe('the home lookup', () => {
     const l = lookup()
     let waited = false
     const wait = l.settled(5000).then(() => (waited = true))
-    await new Promise(r => setTimeout(r, 20))
+    await clock.pass(20)
     expect(waited).toBe(false)
     l.done()
     await wait
     expect(waited).toBe(true)
-    const t0 = Date.now()
-    await lookup().settled(30)
-    expect(Date.now() - t0 < 1000).toBe(true)
+    let bounded = false
+    void lookup()
+      .settled(30)
+      .then(() => (bounded = true))
+    await clock.pass(29)
+    expect(bounded).toBe(false)
+    await clock.pass(1)
+    expect(bounded).toBe(true)
     const late = lookup()
     late.done()
     await late.settled(5000)

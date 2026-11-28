@@ -1,13 +1,19 @@
+import { testClock, type ManualTime } from './helpers/test_clock'
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import type { WsEvent } from '../types'
 import { embed, me, media, member, msg, paged, serverDetail, user } from './fixtures'
 
+let clock: ManualTime
+beforeEach(() => {
+  clock = testClock()
+})
+
 const dispatch = (ev: WsEvent) => useStore.getState().applyWsEvent(ev)
 const st = () => useStore.getState()
 const scoped = { server: 's', channel_id: 1, dm_id: null, dm_users: null }
 const viewing = { kind: 'channel' as const, server: 's', channelId: 1 }
-const frame = () => new Promise(r => setTimeout(r, 20))
+const frame = () => clock.pass(20)
 
 beforeEach(() => {
   useStore.setState({

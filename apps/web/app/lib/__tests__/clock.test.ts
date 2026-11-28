@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { FRAME_MS, ManualTime } from '../clock'
+import { FRAME_MS } from '../clock'
 import { deviceTime, time } from '../platform/time'
-import { testClock } from './helpers/test_clock'
+import { ManualTime, testClock } from './helpers/test_clock'
 import { testAccount } from './test_account'
 
 describe('manual time', () => {
@@ -88,6 +88,21 @@ describe('manual time', () => {
     expect((signal.reason as DOMException).name).toBe('TimeoutError')
   })
 
+  test('released timers go on with the other time and can be cancelled', () => {
+    const t = new ManualTime()
+    const to = new ManualTime()
+    const ran: string[] = []
+    t.after(30, () => ran.push('once'))
+    t.every(20, () => ran.push('each'))
+    const cancel = t.after(5, () => ran.push('cancelled'))
+    t.advance(10 - 5 - 1)
+    t.release(to)
+    expect(t.pending).toBe(0)
+    cancel()
+    to.advance(60)
+    expect(ran).toEqual(['each', 'once', 'each', 'each'])
+  })
+
   test('flush settles pending promises', async () => {
     const t = new ManualTime()
     let seen = 0
@@ -119,21 +134,26 @@ describe('manual time', () => {
 
 describe('the time in use', () => {
   test('is the device time unless a test clock is set', () => {
-    expect(time()).toBe(deviceTime)
     const before = Date.now()
     expect(time().now()).toBeGreaterThanOrEqual(before)
+    expect(time().now()).toBeLessThanOrEqual(Date.now())
   })
 
-  test('a session runs on the test clock set before it was made', () => {
+  test('a session runs on the test clock, whether made before or after it was set', () => {
+    const early = testAccount('ada')
     const clock = testClock(42_000)
-    expect(time()).toBe(clock)
-    const account = testAccount('ada')
-    expect(account.time).toBe(clock)
-    expect(account.time.now()).toBe(42_000)
+    const late = testAccount('bob')
+    expect([early.time.now(), late.time.now(), time().now()]).toEqual([42_000, 42_000, 42_000])
+    let ran = 0
+    early.time.after(10, () => ran++)
+    late.time.every(10, () => ran++)
+    clock.advance(20)
+    expect(ran).toBe(3)
   })
 
   test('a test clock ends with its test', () => {
-    expect(time()).toBe(deviceTime)
+    expect(time().now()).toBeGreaterThan(1_000_000_000_000 + 42_000)
+    expect(time().elapsed()).toBeGreaterThan(0)
   })
 
   test('device timers run and cancel', async () => {

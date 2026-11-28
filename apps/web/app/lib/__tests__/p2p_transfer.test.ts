@@ -1,3 +1,4 @@
+import { waitUntil } from './helpers/test_clock'
 import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { Hub, makeNode, ManualClock, waitFor } from './p2p_net'
 import { identityConflict, P2pNode } from '../p2p/node'
@@ -128,13 +129,7 @@ const openPeer = async (hub: Hub, db: string, clock: ManualClock) => {
 // test run slows down a lot (the move test is the longest chain of it).
 const SLOW = 40_000
 
-const eventually = async (ok: () => Promise<boolean>, what: string, ms = SLOW) => {
-  const end = Date.now() + ms
-  while (!(await ok())) {
-    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)
-    await new Promise(r => setTimeout(r, 2))
-  }
-}
+const eventually = (ok: () => Promise<boolean>, what: string, ms = SLOW) => waitUntil(ok, what, ms)
 
 const linked = (a: Peer, b: Peer) =>
   a.dms.online(a.dms.roomFor(b.node.ik)) && b.dms.online(b.dms.roomFor(a.node.ik))

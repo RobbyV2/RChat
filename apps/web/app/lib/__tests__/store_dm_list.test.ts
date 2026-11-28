@@ -1,3 +1,4 @@
+import { testClock, type ManualTime } from './helpers/test_clock'
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { ListFilter, X } from 'lucide-react'
 import { ctxFor, paletteCtx } from '../actions/ctx'
@@ -11,6 +12,11 @@ import { home } from './home_instance'
 import type { DmSummary, WsEvent } from '../types'
 import { me, memoryStorage, msg, until, user } from './fixtures'
 import { Secret } from '../secret'
+
+let clock: ManualTime
+beforeEach(() => {
+  clock = testClock()
+})
 
 beforeAll(registerAppActions)
 
@@ -131,7 +137,7 @@ describe('dm list sort and filters', () => {
     st().setDmList({ unreadTop: true })
     st().setDmList({ unread: true })
     st().setDmList({ sort: 'custom' })
-    await new Promise(r => setTimeout(r, 20))
+    await clock.pass(20)
     expect(listed()).toEqual([])
     expect(saved()?.dmList?.sort).toBe('custom')
   })
@@ -216,7 +222,7 @@ describe('dm list sort and filters', () => {
     } as unknown as WsEvent)
     await until(() => calls.some(c => c.endsWith('/me')))
     expect(calls.at(-1)).toEndWith('/me')
-    await new Promise(r => setTimeout(r, 20))
+    await clock.pass(20)
     expect(st().dmsEdge.last?.id).toBe(4)
     expect(st().dmsMore).toBe(true)
     expect(listed()).toHaveLength(1)

@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { askKick } from '../place/moderation'
 import { HostedServer } from '../place/place'
@@ -65,7 +66,7 @@ const realCheck = relayBook.check
 const realSend = ws.sendVoice
 const tick = async () => {
   for (let i = 0; i < 10; i += 1) await Promise.resolve()
-  await new Promise(r => setTimeout(r, 0))
+  await flush()
   for (let i = 0; i < 10; i += 1) await Promise.resolve()
 }
 const settle = async () => {

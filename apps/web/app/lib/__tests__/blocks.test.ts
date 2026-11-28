@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore } from '../store'
 import { home } from './home_instance'
@@ -9,7 +10,7 @@ import { Secret } from '../secret'
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
-const tick = () => new Promise(r => setTimeout(r, 0))
+const tick = () => flush()
 const blockedUser = (name: string, at = 1, display = name): BlockedUser => ({
   user: user(name, { display_name: display }),
   blocked_at: at,

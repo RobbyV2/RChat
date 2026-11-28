@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from 'bun:test'
@@ -42,10 +43,10 @@ for (const change of ['switch', 'sign out']) {
       else a.lifetime.endSession()
       registration.resolve(() => {})
       await listener
-      await new Promise(resolve => setTimeout(resolve, 0))
+      await flush()
       expect(failures).toEqual([])
       event()
-      await new Promise(resolve => setTimeout(resolve, 0))
+      await flush()
       expect(failures).toEqual([change === 'switch' ? 'b' : 'a'])
     } finally {
       restoreWindow()
@@ -102,7 +103,7 @@ for (const switched of [false, true]) {
       event(2)
       ready.resolve(() => {})
       await listener
-      await new Promise(resolve => setTimeout(resolve, 0))
+      await flush()
       expect(paths).toEqual(switched ? ['/dm/2/'] : ['/dm/1/', '/dm/2/'])
       expect(queue.size).toBe(0)
     } finally {

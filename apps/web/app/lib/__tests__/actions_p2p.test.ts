@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { CAN_ALL } from '../channel_perms'
 import { moderationOf } from '../place/moderation'
 import { shownPeer } from './shown_peer'
@@ -204,7 +205,7 @@ const onMember = (v: ServerView, m: MemberView): Target => {
 }
 const onRole = (v: ServerView, r: RoleView): Target => ({ kind: 'p2p_role', v, r })
 
-const settle = () => new Promise(r => setTimeout(r, 0))
+const settle = () => flush()
 
 // What `syncWidens` answers in the recorded runs.
 let widens: string[] = []

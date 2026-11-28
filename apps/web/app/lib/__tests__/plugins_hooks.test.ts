@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test'
+import { testClock, type ManualTime } from './helpers/test_clock'
+import { describe, expect, test, beforeEach } from 'bun:test'
 import {
   CANCEL,
   Late,
@@ -7,6 +8,11 @@ import {
   type AsyncHandler,
   type Handler,
 } from '../plugins/hooks'
+
+let clock: ManualTime
+beforeEach(() => {
+  clock = testClock()
+})
 
 const isStr = (v: unknown): v is string => typeof v === 'string'
 const h = (
@@ -206,7 +212,7 @@ describe('hook chains', () => {
 
 describe('async hook chains with deadlines', () => {
   const D = 40
-  const wait = (ms: number) => new Promise(r => setTimeout(r, ms))
+  const wait = (ms: number) => clock.pass(ms)
   const a = (
     plugin: string,
     kind: AsyncHandler<string>['kind'],

@@ -1,3 +1,4 @@
+import { waitUntil } from './helpers/test_clock'
 import { CallGuard, type ClaimMedia } from '../client/calls'
 import { testAccount } from './test_account'
 import { afterEach, describe, expect, test } from 'bun:test'
@@ -441,13 +442,8 @@ const rows = async (p: Peer, other: Peer) =>
 const callRows = async (p: Peer, other: Peer) =>
   (await rows(p, other)).flatMap(m => (m.call ? [{ ...m.call, sender: m.sender }] : []))
 
-const eventually = async (ok: () => Promise<boolean>, what: string, ms = 15_000) => {
-  const end = Date.now() + ms
-  while (!(await ok())) {
-    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)
-    await new Promise(r => setTimeout(r, 2))
-  }
-}
+const eventually = (ok: () => Promise<boolean>, what: string, ms = 15_000) =>
+  waitUntil(ok, what, ms)
 
 const failure = (p: Promise<unknown>) =>
   p.then(

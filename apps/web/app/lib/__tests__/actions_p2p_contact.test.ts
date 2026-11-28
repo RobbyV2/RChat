@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { shownPeer } from './shown_peer'
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { ctxFor } from '../actions/ctx'
@@ -62,7 +63,7 @@ const recorder = () => {
   return calls
 }
 
-const settle = () => new Promise(r => setTimeout(r, 0))
+const settle = () => flush()
 
 describe("a P2P contact's menu", () => {
   test('a mutual contact: message, mute, notifications, rename, verify, block and remove', async () => {

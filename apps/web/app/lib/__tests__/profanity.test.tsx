@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { shownPeer } from './shown_peer'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
@@ -278,7 +279,7 @@ describe('in messages', () => {
     expect(render()).toContain('hey, shit')
     useStore.getState().setProfanityOn(true)
     expect(storage.get('rchat_profanity:alice')).toBe('{"v":1,"on":true}')
-    await new Promise(r => setTimeout(r, 0))
+    await flush()
     expect(useStore.getState().profanityReady).toBe(true)
     const mask = maskOf(useStore.getState())
     expect(mask('hey, shit')).toBe('hey, ****')
@@ -724,7 +725,7 @@ describe('in messages', () => {
       await signIn('alice')
       expect(useStore.getState().profanityOn).toBe(true)
       expect(storage.has('rchat_profanity:alice')).toBe(false)
-      await new Promise(r => setTimeout(r, 0))
+      await flush()
       expect(maskOf(useStore.getState())('hey, shit')).toBe('hey, ****')
       useStore.getState().setProfanityOn(false)
       storage.set('rchat_profanity:bob', '{"v":1,"on":false}')

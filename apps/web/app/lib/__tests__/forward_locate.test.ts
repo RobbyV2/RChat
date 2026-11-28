@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   LOOKUPS_MAX,
@@ -115,7 +116,7 @@ describe('located originals', () => {
     const first = locateOnce(acct, 42)
     acct.store.setState({ me: member('club', 'vault') })
     const second = locateOnce(acct, 42)
-    await new Promise(r => setTimeout(r, 0))
+    await flush()
     for (const open of gates) open()
     await Promise.all([first, second])
     expect(locatedNow(acct, 42)?.kind).toBe('channel')

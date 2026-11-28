@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { createTestMedia } from './test_media'
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
@@ -439,7 +440,7 @@ describe('p2p transfer', () => {
     const { m: viewer, x: vx } = manager('viewer')
     vx.ensurePeer = () => ({ connect: () => client })
     const got = viewer.download('host', 'f', { size: SVG.length, sha256: null, hoster: 'host' })
-    await new Promise(r => setTimeout(r, 0))
+    await flush()
     client.emit('open')
     client.emit('data', { type: 'meta', id: 'f', mime: 'text/html', size: SVG.length })
     client.emit('data', { type: 'chunk', id: 'f', data: SVG })
@@ -455,7 +456,7 @@ describe('p2p transfer', () => {
     const { got, m: viewer } = fetchFrom(x, 'f', { size: 1000, sha256: 'ab'.repeat(32) })
     const e = await got.catch((err: unknown) => err)
     expect(e instanceof Error ? e.message : null).toBe(MISMATCH)
-    await new Promise(r => setTimeout(r, 0))
+    await flush()
     expect([...kept.keys()].filter(k => k.startsWith('d:'))).toEqual([])
     expect(viewer.received()).toEqual({})
   })
@@ -481,7 +482,7 @@ describe('p2p transfer', () => {
     stop.abort()
     const canceled = await pending.catch((e: unknown) => e)
     expect(canceled instanceof Error ? canceled.message : null).toBe(CANCELED)
-    await new Promise(r => setTimeout(r, 0))
+    await flush()
     expect([...kept.keys()].filter(k => k.startsWith('d:'))).toEqual([])
   })
 
@@ -506,7 +507,7 @@ describe('p2p transfer', () => {
     const { m, x } = manager('viewer')
     x.ensurePeer = () => ({ connect: () => client })
     const got = m.download('host', 'f', { size, sha256: null, hoster: 'host' })
-    await new Promise(r => setTimeout(r, 0))
+    await flush()
     client.emit('open')
     for (const msg of msgs) client.emit('data', msg)
     const e = await got.catch((err: unknown) => err)
@@ -1107,7 +1108,7 @@ describe('p2p transfer', () => {
       iceTransportPolicy: 'relay',
     }
     const until = async (ok: () => boolean) => {
-      for (let i = 0; i < 50 && !ok(); i += 1) await new Promise(r => setTimeout(r, 1))
+      for (let i = 0; i < 50 && !ok(); i += 1) await flush()
     }
 
     test('PeerJS stays pinned at the version whose offer handling the hook relies on', () => {

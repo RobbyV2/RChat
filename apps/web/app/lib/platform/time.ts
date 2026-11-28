@@ -25,8 +25,18 @@ export const deviceTime: Time = {
 
 let current: Time = deviceTime
 
+// Forwards to the time in use, so what took it earlier (a session, a module) follows a change.
+const inUse: Time = {
+  now: () => current.now(),
+  elapsed: () => current.elapsed(),
+  after: (ms, fn) => current.after(ms, fn),
+  every: (ms, fn) => current.every(ms, fn),
+  frame: fn => current.frame(fn),
+  deadline: ms => current.deadline(ms),
+}
+
 // The time in use: the device's, unless a test registered its own.
-export const time = () => current
+export const time = () => inUse
 
 export const setTime = (next: Time = deviceTime) => {
   current = next

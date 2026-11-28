@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { setBlobs, type BlobStore } from '../platform'
 import { webBlobs } from '../platform/web_blobs'
@@ -155,7 +156,7 @@ describe('following the app', () => {
   ]
   const st = () => useStore.getState()
   const ids = (q: string) => (paletteIndex()?.search(q) ?? []).map(h => h.doc.id)
-  const tick = () => new Promise(r => setTimeout(r, 0))
+  const tick = () => flush()
 
   const state = () => ({
     token: Secret.of('tok'),

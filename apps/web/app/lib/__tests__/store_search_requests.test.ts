@@ -1,7 +1,13 @@
+import { flush, testClock, type ManualTime } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { SearchArgs } from '../search'
 import { useStore } from '../store'
 import { memoryStorage, result } from './fixtures'
+
+let clock: ManualTime
+beforeEach(() => {
+  clock = testClock()
+})
 
 const st = () => useStore.getState()
 const g = globalThis as { window?: unknown; document?: unknown }
@@ -41,11 +47,11 @@ const refused = (status: number, error: string, kind: string) =>
   })
 
 const settle = async () => {
-  for (let i = 0; i < 20; i += 1) await new Promise(r => setTimeout(r, 0))
+  for (let i = 0; i < 20; i += 1) await flush()
 }
 
 const waitFor = async (holds: () => boolean) => {
-  for (let i = 0; i < 300 && !holds(); i += 1) await new Promise(r => setTimeout(r, 10))
+  for (let i = 0; i < 300 && !holds(); i += 1) await clock.pass(10)
   expect(holds()).toBe(true)
 }
 
@@ -229,7 +235,7 @@ describe('search requests', () => {
     ask('chatter')
     await settle()
     asked[1].answer(found([7]))
-    await new Promise(r => setTimeout(r, 1300))
+    await clock.pass(1300)
     expect(asked.map(a => a.q)).toEqual(['chat', 'chatter'])
     expect(shown()).toEqual({ ids: [7], loading: false, error: null })
   })

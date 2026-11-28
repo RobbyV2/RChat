@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore } from '../store'
 import { home } from './home_instance'
@@ -234,7 +235,7 @@ describe('shortcuts', () => {
 describe('selection store', () => {
   const st = () => useStore.getState()
   const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
-  const tick = () => new Promise(r => setTimeout(r, 0))
+  const tick = () => flush()
   type Call = { method: string; url: string; body?: unknown }
   let calls: Call[] = []
   let routes: [RegExp, (body: unknown) => unknown][] = []

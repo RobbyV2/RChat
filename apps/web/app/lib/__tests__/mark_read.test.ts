@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import {
   allMarkTargets,
@@ -230,7 +231,7 @@ describe('mark as read actions', () => {
     expect(st().confirm?.title).toBe('Mark all as read')
     expect(batches()).toEqual([])
     st().confirm?.action('')
-    await new Promise(r => setTimeout(r, 0))
+    await flush()
     expect(batches()).toHaveLength(1)
   })
 

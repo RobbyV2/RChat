@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
@@ -51,7 +52,7 @@ const unwire = (nonces: string) =>
 const plain = (seed = SEED, target = TARGET, log?: string[]): Runner => ({
   chunk: async (sub, start, count) => {
     log?.push(`${sub}@${start}+${count}`)
-    await new Promise(r => setTimeout(r, 0))
+    await flush()
     return jsChunk(seed, sub, start, count, target)
   },
 })

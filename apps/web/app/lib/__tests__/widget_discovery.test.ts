@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { expect, test } from 'bun:test'
 import { WidgetConnection } from '../widget_connection'
 import { me, msg } from './fixtures'
@@ -324,7 +325,7 @@ test('the live subscription picks up a posting change after the initial view', a
       expect(client.canPost).toBe(true)
       room.participate = false
       ready()
-      await new Promise(resolve => setTimeout(resolve, 0))
+      await flush()
       expect(client.canPost).toBe(false)
       expect(sockets).toHaveLength(1)
     }
@@ -493,7 +494,7 @@ test('link previews stay in place while the room is read again, then follow the 
   }
   const answers: PromiseWithResolvers<Response>[] = []
   const settled = async (check: () => boolean) => {
-    for (let i = 0; i < 50 && !check(); i++) await new Promise(resolve => setTimeout(resolve, 0))
+    for (let i = 0; i < 50 && !check(); i++) await flush()
     expect(check()).toBe(true)
   }
   await withWidget(
@@ -592,13 +593,13 @@ test('refresh notices that arrive during a refresh lead to one more', async () =
       await client.start()
       expect(viewed).toBe(1)
       for (let i = 0; i < 5; i++) deliver({ type: 'widget_refresh' })
-      await new Promise(resolve => setTimeout(resolve, 0))
+      await flush()
       expect([rooms, viewed]).toEqual([2, 2])
       views.shift()?.()
-      await new Promise(resolve => setTimeout(resolve, 0))
+      await flush()
       expect([rooms, viewed]).toEqual([3, 3])
       views.shift()?.()
-      await new Promise(resolve => setTimeout(resolve, 0))
+      await flush()
       expect([rooms, viewed]).toEqual([3, 3])
     }
   )

@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { peerStorage } from '../client/keys'
 import { shownPeer } from './shown_peer'
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
@@ -51,7 +52,7 @@ const pick = (t: Target, label: string) => {
   if (!item?.action) throw new Error(`no ${label} row`)
   item.action()
 }
-const settle = () => new Promise(r => setTimeout(r, 0))
+const settle = () => flush()
 const shape = (c: ContextMenuItem) => [c.label, c.swatch ?? null, c.checked ?? null]
 
 beforeEach(() => {

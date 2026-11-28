@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore } from '../store'
 import type { Message, Unread, WsEvent } from '../types'
@@ -13,7 +14,7 @@ let pages: Message[][] = []
 const range = (from: number, to: number, over: Partial<Message> = {}) =>
   Array.from({ length: to - from + 1 }, (_, i) => msg(from + i, over))
 const reply = (body: unknown) => new Response(JSON.stringify(body), { status: 200 })
-const tick = () => new Promise(resolve => setTimeout(resolve, 0))
+const tick = () => flush()
 const live = (channel: number, id: number, author = 'bob'): WsEvent => ({
   type: 'message',
   server: 's',

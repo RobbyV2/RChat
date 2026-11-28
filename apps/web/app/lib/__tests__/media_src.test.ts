@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { describe, expect, test } from 'bun:test'
 import { MEDIA_CACHE_BYTES, blobCache, mediaMode, shownBlob } from '../media_src'
 
@@ -19,7 +20,7 @@ const setup = (keep: number, bytes = Infinity) => {
   // A PNG (or `head`) of `size` bytes, at least its header.
   const finish = async (id: string, size = PNG.length, head = PNG) => {
     pending.get(id)?.(new Blob([head, new Uint8Array(Math.max(0, size - head.length))]))
-    await new Promise(r => setTimeout(r, 0))
+    await flush()
   }
   return { cache, load, revoked, signals, finish }
 }

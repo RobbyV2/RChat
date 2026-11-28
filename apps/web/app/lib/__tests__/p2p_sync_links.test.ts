@@ -1,3 +1,4 @@
+import { flush } from './helpers/test_clock'
 import { expect, test } from 'bun:test'
 import { Sync, type SyncDeps } from '../p2p/sync'
 import { P2pStore, removeP2pDb } from '../p2p/db'
@@ -68,7 +69,7 @@ const pushed = async (allowed: () => boolean, ids: string[]) => {
   for (const id of ids) s.push('r', id, { id } as never)
   const ack = async (ids: string[]) => {
     peer.handlers.get('ack')!({ t: 'ack', room: 'r', ids })
-    for (let i = 0; i < 20; i += 1) await new Promise(r => setTimeout(r, 0))
+    for (let i = 0; i < 20; i += 1) await flush()
   }
   const to = async (id: string) => (await store.db.get('outbox', id))?.deliveredTo ?? []
   const done = async () => {

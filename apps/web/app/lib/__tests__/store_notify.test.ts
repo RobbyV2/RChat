@@ -1,3 +1,4 @@
+import { testClock, type ManualTime } from './helpers/test_clock'
 import { client } from '../client/client'
 import type { AccountSession } from '../client/session'
 import { testAccount } from './test_account'
@@ -28,6 +29,11 @@ import { me, media, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { keyId, newKeyPair } from '../p2p/keys'
 import { Secret } from '../secret'
 
+let clock: ManualTime
+beforeEach(() => {
+  clock = testClock()
+})
+
 pinEmptyBook()
 
 const st = () => useStore.getState()
@@ -35,7 +41,7 @@ const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
 const realFetch = globalThis.fetch
 const realWindow = (globalThis as { window?: unknown }).window
 const realWebSocket = globalThis.WebSocket
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+const sleep = (ms: number) => clock.pass(ms)
 
 // A socket whose host never resolves. A client left running here probes the catch-all fetch,
 // polls, and reloads site settings from it, which later files then inherit.

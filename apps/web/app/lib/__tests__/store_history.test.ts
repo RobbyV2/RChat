@@ -1,7 +1,13 @@
+import { testClock, type ManualTime } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { getHomeSession, useStore } from '../store'
 import { ChannelPermBit, type Message, type WsEvent } from '../types'
 import { textChannel, me, media, msg, result, serverDetail, user } from './fixtures'
+
+let clock: ManualTime
+beforeEach(() => {
+  clock = testClock()
+})
 
 const { files: p2p } = getHomeSession()
 
@@ -359,7 +365,7 @@ describe('pending uploads', () => {
       expect(st().outbox.d5[0].pending?.file.name).toBe('notes.txt')
       expect(st().pending.d5).toBeUndefined()
       for (let i = 0; i < 1000 && st().outbox.d5?.[0]?.status !== 'failed'; i += 1)
-        await new Promise(r => setTimeout(r, 2))
+        await clock.pass(2)
       expect(st().outbox.d5?.[0]?.status).toBe('failed')
     } finally {
       p2p.stage = stage
