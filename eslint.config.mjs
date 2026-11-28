@@ -129,8 +129,8 @@ const STORE_SINKS = ['apps/web/app/lib/client/credentials.ts']
 const SCREEN_SINKS = ['apps/web/app/components/**', 'apps/web/app/**/page.tsx']
 const TEST_FILES = ['apps/web/app/**/__tests__/**', 'apps/web/app/**/*.test.{ts,tsx}']
 
-// The time and timers come from the clock (app/lib/clock.ts); only its device adapter reads the
-// globals.
+// The time and timers come from the clock (app/lib/clock.ts); only it and its device adapter read
+// the globals.
 const TIMERS = [
   'setTimeout',
   'setInterval',
@@ -175,7 +175,7 @@ const clockSyntax = {
   ],
 }
 const NETWORK_FILES = ['apps/web/app/lib/api.ts', 'apps/web/app/lib/api/**']
-const CLOCK_FILES = ['apps/web/app/lib/platform/time.ts']
+const CLOCK_FILES = ['apps/web/app/lib/clock.ts', 'apps/web/app/lib/platform/time.ts']
 
 export default tseslint.config(
   ...excluded(),
