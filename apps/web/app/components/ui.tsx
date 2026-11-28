@@ -286,7 +286,7 @@ export function Sheet({
 }) {
   const backdrop = sheet ? 'dim' : (float?.backdrop ?? 'dim')
   const look = sheet
-    ? `absolute inset-x-0 bottom-0 ${SHEET_HEIGHT[height]} animate-sheet-up rounded-t-3xl safe-x pb-[max(0.75rem,env(safe-area-inset-bottom))]`
+    ? `absolute inset-x-0 bottom-0 ${SHEET_HEIGHT[height]} animate-sheet-up rounded-t-3xl safe-x pb-[max(var(--space-md),env(safe-area-inset-bottom))]`
     : `absolute ${float?.at ?? 'inset-0 m-auto h-fit max-h-[85%] w-[min(28rem,calc(100%-2rem))]'} rounded-2xl border border-outline-variant`
   return (
     <Overlay {...overlay} layer={layer} backdrop={backdrop} onClose={onClose}>
@@ -517,7 +517,7 @@ export function LinkPage({
 }) {
   const authed = useStore(s => s.me !== null || s.guest)
   return (
-    <div className="invite-backdrop fixed inset-x-0 top-app z-page flex h-app flex-col overflow-y-auto safe-x-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+    <div className="invite-backdrop fixed inset-x-0 top-app z-page flex h-app flex-col overflow-y-auto safe-x-4 pb-[max(var(--space-lg),env(safe-area-inset-bottom))]">
       <header className="flex shrink-0 items-center justify-between pt-3 pb-2">
         <img src="/rchat_logo.png" alt="RChat" className="h-9 w-auto" />
         <div className="flex items-center gap-1">

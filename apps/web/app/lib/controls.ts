@@ -309,7 +309,7 @@ export const pillLook = (tone: BadgeTone) =>
 
 // A field of the API console: its border color says whether its value is valid.
 export const consoleFieldLook =
-  'w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1.5 text-base outline-none placeholder:text-on-surface-variant/70 focus:border-primary md:text-sm'
+  'w-full min-w-0 rounded-lg border bg-transparent px-3 py-1.5 text-base outline-none placeholder:text-on-surface-variant/70 focus:border-primary md:text-sm'
 
 // A button an app puts under its message: a pill with the color of its style.
 export const appButtonLook =
@@ -329,7 +329,7 @@ export const miniIconOffLook =
 
 // The pill under a forwarded message that says where it came from.
 export const sourcePillLook =
-  'mt-2 flex w-fit max-w-full min-w-0 items-center gap-1.5 rounded-lg border border-outline-variant/70 bg-surface-container-high px-2.5 py-1 text-xs text-on-surface-variant'
+  'mt-2 flex w-fit max-w-full min-w-0 items-center gap-1.5 rounded-lg border border-outline-variant/70 bg-surface-container-high px-2 py-1 text-xs text-on-surface-variant'
 
 // A place named in that pill.
 export const sourcePlaceLook =
@@ -339,9 +339,9 @@ export const sourcePlaceLook =
 export const homeActionLook =
   'flex min-w-0 items-center gap-3 rounded-2xl bg-surface-container-low px-4 py-3 text-left text-sm font-medium text-on-surface hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary'
 
-// The same for a peer-to-peer action: dashed, its padding less by its border.
+// The same for a peer-to-peer action: dashed.
 export const homeP2pActionLook =
-  'flex min-w-0 items-center gap-3 rounded-2xl border-2 border-dashed border-tertiary/70 bg-surface-container-low px-[calc(1rem-2px)] py-[calc(0.75rem-2px)] text-left text-sm font-medium text-on-surface hover:bg-tertiary-container hover:text-on-tertiary-container focus-visible:outline-2 focus-visible:outline-primary'
+  'flex min-w-0 items-center gap-3 rounded-2xl border-2 border-dashed border-tertiary/70 bg-surface-container-low px-4 py-3 text-left text-sm font-medium text-on-surface hover:bg-tertiary-container hover:text-on-tertiary-container focus-visible:outline-2 focus-visible:outline-primary'
 
 // A covered or removed embed, in place of its card.
 export const embedNoteLook =

@@ -241,3 +241,28 @@ test('a tight icon button grows into the gaps beside it on a coarse pointer', ()
   )
   expect(iconButtonLook('plain', 'lg').includes('-mx-')).toBe(false)
 })
+
+// The steps of the spacing scale as Tailwind numbers (quarter rems): 2, 4, 6, 8, 12, 16, 24, 32
+// and 48 px.
+const SCALE_STEPS = ['0', '0.5', '1', '1.5', '2', '3', '4', '6', '8', '12']
+// Off the scale on purpose: what grows a text link to a 44 px touch target, the top of a dialog
+// under its grip, and a seat's indent under its channel's icon.
+const OFF_SCALE = ['py-3.5', '-my-3.5', 'pt-5', 'ml-7']
+
+test('the padding, margins and gaps the controls set are steps of the spacing scale', () => {
+  const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), 'utf8')
+  const source = ['../controls.ts', '../../components/controls.tsx', '../../components/ui.tsx']
+    .map(read)
+    .join('\n')
+  const words = source.match(
+    /(?<![\w-])-?(?:p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|ml|mr|gap|gap-x|gap-y|space-x|space-y)-(?:\[[^\]]*\]|[0-9.]+)(?![\w.-])/g
+  )
+  expect(words?.length ?? 0).toBeGreaterThan(50)
+  const off = [...new Set(words)].filter(
+    w =>
+      !OFF_SCALE.includes(w) &&
+      !w.includes('var(--space-') &&
+      !SCALE_STEPS.includes(w.replace(/^.*-/, ''))
+  )
+  expect(off).toEqual([])
+})
