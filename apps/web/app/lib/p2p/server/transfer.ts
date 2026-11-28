@@ -33,6 +33,7 @@ import type { ServerCtx } from './context'
 import { SYNC_TEXT, OLD_GONE_TEXT, ServerError, type Migrated } from './types'
 import { type Rt } from './rt'
 import { clip } from '../rate'
+import { malformed } from '../strike'
 
 // The `role_create` a new copy makes from a role of the old one: its position, bits, name, color
 // and looks (the fields of its last change this version doesn't know stay behind).
@@ -293,7 +294,7 @@ export function successorOk(
 export function onTransfer(cx: ServerCtx, m: Message, s: Session, kind: 'take' | 'cosign') {
   const from = s.remote?.ik
   const room = m.room
-  if (!from || typeof room !== 'string') return s.strike()
+  if (!from || typeof room !== 'string') return s.strike(malformed('room'))
   const answer = (ok: boolean, extra: Record<string, unknown> = {}) =>
     void s
       .send({ t: kind === 'take' ? 'gxfered' : 'gcosigned', room, ok, ...extra })

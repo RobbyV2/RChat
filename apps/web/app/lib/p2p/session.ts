@@ -19,6 +19,7 @@ import {
 import { Initiator, Responder, type Established, type Me, type Remote } from './handshake'
 import { LOCAL, type Local } from './limits'
 import { time } from '../platform/time'
+import { malformed, type Strike, unentitled } from './strike'
 
 // One authenticated, encrypted session with a remote device over a reliable binary pipe:
 // handshake, then `hello` both ways, then typed messages. Later tasks register handlers for
@@ -79,6 +80,8 @@ export class Session {
   remote: Remote | null = null
   reason: CloseReason | null = null
   strikes = 0
+  // The reason of the last strike.
+  struck: Strike | null = null
   openedAt = 0
   lastUseful = 0
   private clock: Clock
@@ -197,7 +200,7 @@ export class Session {
     try {
       frame = decodeFrame(data)
     } catch {
-      return this.state === 'handshake' ? this.close('handshake') : this.strike()
+      return this.state === 'handshake' ? this.close('handshake') : this.strike(malformed('frame'))
     }
     if (this.state === 'handshake') {
       if (!knownFrame(frame.type)) return this.close('handshake')
@@ -205,7 +208,7 @@ export class Session {
     }
     // A frame type of a newer version: skipped within the rate limit.
     if (!knownFrame(frame.type)) return void (await this.throttle())
-    if (frame.type !== FrameType.Data) return this.strike()
+    if (frame.type !== FrameType.Data) return this.strike(malformed('frame'))
     let pt: Uint8Array
     try {
       // Every frame is decrypted in order, so the counter always advances.
@@ -224,7 +227,7 @@ export class Session {
       msg = decodeMessage(whole)
     } catch {
       this.reasm = new Reassembler()
-      return this.strike()
+      return this.strike(malformed('message'))
     }
     await this.dispatch(msg)
   }
@@ -417,7 +420,7 @@ export class Session {
     if (msg.t === 'bye') return this.finish('remote')
     if (msg.t === 'rk1' || msg.t === 'rk2' || msg.t === 'rk3') return this.onRekey(msg)
     if (msg.t === 'hello') {
-      if (this.state !== 'open') return this.strike()
+      if (this.state !== 'open') return this.strike(unentitled('hello'))
       let ok: boolean
       try {
         ok = await this.opts.onHello(msg, this)
@@ -430,7 +433,7 @@ export class Session {
       for (const fn of this.readyFns) fn(this)
       return
     }
-    if (this.state !== 'ready') return this.strike()
+    if (this.state !== 'ready') return this.strike(unentitled('message'))
     if (this.held) {
       await this.held
       if (this.state !== 'ready') return
@@ -442,12 +445,13 @@ export class Session {
     try {
       await fn(msg, this)
     } catch {
-      this.strike()
+      this.strike(malformed('message'))
     }
   }
 
-  strike(n = 1) {
+  strike(why: Strike, n = 1) {
     if (this.state === 'closed') return
+    this.struck = why
     this.strikes += n
     if (this.strikes >= this.limits.strikes) this.close('strikes')
   }
@@ -490,12 +494,12 @@ export class Session {
   }
 
   private async onRekey(msg: Message) {
-    if (this.state !== 'ready' || !this.remote) return this.strike()
+    if (this.state !== 'ready' || !this.remote) return this.strike(unentitled('rekey'))
     let h: Uint8Array
     try {
       h = fromB64u(String(msg.h))
     } catch {
-      return this.strike()
+      return this.strike(malformed('h'))
     }
     try {
       if (msg.t === 'rk1' && this.opts.role === 'responder' && !this.rekeying) {
@@ -512,7 +516,7 @@ export class Session {
         const r = await this.rekeying.resp.h3(h)
         if (r.remote.dk !== this.remote.dk) return this.close('strikes')
         this.switchKeys(r)
-      } else return this.strike()
+      } else return this.strike(unentitled('rekey'))
     } catch {
       this.close('strikes')
     }

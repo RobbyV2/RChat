@@ -17,6 +17,7 @@ import {
   type CallOp,
   type RtcFrame,
 } from './signal'
+import { unentitled } from './strike'
 
 // Voice and video calls with a contact. Media runs through rtc.ts like an instance
 // call; everything that sets it up rides the encrypted session with the contact. A call is bound
@@ -389,12 +390,14 @@ export class Calls {
   // ----- Incoming -----
 
   private onCall(raw: Message, s: Session) {
-    const f = readCallFrame(raw)
+    const read = readCallFrame(raw)
     const r = s.remote
-    if (!f || !r) return s.strike()
+    if ('strike' in read) return s.strike(read.strike)
     // An op from a newer version: dropped, at no cost.
-    if (f === 'unknown') return
-    if (f.room !== this.deps.roomOf(r.ik)) return s.strike()
+    if ('unknown' in read) return
+    if (!r) return s.strike(unentitled('call'))
+    const f = read.v
+    if (f.room !== this.deps.roomOf(r.ik)) return s.strike(unentitled('call'))
     // Blocked or removed since the session came up: nothing they send is taken.
     if (!this.deps.mutual(r.ik)) return
     if (f.op === 'ring') return this.incoming(f, s)
@@ -529,10 +532,14 @@ export class Calls {
   }
 
   private onRtc(raw: Message, s: Session) {
-    const f = readRtcFrame(raw)
+    const read = readRtcFrame(raw)
     const r = s.remote
-    if (!f || !r) return s.strike()
-    if (f.to !== this.deps.me() || f.target.p2pRoom !== this.deps.roomOf(r.ik)) return s.strike()
+    if ('strike' in read) return s.strike(read.strike)
+    if ('unknown' in read) return
+    if (!r) return s.strike(unentitled('rtc'))
+    const f = read.v
+    if (f.to !== this.deps.me() || f.target.p2pRoom !== this.deps.roomOf(r.ik))
+      return s.strike(unentitled('rtc'))
     if (!this.deps.mutual(r.ik)) return
     const c = this.cur
     // Late frames of a call that is over (or never was, after a reload) are dropped; the

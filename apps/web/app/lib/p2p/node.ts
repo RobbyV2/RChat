@@ -64,6 +64,7 @@ import {
   verifyCode,
 } from './safety'
 import { realClock, Session, type Clock, type Limits as SessionLimits, type Pipe } from './session'
+import { malformed, unentitled } from './strike'
 
 // A P2P node: this browser's identity, its contacts and its sessions with them. It listens on
 // its own PeerJS id (never the one P2P files use, and never announced to the instance), dials
@@ -1051,7 +1052,7 @@ export class P2pNode {
 
   private async onYours(m: Message, s: Session) {
     const r = s.remote
-    if (!r || !this.contacts.has(r.ik)) return s.strike()
+    if (!r || !this.contacts.has(r.ik)) return s.strike(unentitled('yours'))
     await this.checkYours(m)
   }
 
@@ -1277,7 +1278,7 @@ export class P2pNode {
   private async onVerified(m: Message, s: Session) {
     const r = s.remote
     const c = r && this.contacts.get(r.ik)
-    if (!c || typeof m.n !== 'string') return s.strike()
+    if (!c || typeof m.n !== 'string') return s.strike(malformed('verified'))
     if (!this.verifyNonces.get(c.ik)?.includes(m.n)) return
     this.verifyNonces.delete(c.ik)
     const now = this.clock.now()

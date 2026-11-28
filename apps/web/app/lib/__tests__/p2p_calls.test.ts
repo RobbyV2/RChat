@@ -17,6 +17,7 @@ import { DENIED_CALL } from '../relays'
 import type { RtcPayload, VoiceMsg } from '../types'
 import type { Session } from '../p2p/session'
 import { keyId, newKeyPair, signCert, signRevocation } from '../p2p/keys'
+import { frameOf, known } from './helpers/frames'
 
 // Well-formed ids: a room (32 bytes) and a call (16 bytes), b64u.
 const ROOM_X = 'r'.repeat(42) + 'A'
@@ -69,7 +70,7 @@ const implementations: {
         () => CALL_X,
         (_to, frame) => {
           const wire = decodeMessage(encodeMessage(frame as unknown as Message))
-          const f = readRtcFrame(wire)
+          const f = known(readRtcFrame(wire))
           if (f) deliver({ from: 'alice', payload: f.payload, scope: f.target })
         }
       ),
@@ -141,7 +142,9 @@ describe('call frames', () => {
   test('rtc frames round trip as session messages and refuse malformed known fields', () => {
     for (const payload of payloads) {
       const f: RtcFrame = { t: 'rtc', to: ik, target: { p2pRoom: room }, call: id, payload }
-      expect(readRtcFrame(decodeMessage(encodeMessage(f as unknown as Message)))).toEqual(f)
+      expect(frameOf(readRtcFrame(decodeMessage(encodeMessage(f as unknown as Message))))).toEqual(
+        f
+      )
     }
     const ok = { t: 'rtc', to: ik, target: { p2pRoom: room }, call: id, payload: payloads[0] }
     // Forward compatibility: fields a newer version adds, at any level, are dropped.
@@ -157,7 +160,7 @@ describe('call frames', () => {
         sid: 'ab',
       },
     }
-    expect(readRtcFrame(newer)).toEqual({
+    expect(frameOf(readRtcFrame(newer))).toEqual({
       t: 'rtc',
       to: ik,
       target: { p2pRoom: room },
@@ -180,11 +183,11 @@ describe('call frames', () => {
       { ...ok, payload: { muted: 'yes' } },
       { ...ok, payload: { sid: '<script>' } },
     ]
-    for (const b of bad) expect(readRtcFrame(b)).toBeNull()
+    for (const b of bad) expect(frameOf(readRtcFrame(b))).toBeNull()
   })
 
   test('call frames: ops, video on rings, relays read on ring and accept', () => {
-    expect(readCallFrame({ t: 'call', op: 'ring', id, room, video: true })).toEqual({
+    expect(frameOf(readCallFrame({ t: 'call', op: 'ring', id, room, video: true }))).toEqual({
       t: 'call',
       op: 'ring',
       id,
@@ -192,14 +195,16 @@ describe('call frames', () => {
       video: true,
     })
     expect(
-      readCallFrame({ t: 'call', op: 'accept', id, room, relays: ['turn.example.com'] })
+      frameOf(readCallFrame({ t: 'call', op: 'accept', id, room, relays: ['turn.example.com'] }))
     ).toEqual({ t: 'call', op: 'accept', id, room, relays: ['turn.example.com'] })
     // Fields a newer version adds, and fields this one doesn't read for that op, are dropped.
     expect(
-      readCallFrame({ t: 'call', op: 'end', id, room, video: true, relays: ['x!'], more: 1 })
+      frameOf(
+        readCallFrame({ t: 'call', op: 'end', id, room, video: true, relays: ['x!'], more: 1 })
+      )
     ).toEqual({ t: 'call', op: 'end', id, room })
     // An op a newer version adds is recognised as such (dropped, not struck).
-    expect(readCallFrame({ t: 'call', op: 'hold', id, room, until: 5 })).toBe('unknown')
+    expect(frameOf(readCallFrame({ t: 'call', op: 'hold', id, room, until: 5 }))).toBe('unknown')
     for (const b of [
       { t: 'call', op: 'ring', id, room },
       { t: 'call', op: 7, id, room },
@@ -217,7 +222,7 @@ describe('call frames', () => {
       },
       { t: 'call', op: 'end', id: 'x', room },
     ])
-      expect(readCallFrame(b)).toBeNull()
+      expect(frameOf(readCallFrame(b))).toBeNull()
   })
 
   test('call log content', () => {

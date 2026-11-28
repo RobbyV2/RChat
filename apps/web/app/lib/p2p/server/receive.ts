@@ -27,6 +27,7 @@ import { followStore } from './sealing'
 import { storeDue } from './storage'
 import { sizeOfWire, type ServerArrival } from './types'
 import { type Rt } from './rt'
+import { malformed, unentitled } from '../strike'
 
 // The wire checks: schema, sizes, id, `ch` and the device's signature. Everything else is
 // admission's (insert). Malformed: a strike.
@@ -477,7 +478,10 @@ export async function onMember(cx: ServerCtx, m: Message, s: Session) {
   if (typeof room !== 'string' || !cx.rooms.has(room)) return
   const ev = (m.ev as { ev?: { t?: unknown } } | null)?.ev
   const c = (m.ev as { c?: { to?: unknown } } | null)?.c
-  if ((ev?.t !== 'kick' && ev?.t !== 'ban') || c?.to !== cx.me) return s.strike()
+  if (typeof ev?.t !== 'string') return s.strike(malformed('ev'))
+  // A removal of a kind this version does not know: dropped, at no cost.
+  if (ev?.t !== 'kick' && ev?.t !== 'ban') return
+  if (c?.to !== cx.me) return s.strike(unentitled('removed'))
   const seen = cx.memberFrames.get(s) ?? new Set<string>()
   cx.memberFrames.set(s, seen)
   const mine = cx.myMembership(room)
@@ -485,7 +489,7 @@ export async function onMember(cx: ServerCtx, m: Message, s: Session) {
   seen.add(room)
   const v = await cx.check(room, m.ev)
   if (!v.ok) {
-    if (!v.later) s.strike()
+    if (!v.later) s.strike(malformed('event'))
     return
   }
   await cx.insert(room, v.id, v.wire, cx.clock.now()).catch(() => {})

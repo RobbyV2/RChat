@@ -20,6 +20,7 @@ import {
   codeHash,
 } from './types'
 import { clip } from '../rate'
+import { badSignature, malformed, unentitled, volume } from '../strike'
 
 export async function issueCode(cx: ServerCtx, room: string, ttl: number, label = '') {
   const s = cx.sumOf(room)
@@ -218,7 +219,7 @@ export function request(
 }
 
 export function onRedeemed(cx: ServerCtx, m: Message, s: Session) {
-  if (typeof m.room !== 'string') return s.strike()
+  if (typeof m.room !== 'string') return s.strike(malformed('room'))
   cx.waiters.get(`${s.peer}\n${m.room}`)?.(m)
 }
 
@@ -253,10 +254,11 @@ const expiresAt = async (cx: ServerCtx, id: string, exp: number | undefined) => 
 export async function onRedeem(cx: ServerCtx, m: Message, s: Session) {
   const r = s.remote
   const room = m.room
-  if (!r || typeof room !== 'string' || bytesOf(m.secret, 16) === null) return s.strike()
+  if (!r || typeof room !== 'string' || bytesOf(m.secret, 16) === null)
+    return s.strike(malformed('redeem'))
   const n = (cx.redeems.get(s) ?? 0) + 1
   cx.redeems.set(s, n)
-  if (n > cx.local.server.redeems) return s.strike()
+  if (n > cx.local.server.redeems) return s.strike(volume('redeem'))
   const answer = (ok: boolean, why?: string, ev?: Wire) =>
     void s
       .send({ t: 'gredeemed', room, ok, ...(why ? { why } : {}), ...(ev ? { ev } : {}) })
@@ -363,13 +365,16 @@ export function offerInvites(cx: ServerCtx, s: Session) {
 export async function onInvite(cx: ServerCtx, m: Message, s: Session) {
   const from = s.remote?.ik
   const room = m.room
-  if (!from || typeof room !== 'string' || typeof m.name !== 'string') return s.strike()
+  if (!from || typeof room !== 'string' || typeof m.name !== 'string')
+    return s.strike(malformed('invite'))
   // Only from mutual contacts: nobody else can put rows in our list.
   if (cx.deps.node.contact(from)?.state !== 'mutual') return
   const v = validate2(m.ev, room)
-  if (!v.ok) return s.strike()
+  if (!v.ok) return s.strike(v.why === 'signature' ? badSignature('invite') : malformed('invite'))
   const ev = v.wire.ev
-  if (ev.t !== 'add' || v.wire.c?.to !== cx.me || ev.a !== from) return s.strike()
+  // An invite of a kind this version does not know: dropped, at no cost.
+  if (ev.t !== 'add') return
+  if (v.wire.c?.to !== cx.me || ev.a !== from) return s.strike(unentitled('invite'))
   const cur = cx.rooms.get(room)
   if (cur && (cur.joining || cx.myMembership(room) === 'join')) return
   if (!cur && (await cx.isDmId(room))) return

@@ -47,6 +47,7 @@ import {
   type ChannelPatch,
 } from './types'
 import { clip } from '../rate'
+import { malformed } from '../strike'
 
 export async function author(cx: ServerCtx) {
   const author = cx.deps.node.author()
@@ -291,7 +292,7 @@ export function onBundle(cx: ServerCtx, m: Message, s: Session) {
   const from = s.remote?.ik
   const g = m.g
   if (!from || !isRecord(g) || bytesOf(g.nonce, 16) === null || typeof m.room !== 'string')
-    return s.strike()
+    return s.strike(malformed('bundle'))
   const author = cx.deps.node.author()
   const dk = author ? keyId(author.dk.pk) : ''
   const owners = Array.isArray(g.owners) ? g.owners : []

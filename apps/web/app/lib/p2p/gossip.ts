@@ -5,6 +5,7 @@ import type { Clock, Session } from './session'
 import type { Link } from './sync'
 import { isShortId } from './state'
 import { isEventId } from './content'
+import { malformed } from './strike'
 
 // Which members a P2P server room syncs with. Nobody
 // connects to everyone: each member links a room with at most `perRoom` sessions (a hard cap,
@@ -475,7 +476,7 @@ export class Gossip {
   private onLink(m: Message, s: Session) {
     const ik = s.remote?.ik
     const rooms = strings(m.rooms, this.limits.linkRooms, isRoomId)
-    if (!ik || !rooms) return s.strike()
+    if (!ik || !rooms) return s.strike(malformed('rooms'))
     const ok: string[] = []
     const busy: string[] = []
     for (const room of rooms) {
@@ -499,7 +500,7 @@ export class Gossip {
     const ik = s.remote?.ik
     const rooms = strings(m.rooms, this.limits.linkRooms, isRoomId)
     const busy = strings(m.busy ?? [], this.limits.linkRooms, isRoomId)
-    if (!ik || !rooms || !busy) return s.strike()
+    if (!ik || !rooms || !busy) return s.strike(malformed('rooms'))
     const now = this.deps.clock.now()
     for (const room of rooms) {
       this.asked.delete(this.key(ik, room))
@@ -521,7 +522,7 @@ export class Gossip {
   private onDrop(m: Message, s: Session) {
     const ik = s.remote?.ik
     const rooms = strings(m.rooms, this.limits.linkRooms, isRoomId)
-    if (!ik || !rooms) return s.strike()
+    if (!ik || !rooms) return s.strike(malformed('rooms'))
     for (const room of rooms) {
       this.outOf(room).delete(ik)
       this.deps.unlink(s, room)
@@ -560,7 +561,7 @@ export class Gossip {
   private onPresenceMsg(m: Message, s: Session) {
     const room = m.room
     const on = strings(m.on, this.limits.presenceMax, isKeyId)
-    if (typeof room !== 'string' || !on) return s.strike()
+    if (typeof room !== 'string' || !on) return s.strike(malformed('presence'))
     // Only over a link of that room with a joined member: presence never comes from (or goes
     // to) outside it.
     if (!this.fullLink(s, room)) return
@@ -623,7 +624,7 @@ export class Gossip {
       (thread && !isEventId(m.root)) ||
       (m.ik !== undefined && !isKeyId(m.ik))
     )
-      return s.strike()
+      return s.strike(malformed('typing'))
     if (!this.fullLink(s, room) || !this.allow(s, 'in')) return
     if (this.deps.channel && !this.deps.channel(room, ch)) return
     const ik = (m.ik as string | undefined) ?? from

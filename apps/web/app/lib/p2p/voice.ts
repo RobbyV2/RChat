@@ -10,6 +10,7 @@ import { isKeyId, signTagged, verifyTagged, type Cert } from './keys'
 import type { Clock, Session } from './session'
 import { isRoomId, readPayload } from './signal'
 import { isShortId } from './state'
+import { badSignature, readAs, struck, type Read, unentitled } from './strike'
 
 // Voice channels of P2P servers: a full mesh, like instance
 // voice. Who is in a channel travels in `gvoice {room, ch, on, n, dk, sig}` frames, signed by the
@@ -134,18 +135,23 @@ export interface VoiceRtcFrame {
   payload: RtcPayload
 }
 
-export const readVoiceFrame = (x: unknown): VoiceFrame | null => {
-  if (!isRecord(x) || !hasKeys(x, ['t', 'room', 'ch', 'on', 'n', 'dk', 'sig'])) return null
+export const readVoiceFrame = (x: unknown): Read<VoiceFrame> => {
+  if (!isRecord(x) || !hasKeys(x, ['t', 'room', 'ch', 'on', 'n', 'dk', 'sig']))
+    return struck('gvoice')
   const { t, room, ch, on, n, video, relays, ik, dk, sig, aud } = x
-  if (t !== 'gvoice' || !isRoomId(room) || !isShortId(ch) || typeof on !== 'boolean') return null
-  if (!isKeyId(dk) || !isSig(sig)) return null
-  if (!Number.isSafeInteger(n) || (n as number) < 0) return null
-  if (video !== undefined && typeof video !== 'boolean') return null
-  if (ik !== undefined && !isKeyId(ik)) return null
+  if (t !== 'gvoice' || !isRoomId(room)) return struck('room')
+  if (!isShortId(ch)) return struck('ch')
+  if (typeof on !== 'boolean') return struck('on')
+  if (!isKeyId(dk)) return struck('dk')
+  if (!isSig(sig)) return struck('sig')
+  if (!Number.isSafeInteger(n) || (n as number) < 0) return struck('n')
+  if (video !== undefined && typeof video !== 'boolean') return struck('video')
+  if (ik !== undefined && !isKeyId(ik)) return struck('ik')
   const hosts = declaredHosts(relays)
-  if (hosts === null || (Array.isArray(relays) && hosts.length !== relays.length)) return null
+  if (hosts === null || (Array.isArray(relays) && hosts.length !== relays.length))
+    return struck('relays')
   const audio = aud === undefined ? null : readVoiceAudio(aud)
-  return {
+  return readAs({
     t,
     room,
     ch,
@@ -157,7 +163,7 @@ export const readVoiceFrame = (x: unknown): VoiceFrame | null => {
     dk,
     sig,
     ...(audio ? { aud: audio } : {}),
-  }
+  })
 }
 
 // `gvrefuse {room, ch, relays}`: we don't connect through these relays of yours, so the other
@@ -169,22 +175,27 @@ export interface VoiceRefuse {
   relays: string[]
 }
 
-export const readVoiceRefuse = (x: unknown): VoiceRefuse | null => {
-  if (!isRecord(x) || !hasKeys(x, ['t', 'room', 'ch', 'relays'])) return null
+export const readVoiceRefuse = (x: unknown): Read<VoiceRefuse> => {
+  if (!isRecord(x) || !hasKeys(x, ['t', 'room', 'ch', 'relays'])) return struck('gvrefuse')
   const { t, room, ch, relays } = x
-  if (t !== 'gvrefuse' || !isRoomId(room) || !isShortId(ch) || !Array.isArray(relays)) return null
+  if (t !== 'gvrefuse' || !isRoomId(room)) return struck('room')
+  if (!isShortId(ch)) return struck('ch')
+  if (!Array.isArray(relays)) return struck('relays')
   const hosts = declaredHosts(relays)
-  if (hosts === null || hosts.length !== relays.length) return null
-  return { t, room, ch, relays: hosts }
+  if (hosts === null || hosts.length !== relays.length) return struck('relays')
+  return readAs({ t, room, ch, relays: hosts })
 }
 
-export const readVoiceRtc = (x: unknown): VoiceRtcFrame | null => {
-  if (!isRecord(x) || !hasKeys(x, ['t', 'to', 'target', 'payload'])) return null
+export const readVoiceRtc = (x: unknown): Read<VoiceRtcFrame> => {
+  if (!isRecord(x) || !hasKeys(x, ['t', 'to', 'target', 'payload'])) return struck('gvrtc')
   const { t, to, target, payload } = x
-  if (t !== 'gvrtc' || !isKeyId(to) || !isRecord(target)) return null
-  if (!isRoomId(target.p2pRoom) || !isShortId(target.ch)) return null
+  if (t !== 'gvrtc' || !isKeyId(to)) return struck('to')
+  if (!isRecord(target) || !isRoomId(target.p2pRoom) || !isShortId(target.ch))
+    return struck('target')
   const p = readPayload(payload)
-  return p ? { t, to, target: { p2pRoom: target.p2pRoom, ch: target.ch }, payload: p } : null
+  return p
+    ? readAs({ t, to, target: { p2pRoom: target.p2pRoom, ch: target.ch }, payload: p })
+    : struck('payload')
 }
 
 export interface VoiceState {
@@ -990,9 +1001,12 @@ export class Voice implements Signaler {
   // ----- Incoming -----
 
   private async onFrame(raw: Message, s: Session) {
-    const f = readVoiceFrame(raw)
+    const read = readVoiceFrame(raw)
     const from = s.remote?.ik
-    if (!f || !from) return s.strike()
+    if ('strike' in read) return s.strike(read.strike)
+    if ('unknown' in read) return
+    if (!from) return s.strike(unentitled('voice'))
+    const f = read.v
     if (!this.allow(s)) return
     const { room, ch } = f
     const ik = f.ik ?? from
@@ -1008,9 +1022,10 @@ export class Voice implements Signaler {
     // A device the room doesn't list (yet) for them: dropped. A bad signature strikes, also one
     // over what they say about their audio, which then goes alone.
     if (!this.deps.device(room, ik, f.dk)) return
-    if (!verifyTagged(f.dk, VOICE_TAG, voiceBody(f, ik), f.sig)) return s.strike()
+    if (!verifyTagged(f.dk, VOICE_TAG, voiceBody(f, ik), f.sig))
+      return s.strike(badSignature('voice'))
     if (f.aud && !verifyTagged(f.dk, AUDIO_TAG, audioBody(f, ik), f.aud.sig)) {
-      s.strike()
+      s.strike(badSignature('audio'))
       delete f.aud
     }
     if (!(await this.deps.allowed(room, ch, from))) return
@@ -1096,10 +1111,13 @@ export class Voice implements Signaler {
   }
 
   private onRtc(raw: Message, s: Session) {
-    const f = readVoiceRtc(raw)
+    const read = readVoiceRtc(raw)
     const from = s.remote?.ik
-    if (!f || !from) return s.strike()
-    if (f.to !== this.deps.me()) return s.strike()
+    if ('strike' in read) return s.strike(read.strike)
+    if ('unknown' in read) return
+    if (!from) return s.strike(unentitled('rtc'))
+    const f = read.v
+    if (f.to !== this.deps.me()) return s.strike(unentitled('rtc'))
     const m = this.mine
     // Late frames of a channel we left, anyone we don't connect media with, and their other
     // devices are dropped.
@@ -1110,9 +1128,12 @@ export class Voice implements Signaler {
 
   // A participant refused the relays we declare now: we stop trying to connect to it.
   private onRefuse(raw: Message, s: Session) {
-    const f = readVoiceRefuse(raw)
+    const read = readVoiceRefuse(raw)
     const from = s.remote?.ik
-    if (!f || !from) return s.strike()
+    if ('strike' in read) return s.strike(read.strike)
+    if ('unknown' in read) return
+    if (!from) return s.strike(unentitled('refuse'))
+    const f = read.v
     const m = this.mine
     if (!m || f.room !== m.room || f.ch !== m.ch || !this.deps.member(m.room, from)) return
     if (f.relays.join(',') !== m.plan.declared.join(',') || this.refusedBy.has(from)) return

@@ -25,6 +25,7 @@ import {
   type VoiceLimits,
   type VoiceMedia,
 } from '../p2p/voice'
+import { frameOf, known } from './helpers/frames'
 
 const ROOM = b64u(randomBytes(32))
 const CH = b64u(randomBytes(8))
@@ -277,13 +278,13 @@ const signedBy = (who: Node, over: Partial<VoiceFrame> = {}): Message => {
 describe('P2P voice frames', () => {
   test('known fields are checked, unknown ones ignored', () => {
     const base = { t: 'gvoice' as const, room: ROOM, ch: CH, on: true, n: 5, dk: DK, sig: SIG }
-    expect(readVoiceFrame(frame())).toEqual(base)
-    expect(readVoiceFrame(frame({ later: { x: 1 }, video: true }))).toEqual({
+    expect(frameOf(readVoiceFrame(frame()))).toEqual(base)
+    expect(frameOf(readVoiceFrame(frame({ later: { x: 1 }, video: true })))).toEqual({
       ...base,
       video: true,
     })
     const who = ik()
-    expect(readVoiceFrame(frame({ ik: who, relays: ['turn.example.org'] }))?.ik).toBe(who)
+    expect(known(readVoiceFrame(frame({ ik: who, relays: ['turn.example.org'] })))?.ik).toBe(who)
     for (const bad of [
       frame({ on: 'yes' }),
       frame({ n: -1 }),
@@ -297,27 +298,33 @@ describe('P2P voice frames', () => {
       frame({ sig: 'short' }),
       { t: 'gvoice', room: ROOM, ch: CH, on: true, n: 5 },
     ])
-      expect(readVoiceFrame(bad)).toBeNull()
+      expect(frameOf(readVoiceFrame(bad))).toBeNull()
   })
 
   test('negotiation frames carry only what rtc.ts knows', () => {
     const to = ik()
-    const f = readVoiceRtc({
-      t: 'gvrtc',
-      to,
-      target: { p2pRoom: ROOM, ch: CH, extra: 1 },
-      payload: { muted: true, sid: 'ab12', later: 'x' },
-      also: true,
-    })
+    const f = frameOf(
+      readVoiceRtc({
+        t: 'gvrtc',
+        to,
+        target: { p2pRoom: ROOM, ch: CH, extra: 1 },
+        payload: { muted: true, sid: 'ab12', later: 'x' },
+        also: true,
+      })
+    )
     expect(f).toEqual({
       t: 'gvrtc',
       to,
       target: { p2pRoom: ROOM, ch: CH },
       payload: { muted: true, sid: 'ab12' },
     })
-    expect(readVoiceRtc({ t: 'gvrtc', to, target: { p2pRoom: ROOM }, payload: {} })).toBeNull()
     expect(
-      readVoiceRtc({ t: 'gvrtc', to, target: { p2pRoom: ROOM, ch: CH }, payload: { muted: 1 } })
+      frameOf(readVoiceRtc({ t: 'gvrtc', to, target: { p2pRoom: ROOM }, payload: {} }))
+    ).toBeNull()
+    expect(
+      frameOf(
+        readVoiceRtc({ t: 'gvrtc', to, target: { p2pRoom: ROOM, ch: CH }, payload: { muted: 1 } })
+      )
     ).toBeNull()
   })
 
@@ -814,7 +821,9 @@ describe('voice participant sets', () => {
     await s.deliver({ t: 'gvrefuse', room: ROOM, ch: CH, relays: 'x' } as unknown as Message)
     expect(s.strikes).toBe(1)
     expect(
-      readVoiceRefuse({ t: 'gvrefuse', room: ROOM, ch: CH, relays: ['turn.b.example'], later: 1 })
+      frameOf(
+        readVoiceRefuse({ t: 'gvrefuse', room: ROOM, ch: CH, relays: ['turn.b.example'], later: 1 })
+      )
     ).toEqual({ t: 'gvrefuse', room: ROOM, ch: CH, relays: ['turn.b.example'] })
   })
 
@@ -1229,8 +1238,8 @@ describe('what participants say about their audio', () => {
     const { aud, ...older } = m
     expect(voiceBody(m, a.ik)).toEqual(voiceBody(older, a.ik))
     expect(verifyTagged(a.dk, VOICE_TAG, voiceBody(older, a.ik), older.sig)).toBe(true)
-    expect(readVoiceFrame(m)?.aud).toEqual(aud)
-    expect(readVoiceFrame(older)?.aud).toBeUndefined()
+    expect(known(readVoiceFrame(m))?.aud).toEqual(aud)
+    expect(known(readVoiceFrame(older))?.aud).toBeUndefined()
   })
 
   test('a malformed one is dropped alone, without a strike', async () => {
@@ -1247,7 +1256,7 @@ describe('what participants say about their audio', () => {
       { m: true, sig: 'short' },
     ]
     for (const [i, aud] of bad.entries()) {
-      expect(readVoiceFrame(frame({ aud }))).toEqual(readVoiceFrame(frame()))
+      expect(frameOf(readVoiceFrame(frame({ aud })))).toEqual(frameOf(readVoiceFrame(frame())))
       await s.deliver({ ...withAudio(f, { m: true }, { n: t + i }), aud } as Message)
       expect(userIn(a, f)).toEqual({ ik: f.ik, video: false, muted: false, deafened: false })
     }

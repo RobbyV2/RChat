@@ -22,6 +22,7 @@ import type { Message } from './frames'
 import { LOCAL, type Local } from './limits'
 import { RateWindow } from './rate'
 import type { Clock, Session } from './session'
+import { malformed, unentitled, volume } from './strike'
 
 // The outcome of checking an event from a peer: stored next, refused (a strike), or not stored
 // for now (`later`: no strike, it may be fine once we know more).
@@ -326,7 +327,7 @@ export class Sync {
     if (!byRoom) return null
     const link = typeof room === 'string' ? byRoom.get(room) : undefined
     if (!link || link.closed || !this.allowed(link)) {
-      if (this.strict()) s.strike()
+      if (this.strict()) s.strike(unentitled('room'))
       return null
     }
     return link
@@ -385,7 +386,7 @@ export class Sync {
     if (!link) return
     const heads = strArray(m.heads, this.limits.headsMax, isEventId)
     const state = m.state === undefined ? [] : strArray(m.state, this.limits.headsMax, isEventId)
-    if (!heads || !state) return s.strike()
+    if (!heads || !state) return s.strike(malformed('heads'))
     link.peerHeads = heads
     link.peerState = state
     link.held = false
@@ -574,15 +575,15 @@ export class Sync {
 
   private onEvents(m: Message, s: Session) {
     const link = typeof m.room === 'string' ? this.links.get(s)?.get(m.room) : undefined
-    if (!link || link.closed) return this.strict() ? s.strike() : undefined
+    if (!link || link.closed) return this.strict() ? s.strike(unentitled('room')) : undefined
     const rid = m.rid
     const req = isRid(rid) ? link.requests.get(rid) : undefined
     const evs = Array.isArray(m.evs) ? m.evs : null
     // Only answers we asked for, once, within the size we granted.
     if (!req || req.answered || m.room !== req.room || !evs || evs.length > req.limit)
-      return s.strike()
+      return s.strike(unentitled('events'))
     const bytes = wireSize(evs)
-    if (bytes > this.limits.responseBytes + 4096) return s.strike()
+    if (bytes > this.limits.responseBytes + 4096) return s.strike(volume('events'))
     req.answered = true
     if (!req.state) link.pulled += evs.length
     const more = m.more === true
@@ -652,7 +653,7 @@ export class Sync {
           if (v.id) link.later.add(v.id)
           continue
         }
-        link.session.strike()
+        link.session.strike(malformed('event'))
         if (v.id) {
           refused.push(v.id)
           link.unavailable.add(v.id)
@@ -691,7 +692,7 @@ export class Sync {
         continue
       }
       if (res.status === 'invalid') {
-        link.session.strike()
+        link.session.strike(unentitled('event'))
         refused.push(v.id)
         link.unavailable.add(v.id)
       } else if (res.status === 'rejected') {
@@ -737,8 +738,8 @@ export class Sync {
   // ----- Serving -----
 
   private serve(link: Link, rid: unknown, fn: () => Promise<Walked>) {
-    if (!isRid(rid)) return link.session.strike()
-    if (link.serving >= this.limits.requests) return link.session.strike()
+    if (!isRid(rid)) return link.session.strike(malformed('rid'))
+    if (link.serving >= this.limits.requests) return link.session.strike(volume('requests'))
     link.serving += 1
     this.queue(link, 256, async () => {
       try {
@@ -768,7 +769,7 @@ export class Sync {
     const limit = Number.isSafeInteger(m.limit)
       ? Math.min(m.limit as number, this.limits.wantLimit)
       : -1
-    if (!from || !have || limit < 1) return s.strike()
+    if (!from || !have || limit < 1) return s.strike(malformed('want'))
     const state = m.state === true
     const bytes = this.limits.responseBytes
     this.serve(link, m.rid, () =>
@@ -782,7 +783,7 @@ export class Sync {
     const link = this.linkFor(s, m.room)
     if (!link) return
     const ids = strArray(m.ids, this.limits.getIds, isEventId)
-    if (!ids) return s.strike()
+    if (!ids) return s.strike(malformed('ids'))
     this.serve(link, m.rid, async () => {
       const found = this.deps.serving
         ? await this.deps.serving.get(link, ids)
@@ -854,7 +855,7 @@ export class Sync {
       link.theirPushes + 1 > this.limits.pushQueueEvents ||
       link.theirPushBytes + bytes > this.limits.pushQueueBytes
     )
-      return s.strike()
+      return s.strike(volume('push'))
     link.theirPushes += 1
     link.theirPushBytes += bytes
     this.queue(link, bytes, async () => {
@@ -910,7 +911,7 @@ export class Sync {
     const drop = list(m.drop)
     const full = list(m.full)
     const later = list(m.later)
-    if (m.ids === undefined || !ids || !drop || !full || !later) return s.strike()
+    if (m.ids === undefined || !ids || !drop || !full || !later) return s.strike(malformed('ack'))
     const set = new Set([...ids, ...drop, ...full, ...later])
     link.inFlight = link.inFlight.filter(p => !set.has(p.id))
     if (full.length && link.peerFull === null) {
@@ -933,7 +934,7 @@ export class Sync {
   // An ack on a link that closed meanwhile: what the peer stored of what we pushed it there.
   private lateAck(m: Message, s: Session, room: string, closed: { ik: string; ids: Set<string> }) {
     const ids = m.ids === undefined ? [] : strArray(m.ids, this.limits.acksMax, isEventId)
-    if (!ids) return s.strike()
+    if (!ids) return s.strike(malformed('ack'))
     const stored = ids.filter(id => closed.ids.delete(id))
     if (!closed.ids.size) this.closedOn.get(s)?.delete(room)
     if (stored.length) void this.deliveredTo(room, closed.ik, stored).catch(() => {})
@@ -977,8 +978,8 @@ export class Sync {
     const link = this.linkFor(s, m.room)
     if (!link) return
     const thread = m.thread
-    if (typeof m.on !== 'boolean') return s.strike()
-    if (thread !== undefined && !isEventId(thread)) return s.strike()
+    if (typeof m.on !== 'boolean') return s.strike(malformed('on'))
+    if (thread !== undefined && !isEventId(thread)) return s.strike(malformed('thread'))
     this.deps.onTyping(link.room, link.ik, m.on, thread ?? null)
   }
 

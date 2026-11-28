@@ -5,6 +5,7 @@ import type { RtcPayload } from '../types'
 import { bytesOf, hasKeys, pickKeys } from './canonical'
 import { isCallId } from './content'
 import { isKeyId } from './keys'
+import { UNKNOWN, readAs, struck, type Read } from './strike'
 
 // Call signaling over the encrypted session with a contact: the media SDP and
 // candidates never pass the instance, so the DTLS fingerprints they carry are authenticated by
@@ -93,35 +94,41 @@ export const readPayload = (x: unknown): RtcPayload | null => {
   return p
 }
 
-export const readRtcFrame = (x: unknown): RtcFrame | null => {
-  if (!isRecord(x) || !hasKeys(x, ['t', 'to', 'target', 'call', 'payload'])) return null
+export const readRtcFrame = (x: unknown): Read<RtcFrame> => {
+  if (!isRecord(x) || !hasKeys(x, ['t', 'to', 'target', 'call', 'payload'])) return struck('rtc')
   const { t, to, target, call, payload } = x
-  if (t !== 'rtc' || !isKeyId(to) || !isCallId(call)) return null
-  if (!isRecord(target) || !isRoomId(target.p2pRoom)) return null
+  if (t !== 'rtc' || !isKeyId(to)) return struck('to')
+  if (!isCallId(call)) return struck('call')
+  if (!isRecord(target) || !isRoomId(target.p2pRoom)) return struck('target')
   const p = readPayload(payload)
-  return p ? { t, to, target: { p2pRoom: target.p2pRoom }, call, payload: p } : null
+  return p
+    ? readAs({ t, to, target: { p2pRoom: target.p2pRoom }, call, payload: p })
+    : struck('payload')
 }
 
-// A `call` frame, `'unknown'` for a well-formed one whose op is newer than this version (dropped
-// without a strike), or null when it is malformed.
-export const readCallFrame = (x: unknown): CallFrame | 'unknown' | null => {
-  if (!isRecord(x) || !hasKeys(x, ['t', 'op', 'id', 'room'])) return null
+// A `call` frame, `unknown` for a well-formed one whose op is newer than this version (dropped
+// without a strike), or the strike of its malformed field.
+export const readCallFrame = (x: unknown): Read<CallFrame> => {
+  if (!isRecord(x) || !hasKeys(x, ['t', 'op', 'id', 'room'])) return struck('call')
   const { t, op, id, room, video, relays } = x
-  if (t !== 'call' || typeof op !== 'string' || !isCallId(id) || !isRoomId(room)) return null
-  if (!CALL_OPS.includes(op as CallOp)) return op.length <= 32 ? 'unknown' : null
-  if (op === 'ring' && typeof video !== 'boolean') return null
+  if (t !== 'call' || typeof op !== 'string') return struck('op')
+  if (!isCallId(id)) return struck('id')
+  if (!isRoomId(room)) return struck('room')
+  if (!CALL_OPS.includes(op as CallOp)) return op.length <= 32 ? UNKNOWN : struck('op')
+  if (op === 'ring' && typeof video !== 'boolean') return struck('video')
   // Relays are read only where this version uses them.
   const withRelays = (op === 'ring' || op === 'accept') && relays !== undefined
   const hosts = withRelays ? declaredHosts(relays) : []
-  if (hosts === null || (withRelays && hosts.length !== (relays as unknown[]).length)) return null
-  return {
+  if (hosts === null || (withRelays && hosts.length !== (relays as unknown[]).length))
+    return struck('relays')
+  return readAs({
     t,
     op: op as CallOp,
     id,
     room,
     ...(op === 'ring' ? { video: video as boolean } : {}),
     ...(withRelays ? { relays: hosts } : {}),
-  }
+  })
 }
 
 // The P2P side of rtc.ts's Signaler: each payload goes to the contact `to` (an identity key) as

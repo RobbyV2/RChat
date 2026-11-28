@@ -33,6 +33,7 @@ import {
 import type { P2pNode } from './node'
 import { LOCAL, type Local } from './limits'
 import { realClock, type Clock, type Pipe, type Session } from './session'
+import { malformed, type Strike, unentitled, volume } from './strike'
 
 // P2P attachments. Files are split into 1 MiB blocks, named by a root hash over
 // the block hashes, and fetched block by block over a separate encrypted pipe per session
@@ -240,6 +241,7 @@ interface SmallMeta {
 export class BulkLink {
   state: 'opening' | 'open' | 'closed' = 'opening'
   strikes = 0
+  struck: Strike | null = null
   private forgiven = 0
   // Bytes of frames received and not handled yet.
   queued = 0
@@ -383,7 +385,7 @@ export class BulkLink {
     }
     // A frame type of a newer version: skipped (the byte budget still applies).
     if (!knownFrame(frame.type)) return
-    if (frame.type !== FrameType.Data || !this.rx) return this.strike()
+    if (frame.type !== FrameType.Data || !this.rx) return this.strike(malformed('frame'))
     const { counter, ct } = parseData(frame.payload)
     let pt: Uint8Array
     try {
@@ -395,9 +397,9 @@ export class BulkLink {
     }
     this.rxFrames += 1
     this.bytes += pt.length
-    if (pt.length < 1) return this.strike()
+    if (pt.length < 1) return this.strike(malformed('frame'))
     if (pt[0] === PART_CHUNK) {
-      if (pt.length <= CHUNK_HEAD) return this.strike()
+      if (pt.length <= CHUNK_HEAD) return this.strike(malformed('chunk'))
       const view = new DataView(pt.buffer, pt.byteOffset, pt.byteLength)
       const h = b64u(pt.subarray(1, 33))
       this.hooks.onChunk(h, view.getUint32(33), view.getUint32(37), pt.subarray(CHUNK_HEAD), this)
@@ -412,7 +414,7 @@ export class BulkLink {
       msg = decodeMessage(whole)
     } catch {
       this.reasm = new Reassembler()
-      return this.strike()
+      return this.strike(malformed('message'))
     }
     this.hooks.onMessage(msg, this)
   }
@@ -568,8 +570,9 @@ export class BulkLink {
     return this.fetches.size
   }
 
-  strike(n = 1) {
+  strike(why: Strike, n = 1) {
     if (this.state === 'closed') return
+    this.struck = why
     const now = this.clock.now()
     if (this.forgiven === 0) this.forgiven = now
     const back = Math.floor((now - this.forgiven) / this.limits.forgiveMs)
@@ -876,9 +879,11 @@ export class Blobs {
         const rid = m.rid
         const call = typeof rid === 'number' ? link.calls.get(rid) : undefined
         if (!call)
-          return typeof rid === 'number' && link.lateAnswer(rid) ? undefined : link.strike()
+          return typeof rid === 'number' && link.lateAnswer(rid)
+            ? undefined
+            : link.strike(unentitled('answer'))
         link.calls.delete(rid as number)
-        if (m.t !== 'blob_no' && m.t !== call.t) return link.strike()
+        if (m.t !== 'blob_no' && m.t !== call.t) return link.strike(malformed('answer'))
         return call.done(m)
       }
       default:
@@ -915,11 +920,12 @@ export class Blobs {
   // it costs a strike.
   private onGet(m: Message, link: BulkLink) {
     const { h, block } = m
-    if (!hashOk(h) || !blockOk(block)) return link.strike()
+    if (!hashOk(h) || !blockOk(block)) return link.strike(malformed('blob_get'))
     const key = `${h}:${block}`
-    if (link.serveCur?.key === key || link.serveQueue.some(r => r.key === key)) return link.strike()
+    if (link.serveCur?.key === key || link.serveQueue.some(r => r.key === key))
+      return link.strike(volume('blob_get'))
     if (this.serving(link) >= this.limits.serveMax) {
-      link.strike()
+      link.strike(volume('blob_get'))
       void link.send({ t: 'blob_no', h, block, why: 'busy' }).catch(() => {})
       return
     }
@@ -932,13 +938,13 @@ export class Blobs {
   // no answer.
   private onCancel(m: Message, link: BulkLink) {
     const { h, block } = m
-    if (!hashOk(h) || !blockOk(block)) return link.strike()
+    if (!hashOk(h) || !blockOk(block)) return link.strike(malformed('blob_cancel'))
     const key = `${h}:${block}`
     const at = link.serveQueue.findIndex(r => r.key === key)
     const req =
       at >= 0 ? link.serveQueue.splice(at, 1)[0] : link.serveCur?.key === key ? link.serveCur : null
     // Cancels cost us work and them nothing: only far more than any client sends count.
-    if (link.tally('cancel', this.limits.cancelsFree)) link.strike()
+    if (link.tally('cancel', this.limits.cancelsFree)) link.strike(volume('blob_cancel'))
     if (!req) return
     req.cancelled = true
     if (link.serveCur === req) link.serveCur = null
@@ -984,7 +990,7 @@ export class Blobs {
     if (req.cancelled) return
     if (gate !== 'yes') {
       release()
-      if (gate === 'no') link.strike()
+      if (gate === 'no') link.strike(unentitled('blob_get'))
       await link.send({ t: 'blob_no', h, block, why: gate === 'off' ? 'missing' : 'denied' })
       return
     }
@@ -1007,9 +1013,9 @@ export class Blobs {
   // older client: it gets `busy`, and only an abusive number of those cost a strike.
   private onControl(m: Message, link: BulkLink) {
     const rid = m.rid
-    if (!Number.isSafeInteger(rid) || (rid as number) <= 0) return link.strike()
+    if (!Number.isSafeInteger(rid) || (rid as number) <= 0) return link.strike(malformed('rid'))
     if (link.control >= this.limits.controlMax) {
-      if (link.tally('busy', this.limits.busyFree)) link.strike()
+      if (link.tally('busy', this.limits.busyFree)) link.strike(volume('busy'))
       void link.send({ t: 'blob_no', rid, why: 'busy' }).catch(() => {})
       return
     }
@@ -1034,7 +1040,7 @@ export class Blobs {
   private async answerHas(m: Message, link: BulkLink): Promise<Message | null> {
     const hs = m.hs
     if (!Array.isArray(hs) || hs.length > this.limits.hasMax || !hs.every(hashOk)) {
-      link.strike()
+      link.strike(malformed('blob_has'))
       return null
     }
     const have: string[] = []
@@ -1059,12 +1065,12 @@ export class Blobs {
   private async answerMeta(m: Message, link: BulkLink): Promise<Message | null> {
     const { h, from } = m
     if (!hashOk(h) || !blockOk(from)) {
-      link.strike()
+      link.strike(malformed('blob_meta'))
       return null
     }
     const gate = await this.gate(link, h)
     if (gate !== 'yes') {
-      if (gate === 'no') link.strike()
+      if (gate === 'no') link.strike(unentitled('blob_meta'))
       return { t: 'blob_no', rid: m.rid, h, why: gate === 'off' ? 'missing' : 'denied' }
     }
     const rec = await this.db.get('blobs', h)
@@ -1149,7 +1155,7 @@ export class Blobs {
     // stopped wanting, not for one asked again since.
     if (link.abandoned.has(key)) return this.ended(link, key)
     const f = link.fetches.get(key)
-    if (!f || m.why === 'cancelled') return link.strike()
+    if (!f || m.why === 'cancelled') return link.strike(unentitled('blob_end'))
     this.dropFetch(link, f)
     this.giveBack(f.dl, f.block)
     if (m.why === 'denied') {
@@ -1164,21 +1170,21 @@ export class Blobs {
     const a = link.abandoned.get(key)?.[0]
     if (a) {
       // The rest of a block we stopped wanting comes before anything asked for again.
-      if (off !== a.next || off + data.length > a.end) return link.strike()
+      if (off !== a.next || off + data.length > a.end) return link.strike(malformed('blob_data'))
       a.next += data.length
       link.expect = Math.max(0, link.expect - data.length)
       if (a.next === a.end) this.ended(link, key)
       return
     }
     const f = link.fetches.get(key)
-    if (!f) return link.strike()
+    if (!f) return link.strike(unentitled('blob_data'))
     // Only what we asked for, in order.
     if (off !== f.got || f.got + data.length > f.buf.length) {
       this.dropFetch(link, f)
       this.giveBack(f.dl, block)
       f.dl.bad.add(link)
       this.pumpAll()
-      return link.strike()
+      return link.strike(malformed('blob_data'))
     }
     f.buf.set(data, off)
     f.got += data.length
@@ -1205,7 +1211,7 @@ export class Blobs {
       // A corrupt block: never stored; another holder gets asked.
       dl.bad.add(link)
       this.giveBack(dl, f.block)
-      link.strike()
+      link.strike(malformed('block'))
       return
     }
     dl.writes = dl.writes.then(() => this.storeBlock(dl, f))
@@ -1462,7 +1468,7 @@ export class Blobs {
         continue
       }
       dl.skip.add(link)
-      if (!dl.refused.has(link)) link.strike()
+      if (!dl.refused.has(link)) link.strike(malformed('hashes'))
     }
     return false
   }
