@@ -28,7 +28,7 @@ export function RailVoiceBadge({ count }: { count: number }) {
     <span
       data-voice-badge={count}
       title={voiceBadgeTitle(count, streamer)}
-      className={`absolute -top-1.5 -left-1.5 flex size-5 items-center justify-center rounded-full border-2 border-(--rail-cut,var(--color-surface-container-lowest)) bg-status-green text-surface ${moves ? 'animate-badge-pop' : ''}`}
+      className={`absolute -top-1.5 -left-1.5 flex size-5 items-center justify-center rounded-full border-2 border-rail-cut bg-status-green text-surface ${moves ? 'animate-badge-pop' : ''}`}
     >
       <Volume2 size={11} strokeWidth={2.5} aria-hidden />
       <span className="sr-only">{voiceLabel(count)}</span>

@@ -195,7 +195,7 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
       }`}
     >
       <span
-        className={`flex h-full w-full items-center justify-center rounded-[inherit] ${muted && !active ? 'opacity-50' : ''}`}
+        className={`flex h-full w-full items-center justify-center rounded-inherit ${muted && !active ? 'opacity-50' : ''}`}
       >
         <ServerIcon
           seed={v.id}
@@ -208,14 +208,14 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
       </span>
       <span
         aria-hidden
-        className="absolute -right-1 -bottom-1 flex size-4.5 items-center justify-center rounded-full border-2 border-(--rail-cut,var(--color-surface-container-lowest)) bg-tertiary text-on-tertiary"
+        className="absolute -right-1 -bottom-1 flex size-4.5 items-center justify-center rounded-full border-2 border-rail-cut bg-tertiary text-on-tertiary"
       >
         <Waypoints size={9} strokeWidth={2.5} />
       </span>
       <MutedIcon
         scope={serverScope(v.id)}
         size={10}
-        className="absolute -bottom-1 -left-1 size-5 items-center justify-center rounded-full border-2 border-(--rail-cut,var(--color-surface-container-lowest)) bg-surface-container-highest text-on-surface-variant"
+        className="absolute -bottom-1 -left-1 size-5 items-center justify-center rounded-full border-2 border-rail-cut bg-surface-container-highest text-on-surface-variant"
       />
       {pings > 0 ? (
         <RailPingBadge count={pings} />
@@ -224,7 +224,7 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
           <span
             title="Unread messages"
             aria-hidden
-            className="absolute -top-1 -right-1 h-3 w-3 rounded-full border-2 border-(--rail-cut,var(--color-surface-container-lowest)) bg-error"
+            className="absolute -top-1 -right-1 h-3 w-3 rounded-full border-2 border-rail-cut bg-error"
           />
         )
       )}
@@ -285,7 +285,7 @@ function P2pFolderEntryBody({
           {list.slice(0, 4).map(v => (
             <span
               key={v.id}
-              className="folder-mini flex min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-md text-[9px] leading-none font-semibold"
+              className="folder-mini flex min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-md text-3xs leading-none font-semibold"
             >
               <ServerIcon seed={v.id} name={v.name} kind={v.about.icon} color={hex(v.color)} />
             </span>
@@ -293,7 +293,7 @@ function P2pFolderEntryBody({
         </span>
         <span
           aria-hidden
-          className="absolute -right-1 -bottom-1 flex size-4.5 items-center justify-center rounded-full border-2 border-(--rail-cut,var(--color-surface-container-lowest)) bg-(--folder-icon,var(--color-tertiary)) text-(--folder-on-icon,var(--color-on-tertiary))"
+          className="absolute -right-1 -bottom-1 flex size-4.5 items-center justify-center rounded-full border-2 border-rail-cut folder-badge-p2p"
         >
           <FolderIcon size={9} strokeWidth={2.5} />
         </span>
@@ -304,7 +304,7 @@ function P2pFolderEntryBody({
             <span
               title="Unread messages"
               aria-hidden
-              className="absolute -top-1 -right-1 h-3 w-3 rounded-full border-2 border-(--rail-cut,var(--color-surface-container-lowest)) bg-error"
+              className="absolute -top-1 -right-1 h-3 w-3 rounded-full border-2 border-rail-cut bg-error"
             />
           )
         )}
@@ -314,10 +314,7 @@ function P2pFolderEntryBody({
   return (
     <div data-drag-box style={style} className="folder-group w-14 shrink-0 rounded-group">
       <Surface pad="2xs" gap="sm" tone="plain" radius="none" align="center">
-        <button
-          {...header}
-          className={`${tile} text-(--folder-icon,var(--color-tertiary)) hover:bg-(--folder-hover,var(--color-tertiary-container)) hover:text-(--folder-icon,var(--color-on-tertiary-container))`}
-        >
+        <button {...header} className={`${tile} folder-icon-p2p`}>
           <FolderOpen size={22} />
         </button>
         <Stack
@@ -432,13 +429,20 @@ function ServerHead({ v }: { v: ServerView }) {
       look="h-14"
       place="shrink-0"
     >
-      <button
+      <Surface
+        as="button"
         {...longPress(open)}
         onClick={e => {
           const r = e.currentTarget.getBoundingClientRect()
           open(r.left + 12, r.bottom)
         }}
-        className="flex min-w-0 flex-1 flex-col items-start rounded-lg px-1 py-0.5 text-left hover:bg-surface-container"
+        pad="2xs"
+        inset="bar"
+        tone="plain"
+        radius="md"
+        align="start"
+        look="text-left hover:bg-surface-container"
+        place="min-w-0 flex-1"
       >
         <Row as="span" gap="xs" place="w-full">
           <span data-p2p-server-name className="streamer truncate font-medium">
@@ -449,7 +453,7 @@ function ServerHead({ v }: { v: ServerView }) {
         <span data-p2p-online-count className="truncate text-xs text-on-surface-variant">
           {v.online} of {v.joined} online
         </span>
-      </button>
+      </Surface>
       {can(v, P.Invite) && (
         <button
           title="Invite people"

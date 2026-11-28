@@ -852,7 +852,7 @@ function Card({ target }: { target: ProfileTarget }) {
         top: pos?.y ?? y,
         visibility: pos ? 'visible' : 'hidden',
       }}
-      className="fixed z-top flex max-h-[calc(100dvh-1rem)] w-75 flex-col overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl bg-surface-container-high pb-4 shadow-elevation-3 outline-none"
+      className="fixed z-top flex max-h-screen-inset w-75 flex-col overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl bg-surface-container-high pb-4 shadow-elevation-3 outline-none"
     >
       {body}
     </div>

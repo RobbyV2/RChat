@@ -21,7 +21,7 @@ export function RailPingBadge({ count }: { count: number }) {
   return (
     <PingBadge
       count={count}
-      className="absolute -top-1.5 -right-1.5 h-5 min-w-5 border-[3px] border-(--rail-cut,var(--color-surface-container-lowest))"
+      className="absolute -top-1.5 -right-1.5 h-5 min-w-5 border-3 border-rail-cut"
     />
   )
 }

@@ -191,7 +191,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
             <span
               id={nameId}
               title={streamer ? undefined : peerName}
-              className={`streamer min-w-0 truncate text-sm font-medium ${chip ? 'sm:max-w-[60%] sm:shrink-0' : ''}`}
+              className={`streamer min-w-0 truncate text-sm font-medium ${chip ? 'sm:max-w-3/5 sm:shrink-0' : ''}`}
             >
               <Masked text={peerRaw} />
             </span>
@@ -234,7 +234,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
       {staged && (
         <div
           data-p2p-stage
-          className={`flex shrink-0 flex-col overflow-hidden ${callShare ? 'h-[70dvh]' : 'h-[45dvh]'}`}
+          className={`flex shrink-0 flex-col overflow-hidden ${callShare ? 'h-dvh-70' : 'h-dvh-45'}`}
         >
           <VoiceGrid key={`p${chat.room}`} p2pRoom={chat.room} />
         </div>

@@ -16,7 +16,7 @@ import { BlockedQuote } from './blocking'
 import { Button } from './controls'
 import { Masked } from './ui'
 import { ShownAvatar, ShownName } from './shown_user'
-import { Row } from './layout'
+import { Row, Surface } from './layout'
 
 export const WidgetLinkCards = createContext<ReadonlyMap<number, MessageLocation> | null>(null)
 // Whether a frame may show a forwarded copy from this source, and the room to ask about.
@@ -127,12 +127,19 @@ function LinkCard({
   const [shown, setShown] = useState(false)
   if (blocked && !shown)
     return (
-      <div
+      <Surface
         data-link-card={id}
-        className="mt-1 flex max-w-160 min-w-0 items-center gap-3 rounded-xl border border-outline-variant bg-surface-container px-3 py-2"
+        row
+        pad="md"
+        inset="bar"
+        gap="md"
+        tone="base"
+        radius="lg"
+        border
+        place="max-w-160 min-w-0"
       >
         <BlockedQuote onShow={() => setShown(true)} />
-      </div>
+      </Surface>
     )
   const { author, created_at } = card
   const onJump = (e: React.MouseEvent) => {
@@ -140,9 +147,16 @@ function LinkCard({
     jump()
   }
   return (
-    <div
+    <Surface
       data-link-card={id}
-      className="mt-1 flex max-w-160 min-w-0 items-center gap-3 rounded-xl border border-outline-variant bg-surface-container px-3 py-2"
+      row
+      pad="md"
+      inset="bar"
+      gap="md"
+      tone="base"
+      radius="lg"
+      border
+      place="max-w-160 min-w-0"
     >
       <PreviewRow tabIndex={-1} onOpen={jump} className="min-w-0 flex-1 text-left">
         <Row gap="sm">
@@ -152,7 +166,7 @@ function LinkCard({
           </span>
           <MessageTime ts={created_at} className="shrink-0 text-xs text-on-surface-variant" />
         </Row>
-        <div className="mt-0.5 flex min-w-0 items-center gap-1 text-sm text-on-surface-variant">
+        <Row gap="2xs" text="sm" ink="muted" place="min-w-0">
           {gated ? (
             <>
               <Label icon={<Forward size={14} className="shrink-0" />} text="Forwarded message" />
@@ -161,7 +175,7 @@ function LinkCard({
           ) : (
             <CardText card={card} />
           )}
-        </div>
+        </Row>
       </PreviewRow>
       <Button
         variant="tonal"
@@ -172,7 +186,7 @@ function LinkCard({
       >
         Jump
       </Button>
-    </div>
+    </Surface>
   )
 }
 

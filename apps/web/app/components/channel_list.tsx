@@ -126,7 +126,7 @@ export function ChannelList({
                 (x, y) => channels.categoryMenu(category.key, x, y),
                 drag?.category(category)
               )}
-              className="flex min-w-0 flex-1 items-center gap-1 rounded-md py-1 pr-1 pl-2 text-xs font-medium tracking-wider text-on-surface-variant uppercase outline-offset-[-2px] hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11"
+              className="flex min-w-0 flex-1 items-center gap-1 rounded-md py-1 pr-1 pl-2 text-xs font-medium tracking-wider text-on-surface-variant uppercase -outline-offset-2 hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11"
             >
               {category.open ? (
                 <ChevronDown size={14} className="shrink-0" />

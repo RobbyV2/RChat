@@ -1,14 +1,19 @@
+import { Inset } from '../layout'
 // Always shown next to an automation's name, whatever name it posted with. `by`: on a P2P
 // server, whose device ran it or who saved it.
 export function AutomationChip({ by }: { by?: { how: 'run' | 'saved'; name: string } }) {
   return (
     <>
-      <span
+      <Inset
         title="Posted by an automation, not by a member"
-        className="shrink-0 self-center rounded-md bg-tertiary-container px-1 py-px text-3xs leading-4 font-semibold tracking-wide text-on-tertiary-container"
+        as="span"
+        pad="2xs"
+        inset="bar"
+        look="rounded-md bg-tertiary-container text-3xs leading-4 font-semibold tracking-wide text-on-tertiary-container"
+        place="shrink-0 self-center"
       >
         AUTOMATION
-      </span>
+      </Inset>
       {by && (
         <span className="min-w-0 truncate text-xs text-on-surface-variant">
           {by.how === 'run' ? 'run by ' : 'saved by '}

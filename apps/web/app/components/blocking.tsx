@@ -180,11 +180,22 @@ export function BlockedList({
 export function BlockedComposer({ user }: { user: UserRef }) {
   const unblockUser = useStore(s => s.unblockUser)
   return (
-    <div className="flex items-center gap-3 border-t border-outline-variant px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-sm text-on-surface-variant">
+    <Surface
+      row
+      pad="lg"
+      inset="bar"
+      gap="md"
+      tone="plain"
+      radius="none"
+      border="top"
+      safe
+      text="sm"
+      ink="muted"
+    >
       <UserX size={16} aria-hidden className="shrink-0" />
       <span className="min-w-0 flex-1">You blocked this user.</span>
       <Button onClick={() => void unblockUser(user.username, user.display_name)}>Unblock</Button>
-    </div>
+    </Surface>
   )
 }
 

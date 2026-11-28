@@ -145,13 +145,21 @@ export function MemberPicker({
       {found.active && (
         <Stack gap="3xs">
           {hits.map(m => (
-            <button
+            <Surface
               key={m.username}
               onClick={() => {
                 onPick(m)
                 setQ('')
               }}
-              className="flex w-full items-center gap-2 rounded-xl px-2 py-1 text-left hover:bg-surface-container-highest"
+              as="button"
+              row
+              pad="sm"
+              inset="chip"
+              gap="sm"
+              tone="plain"
+              radius="lg"
+              look="text-left hover:bg-surface-container-highest"
+              place="w-full"
             >
               <UserAvatar
                 username={m.username}
@@ -162,7 +170,7 @@ export function MemberPicker({
               <span className="streamer min-w-0 flex-1 truncate text-sm">
                 <Masked text={shownOf(m).display_name} by={m.username} />
               </span>
-            </button>
+            </Surface>
           ))}
           {!found.loading && hits.length === 0 && (
             <Surface pad="sm" inset="bar" tone="plain" radius="none">

@@ -81,7 +81,7 @@ function Bar({ share, mine, lead }: { share: number; mine: boolean; lead: boolea
   return (
     <span
       aria-hidden
-      className={`absolute inset-y-0 left-0 rounded-xl transition-[width] duration-300 ${
+      className={`absolute inset-y-0 left-0 rounded-xl transition-width duration-300 ${
         mine
           ? 'bg-primary-container'
           : lead

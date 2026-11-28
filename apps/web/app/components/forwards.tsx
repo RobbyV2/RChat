@@ -355,13 +355,13 @@ export function ForwardSourcePill({
       <div data-forward-pill="open" className={PILL}>
         {head}
         {frame || !openServer ? (
-          <span className={`${PLACE} max-w-[45%]`}>{serverName}</span>
+          <span className={`${PLACE} max-w-9/20`}>{serverName}</span>
         ) : (
           <button
             type="button"
             title={streamer ? 'Open server' : `Open ${mask(server.name)}`}
             onClick={stop(openServer)}
-            className={`${PLACE_BUTTON} max-w-[45%]`}
+            className={`${PLACE_BUTTON} max-w-9/20`}
           >
             {serverName}
           </button>
@@ -408,7 +408,7 @@ export function ForwardSourcePill({
     return (
       <div data-forward-pill="named" className={PILL}>
         {head}
-        <span className={`${PLACE} max-w-[45%]`}>
+        <span className={`${PLACE} max-w-9/20`}>
           <span className="min-w-0 truncate">
             <Masked text={pill.server} />
           </span>

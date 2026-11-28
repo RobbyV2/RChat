@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react'
 import type { longPress } from './context_menu'
 import { Row, Surface } from './layout'
 import { textBtn } from './ui'
+import { IconButton, Tab } from './controls'
 
 // Pieces the Roles pages of hosted servers and P2P rooms share: the Role order and Display order
 // tabs, Alt+Up and Alt+Down on a focused role row, and a row of the display order.
@@ -19,20 +20,9 @@ export function RoleTabs({ tab, onTab }: { tab: RolesTab; onTab: (tab: RolesTab)
   return (
     <Row role="tablist" aria-label="Roles" gap="2xs">
       {tabs.map(([t, text]) => (
-        <button
-          key={t}
-          type="button"
-          role="tab"
-          aria-selected={tab === t}
-          onClick={() => onTab(t)}
-          className={`rounded-full px-3 py-1.5 text-sm pointer-coarse:min-h-11 ${
-            tab === t
-              ? 'bg-secondary-container text-on-secondary-container'
-              : 'text-on-surface-variant hover:bg-surface-container-highest'
-          }`}
-        >
+        <Tab key={t} onClick={() => onTab(t)} selected={tab === t}>
           {text}
-        </button>
+        </Tab>
       ))}
     </Row>
   )
@@ -68,16 +58,7 @@ export function ShownRow({
   menu: ReturnType<typeof longPress>
 }) {
   const btn = ({ text, run }: { text: string; run: Run }, Icon: typeof ChevronUp) => (
-    <button
-      type="button"
-      onClick={() => run?.()}
-      disabled={!run}
-      title={text}
-      aria-label={text}
-      className="shrink-0 rounded-full p-1.5 text-on-surface-variant enabled:hover:bg-surface-container-highest disabled:opacity-30 pointer-coarse:p-2.5"
-    >
-      <Icon size={16} />
-    </button>
+    <IconButton onClick={() => run?.()} disabled={!run} icon={Icon} label={text} size="sm" />
   )
   return (
     <Surface {...menu} data-shown-role pad="sm" inset="bar" tone="base" radius="lg">

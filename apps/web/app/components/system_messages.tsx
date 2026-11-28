@@ -26,7 +26,7 @@ import { MessageTime } from './timestamp'
 import { profileTrigger } from './profile_card'
 import { fieldCls, FieldError } from './ui'
 import { ShownName } from './shown_user'
-import { Row, Stack } from './layout'
+import { Inset, Row, Stack } from './layout'
 
 // "alice joined the party." with a green arrow, "alice left the server." with a red one.
 export function SystemNotice({
@@ -47,13 +47,18 @@ export function SystemNotice({
   return (
     <div data-row data-mid={m.id}>
       {divider}
-      <div
+      <Inset
         {...longPress((x, y) => onMenu(m, x, y))}
         data-system={m.kind}
-        className="flex items-start gap-3 px-4 py-1 hover:bg-surface-container-low"
+        row
+        pad="lg"
+        inset="line"
+        gap="md"
+        align="start"
+        look="hover:bg-surface-container-low"
       >
         <span
-          className={`flex w-9 shrink-0 justify-center pt-0.5 ${join ? 'text-status-green' : 'text-error'}`}
+          className={`flex h-lh w-9 shrink-0 items-center justify-center ${join ? 'text-status-green' : 'text-error'}`}
         >
           <Arrow size={16} aria-hidden />
         </span>
@@ -65,10 +70,9 @@ export function SystemNotice({
           >
             <ShownName user={m.author} server={server} />
           </span>
-          {after}
-          <MessageTime ts={m.created_at} className="ml-2 text-xs opacity-70" />
+          {after} <MessageTime ts={m.created_at} className="text-xs opacity-70" />
         </p>
-      </div>
+      </Inset>
     </div>
   )
 }

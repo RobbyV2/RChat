@@ -10,7 +10,7 @@ import { typingParts, typingTitle } from '../lib/typing'
 import { useLooksFor } from './shown_user'
 import { Masked } from './ui'
 import { PingBadge } from './ping_badge'
-import { Row } from './layout'
+import { Inset, Row } from './layout'
 
 const NONE: string[] = []
 
@@ -101,7 +101,7 @@ export function TypingIndicator({
   server = null,
 }: {
   scope: string | null
-  bg: string
+  bg: 'bg-surface' | 'bg-surface-container-low'
   names?: string[]
   server?: string | null
 }) {
@@ -122,9 +122,16 @@ export function TypingIndicator({
   const parts = on ? typingParts(names ?? typers) : []
   if (!parts.length) return null
   return (
-    <div
+    <Inset
       data-typing
-      className={`pointer-events-none absolute inset-x-0 bottom-full flex h-4 items-center gap-1.5 px-4 text-xs leading-4 text-on-surface-variant ${bg}`}
+      row
+      pad="lg"
+      inset="sides"
+      gap="xs"
+      text="xs"
+      ink="muted"
+      look={`h-4 leading-4 ${bg}`}
+      place="pointer-events-none absolute inset-x-0 bottom-full"
     >
       <Dots still="opacity-70" />
       <span aria-live="polite" className="min-w-0 truncate">
@@ -138,6 +145,6 @@ export function TypingIndicator({
           )
         )}
       </span>
-    </div>
+    </Inset>
   )
 }

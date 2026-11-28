@@ -49,7 +49,7 @@ export function AltBadge({
           e.stopPropagation()
           setOpen(o => !o)
         }}
-        className="absolute right-2 bottom-2 rounded bg-scrim/80 px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-white uppercase hover:bg-scrim"
+        className="absolute right-2 bottom-2 rounded bg-scrim/80 px-1.5 py-0.5 text-3xs font-bold tracking-wider text-white uppercase hover:bg-scrim"
       >
         Alt
       </button>
@@ -105,7 +105,7 @@ export function AltField({
       {(tooLong || count > ALT_MAX - 50) && (
         <span
           role="status"
-          className={`text-[11px] ${tooLong ? 'text-error' : 'text-on-surface-variant'}`}
+          className={`text-2xs ${tooLong ? 'text-error' : 'text-on-surface-variant'}`}
         >
           {tooLong ?? altAnnouncement(count)}
         </span>

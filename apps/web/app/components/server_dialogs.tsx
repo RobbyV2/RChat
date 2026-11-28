@@ -21,7 +21,7 @@ import { JOIN_NOTE, runJoinStep, type JoinStep } from '../lib/join_flow'
 import { SHORT_PASSWORD, tooShort } from '../lib/passwords'
 import { Button, ListRow, Tab } from './controls'
 import { Row, Stack, Surface } from './layout'
-import { Dialog, FieldError, Masked } from './ui'
+import { Dialog, fieldCls, FieldError, Masked, smallFieldCls } from './ui'
 import { ServerGlyph } from './server_rail'
 import { AboutLine } from './server_about'
 import { aboutText } from '../lib/server_about'
@@ -214,7 +214,7 @@ function AddServerDialog({
                 placeholder={joining ? 'server name or invite link' : 'server name'}
                 aria-label={joining ? 'Server name or invite link' : 'Server name'}
                 aria-invalid={nameTaken}
-                className="streamer w-full rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none focus:border-primary md:text-sm"
+                className={`streamer w-full ${fieldCls}`}
               />
               {nameTaken && <p className="text-xs text-error">That name is taken</p>}
             </Stack>
@@ -253,7 +253,7 @@ function AddServerDialog({
               }}
               placeholder={creating ? 'password (optional)' : 'password'}
               aria-label={creating ? 'Password (optional)' : 'Server password'}
-              className="w-full rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none focus:border-primary md:text-sm"
+              className={`w-full ${fieldCls}`}
             />
           )}
           {joining && <p className="text-xs text-on-surface-variant">{JOIN_NOTE}</p>}
@@ -342,7 +342,7 @@ function AccountServerDialog({
           <select
             aria-label="As"
             value={(switching ?? acting).renderKey}
-            className="streamer min-w-0 flex-1 rounded-lg bg-surface-container px-2 py-1"
+            className={`streamer min-w-0 flex-1 ${smallFieldCls}`}
             onChange={async e => {
               const mark = ++selection.current
               setSwitchError('')

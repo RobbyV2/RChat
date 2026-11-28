@@ -133,7 +133,7 @@ export function MessageToolbar({
               </button>
             )
           })}
-          <span aria-hidden className={`mx-0.5 h-5 w-px bg-outline-variant ${quickCls}`} />
+          <span aria-hidden className={`h-5 w-px bg-outline-variant ${quickCls}`} />
           <button
             ref={addRef}
             type="button"

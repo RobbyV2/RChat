@@ -4,6 +4,7 @@ import { useAccount } from '../lib/client/react'
 import { useEffect, useId, useRef, useState, type HTMLAttributes, type ReactNode } from 'react'
 import type { ViewingTarget } from '../lib/viewing'
 import { Masked } from './ui'
+import { Inset } from './layout'
 
 // The row opens its destination. Buttons in its preview have their own focus and click targets.
 export function PreviewRow({
@@ -30,7 +31,7 @@ export function PreviewRow({
         title={title}
         tabIndex={tabIndex}
         aria-labelledby={label}
-        className="absolute inset-0 cursor-pointer rounded-[inherit] focus-visible:outline-2 focus-visible:outline-primary"
+        className="absolute inset-0 cursor-pointer rounded-inherit focus-visible:outline-2 focus-visible:outline-primary"
       />
       <div
         id={label}
@@ -63,7 +64,8 @@ export function PreviewSpoiler({
     )
   const label = file ? 'Reveal spoiler attachment' : 'Reveal spoiler'
   return (
-    <button
+    <Inset
+      as="button"
       type="button"
       data-reply-spoiler
       aria-label={label}
@@ -74,10 +76,15 @@ export function PreviewSpoiler({
         focus.current = e.currentTarget === document.activeElement
         setOpen(true)
       }}
-      className="inline-flex cursor-pointer items-center rounded bg-spoiler px-1.5 align-baseline text-xs font-medium text-white hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+      pad="xs"
+      inset="sides"
+      row
+      text="xs"
+      look="cursor-pointer rounded bg-spoiler align-baseline font-medium text-white hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+      place="inline-flex"
     >
       Spoiler
-    </button>
+    </Inset>
   )
 }
 

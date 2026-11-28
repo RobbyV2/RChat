@@ -6,6 +6,7 @@ import {
   dockLook,
   firstLineLook,
   gridLook,
+  liftLook,
   rowLook,
   smaller,
   stackLook,
@@ -158,5 +159,25 @@ test('a safe surface pads its lower edge by its own step or the home indicator, 
 test('a surface inset at its sides only sets no padding above or below', () => {
   const look = surface({ pad: 'lg', inset: 'sides' }).split(' ')
   expect(look).toContain('px-(--space-lg)')
-  expect(look.some(w => /^(p|py|pt|pb)-/.test(w))).toBe(false)
+  expect(look).toContain('py-0')
+  expect(look.some(w => /^(p|pt|pb)-/.test(w))).toBe(false)
+})
+
+test('a chip surface pads two steps less above and below than at its sides', () => {
+  has(surface({ pad: 'md', inset: 'chip' }), 'px-(--space-md)', 'py-(--space-xs)')
+  has(surface({ pad: '2xs', inset: 'chip' }), 'px-(--space-2xs)', 'py-0')
+})
+
+test('a grid can pair a label column with a value column', () => {
+  has(
+    gridLook('pair', 'md', 'stretch', '2xs'),
+    'grid-cols-[auto_minmax(0,1fr)]',
+    'gap-y-(--space-2xs)'
+  )
+  has(gridLook('thirds', 'md'), 'grid-cols-[minmax(0,1fr)_minmax(0,2fr)]')
+})
+
+test('a line surface keeps a hair above and below; a lifted box overlaps by a step of the scale', () => {
+  has(surface({ pad: 'lg', inset: 'line' }), 'px-(--space-lg)', 'py-(--space-2xs)')
+  has(liftLook('2xl'), 'relative', '-mt-(--space-2xl)')
 })

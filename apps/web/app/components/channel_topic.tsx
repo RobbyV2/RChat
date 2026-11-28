@@ -219,7 +219,7 @@ function TopicWindow({
       tabIndex={-1}
       data-popover
       style={at ? { top: at.top, left: at.left } : { visibility: 'hidden' }}
-      className="fixed z-popover flex max-h-[min(28rem,calc(100dvh-6rem))] outline-none w-[28rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-2xl bg-surface-container-high pt-3 shadow-elevation-3"
+      className="fixed z-popover flex max-h-[min(28rem,calc(100dvh-6rem))] outline-none w-112 max-w-screen-inset flex-col overflow-hidden rounded-2xl bg-surface-container-high pt-3 shadow-elevation-3"
     >
       {body}
     </div>,

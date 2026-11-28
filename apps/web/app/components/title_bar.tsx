@@ -51,7 +51,7 @@ function useMaximized(win: Win | null) {
 function Controls({ os, win }: { os: DesktopOs; win: Win | null }) {
   const maximized = useMaximized(win)
   const windows = os === 'windows'
-  const focus = 'outline-offset-[-2px] focus-visible:outline-2 focus-visible:outline-primary'
+  const focus = '-outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary'
   const btn = windows
     ? `${focus} flex h-full w-[46px] items-center justify-center text-on-surface hover:bg-on-surface/10 active:bg-on-surface/20`
     : `${focus} flex size-6 items-center justify-center rounded-full bg-on-surface/10 text-on-surface hover:bg-on-surface/20 active:bg-on-surface/30`
@@ -124,7 +124,7 @@ export default function TitleBar() {
   return (
     <div
       data-tauri-drag-region
-      className="fixed inset-x-0 top-0 z-chrome flex h-(--titlebar-h) items-center bg-surface-container-lowest text-xs text-on-surface-variant select-none"
+      className="fixed inset-x-0 top-0 z-chrome flex h-titlebar items-center bg-surface-container-lowest text-xs text-on-surface-variant select-none"
     >
       {os === 'windows' ? (
         <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center gap-2 pl-3">

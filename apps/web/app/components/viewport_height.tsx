@@ -17,6 +17,7 @@ import {
   type PillEvent,
 } from '../lib/follow'
 import { time } from '../lib/platform/time'
+import { Surface } from './layout'
 
 const KEYBOARD_MIN = 120
 
@@ -266,13 +267,22 @@ export function OlderLoading({
     <div
       className={`pointer-events-none absolute inset-x-0 z-raised flex justify-center ${newer ? 'bottom-2' : lower ? 'top-14' : 'top-2'}`}
     >
-      <span
+      <Surface
         role="status"
-        className="flex items-center gap-1.5 rounded-full bg-surface-container-high px-3 py-1 text-xs text-on-surface-variant shadow-elevation-1"
+        as="span"
+        pad="md"
+        inset="chip"
+        gap="xs"
+        row
+        tone="high"
+        radius="full"
+        elevation={1}
+        text="xs"
+        ink="muted"
       >
         <LoaderCircle size={14} className="animate-spin" />
         {newer ? 'Loading newer messages' : 'Loading older messages'}
-      </span>
+      </Surface>
     </div>
   )
 }
@@ -356,13 +366,23 @@ export function useFocusMessage(
 export function PresentBar({ onJump, count = 0 }: { onJump: () => void; count?: number }) {
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-3 z-raised flex justify-center">
-      <button
+      <Surface
         onClick={onJump}
-        className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-on-primary shadow-elevation-2 hover:opacity-90"
+        as="button"
+        pad="md"
+        inset="chip"
+        gap="xs"
+        row
+        tone="plain"
+        radius="full"
+        elevation={2}
+        text="xs"
+        look="bg-primary font-medium text-on-primary hover:opacity-90"
+        place="pointer-events-auto"
       >
         <ArrowDown size={14} />
         {count > 0 ? `${count} new ${count === 1 ? 'message' : 'messages'}` : 'Jump to present'}
-      </button>
+      </Surface>
     </div>
   )
 }

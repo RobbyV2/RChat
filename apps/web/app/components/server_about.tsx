@@ -18,7 +18,7 @@ import {
 import { iconLook } from '../lib/server_icon'
 import { Button } from './controls'
 import { Row, Stack } from './layout'
-import { Chips, FieldError, Masked, fieldCls, sectionCls } from './ui'
+import { Chips, fieldCls, FieldError, Masked, sectionCls } from './ui'
 
 // One server icon for the rail, invite cards and search: the first letter of its name or a
 // pattern from its key, on the server's color when it has one.
@@ -54,17 +54,17 @@ export function ServerIcon({
     <span
       data-server-icon={kind}
       style={look.bg ? { background: look.bg, color: look.fg ?? undefined } : undefined}
-      className={`flex h-full w-full items-center justify-center overflow-hidden rounded-[inherit] ${className}`}
+      className={`flex h-full w-full items-center justify-center overflow-hidden rounded-inherit ${className}`}
     >
       {src ? (
-        <img src={src} alt="" draggable={false} className="h-full w-full p-[12%]" />
+        <img src={src} alt="" draggable={false} className="icon-inset h-full w-full" />
       ) : (
         <span className="streamer">{serverInitial(mask(name))}</span>
       )}
     </span>
   )
   return framed && look.bg ? (
-    <span className="flex h-full w-full rounded-[inherit] p-[7%]">{icon}</span>
+    <span className="icon-frame flex h-full w-full rounded-inherit">{icon}</span>
   ) : (
     icon
   )

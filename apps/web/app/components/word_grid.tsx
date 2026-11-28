@@ -2,7 +2,7 @@
 
 import { KeyRound, LayoutGrid, X } from 'lucide-react'
 import type { PassKind } from '../lib/password'
-import { Grid, Row, Stack } from './layout'
+import { Grid, Row, Stack, Surface } from './layout'
 
 interface Props {
   words: string[]
@@ -43,17 +43,24 @@ export function WordGrid({ words, selected, onChange }: Props) {
       </Grid>
       <Row gap="sm" wrap>
         {selected.map((word, i) => (
-          <button
+          <Surface
             key={word}
             type="button"
             title={`Remove ${word}`}
             onClick={() => onChange(selected.filter(w => w !== word))}
-            className="flex items-center gap-1 rounded-lg bg-secondary-container px-2 py-1 text-xs text-on-secondary-container"
+            as="button"
+            row
+            pad="sm"
+            inset="chip"
+            gap="2xs"
+            tone="secondary"
+            radius="md"
+            text="xs"
           >
             <span className="font-medium">{i + 1}.</span>
             {word}
             <X size={12} />
-          </button>
+          </Surface>
         ))}
         <span className="flex min-h-8 items-center text-xs text-on-surface-variant">
           {selected.length}/7 words in order

@@ -20,7 +20,7 @@ import {
 } from '../lib/relays'
 import { SettingNotes, SettingSwitch } from './settings_fields'
 import { Button, IconButton } from './controls'
-import { Row, Stack, Surface } from './layout'
+import { Inset, Row, Stack, Surface } from './layout'
 import { CloseButton, FieldError, TopDialog, fieldCls, sectionCls } from './ui'
 
 const relayLabel = (url: string) => displayHost(hostOf(url) ?? url)
@@ -166,9 +166,15 @@ export function RelaySection() {
             {prefs.relays.map(r => (
               <Surface as="li" key={r.url} pad="md" tone="base" radius="lg">
                 <Row gap="sm">
-                  <span className="shrink-0 rounded bg-surface-container-highest px-1 py-0.5 text-3xs leading-none font-bold text-on-surface-variant">
+                  <Inset
+                    as="span"
+                    pad="2xs"
+                    inset="bar"
+                    look="rounded bg-surface-container-highest text-3xs leading-none font-bold text-on-surface-variant"
+                    place="shrink-0"
+                  >
                     {isTurn(r.url) ? 'TURN' : 'STUN'}
-                  </span>
+                  </Inset>
                   <span className="min-w-0 flex-1 truncate font-mono text-xs" title={r.url}>
                     {r.url}
                   </span>

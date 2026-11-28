@@ -1,7 +1,7 @@
 'use client'
 
 import { Check } from 'lucide-react'
-import { Row, Surface } from './layout'
+import { Inset, Row, Surface } from './layout'
 import { useMotionPlays } from '../lib/motion/use_motion'
 import { unreadBannerText, type UnreadSummary } from '../lib/unread_banner'
 
@@ -18,27 +18,49 @@ export function UnreadBanner({
 }) {
   const moves = useMotionPlays()
   return (
-    <div
+    <Surface
       data-unread-banner
-      className={`absolute inset-x-3 top-2 z-raised flex items-center gap-1 rounded-xl bg-primary py-0.5 pr-1 pl-3.5 text-sm text-on-primary shadow-elevation-2 ${moves ? 'animate-banner-in' : ''}`}
+      pad="2xs"
+      gap="2xs"
+      row
+      tone="plain"
+      radius="lg"
+      elevation={2}
+      text="sm"
+      look={`bg-primary text-on-primary ${moves ? 'animate-banner-in' : ''}`}
+      place="absolute inset-x-3 top-2 z-raised"
     >
-      <button
+      <Inset
         onClick={onJump}
         title="Jump to the first unread message"
-        className="min-h-9 min-w-0 flex-1 truncate text-left font-medium pointer-coarse:min-h-11"
+        as="button"
+        pad="sm"
+        inset="sides"
+        row
+        look="min-h-9 text-left font-medium pointer-coarse:min-h-11"
+        place="min-w-0 flex-1"
       >
-        {unreadBannerText(unread)}
-      </button>
-      <button
+        <span className="truncate">{unreadBannerText(unread)}</span>
+      </Inset>
+      <Surface
+        as="button"
         onClick={onMarkRead}
         title="Mark as read"
         aria-label="Mark as read"
-        className="flex min-h-9 min-w-9 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2 font-medium hover:bg-on-primary/10 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+        pad="sm"
+        inset="sides"
+        gap="xs"
+        row
+        tone="plain"
+        radius="md"
+        justify="center"
+        look="min-h-9 min-w-9 font-medium hover:bg-on-primary/10 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+        place="shrink-0"
       >
         <span className="max-sm:hidden">Mark as read</span>
         <Check size={16} aria-hidden />
-      </button>
-    </div>
+      </Surface>
+    </Surface>
   )
 }
 
@@ -56,9 +78,15 @@ export function UnreadDivider() {
     >
       <Row gap="none">
         <div className="h-px flex-1 bg-danger/80" />
-        <span className="shrink-0 rounded-sm bg-danger px-1.5 py-0.5 text-3xs leading-none font-bold tracking-wider text-on-danger uppercase select-none">
+        <Inset
+          as="span"
+          pad="xs"
+          inset="chip"
+          look="rounded-sm bg-danger text-3xs leading-none font-bold tracking-wider text-on-danger uppercase select-none"
+          place="shrink-0"
+        >
           New
-        </span>
+        </Inset>
       </Row>
     </Surface>
   )

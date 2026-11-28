@@ -7,6 +7,7 @@ import { daySnapshot, snapshot, subscribe, subscribeDay, track } from '../lib/st
 import { formatStamp, fullTime, messageTime, type StampStyle } from '../lib/timestamps'
 import { longPress } from './context_menu'
 import { time } from '../lib/platform/time'
+import { inlineChipCls } from './ui'
 
 // The shared clock's time, ticking while `target` (milliseconds) is set: each second within a
 // minute of it, else each minute.
@@ -35,7 +36,7 @@ export function Stamp({ ms, style, token }: { ms: number; style: StampStyle; tok
       data-stamp={style}
       dateTime={new Date(ms).toISOString()}
       title={full}
-      className="rounded box-decoration-clone bg-surface-container-high px-1 py-0.5 text-on-surface"
+      className={inlineChipCls}
     >
       {text}
     </time>

@@ -29,7 +29,7 @@ import { shellInfo } from '../lib/platform'
 import type { InstanceInfo, SiteSettings } from '../lib/types'
 import { Button } from './controls'
 import { Row, Stack, Surface } from './layout'
-import { Dialog } from './ui'
+import { Dialog, fieldCls } from './ui'
 import { SignInStep } from './sign_in_step'
 export { SignInStep } from './sign_in_step'
 
@@ -248,7 +248,7 @@ export function AddInstanceFlow({
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              className="streamer rounded-lg border border-outline bg-transparent px-3 py-2"
+              className={`streamer ${fieldCls}`}
             />
           </Stack>
           {!streamer && !linkTarget && (
@@ -290,9 +290,16 @@ export function AddInstanceFlow({
       {target && (
         <Surface tone="base" radius="lg" pad="md" gap="sm">
           <Row gap="md">
-            <span aria-hidden="true" className="streamer rounded-lg bg-primary-container p-2">
+            <Surface
+              aria-hidden="true"
+              as="span"
+              pad="sm"
+              tone="primary"
+              radius="md"
+              look="streamer"
+            >
               {target.info.name.slice(0, 1)}
-            </span>
+            </Surface>
             <div>
               <strong className="streamer">{target.info.name}</strong>
               <p className="streamer text-xs">

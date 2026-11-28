@@ -24,7 +24,7 @@ import { LiveBadge } from './voice_grid'
 import { VoiceStatusIcons } from './voice_status'
 
 const seatCls =
-  'mr-2 ml-7 flex items-center gap-2 rounded-md px-2 py-1 text-sm text-on-surface-variant outline-offset-[-2px]'
+  'mr-2 ml-7 flex items-center gap-2 rounded-md px-2 py-1 text-sm text-on-surface-variant -outline-offset-2'
 const opensCls =
   'cursor-pointer hover:bg-surface-container hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary active:bg-surface-container-high'
 
@@ -168,7 +168,7 @@ function Row({
           if (!locked) voice.enter(channel.key)
         }}
         {...longPress(menu, drag)}
-        className={`group mx-2 flex w-[calc(100%-1rem)] items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm outline-offset-[-2px] transition-colors focus-visible:outline-2 focus-visible:outline-primary active:scale-[0.98] pointer-coarse:min-h-11 ${
+        className={`group mx-2 flex w-[calc(100%-1rem)] items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm -outline-offset-2 transition-colors focus-visible:outline-2 focus-visible:outline-primary active:scale-98 pointer-coarse:min-h-11 ${
           channel.active
             ? 'bg-secondary-container text-on-secondary-container'
             : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'

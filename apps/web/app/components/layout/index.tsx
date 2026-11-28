@@ -4,6 +4,7 @@ import {
   dockLook,
   firstLineLook,
   gridLook,
+  liftLook,
   rowLook,
   stackLook,
   surfaceLook,
@@ -14,6 +15,7 @@ import {
   type Elevation,
   type GridColumns,
   type Justify,
+  type LiftBy,
   type RowAlign,
   type Space,
   type StackAlign,
@@ -47,6 +49,22 @@ type Tag =
   | 'label'
   | 'span'
   | 'p'
+  | 'h1'
+  | 'h2'
+  | 'h3'
+  | 'h4'
+  | 'legend'
+  | 'summary'
+  | 'dt'
+  | 'dd'
+  | 'time'
+  | 'figure'
+  | 'blockquote'
+  | 'kbd'
+  | 'code'
+  | 'pre'
+  | 'button'
+  | 'a'
 
 type Box<S extends string, L extends string> = Omit<
   AllHTMLAttributes<HTMLElement>,
@@ -162,6 +180,14 @@ export function Surface<const S extends string = never, const L extends string =
   )
 }
 
+// Room around some content without a surface of its own: a `Surface` with no tone and no round
+// corners (the padded body of a panel, a line of a list).
+export function Inset<const S extends string = never, const L extends string = never>(
+  props: Omit<Parameters<typeof Surface<S, L>>[0], 'tone' | 'radius'>
+) {
+  return <Surface<S, L> {...props} tone="plain" radius="none" />
+}
+
 // Equal columns, `gap` apart (rows `lineGap` apart when given).
 export function Grid<const S extends string = never, const L extends string = never>({
   cols,
@@ -183,4 +209,9 @@ export function FirstLine({ children }: { children: ReactNode }) {
 // the sides and above the home indicator, or the keyboard while it is open.
 export function Dock({ children }: { children: ReactNode }) {
   return <div className={dockLook}>{children}</div>
+}
+
+// Pulls its content up over what is above it (an avatar over a banner).
+export function Lift({ by, children }: { by: LiftBy; children: ReactNode }) {
+  return <div className={liftLook(by)}>{children}</div>
 }

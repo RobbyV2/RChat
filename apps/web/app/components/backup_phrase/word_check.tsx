@@ -4,7 +4,7 @@ import { useState, type FormEvent } from 'react'
 import { checkAnswers, pickCheck } from '../../lib/backup_phrase'
 import { Button } from '../controls'
 import { Grid, Row, Stack, Surface } from '../layout'
-import { FieldError } from '../ui'
+import { bareFieldCls, FieldError } from '../ui'
 import { RevealToggle, SECRET, useReveal } from './reveal'
 
 // Asks for 3 words of the phrase by position. Every check is reported; after a miss the form stays
@@ -60,7 +60,7 @@ export function WordCheck({
                   setWrong(false)
                   setAnswers(a => a.map((v, j) => (j === i ? e.target.value : v)))
                 }}
-                className={`${reveal.hidden ? SECRET : ''} min-w-0 flex-1 bg-transparent py-2 font-mono text-base text-on-surface outline-none md:text-sm`}
+                className={`${reveal.hidden ? SECRET : ''} ${bareFieldCls} font-mono text-on-surface`}
               />
             </Surface>
           </Stack>

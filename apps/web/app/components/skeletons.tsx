@@ -93,7 +93,7 @@ export function MessageListSkeleton({
               <div className="flex h-4 min-w-0 items-center">
                 <Row gap="sm" place="flex-1">
                   <Blob
-                    className={`h-3 max-w-[50%] rounded-full ${strong}`}
+                    className={`h-3 max-w-1/2 rounded-full ${strong}`}
                     style={{ width: m.name }}
                   />
                   <Blob

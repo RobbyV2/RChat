@@ -277,7 +277,7 @@ export function EmojiPicker({
       aria-label={label}
       data-popover
       style={pos ?? undefined}
-      className={`fixed z-top flex h-[27.5rem] max-h-[calc(100dvh-1rem)] w-[27.5rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-2xl bg-surface-container-high shadow-elevation-3 ${
+      className={`fixed z-top flex h-110 max-h-screen-inset w-110 max-w-screen-inset flex-col overflow-hidden rounded-2xl bg-surface-container-high shadow-elevation-3 ${
         pos ? '' : 'pointer-events-none opacity-0'
       }`}
     >
@@ -462,7 +462,7 @@ const PickerBody = memo(function PickerBody({
       className={
         sheet
           ? 'flex shrink-0 justify-between gap-0.5 px-3 pb-2'
-          : 'flex w-12 shrink-0 flex-col items-center gap-0.5 overflow-y-auto bg-surface-container py-2 [scrollbar-width:none]'
+          : 'flex w-12 shrink-0 flex-col items-center gap-0.5 overflow-y-auto bg-surface-container py-2 scrollbar-none'
       }
     >
       {CATEGORIES.filter(c => groups.some(g => g.id === c.id)).map(c => {
@@ -509,7 +509,7 @@ const PickerBody = memo(function PickerBody({
         >
           <div
             aria-hidden
-            className="sticky top-0 z-raised h-[30px] bg-surface-container-high/95 px-2 pt-2 pb-1.5 text-xs font-medium tracking-wide text-on-surface-variant uppercase backdrop-blur-sm"
+            className="sticky top-0 z-raised h-7.5 bg-surface-container-high/95 px-2 pt-2 pb-1.5 text-xs font-medium tracking-wide text-on-surface-variant uppercase backdrop-blur-sm"
           >
             {g.label}
           </div>

@@ -38,7 +38,7 @@ import {
 import { reapplyLine } from '../../lib/p2p/roles'
 import type { ServerView } from '../../lib/p2p/server'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
-import { Dialog, Masked } from '../ui'
+import { Dialog, fieldCls, Masked } from '../ui'
 import { KeyAvatar } from './p2p_badge'
 import { Row, Stack, Surface } from '../layout'
 import { andMore, fewOf, nextPage, page, PAGE } from '../../lib/paging'
@@ -707,7 +707,7 @@ function LostDeviceDialogBody({ dk }: { dk: string }) {
                 if (Number.isFinite(v)) setT(Math.min(v, at))
               }}
               data-p2p-lost-time
-              className="rounded-xl border border-outline-variant bg-transparent px-3 py-2 text-base md:text-sm"
+              className={fieldCls}
             />
           </Stack>
           <Row gap="2xs" align="stretch" wrap>

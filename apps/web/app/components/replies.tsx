@@ -184,7 +184,7 @@ export function ReplyPreview({
         ) : (
           <span
             style={{ color }}
-            className="streamer max-w-[40%] shrink-0 truncate font-medium text-on-surface"
+            className="streamer max-w-2/5 shrink-0 truncate font-medium text-on-surface"
           >
             {quote.mention ? '@' : ''}
             <NameWithUsername user={author} own={own} />

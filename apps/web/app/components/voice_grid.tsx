@@ -446,7 +446,7 @@ export function Tile({
               className={`absolute -inset-1 rounded-full ${
                 pending
                   ? 'border-2 border-on-surface/40 motion-safe:animate-ring'
-                  : 'ring-[3px] ring-status-green'
+                  : 'ring-3 ring-status-green'
               }`}
             />
           )}
@@ -481,7 +481,7 @@ export function Tile({
         aria-pressed={focused}
         title={focused ? 'Back to grid' : 'Focus'}
         onClick={onToggle}
-        className="absolute inset-0 rounded-xl outline-offset-[-3px] transition-colors hover:bg-on-surface/5 focus-visible:outline-2 focus-visible:outline-primary"
+        className="absolute inset-0 rounded-xl -outline-offset-3 transition-colors hover:bg-on-surface/5 focus-visible:outline-2 focus-visible:outline-primary"
       />
       <span
         {...(tile.local || isGuestName(user.username) ? {} : profileTrigger(store, user, server))}
@@ -818,7 +818,7 @@ function PeerCallPane() {
   const { roomCall, roomVoice } = useCallMedia()
   if (!roomCall && !roomVoice) return null
   return (
-    <div className="flex h-[60dvh] min-h-52">
+    <div className="flex h-dvh-60 min-h-52">
       <VoiceGrid p2pRoom={roomVoice?.room ?? roomCall?.room} p2pCh={roomVoice?.ch} />
     </div>
   )
@@ -876,7 +876,8 @@ function VoiceDockBody() {
               <p className={`truncate text-sm leading-tight font-semibold ${status.cls}`}>
                 {status.label}
               </p>
-              <button
+              <Row
+                as="button"
                 title={`Go to ${inVoice ? 'voice channel' : 'call'}`}
                 onClick={() => {
                   if (identity && (roomVoice || roomCall)) {
@@ -894,10 +895,14 @@ function VoiceDockBody() {
                     void p2pDm?.openDm(roomCall.peer)
                   } else if (call) void openDm(call.dmId)
                 }}
-                className="flex max-w-full min-w-0 items-center gap-1 rounded-sm text-left text-xs leading-tight text-on-surface-variant outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+                gap="2xs"
+                text="xs"
+                ink="muted"
+                look="rounded-sm text-left leading-tight outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+                place="max-w-full min-w-0"
               >
                 {roomVoice && <P2pBadge />}
-                <span className={`streamer truncate ${roomVoice ? 'max-w-[60%] shrink-0' : ''}`}>
+                <span className={`streamer truncate ${roomVoice ? 'max-w-3/5 shrink-0' : ''}`}>
                   <DockPlace place={place} peer={dmPeer} />
                 </span>
                 {roomCall && <P2pBadge />}
@@ -917,7 +922,7 @@ function VoiceDockBody() {
                     </span>
                   </>
                 )}
-              </button>
+              </Row>
             </div>
             <button
               title={inVoice ? 'Disconnect' : 'Leave call'}
@@ -1528,13 +1533,20 @@ function CallBannerBody() {
     return (
       <div
         role="status"
-        className="pointer-events-auto shrink-0 max-w-[calc(100vw-2rem)] rounded-full bg-surface-container-high py-1.5 pr-1.5 pl-2 shadow-elevation-3"
+        className="pointer-events-auto shrink-0 max-w-screen-inset rounded-full bg-surface-container-high py-1.5 pr-1.5 pl-2 shadow-elevation-3"
       >
         <Row gap="md">
-          <button
+          <Surface
+            as="button"
             title="Go to call"
             onClick={go}
-            className="flex min-w-0 items-center gap-3 rounded-full outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary"
+            pad="none"
+            gap="md"
+            row
+            tone="plain"
+            radius="full"
+            look="outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary"
+            place="min-w-0"
           >
             {avatar(28)}
             <span className="flex min-w-0 flex-col text-left">
@@ -1550,7 +1562,7 @@ function CallBannerBody() {
               {!shown && <AccountLabel />}
               <CallType video={call.video} p2p={p2pCall} />
             </span>
-          </button>
+          </Surface>
           <button
             title="Cancel call"
             aria-label="Cancel call"
@@ -1566,7 +1578,7 @@ function CallBannerBody() {
     <div
       role="alertdialog"
       aria-label="Incoming call"
-      className="pointer-events-auto flex shrink-0 w-72 max-w-[calc(100vw-2rem)] flex-col items-center gap-3 rounded-3xl bg-surface-container-high px-5 pt-6 pb-5 text-center shadow-elevation-3 max-sm:flex-row max-sm:rounded-2xl max-sm:px-4 max-sm:py-3 max-sm:text-left"
+      className="pointer-events-auto flex shrink-0 w-72 max-w-screen-inset flex-col items-center gap-3 rounded-3xl bg-surface-container-high px-5 pt-6 pb-5 text-center shadow-elevation-3 max-sm:flex-row max-sm:rounded-2xl max-sm:px-4 max-sm:py-3 max-sm:text-left"
     >
       <span className="max-sm:hidden">{avatar(72)}</span>
       <span className="sm:hidden">{avatar(40)}</span>
@@ -1576,17 +1588,22 @@ function CallBannerBody() {
         </span>
         {!shown && <AccountLabel />}
         <CallType video={call.video} p2p={p2pCall} incoming />
-        <button
+        <Row
+          as="button"
           title="Go to DM"
           onClick={go}
-          className="flex max-w-full min-w-0 items-center gap-1 rounded-sm text-xs text-on-surface-variant outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+          gap="2xs"
+          text="xs"
+          ink="muted"
+          look="rounded-sm outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+          place="max-w-full min-w-0"
         >
           <MessageCircle size={12} aria-hidden className="shrink-0" />
           <span className="shrink-0">DM with</span>
           <span className="streamer truncate">
             <NameWithUsername user={dm?.other ?? other} />
           </span>
-        </button>
+        </Row>
       </div>
       <div className="flex shrink-0 items-center gap-4 max-sm:gap-2 sm:mt-1">
         <button
@@ -1695,13 +1712,20 @@ function ContactCallBanner() {
     return (
       <div
         role="status"
-        className="pointer-events-auto shrink-0 max-w-[calc(100vw-2rem)] rounded-full bg-surface-container-high py-1.5 pr-1.5 pl-2 shadow-elevation-3"
+        className="pointer-events-auto shrink-0 max-w-screen-inset rounded-full bg-surface-container-high py-1.5 pr-1.5 pl-2 shadow-elevation-3"
       >
         <Row gap="md">
-          <button
+          <Surface
+            as="button"
             title="Go to call"
             onClick={go}
-            className="flex min-w-0 items-center gap-3 rounded-full outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary"
+            pad="none"
+            gap="md"
+            row
+            tone="plain"
+            radius="full"
+            look="outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary"
+            place="min-w-0"
           >
             {avatar(28)}
             <span className="flex min-w-0 flex-col text-left">
@@ -1716,7 +1740,7 @@ function ContactCallBanner() {
               </span>
               <CallType video={c.video} p2p chip={<P2pBadge />} />
             </span>
-          </button>
+          </Surface>
           <button
             title="Cancel call"
             aria-label="Cancel call"
@@ -1733,7 +1757,7 @@ function ContactCallBanner() {
       role="alertdialog"
       aria-label="Incoming call"
       data-p2p-call-card
-      className="pointer-events-auto flex shrink-0 w-72 max-w-[calc(100vw-2rem)] flex-col items-center gap-3 rounded-3xl bg-surface-container-high px-5 pt-6 pb-5 text-center shadow-elevation-3 max-sm:flex-row max-sm:rounded-2xl max-sm:px-4 max-sm:py-3 max-sm:text-left"
+      className="pointer-events-auto flex shrink-0 w-72 max-w-screen-inset flex-col items-center gap-3 rounded-3xl bg-surface-container-high px-5 pt-6 pb-5 text-center shadow-elevation-3 max-sm:flex-row max-sm:rounded-2xl max-sm:px-4 max-sm:py-3 max-sm:text-left"
     >
       <span className="max-sm:hidden">{avatar(72)}</span>
       <span className="sm:hidden">{avatar(40)}</span>
@@ -1742,17 +1766,22 @@ function ContactCallBanner() {
           <Masked text={name} />
         </span>
         <CallType video={c.video} p2p incoming chip={<P2pBadge />} />
-        <button
+        <Row
+          as="button"
           title="Go to conversation"
           onClick={go}
-          className="flex max-w-full min-w-0 items-center gap-1 rounded-sm text-xs text-on-surface-variant outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+          gap="2xs"
+          text="xs"
+          ink="muted"
+          look="rounded-sm outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+          place="max-w-full min-w-0"
         >
           <MessageCircle size={12} aria-hidden className="shrink-0" />
           <span className="shrink-0">Conversation with</span>
           <span className="streamer truncate">
             <Masked text={name} />
           </span>
-        </button>
+        </Row>
       </div>
       <div className="flex shrink-0 items-center gap-4 max-sm:gap-2 sm:mt-1">
         <button

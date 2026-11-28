@@ -116,6 +116,24 @@ const JUSTIFY: Record<Justify, string> = {
   around: 'justify-around',
 }
 
+// How a surface pads its content: `even` the same on all four sides; `bar` (a header, footer or
+// toolbar line) one step less above and below than at the sides; `chip` (a pill, a tag, a chip)
+// two steps less; `line` (a line of a list or a chat) a hair above and below; `sides` only at
+// the sides.
+export type SurfaceInset = 'even' | 'bar' | 'sides' | 'chip' | 'line'
+
+// The padding above and below a surface whose sides are padded by `pad`.
+const above = (pad: Space, inset: SurfaceInset): Space =>
+  inset === 'even'
+    ? pad
+    : inset === 'bar'
+      ? smaller(pad)
+      : inset === 'chip'
+        ? smaller(smaller(pad))
+        : inset === 'line'
+          ? '2xs'
+          : 'none'
+
 // The type step and the color a box gives the text in it (its children inherit both).
 export type BoxText = '3xs' | '2xs' | 'xs' | 'sm' | 'base' | 'lg'
 export type BoxInk = 'strong' | 'muted' | 'primary' | 'tertiary' | 'error'
@@ -173,10 +191,6 @@ export type SurfaceTone =
   'plain' | 'lowest' | 'low' | 'base' | 'high' | 'highest' | 'primary' | 'secondary' | 'error'
 export type SurfaceRadius = 'none' | 'md' | 'lg' | 'xl' | 'group' | 'hero' | 'full'
 export type Elevation = 0 | 1 | 2 | 3
-// How a surface pads its content: `even` the same on all four sides; `bar` (a header, footer or
-// toolbar line) one step less above and below than at the sides; `sides` only at the sides (a line
-// of a list, whose height is its content's).
-export type SurfaceInset = 'even' | 'bar' | 'sides'
 // A line along every side, or only along the top or bottom (a header or footer of a panel), or a
 // dashed one (a place something can go, or a draft).
 export type SurfaceBorder = boolean | 'top' | 'bottom' | 'dashed'
@@ -250,12 +264,8 @@ export const surfaceLook = ({
 }) =>
   [
     row ? 'min-w-0 flex-row' : 'min-w-0 flex-col',
-    inset === 'even'
-      ? PAD[pad]
-      : inset === 'bar'
-        ? `${PAD_X[pad]} ${PAD_Y[smaller(pad)]}`
-        : PAD_X[pad],
-    safe ? PAD_SAFE_BOTTOM[inset === 'even' ? pad : inset === 'bar' ? smaller(pad) : 'none'] : '',
+    inset === 'even' ? PAD[pad] : `${PAD_X[pad]} ${PAD_Y[above(pad, inset)]}`,
+    safe ? PAD_SAFE_BOTTOM[above(pad, inset)] : '',
     GAP[gap],
     ITEMS[align],
     JUSTIFY[justify],
@@ -269,7 +279,16 @@ export const surfaceLook = ({
     .join(' ')
 
 export type Columns = 1 | 2 | 3 | 4 | 6
-export type GridColumns = Columns | { base?: Columns; sm?: Columns; md?: Columns; lg?: Columns }
+// Two columns that are not equal: `pair` a label as wide as it needs and its value in the rest;
+// `thirds` a third and two thirds.
+export type GridPair = 'pair' | 'thirds'
+export type GridColumns =
+  Columns | GridPair | { base?: Columns; sm?: Columns; md?: Columns; lg?: Columns }
+
+const PAIR: Record<GridPair, string> = {
+  pair: 'grid-cols-[auto_minmax(0,1fr)]',
+  thirds: 'grid-cols-[minmax(0,1fr)_minmax(0,2fr)]',
+}
 
 const COLS = {
   base: {
@@ -310,6 +329,8 @@ export const gridLook = (
   align: RowAlign = 'stretch',
   lineGap?: Space
 ) => {
+  if (typeof cols === 'string')
+    return `min-w-0 ${PAIR[cols]} ${GAP[gap]}${lineGap ? ` ${ROW_GAP[lineGap]}` : ''} ${ITEMS[align]}`
   const by = typeof cols === 'number' ? { base: cols } : cols
   const steps = (['base', 'sm', 'md', 'lg'] as const).flatMap(k => {
     const n = by[k]
@@ -326,3 +347,14 @@ export const firstLineLook = 'h-lh shrink-0 items-center'
 // sides, and above the home indicator or, while it is open, the on-screen keyboard.
 export const dockLook =
   'mx-(--space-md) mb-[max(var(--space-md),env(safe-area-inset-bottom))] shrink-0 keyboard:mb-(--space-md)'
+
+// How far a box is pulled up over what is above it (an avatar over a banner).
+export type LiftBy = 'lg' | '2xl' | '3xl'
+
+const LIFT: Record<LiftBy, string> = {
+  lg: '-mt-(--space-lg)',
+  '2xl': '-mt-(--space-2xl)',
+  '3xl': '-mt-(--space-3xl)',
+}
+
+export const liftLook = (by: LiftBy) => `relative ${LIFT[by]}`

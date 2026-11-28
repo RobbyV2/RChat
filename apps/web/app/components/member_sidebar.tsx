@@ -15,7 +15,7 @@ import type { Timeout } from '../lib/timeouts'
 import type { UserRef } from '../lib/types'
 import { prefixHeights, visibleRange } from '../lib/window'
 import { longPress } from './context_menu'
-import { Row, Surface } from './layout'
+import { Inset, Row, Surface } from './layout'
 import { FitName } from './display_name'
 import { AccountChip, ContactShield, MemberAvatar, PresenceDot } from './p2p/p2p_badge'
 import { MemberCard } from './p2p/p2p_server_roles'
@@ -28,7 +28,7 @@ import { UserAvatar } from './user_avatar'
 import { PeerActorTag, ViewActorTag } from './view_actor'
 import { time } from '../lib/platform/time'
 
-const rowFocus = 'outline-offset-[-2px] focus-visible:outline-2 focus-visible:outline-primary'
+const rowFocus = '-outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary'
 
 const ROW = 40
 const HEAD = 32
@@ -217,20 +217,27 @@ function MemberRow({
 
 function Head({ item, masked }: { item: Extract<MemberItem, { kind: 'head' }>; masked: boolean }) {
   return (
-    <p
+    <Inset
       data-member-group={item.key}
-      className="flex h-8 items-end gap-1.5 px-2 pb-1 text-xs font-medium tracking-wide text-on-surface-variant uppercase"
+      as="p"
+      row
+      pad="sm"
+      inset="sides"
+      gap="xs"
+      text="xs"
+      ink="muted"
+      look="h-8 font-medium tracking-wide uppercase"
     >
       {item.dot && (
         <span
           aria-hidden
-          className="mb-1 h-2 w-2 shrink-0 rounded-full"
+          className="h-2 w-2 shrink-0 rounded-full"
           style={{ backgroundColor: item.dot }}
         />
       )}
       <span className="min-w-0 truncate">{masked ? <Masked text={item.label} /> : item.label}</span>
       {item.count !== null && <span className="shrink-0">({item.count})</span>}
-    </p>
+    </Inset>
   )
 }
 

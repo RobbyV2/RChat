@@ -73,13 +73,13 @@ describe('search panel paging', () => {
 
 describe('end of the search list', () => {
   test('the list has no scroll anchoring, so a page that lands never scrolls it toward the end', () => {
-    const list = /class="[^"]*overflow-y-auto[^"]*\[overflow-anchor:none\]/
+    const list = /class="(?=[^"]*overflow-y-auto)[^"]*anchor-none/
     expect(list.test(view('we'))).toBe(true)
   })
 
   test('the end of the list clears the bottom safe area of a home-screen app', () => {
     const list =
-      /class="[^"]*overflow-y-auto[^"]*pb-\[max\(0\.5rem,env\(safe-area-inset-bottom\)\)\]/
+      /overflow-y-auto[^"]*"><div class="[^"]*pb-\[max\(var\(--space-sm\),env\(safe-area-inset-bottom\)\)\]/
     expect(list.test(view('we'))).toBe(true)
   })
 

@@ -38,6 +38,16 @@ import { time } from '../lib/platform/time'
 
 export const fieldCls =
   'min-w-0 flex-1 rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none placeholder:text-on-surface-variant focus:border-primary md:text-sm pointer-coarse:min-h-11'
+// A small field or select beside others on a toolbar line (a search filter).
+export const smallFieldCls =
+  'rounded-lg border border-outline bg-transparent px-2 py-1 text-base outline-none placeholder:text-on-surface-variant focus:border-primary md:text-xs'
+// A text field inside a box that draws the field (a search box, a composer): no border or sides of
+// its own.
+export const bareFieldCls =
+  'min-w-0 flex-1 bg-transparent py-1.5 text-base outline-none placeholder:text-on-surface-variant md:text-sm'
+// A value set off inside a line of text (a time, a code): it breaks across lines with the text.
+export const inlineChipCls =
+  'rounded box-decoration-clone bg-surface-container-high px-1 py-0.5 text-on-surface'
 export const filledBtn = buttonLook('filled', 'md')
 export const filledDangerBtn = buttonLook('filled-danger', 'md')
 export const textBtn = buttonLook('text', 'sm')
@@ -489,7 +499,7 @@ export function TopDialog({
         e.stopPropagation()
         onKeyDown?.(e)
       }}
-      className={`fixed inset-0 m-auto max-h-[85dvh] max-w-full flex-col overflow-hidden rounded-3xl bg-surface-container-high text-on-surface shadow-elevation-3 open:flex backdrop:bg-scrim/60 ${
+      className={`fixed inset-0 m-auto max-h-dvh-85 max-w-full flex-col overflow-hidden rounded-3xl bg-surface-container-high text-on-surface shadow-elevation-3 open:flex backdrop:bg-scrim/60 ${
         wide ? 'w-[min(32rem,calc(100%-2rem))]' : 'w-[min(24rem,calc(100%-2rem))]'
       }`}
       {...(backdrop ? beside : {})}

@@ -15,7 +15,7 @@ import {
 import { QrScan } from '../p2p/qr_scan'
 import { Button } from '../controls'
 import { Grid, Row, Stack, Surface } from '../layout'
-import { FieldError } from '../ui'
+import { bareFieldCls, FieldError } from '../ui'
 import { RevealToggle, SECRET, useReveal } from './reveal'
 
 const EMPTY: string[] = Array(PHRASE_LENGTH).fill('')
@@ -32,15 +32,21 @@ export function PhraseHints({
   return (
     <Row role="group" aria-label="Suggestions" gap="2xs" wrap>
       {hints.map(w => (
-        <button
+        <Surface
           key={w}
           type="button"
           onMouseDown={e => e.preventDefault()}
           onClick={() => onPick(w)}
-          className={`${secret ? SECRET : ''} rounded-full bg-secondary-container px-3 py-1 font-mono text-sm text-on-secondary-container hover:opacity-90 pointer-coarse:min-h-11`}
+          as="button"
+          pad="md"
+          inset="chip"
+          tone="secondary"
+          radius="full"
+          text="sm"
+          look={`${secret ? SECRET : ''} font-mono hover:opacity-90 pointer-coarse:min-h-11`}
         >
           {w}
-        </button>
+        </Surface>
       ))}
     </Row>
   )
@@ -140,7 +146,7 @@ export function PhraseInput({
 
   return (
     <Stack as="fieldset" gap="sm">
-      <legend className="pb-2 text-sm font-medium text-on-surface">{label}</legend>
+      <legend className="text-sm font-medium text-on-surface">{label}</legend>
       <Grid cols={{ base: 2, sm: 3 }} gap="sm">
         {slots.map((s, i) => {
           const bad = !!s && focus !== i && expand(s) === null
@@ -177,7 +183,7 @@ export function PhraseInput({
                 onFocus={() => setFocus(i)}
                 onBlur={() => onBlur(i)}
                 onKeyDown={e => onKey(i, e)}
-                className={`${secret} min-w-0 flex-1 bg-transparent py-2 font-mono text-base text-on-surface outline-none md:text-sm`}
+                className={`${secret} ${bareFieldCls} font-mono text-on-surface`}
               />
             </Surface>
           )

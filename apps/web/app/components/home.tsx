@@ -907,7 +907,7 @@ function ServerUnreadRow({
       id={name}
       glyph={
         <PlaceGlyph>
-          <span className="flex h-full w-full rounded-[inherit] text-on-surface">
+          <span className="flex h-full w-full rounded-inherit text-on-surface">
             <ServerGlyph name={name} displayName={display} />
           </span>
         </PlaceGlyph>
@@ -976,7 +976,7 @@ function P2pServerUnreadRow({ v, pings, channels }: P2pUnreadRow) {
       id={`p2p:${v.id}`}
       glyph={
         <PlaceGlyph p2p>
-          <span className="flex h-full w-full rounded-[inherit] text-on-surface">
+          <span className="flex h-full w-full rounded-inherit text-on-surface">
             <ServerIcon
               seed={v.id}
               name={v.name}
@@ -1582,12 +1582,18 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
       <Greeting total={total} accounts={accounts.length} />
       <Row gap="sm" align="stretch" aria-label="Accounts" place="overflow-x-auto">
         {actors.map(a => (
-          <button
+          <Surface
+            as="button"
             type="button"
             key={a.key}
             aria-pressed={a.row.active}
             onClick={() => void switchActor(a.row, shown)}
-            className="flex shrink-0 flex-col gap-1 rounded-xl bg-surface-container-low p-2 text-left outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary pressed:bg-secondary-container"
+            pad="sm"
+            gap="2xs"
+            tone="low"
+            radius="lg"
+            look="text-left outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary pressed:bg-secondary-container"
+            place="shrink-0"
           >
             <Row as="span" gap="2xs">
               <HomeActorLabel actor={a} />
@@ -1595,7 +1601,7 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
             <span className="text-xs">
               {a.row.status} {a.row.badge > 0 && <PingBadge count={a.row.badge} />}
             </span>
-          </button>
+          </Surface>
         ))}
         {canAdd && (
           <Button onClick={() => shown.store.getState().openDialog({ kind: 'add_instance' })}>

@@ -7,8 +7,8 @@ import { FileText, Hash, Search } from 'lucide-react'
 import { useMask } from '../lib/store'
 import { dayEndTs, dayStartTs, endOfList } from '../lib/search'
 import { Button, Chip } from './controls'
-import { Row, Stack, Surface } from './layout'
-import { fieldCls, Masked, PanelHeader, Sentinel, useEscape } from './ui'
+import { Inset, Row, Stack, Surface } from './layout'
+import { fieldCls, Masked, PanelHeader, Sentinel, smallFieldCls, useEscape } from './ui'
 import { MessageListSkeleton } from './skeletons'
 import { ShownAvatar, ShownName } from './shown_user'
 import { avatarTriggerCls, nameTriggerCls } from './message_pane'
@@ -209,7 +209,7 @@ export function SearchView({
           value={value}
           max={max}
           onChange={e => onChange(e.target.value)}
-          className="rounded-lg border border-outline bg-transparent px-2 py-1 text-base outline-none focus:border-primary md:text-xs"
+          className={smallFieldCls}
         />
       </Row>
     </label>
@@ -237,13 +237,13 @@ export function SearchView({
             value={from}
             onChange={e => setFrom(e.target.value)}
             placeholder="from: user"
-            className="w-28 rounded-full border border-outline bg-transparent px-3 py-1 text-base outline-none placeholder:text-on-surface-variant focus:border-primary md:text-xs"
+            className={`${smallFieldCls} w-28`}
           />
           {channels && (
             <select
               value={channelId}
               onChange={e => setChannelId(e.target.value)}
-              className="rounded-full border border-outline bg-transparent px-2 py-1 text-base text-on-surface-variant outline-none focus:border-primary md:text-xs"
+              className={`${smallFieldCls} text-on-surface-variant`}
             >
               <option value="">in: any channel</option>
               {channels.map(c => (
@@ -261,74 +261,74 @@ export function SearchView({
         </Row>
         {note && <p className="text-xs text-on-surface-variant">{note}</p>}
       </Surface>
-      <div
-        ref={listRef}
-        onScroll={scrolled}
-        className="flex-1 overflow-y-auto p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] [overflow-anchor:none]"
-      >
-        {!active && (
-          <Surface pad="xl" tone="plain" radius="none">
-            <p className="text-center text-sm text-on-surface-variant">
-              Type a query or pick a filter to search.
-            </p>
-          </Surface>
-        )}
-        {active && !loading && hits.length === 0 && !hasMore && (
-          <Surface pad="xl" tone="plain" radius="none">
-            <p className="text-center text-sm text-on-surface-variant">No results.</p>
-          </Surface>
-        )}
-        {first && <MessageListSkeleton seed="search" variant="search" label="Loading results" />}
-        {hits.map(r => (
-          <PreviewRow
-            key={r.key}
-            onOpen={r.onOpen}
-            className="block w-full rounded-xl text-left hover:bg-surface-container-high"
-          >
-            <Surface pad="md" gap="2xs" tone="plain" radius="none">
-              <p className="text-xs text-on-surface-variant">
-                <Row as="span" gap="2xs">
-                  <Hash size={12} className="shrink-0" />
-                  <span className="truncate">
-                    <Masked text={r.channel} own={r.ownPlace} />
-                  </span>
-                  <span className="shrink-0">·</span>
-                  <span className="streamer truncate">
-                    <Masked text={r.server} own={r.ownPlace} />
-                  </span>
-                </Row>
+      <div ref={listRef} onScroll={scrolled} className="anchor-none flex-1 overflow-y-auto">
+        <Inset pad="sm" safe>
+          {!active && (
+            <Surface pad="xl" tone="plain" radius="none">
+              <p className="text-center text-sm text-on-surface-variant">
+                Type a query or pick a filter to search.
               </p>
-              <Row gap="sm">
-                <HitAuthor r={r} />
-                <MessageTime
-                  ts={r.createdAt}
-                  className="shrink-0 text-xs text-on-surface-variant"
-                />
-                {r.forwarded && (
-                  <span className="text-xs">
-                    <ForwardedTag />
-                  </span>
-                )}
-              </Row>
-              <HitText r={r} />
             </Surface>
-          </PreviewRow>
-        ))}
-        {active && hasMore && <Sentinel key={pageKey} onVisible={endShown} onHidden={endHidden} />}
-        {stepped && !first && (hasMore || loading) && (
-          <div className="flex min-h-9 items-center justify-center">
-            {loading ? (
-              <p className="text-xs text-on-surface-variant">Searching</p>
-            ) : (
-              <Button onClick={more}>Search older messages</Button>
-            )}
-          </div>
-        )}
-        {loading && !stepped && !first && (
-          <Surface pad="md" tone="plain" radius="none">
-            <p className="text-center text-xs text-on-surface-variant">Searching</p>
-          </Surface>
-        )}
+          )}
+          {active && !loading && hits.length === 0 && !hasMore && (
+            <Surface pad="xl" tone="plain" radius="none">
+              <p className="text-center text-sm text-on-surface-variant">No results.</p>
+            </Surface>
+          )}
+          {first && <MessageListSkeleton seed="search" variant="search" label="Loading results" />}
+          {hits.map(r => (
+            <PreviewRow
+              key={r.key}
+              onOpen={r.onOpen}
+              className="block w-full rounded-xl text-left hover:bg-surface-container-high"
+            >
+              <Surface pad="md" gap="2xs" tone="plain" radius="none">
+                <p className="text-xs text-on-surface-variant">
+                  <Row as="span" gap="2xs">
+                    <Hash size={12} className="shrink-0" />
+                    <span className="truncate">
+                      <Masked text={r.channel} own={r.ownPlace} />
+                    </span>
+                    <span className="shrink-0">·</span>
+                    <span className="streamer truncate">
+                      <Masked text={r.server} own={r.ownPlace} />
+                    </span>
+                  </Row>
+                </p>
+                <Row gap="sm">
+                  <HitAuthor r={r} />
+                  <MessageTime
+                    ts={r.createdAt}
+                    className="shrink-0 text-xs text-on-surface-variant"
+                  />
+                  {r.forwarded && (
+                    <span className="text-xs">
+                      <ForwardedTag />
+                    </span>
+                  )}
+                </Row>
+                <HitText r={r} />
+              </Surface>
+            </PreviewRow>
+          ))}
+          {active && hasMore && (
+            <Sentinel key={pageKey} onVisible={endShown} onHidden={endHidden} />
+          )}
+          {stepped && !first && (hasMore || loading) && (
+            <div className="flex min-h-9 items-center justify-center">
+              {loading ? (
+                <p className="text-xs text-on-surface-variant">Searching</p>
+              ) : (
+                <Button onClick={more}>Search older messages</Button>
+              )}
+            </div>
+          )}
+          {loading && !stepped && !first && (
+            <Surface pad="md" tone="plain" radius="none">
+              <p className="text-center text-xs text-on-surface-variant">Searching</p>
+            </Surface>
+          )}
+        </Inset>
       </div>
     </div>
   )

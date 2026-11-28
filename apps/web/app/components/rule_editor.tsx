@@ -24,7 +24,7 @@ import {
 } from '../lib/perm_source'
 import { hasBit, type Ow } from '../lib/perms'
 import { Row, Stack, Surface } from './layout'
-import { fieldCls, textBtn } from './ui'
+import { fieldCls, smallFieldCls, textBtn } from './ui'
 
 // The rules of a channel or category, for hosted servers and P2P rooms alike: the subjects with a
 // rule (@everyone, roles, members), each permission of the selected one as Allow, Inherit or
@@ -194,24 +194,41 @@ export function RuleEditor({
               radius="lg"
             >
               <Row gap="2xs">
-                <button
+                <Surface
+                  as="button"
                   type="button"
                   aria-pressed={s === current}
                   onClick={() => setSelected(s)}
-                  className="flex min-h-9 min-w-0 flex-1 items-center gap-1.5 rounded-xl px-2 text-left text-sm pointer-coarse:min-h-11"
+                  pad="sm"
+                  inset="sides"
+                  gap="xs"
+                  row
+                  tone="plain"
+                  radius="lg"
+                  text="sm"
+                  look="min-h-9 text-left pointer-coarse:min-h-11"
+                  place="min-w-0 flex-1"
                 >
                   {render(s)}
-                </button>
-                <button
+                </Surface>
+                <Surface
+                  as="button"
                   type="button"
                   onClick={() => remove(s)}
                   disabled={listed.has(s) && !!block}
                   aria-label={`Remove ${name}`}
                   title={`Remove ${name}`}
-                  className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-error disabled:pointer-events-none disabled:opacity-40 pointer-coarse:size-11"
+                  pad="xs"
+                  row
+                  tone="plain"
+                  radius="full"
+                  justify="center"
+                  ink="muted"
+                  look="hover:bg-surface-container-highest hover:text-error disabled:opacity-40 pointer-coarse:size-11"
+                  place="shrink-0 disabled:pointer-events-none"
                 >
                   <X size={14} />
-                </button>
+                </Surface>
               </Row>
             </Surface>
           )
@@ -338,7 +355,7 @@ export function RuleEditor({
             value={viewed ?? ''}
             onChange={e => setAs(e.target.value)}
             aria-label="View as"
-            className="min-w-0 flex-1 rounded-lg border border-outline bg-surface-container-high px-2 py-1 text-base text-on-surface outline-none focus:border-primary md:text-sm"
+            className={`${smallFieldCls} min-w-0 flex-1 text-on-surface`}
           >
             <option value="">Choose…</option>
             {viewable.map(s => (
@@ -361,15 +378,27 @@ function ViewAs({ src, subject, items }: { src: RuleSource; subject: string; ite
       {items.map(item => {
         const can = hasBit(mask, src.canonical(item.bit))
         return (
-          <li
+          <Surface
             key={item.name}
             data-can={can ? 'yes' : 'no'}
-            className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${can ? 'bg-primary-container text-on-primary-container' : 'bg-surface-container-highest text-on-surface-variant line-through'}`}
+            as="li"
+            row
+            pad="sm"
+            inset="chip"
+            gap="2xs"
+            tone="plain"
+            radius="full"
+            text="xs"
+            look={
+              can
+                ? 'bg-primary-container text-on-primary-container'
+                : 'bg-surface-container-highest text-on-surface-variant line-through'
+            }
           >
             {can ? <Check size={12} aria-hidden /> : <X size={12} aria-hidden />}
             <span>{item.label}</span>
             <span className="sr-only">{can ? 'allowed' : 'not allowed'}</span>
-          </li>
+          </Surface>
         )
       })}
     </Row>

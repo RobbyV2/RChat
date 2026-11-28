@@ -254,7 +254,7 @@ function ImportPreview({
                   checked={picked.has(c.key)}
                   disabled={!ok}
                   onChange={() => toggle(c.key)}
-                  className="mt-1 accent-primary"
+                  className="accent-primary"
                 />
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm text-on-surface">{c.label}</span>
@@ -295,7 +295,7 @@ function IncludeList({
   const available = useAvailable()
   return (
     <Stack as="fieldset" gap="2xs">
-      <legend className="pb-1 text-sm text-on-surface-variant">Include</legend>
+      <legend className="text-sm text-on-surface-variant">Include</legend>
       {SECTIONS.map(s => {
         const ok = available(s.key)
         return (

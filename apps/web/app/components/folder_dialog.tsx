@@ -8,7 +8,7 @@ import { FOLDER_NAME_MAX, type Folder } from '../lib/nav_layout'
 import { enterKey } from '../lib/keys'
 import { ColorField } from './color_field'
 import { Button } from './controls'
-import { Row, Stack } from './layout'
+import { Grid, Row, Stack } from './layout'
 import { Dialog, fieldCls } from './ui'
 
 // The color choice of a folder with a preview of it open and closed. `tone` marks a P2P folder.
@@ -33,14 +33,7 @@ export function FolderColorField({
             style={style}
             className="folder-group flex size-12 items-center justify-center rounded-2xl"
           >
-            <FolderOpen
-              size={22}
-              className={
-                p2p
-                  ? 'text-(--folder-icon,var(--color-tertiary))'
-                  : 'text-(--folder-icon,var(--color-primary))'
-              }
-            />
+            <FolderOpen size={22} className={p2p ? 'folder-ink-p2p' : 'folder-ink'} />
           </span>
           <span
             style={style}
@@ -48,16 +41,14 @@ export function FolderColorField({
               p2p ? 'border-2 border-dashed border-tertiary' : ''
             }`}
           >
-            <span className="grid size-8 grid-cols-2 grid-rows-2 gap-1">
+            <Grid as="span" cols={2} gap="2xs" look="size-8 grid-rows-2">
               {[0, 1, 2, 3].map(i => (
                 <span key={i} className="folder-mini rounded-md" />
               ))}
-            </span>
+            </Grid>
             <span
               className={`absolute -right-1 -bottom-1 flex size-4.5 items-center justify-center rounded-full border-2 border-surface-container-high ${
-                p2p
-                  ? 'bg-(--folder-icon,var(--color-tertiary)) text-(--folder-on-icon,var(--color-on-tertiary))'
-                  : 'folder-badge'
+                p2p ? 'folder-badge-p2p' : 'folder-badge'
               }`}
             >
               <FolderIcon size={9} strokeWidth={2.5} />

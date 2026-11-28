@@ -1139,7 +1139,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           <div className="flex min-w-0 flex-1 flex-col md:flex-row md:items-center md:gap-3">
             <span
               className={`flex max-w-full min-w-0 shrink-0 items-center gap-1.5 font-medium ${
-                !isVoice && channel?.topic?.trim() ? 'md:max-w-[50%]' : ''
+                !isVoice && channel?.topic?.trim() ? 'md:max-w-1/2' : ''
               }`}
             >
               {isVoice ? (
@@ -1226,7 +1226,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           {dm && dmCall && (
             <div
               className={`flex shrink-0 flex-col overflow-hidden ${
-                callShare ? 'h-[70dvh]' : 'h-[45dvh]'
+                callShare ? 'h-dvh-70' : 'h-dvh-45'
               }`}
             >
               <VoiceGrid key={`d${dm.id}`} dmId={dm.id} />

@@ -431,7 +431,7 @@ export function PreviewLine({
       />
       <p
         className={`min-w-0 flex-1 text-left break-words ${
-          big ? 'line-clamp-2 text-sm' : 'truncate text-xs leading-[18px]'
+          big ? 'line-clamp-2 text-sm' : 'truncate text-xs leading-4.5'
         }`}
       >
         <span

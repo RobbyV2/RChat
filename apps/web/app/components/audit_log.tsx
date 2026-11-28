@@ -41,7 +41,7 @@ import { useMemberSearch } from './member_search'
 import { UserAvatar } from './user_avatar'
 import { Dialog, Masked, Sentinel, fieldCls } from './ui'
 import { NameWithUsername } from './display_name'
-import { Grid, Row, Stack, Surface } from './layout'
+import { Grid, Inset, Row, Stack, Surface } from './layout'
 import { useLooksFor, useShown, useShownMembers } from './shown_user'
 import { usePermissionRules } from './use_permission_rules'
 import { useStable } from '../lib/stable_key'
@@ -388,12 +388,18 @@ export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?:
   return (
     <li className="rounded-xl hover:bg-surface-container-highest">
       {expandable ? (
-        <button
+        <Inset
+          as="button"
           type="button"
           onClick={() => setOpen(o => !o)}
           aria-expanded={open}
           title={open ? 'Hide details' : 'Show details'}
-          className="flex w-full items-start gap-3 px-2 py-2 text-left"
+          pad="sm"
+          gap="md"
+          row
+          align="start"
+          look="text-left"
+          place="w-full"
         >
           {body}
           <ChevronDown
@@ -401,7 +407,7 @@ export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?:
             aria-hidden
             className={`mt-1 shrink-0 text-on-surface-variant transition-transform ${open ? 'rotate-180' : ''}`}
           />
-        </button>
+        </Inset>
       ) : (
         <Surface tone="plain" pad="sm">
           <Row gap="md" align="start">

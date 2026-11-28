@@ -10,10 +10,19 @@ export function PhraseWords({ words }: { words: string[] }) {
   const reveal = useReveal()
   if (reveal.hidden)
     return (
-      <div className="flex min-h-32 flex-col items-center justify-center gap-1 rounded-2xl border border-dashed border-outline-variant p-4 text-center text-sm text-on-surface-variant">
+      <Surface
+        pad="lg"
+        gap="2xs"
+        tone="plain"
+        align="center"
+        justify="center"
+        text="sm"
+        ink="muted"
+        look="min-h-32 border border-dashed border-outline-variant text-center"
+      >
         Hidden in streamer mode
         <Button onClick={reveal.show}>Show</Button>
-      </div>
+      </Surface>
     )
   return (
     <Stack gap="2xs">

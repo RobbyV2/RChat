@@ -35,7 +35,7 @@ import { EDITABLE } from '../lib/follow'
 import { withActionElement } from '../lib/masked_reveal'
 import { dnd, type DragSpec } from './drag'
 import { IconButton } from './controls'
-import { Row, Stack, Surface } from './layout'
+import { Inset, Row, Stack, Surface } from './layout'
 import { Overlay, Sheet } from './ui'
 import { time } from '../lib/platform/time'
 
@@ -371,7 +371,7 @@ function MenuRow({
 }) {
   const size = coarse ? 20 : 16
   return (
-    <button
+    <Inset
       role={roleOf(it)}
       aria-checked={it.checked}
       aria-haspopup={it.submenu ? 'menu' : undefined}
@@ -381,12 +381,14 @@ function MenuRow({
       data-menu-index={index}
       onMouseEnter={onEnter ? e => onEnter(e.currentTarget) : undefined}
       onClick={e => onPick(e.currentTarget, e.detail === 0)}
-      className={`flex w-full items-center gap-3 text-left outline-none focus-visible:bg-surface-container-highest ${
-        coarse
-          ? `min-h-13 px-6 py-1.5 text-base ${it.disabled ? '' : 'active:bg-surface-container-highest'}`
-          : `px-4 py-2 text-sm ${it.disabled ? '' : 'hover:bg-surface-container-highest'} ${open ? 'bg-surface-container-highest' : ''}`
-      } ${it.danger ? 'text-error' : 'text-on-surface'} ${it.disabled ? 'cursor-default opacity-40' : ''}`}
       data-level={level}
+      as="button"
+      row
+      pad={coarse ? 'xl' : 'lg'}
+      inset="chip"
+      gap="md"
+      look={`text-left outline-none focus-visible:bg-surface-container-highest ${coarse ? 'min-h-13 text-base' : 'text-sm'} ${it.disabled ? 'cursor-default opacity-40' : coarse ? 'active:bg-surface-container-highest' : 'hover:bg-surface-container-highest'} ${open && !coarse ? 'bg-surface-container-highest' : ''} ${it.danger ? 'text-error' : 'text-on-surface'}`}
+      place="w-full"
     >
       {it.swatch ? (
         <span
@@ -411,7 +413,7 @@ function MenuRow({
         )}
       </span>
       <Indicator it={it} size={size} />
-    </button>
+    </Inset>
   )
 }
 
@@ -452,17 +454,19 @@ function Panel({
       ref={ref}
       role="menu"
       data-menu-level={level}
-      className="fixed max-h-[calc(100dvh-1rem)] min-w-44 overflow-y-auto rounded-xl bg-surface-container-high py-2 shadow-elevation-2"
+      className="fixed max-h-screen-inset min-w-44 overflow-y-auto rounded-xl bg-surface-container-high shadow-elevation-2"
       onMouseDown={e => e.stopPropagation()}
     >
-      <Stack gap="2xs">
-        {header && (
-          <Surface pad="sm" inset="bar" tone="plain" radius="none" border="bottom">
-            {header}
-          </Surface>
-        )}
-        <Stack gap="none">{children}</Stack>
-      </Stack>
+      <Inset pad="sm" inset="bar">
+        <Stack gap="2xs">
+          {header && (
+            <Surface pad="sm" inset="bar" tone="plain" radius="none" border="bottom">
+              {header}
+            </Surface>
+          )}
+          <Stack gap="none">{children}</Stack>
+        </Stack>
+      </Inset>
     </div>
   )
 }

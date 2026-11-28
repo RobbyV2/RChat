@@ -369,7 +369,7 @@ export const P2pRow = memo(function P2pRow({
                   <span
                     data-late
                     title={`Sent ${new Date(p.sentTs).toLocaleString()}`}
-                    className="shrink-0 text-[11px] text-on-surface-variant italic"
+                    className="shrink-0 text-2xs text-on-surface-variant italic"
                   >
                     sent earlier, arrived later
                   </span>

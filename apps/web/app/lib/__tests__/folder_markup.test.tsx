@@ -112,13 +112,12 @@ describe('rail folder markup', () => {
     const tile = tagWith(closed, 'folder-tile')
     expect(tile).toContain(`style="${DARK_RED}"`)
     expect(tile).toContain('border-dashed border-tertiary')
-    expect(closed).toContain('bg-(--folder-icon,var(--color-tertiary))')
-    expect(closed).toContain('text-(--folder-on-icon,var(--color-on-tertiary))')
+    expect(closed).toContain('folder-badge-p2p')
     const open = renderToStaticMarkup(
       <P2pFolderEntry folder={F({ color: '#ff0000', open: true })} list={rooms} at={0} />
     )
     expect(tagWith(open, 'folder-group')).toContain(`style="${DARK_RED}"`)
-    expect(open).toContain('text-(--folder-icon,var(--color-tertiary))')
+    expect(open).toContain('folder-icon-p2p')
     const plain = renderToStaticMarkup(<P2pFolderEntry folder={F()} list={rooms} at={0} />)
     expect(plain).not.toContain('--folder-icon:')
   })

@@ -241,9 +241,9 @@ describe('menu picks', () => {
 describe('layering', () => {
   // The layout boxes take props only themselves.
   const BOXES = [
-    'apps/web/app/components/layout.tsx',
+    'apps/web/app/components/layout/index.tsx',
     'apps/web/app/lib/controls.ts',
-    'apps/web/app/lib/layout.ts',
+    'apps/web/app/lib/layout/index.ts',
   ]
 
   test('props only: no store, no API client, no other component than the layout boxes', () => {

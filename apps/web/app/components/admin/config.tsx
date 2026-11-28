@@ -21,7 +21,7 @@ import { PageGroup, PageRow } from '../settings_page'
 import { Chips } from '../ui'
 import { useApplyConfig, useConfigStore } from './config_state'
 import { Button, Pill } from '../controls'
-import { Row, Stack, Surface } from '../layout'
+import { Grid, Row, Stack, Surface } from '../layout'
 
 // Controls whose values are usernames or server names.
 const NAMES = new Set(['server_creators', 'default_servers'])
@@ -53,20 +53,20 @@ function Control({ control }: { control: ConfigControl }) {
               <code className="font-mono text-xs break-all text-on-surface-variant">
                 {control.env}
               </code>
-              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs">
+              <Grid as="dl" cols="pair" gap="md" lineGap="3xs" text="xs">
                 <dt className="text-on-surface-variant">Value</dt>
                 <dd className={`break-words ${names}`}>{shownValue(control.value, options)}</dd>
                 <dt className="text-on-surface-variant">Server config</dt>
                 <dd className={`break-words ${control.config === null ? '' : names}`}>
                   {control.config === null ? 'Not set' : shownValue(control.config, options)}
                 </dd>
-              </dl>
+              </Grid>
               {control.key === 'upload_expiry_max_days' && (
                 <p className="text-xs text-on-surface-variant">{CAP_NOTE}</p>
               )}
             </Stack>
           </div>
-          <div className="flex flex-wrap gap-1 sm:flex-col sm:items-end">
+          <Row gap="2xs" wrap justify="end">
             {source === 'differs' && patchFor(control.key, control.config ?? '') !== null && (
               <Button onClick={() => apply([control])}>Use server config</Button>
             )}
@@ -75,7 +75,7 @@ function Control({ control }: { control: ConfigControl }) {
                 {where === 'servers' ? 'Show in Servers' : 'Show in Features'}
               </Button>
             )}
-          </div>
+          </Row>
         </Row>
       </Surface>
     </PageRow>
@@ -157,14 +157,14 @@ export function ConfigSection() {
             <Stack gap="2xs">
               <p className="text-sm text-on-surface-variant">On this copy</p>
               <Surface tone="plain" pad="md" inset="bar">
-                <dl className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-x-3 gap-y-2 text-sm">
+                <Grid as="dl" cols="thirds" gap="md" lineGap="sm" text="sm">
                   {databaseRows(config.database).map(([label, value]) => (
                     <div key={label} className="contents">
                       <dt className="break-words text-on-surface-variant">{label}</dt>
                       <dd className="break-words">{value}</dd>
                     </div>
                   ))}
-                </dl>
+                </Grid>
               </Surface>
             </Stack>
           </PageGroup>

@@ -1,7 +1,7 @@
 'use client'
 
 import { ListRow } from './controls'
-import { Grid, Row, Stack, Surface } from './layout'
+import { Grid, Inset, Lift, Row, Stack, Surface } from './layout'
 import type { ReactNode } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { embedColor, fieldRows, safeLink, webhookIdOf } from '../lib/webhooks'
@@ -13,12 +13,16 @@ import { sharing } from '../lib/platform'
 // Always shown next to a webhook's name, whatever name it posted with.
 export function WebhookBadge() {
   return (
-    <span
+    <Inset
       title="Posted through a webhook, not by a member"
-      className="shrink-0 self-center rounded-md bg-tertiary-container px-1 py-px text-3xs leading-4 font-semibold tracking-wide text-on-tertiary-container"
+      as="span"
+      pad="2xs"
+      inset="bar"
+      look="rounded-md bg-tertiary-container text-3xs leading-4 font-semibold tracking-wide text-on-tertiary-container"
+      place="shrink-0 self-center"
     >
       WEBHOOK
-    </span>
+    </Inset>
   )
 }
 
@@ -122,23 +126,23 @@ export function WebhookProfile({
         aria-hidden
         className={`shrink-0 bg-surface-container-highest ${sheet ? 'h-20' : 'h-14'}`}
       />
-      <div className={sheet ? 'px-5' : 'px-4'}>
+      <Inset pad="lg" inset="sides">
         <Stack gap="sm">
-          <div className="-mt-10">
+          <Lift by="2xl">
             <Row gap="sm" align="end" justify="between">
-              <span className="block shrink-0 rounded-full bg-surface-container-high p-1.5">
+              <Surface as="span" pad="xs" tone="high" radius="full" place="shrink-0">
                 <UserAvatar
                   username={user.username}
                   avatarKind={user.avatar_kind}
                   avatarColor={user.avatar_color}
                   size={64}
                 />
-              </span>
+              </Surface>
               <span>
                 <WebhookBadge />
               </span>
             </Row>
-          </div>
+          </Lift>
           <p
             id={titleId}
             className="streamer line-clamp-2 text-lg leading-6 font-semibold break-words text-on-surface"
@@ -159,7 +163,7 @@ export function WebhookProfile({
             />
           )}
         </Stack>
-      </div>
+      </Inset>
     </>
   )
 }

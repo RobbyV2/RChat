@@ -390,7 +390,7 @@ export function HeaderPopover({
       role="dialog"
       aria-labelledby={titleId}
       data-popover
-      className="absolute top-14 right-2 z-popover flex max-h-[min(36rem,calc(100%-4.5rem))] w-[26rem] max-w-[calc(100%-1rem)] flex-col overflow-hidden rounded-2xl bg-surface-container-high pt-3 shadow-elevation-3"
+      className="absolute top-14 right-2 z-popover flex max-h-[min(36rem,calc(100%-4.5rem))] w-104 max-w-[calc(100%-1rem)] flex-col overflow-hidden rounded-2xl bg-surface-container-high pt-3 shadow-elevation-3"
     >
       {body}
     </div>

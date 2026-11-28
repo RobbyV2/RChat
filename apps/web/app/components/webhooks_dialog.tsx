@@ -534,7 +534,7 @@ function OutEditor({
         )}
       </Stack>
       <Stack as="fieldset" gap="2xs">
-        <legend className="mb-1 text-sm text-on-surface-variant">Events</legend>
+        <legend className="text-sm text-on-surface-variant">Events</legend>
         <Grid cols={{ base: 1, sm: 2 }} gap="2xs">
           {OUTGOING_EVENTS.map(e => (
             <Row as="label" key={e.key} gap="sm" text="sm" ink="strong" look="min-h-9">

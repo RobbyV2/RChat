@@ -89,7 +89,7 @@ function ChoiceControl({ row }: { row: ChoiceRow }) {
                 checked={value === o.value}
                 disabled={pinned}
                 onChange={() => set(o.value)}
-                className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+                className="h-4 w-4 shrink-0 accent-primary"
               />
               <Stack as="span" gap="none">
                 <span className="text-sm">{o.label}</span>
@@ -194,12 +194,14 @@ function TargetChecks({ row }: { row: AdminRow }) {
             {PROFANITY_TARGETS.map(({ key, label }) => {
               const locked = pinned || profanityTargetLocked(settings, key)
               return (
-                <label
+                <Row
                   key={key}
                   title={label}
-                  className={`flex min-w-0 items-center gap-2 py-1 text-sm leading-5 pointer-coarse:min-h-11 md:items-start ${
-                    locked ? 'cursor-not-allowed text-on-surface-variant' : 'text-on-surface'
-                  }`}
+                  as="label"
+                  gap="sm"
+                  text="sm"
+                  look={`leading-5 pointer-coarse:min-h-11 ${locked ? 'cursor-not-allowed text-on-surface-variant' : 'text-on-surface'}`}
+                  place="min-w-0"
                 >
                   <input
                     type="checkbox"
@@ -208,10 +210,10 @@ function TargetChecks({ row }: { row: AdminRow }) {
                     onChange={e =>
                       void updateSettings({ profanity_targets: { [key]: e.target.checked } })
                     }
-                    className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+                    className="h-4 w-4 shrink-0 accent-primary"
                   />
                   <span className="min-w-0 break-words">{label}</span>
-                </label>
+                </Row>
               )
             })}
           </Grid>
@@ -269,9 +271,18 @@ function NamesControl({ row }: { row: AdminRow }) {
           ) : (
             <Row as="ul" gap="xs" wrap>
               {list.map((entry, i) => (
-                <li
+                <Surface
                   key={entry}
-                  className="flex max-w-full min-w-0 items-center gap-1 rounded-full border border-outline-variant pr-0.5 pl-3 text-sm md:py-0.5 md:pr-1"
+                  as="li"
+                  row
+                  pad="md"
+                  inset="sides"
+                  gap="2xs"
+                  tone="plain"
+                  radius="full"
+                  border
+                  text="sm"
+                  place="max-w-full min-w-0"
                 >
                   <span className="streamer min-w-0 break-all">{entry}</span>
                   <IconButton
@@ -282,7 +293,7 @@ function NamesControl({ row }: { row: AdminRow }) {
                     disabled={pinned}
                     onClick={() => save(removeEntry(list, i))}
                   />
-                </li>
+                </Surface>
               ))}
             </Row>
           )}

@@ -345,7 +345,7 @@ function EnableDialogBody() {
         p2p.closeDialog()
       }}
       onKeyDown={event => event.stopPropagation()}
-      className="fixed inset-0 m-auto max-h-[85dvh] w-[min(24rem,calc(100%-2rem))] max-w-full overflow-y-auto rounded-3xl bg-surface-container-high text-on-surface shadow-elevation-3 backdrop:bg-scrim/60"
+      className="fixed inset-0 m-auto max-h-dvh-85 w-[min(24rem,calc(100%-2rem))] max-w-full overflow-y-auto rounded-3xl bg-surface-container-high text-on-surface shadow-elevation-3 backdrop:bg-scrim/60"
       {...backdrop}
     >
       <Surface pad="md" tone="plain" radius="none">
@@ -453,7 +453,7 @@ function ContactRowBody({
         <span className="min-w-0 flex-1">
           <Row as="span" gap="xs">
             <span
-              className={`streamer ${chip ? 'max-w-[60%] shrink-0' : ''} truncate text-sm ${unread || pings ? 'font-bold text-on-surface' : 'font-medium'}`}
+              className={`streamer ${chip ? 'max-w-3/5 shrink-0' : ''} truncate text-sm ${unread || pings ? 'font-bold text-on-surface' : 'font-medium'}`}
             >
               <Masked text={displayName(c)} />
             </span>
@@ -500,14 +500,14 @@ function RequestRow({ c }: { c: Contact }) {
         <div className="min-w-0 flex-1">
           <Row as="p" gap="xs">
             <span
-              className={`streamer truncate text-sm font-medium ${chip ? 'max-w-[60%] shrink-0' : ''}`}
+              className={`streamer truncate text-sm font-medium ${chip ? 'max-w-3/5 shrink-0' : ''}`}
             >
               <Masked text={displayName(c)} />
             </span>
             <ContactShield kind={shield} size={14} />
             <AccountChip ik={c.ik} />
           </Row>
-          <p className="streamer truncate font-mono text-[11px] text-on-surface-variant">
+          <p className="streamer truncate font-mono text-2xs text-on-surface-variant">
             {fingerprint(c.ik)}
           </p>
         </div>
@@ -863,9 +863,17 @@ function ContactDialog({ ik }: { ik: string }) {
             </p>
           </div>
         </Row>
-        <button
+        <Surface
+          as="button"
           onClick={() => p2p.openDialog({ kind: 'verify', ik })}
-          className="flex items-center gap-2 rounded-xl bg-surface-container px-3 py-2 text-left text-sm hover:bg-surface-container-highest"
+          pad="md"
+          inset="bar"
+          gap="sm"
+          row
+          tone="base"
+          radius="lg"
+          text="sm"
+          look="text-left hover:bg-surface-container-highest"
         >
           <ContactShield kind={shield} />
           <span className="flex-1">
@@ -878,7 +886,7 @@ function ContactDialog({ ik }: { ik: string }) {
             )}
           </span>
           <span className="text-primary">Verify</span>
-        </button>
+        </Surface>
         <BadgeRow ik={c.ik} />
         {notice && (
           <p className="text-sm text-on-surface-variant">

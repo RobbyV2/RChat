@@ -410,7 +410,7 @@ function PendingChip({ room, p }: { room: string; p: PendingFile }) {
           <Loader2 size={10} className="text-on-surface-variant motion-safe:animate-spin" />
         )}
         <span
-          className={`text-[11px] tabular-nums ${p.error ? 'text-error' : 'text-on-surface-variant'}`}
+          className={`text-2xs tabular-nums ${p.error ? 'text-error' : 'text-on-surface-variant'}`}
         >
           {p.error
             ? p.error
@@ -453,7 +453,7 @@ function PendingFilesBody({ room }: { room: string }) {
         ))}
         <span
           title="Sent peer-to-peer: stored on your devices and shared with the people in this conversation"
-          className="flex shrink-0 items-center gap-1 self-end rounded bg-tertiary-container px-1.5 py-0.5 text-[11px] font-medium text-on-tertiary-container"
+          className="flex shrink-0 items-center gap-1 self-end rounded bg-tertiary-container px-1.5 py-0.5 text-2xs font-medium text-on-tertiary-container"
         >
           <Waypoints size={10} />
           P2P

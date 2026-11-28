@@ -19,7 +19,7 @@ import {
 } from '../server_settings'
 import { MemberSearchField, useMemberSearch } from '../member_search'
 import { Button, SectionHeading } from '../controls'
-import { Row, Surface } from '../layout'
+import { Inset, Row, Surface } from '../layout'
 import { Sentinel } from '../ui'
 import { dangerBtn, fieldCls } from './touch'
 
@@ -270,14 +270,14 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
             )}
           </Row>
           {m.is_admin && editingAdmin === m.username && (
-            <div className="pl-8">
+            <Inset pad="2xl" inset="sides">
               <AdminPermsEditor
                 server={name}
                 username={m.username}
                 perms={m.perms}
                 refresh={reloadMembers}
               />
-            </div>
+            </Inset>
           )}
         </Surface>
       ))}

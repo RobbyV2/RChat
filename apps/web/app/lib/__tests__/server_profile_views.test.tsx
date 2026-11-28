@@ -105,11 +105,13 @@ test('an audit row names people as the server shows them now, the username alway
 
 test('the typing line of a server channel names typers as the server shows them', () => {
   withLook()
-  expect(render(<TypingIndicator scope="c1" server="s" bg="" />)).toContain('Robert (bob)')
-  expect(render(<TypingIndicator scope="c1" bg="" />)).toContain('>Bob<')
-  expect(render(<TypingIndicator scope="c1" server="s" bg="" names={['Peer']} />)).toContain(
-    '>Peer<'
+  expect(render(<TypingIndicator scope="c1" server="s" bg="bg-surface" />)).toContain(
+    'Robert (bob)'
   )
+  expect(render(<TypingIndicator scope="c1" bg="bg-surface" />)).toContain('>Bob<')
+  expect(
+    render(<TypingIndicator scope="c1" server="s" bg="bg-surface" names={['Peer']} />)
+  ).toContain('>Peer<')
 })
 
 test('a mention pill keeps the handle: the username with the server name as its tooltip, the name in a P2P server', () => {

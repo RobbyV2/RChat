@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { applyFormat, FORMATS, formatKey, keysLabel, type Format } from '../lib/format'
 import { time } from '../lib/platform/time'
+import { Surface } from './layout'
 
 const ICONS: Record<Format, LucideIcon> = {
   bold: Bold,
@@ -99,13 +100,21 @@ export function FormatToolbar({
 }) {
   if (!open) return null
   return (
-    <div
+    <Surface
       role="toolbar"
       aria-label="Formatting"
       data-format-toolbar
-      className={`absolute left-2 z-float flex items-center gap-0.5 rounded-xl bg-surface-container-highest p-1 shadow-elevation-2 ${
-        below ? 'top-full mt-1' : 'bottom-full mb-1'
-      }`}
+      pad="2xs"
+      gap="3xs"
+      row
+      tone="highest"
+      radius="lg"
+      elevation={2}
+      place={
+        below
+          ? 'absolute left-2 z-float top-full translate-y-1'
+          : 'absolute left-2 z-float bottom-full -translate-y-1'
+      }
     >
       {FORMATS.map(({ format, label, keys }) => {
         const Icon = ICONS[format]
@@ -122,6 +131,6 @@ export function FormatToolbar({
           />
         )
       })}
-    </div>
+    </Surface>
   )
 }

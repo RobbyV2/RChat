@@ -10,7 +10,7 @@ import { NoticeStack } from './notice_stack'
 import { time } from '../lib/platform/time'
 
 const bannerCls =
-  'pointer-events-auto max-w-full self-center rounded-xl px-4 py-2 text-center text-sm shadow-elevation-2 sm:w-max sm:max-w-[calc(100vw-2rem)]'
+  'pointer-events-auto max-w-full self-center rounded-xl px-4 py-2 text-center text-sm shadow-elevation-2 sm:w-max sm:max-w-screen-inset'
 
 // Shown while the account signed in with a temporary password it has not replaced, in the
 // place of the error and the toast, which take it while they show. A dialog hides it.

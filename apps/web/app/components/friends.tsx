@@ -817,7 +817,7 @@ function AddFriends({ dialog }: { dialog: Extract<ActiveDialog, { kind: 'add_fri
     <Dialog title={single ? 'Add friend' : 'Add friends'} onClose={closeDialog}>
       <Stack gap="xl">
         <Stack gap="none">
-          <div className="max-h-[50vh] overflow-y-auto">
+          <div className="max-h-dvh-50 overflow-y-auto">
             <Stack gap="sm">
               {names.map(n => (
                 <FriendPreview key={n} name={n} preview={previews[n]} result={results?.[n]} />

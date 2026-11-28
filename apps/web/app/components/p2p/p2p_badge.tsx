@@ -29,19 +29,27 @@ import { badgeState, type BadgeSlot, type BadgeState } from '../../lib/p2p/badge
 import { openActionMenu } from '../../lib/actions/menu'
 import { useStore } from '../../lib/store'
 import { longPress } from '../context_menu'
-import { Row, Stack } from '../layout'
+import { Row, Stack, Surface } from '../layout'
 import { time } from '../../lib/platform/time'
 
 // The one mark everything P2P carries: Waypoints, "P2P", a dashed outline in the tertiary color.
 export function P2pBadge({ label = 'P2P', title }: { label?: string; title?: string }) {
   return (
-    <span
+    <Surface
       title={title ?? 'Peer-to-peer: stored on your devices, not on the instance'}
-      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-dashed border-tertiary px-1.5 py-px text-2xs leading-4 font-medium text-tertiary"
+      as="span"
+      row
+      pad="xs"
+      inset="chip"
+      gap="2xs"
+      tone="plain"
+      radius="full"
+      look="border border-dashed border-tertiary text-2xs leading-4 font-medium text-tertiary"
+      place="inline-flex shrink-0"
     >
       <Waypoints size={12} aria-hidden />
       {label}
-    </span>
+    </Surface>
   )
 }
 

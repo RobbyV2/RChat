@@ -50,7 +50,7 @@ import { ApiConsoleFor } from './api_console'
 import { useMedia } from './context_menu'
 import { CreatePollDialog } from './poll_dialog'
 import { Button, Chip, IconButton } from './controls'
-import { Row, Surface } from './layout'
+import { Inset, Row, Surface } from './layout'
 import { Masked, MaskedText, Sheet } from './ui'
 
 const SHEET = '(max-width: 767px)'
@@ -182,16 +182,20 @@ function ResultRow({
 }) {
   const Icon = item.icon ?? Command
   return (
-    <div
+    <Surface
       id={id}
       role="option"
       aria-selected={active}
       data-palette-item={item.id}
       onClick={onPick}
       onMouseMove={onHover}
-      className={`flex min-h-11 cursor-pointer items-center gap-3 rounded-xl px-3 py-1.5 ${
-        active ? 'bg-secondary-container text-on-secondary-container' : ''
-      }`}
+      row
+      pad="md"
+      inset="chip"
+      gap="md"
+      tone="plain"
+      radius="lg"
+      look={`min-h-11 cursor-pointer ${active ? 'bg-secondary-container text-on-secondary-container' : ''}`}
     >
       <Icon
         size={16}
@@ -218,12 +222,18 @@ function ResultRow({
         )}
       </span>
       {item.hint && (
-        <kbd className="shrink-0 rounded-md border border-outline-variant px-1.5 py-0.5 font-mono text-2xs text-on-surface-variant">
+        <Inset
+          as="kbd"
+          pad="xs"
+          inset="chip"
+          look="rounded-md border border-outline-variant font-mono text-2xs text-on-surface-variant"
+          place="shrink-0"
+        >
           {/^Mod|^Shift|^Escape/.test(item.hint) ? shortcutLabel(item.hint) : item.hint}
-        </kbd>
+        </Inset>
       )}
       {item.arg && <span className="shrink-0 text-xs text-on-surface-variant">…</span>}
-    </div>
+    </Surface>
   )
 }
 
@@ -455,7 +465,7 @@ function ListView() {
   let n = 0
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shrink-0 border-b border-outline-variant px-4">
+      <Inset pad="lg" inset="sides" border="bottom" place="shrink-0">
         <Row gap="md">
           <Search size={18} className="shrink-0 text-on-surface-variant" />
           <input
@@ -476,7 +486,7 @@ function ListView() {
             className="h-14 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-on-surface-variant"
           />
         </Row>
-      </div>
+      </Inset>
       <Surface
         role="toolbar"
         aria-label="Narrow the search"

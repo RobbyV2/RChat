@@ -133,7 +133,7 @@ function UnreadDot() {
     <span
       title="Unread messages"
       aria-hidden
-      className="absolute -top-1 -right-1 h-3 w-3 rounded-full border-2 border-(--rail-cut,var(--color-surface-container-lowest)) bg-error"
+      className="absolute -top-1 -right-1 h-3 w-3 rounded-full border-2 border-rail-cut bg-error"
     />
   )
 }
@@ -184,14 +184,14 @@ function ServerTile({
       className={`${tile} relative text-lg font-semibold ${active ? 'bg-primary text-on-primary' : idle}`}
     >
       <span
-        className={`flex h-full w-full items-center justify-center rounded-[inherit] ${muted && !active ? 'opacity-50' : ''}`}
+        className={`flex h-full w-full items-center justify-center rounded-inherit ${muted && !active ? 'opacity-50' : ''}`}
       >
         <ServerGlyph name={name} displayName={display_name} framed={active} />
       </span>
       <MutedIcon
         scope={{ kind: 'server', name }}
         size={10}
-        className="absolute -bottom-1 -left-1 size-5 items-center justify-center rounded-full border-2 border-(--rail-cut,var(--color-surface-container-lowest)) bg-surface-container-highest text-on-surface-variant"
+        className="absolute -bottom-1 -left-1 size-5 items-center justify-center rounded-full border-2 border-rail-cut bg-surface-container-highest text-on-surface-variant"
       />
       {mine && (
         <span
@@ -234,12 +234,12 @@ function PreviewTile() {
       )}
       className={`${tile} relative border-2 border-dashed border-primary bg-surface-container-high text-lg font-semibold text-on-surface`}
     >
-      <span className="flex h-full w-full items-center justify-center rounded-[inherit] opacity-60">
+      <span className="flex h-full w-full items-center justify-center rounded-inherit opacity-60">
         <ServerGlyph name={name} displayName={display} />
       </span>
       <span
         aria-hidden
-        className="absolute -right-1.5 -bottom-1.5 flex size-5 items-center justify-center rounded-full border-2 border-(--rail-cut,var(--color-surface-container-lowest)) bg-primary text-on-primary"
+        className="absolute -right-1.5 -bottom-1.5 flex size-5 items-center justify-center rounded-full border-2 border-rail-cut bg-primary text-on-primary"
       >
         <Eye size={11} strokeWidth={2.5} />
       </span>
@@ -321,7 +321,7 @@ export function FolderEntry({
         </span>
         <span
           aria-hidden
-          className="folder-badge absolute -right-1 -bottom-1 flex size-4.5 items-center justify-center rounded-full border-2 border-(--rail-cut,var(--color-surface-container-lowest))"
+          className="folder-badge absolute -right-1 -bottom-1 flex size-4.5 items-center justify-center rounded-full border-2 border-rail-cut"
         >
           <FolderIcon size={9} strokeWidth={2.5} />
         </span>
@@ -734,7 +734,7 @@ export function ServerRail() {
                         key={key}
                         data-account-section
                         data-shown-block={account === loginAccount}
-                        className={`shrink-0${account === loginAccount ? ' border-l-[3px] border-primary' : ''}`}
+                        className={`shrink-0${account === loginAccount ? ' border-l-3 border-primary' : ''}`}
                       >
                         <Stack gap="sm" align="center">
                           {group.accounts.length > 1 && (

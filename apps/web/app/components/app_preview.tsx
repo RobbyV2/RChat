@@ -156,13 +156,20 @@ export function AppByline({ author }: { author: string }) {
       <span className="line-clamp-2 min-w-0 break-words text-sm text-on-surface-variant">
         By <Masked text={author} />
       </span>
-      <span
+      <Surface
         data-app-unverified
         title="The author's name comes from the file and is not verified"
-        className="shrink-0 rounded-full bg-surface-container-highest px-2 text-xs font-medium text-on-surface"
+        as="span"
+        pad="sm"
+        inset="sides"
+        tone="highest"
+        radius="full"
+        text="xs"
+        look="font-medium"
+        place="shrink-0"
       >
         Unverified
-      </span>
+      </Surface>
     </Row>
   )
 }
@@ -267,7 +274,7 @@ function Launcher({ where }: { where: string }) {
           </p>
         )}
         {account && files.some(f => f.revision !== app?.source.revision) && (
-          <ul aria-label="Saved app definitions" className="max-h-[18dvh] shrink-0 overflow-y-auto">
+          <ul aria-label="Saved app definitions" className="max-h-dvh-18 shrink-0 overflow-y-auto">
             {files
               .filter(f => f.revision !== app?.source.revision)
               .map(f => (

@@ -5,7 +5,7 @@ import { ArrowRight, TriangleAlert } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { RISK_TEXT, linkRisks, siteOf, webLink } from '../lib/link_safety'
 import { Button } from './controls'
-import { Row, Stack, Surface } from './layout'
+import { FirstLine, Row, Stack, Surface } from './layout'
 import { Dialog } from './ui'
 
 // The warning before a link from a message opens another site.
@@ -60,7 +60,9 @@ function ExternalLinkBody({ href, label }: { href: string; label: string | null 
             <Surface role="alert" pad="md" gap="2xs" tone="error" radius="lg">
               {risks.map(r => (
                 <Row key={r} as="p" gap="xs" align="start">
-                  <TriangleAlert size={14} className="mt-px shrink-0" aria-hidden />
+                  <FirstLine>
+                    <TriangleAlert size={14} className="shrink-0" aria-hidden />
+                  </FirstLine>
                   <span className="text-xs">{RISK_TEXT[r]}</span>
                 </Row>
               ))}
@@ -78,7 +80,7 @@ function ExternalLinkBody({ href, label }: { href: string; label: string | null 
                 type="checkbox"
                 checked={trust}
                 onChange={e => setTrust(e.target.checked)}
-                className="mt-0.5 size-4 shrink-0 accent-primary"
+                className="size-4 shrink-0 accent-primary"
               />
               <span>
                 Always trust <span className="font-semibold break-all">{site}</span> and skip this

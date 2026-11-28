@@ -61,14 +61,14 @@ test('a floating panel is placed by `at` and keeps the floating look', () => {
     <Sheet
       sheet={false}
       aria-label="Inbox"
-      float={{ at: 'top-2 right-3 w-[26rem]', backdrop: 'dim' }}
+      float={{ at: 'top-2 right-3 w-104', backdrop: 'dim' }}
       onClose={() => {}}
     >
       <span>body</span>
     </Sheet>
   )
   const panel = panelOf(html)
-  expect(panel).toContain('absolute top-2 right-3 w-[26rem] rounded-2xl')
+  expect(panel).toContain('absolute top-2 right-3 w-104 rounded-2xl')
   expect(panel).not.toContain('rounded-t-3xl')
   expect(html).not.toContain('pt-3 pb-2')
 })

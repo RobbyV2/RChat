@@ -16,7 +16,7 @@ function Fixture() {
       </button>
       <Sheet
         sheet={sheet}
-        float={{ at: 'top-2 right-3 w-[26rem]', backdrop: 'none' }}
+        float={{ at: 'top-2 right-3 w-104', backdrop: 'none' }}
         aria-label="Panel"
         onClose={() => {}}
       >

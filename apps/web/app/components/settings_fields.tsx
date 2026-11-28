@@ -28,7 +28,8 @@ export function SettingSwitch({
 }) {
   const hintId = useId()
   return (
-    <button
+    <Surface
+      as="button"
       role="switch"
       aria-checked={value}
       aria-label={label}
@@ -36,7 +37,15 @@ export function SettingSwitch({
       title={label}
       disabled={disabled}
       onClick={() => onChange(!value)}
-      className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-1.5 text-left outline-offset-2 enabled:hover:bg-surface-container focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-50 pointer-coarse:min-h-11"
+      pad="sm"
+      inset="bar"
+      gap="md"
+      row
+      tone="plain"
+      radius="lg"
+      justify="between"
+      look="text-left outline-offset-2 enabled:hover:bg-surface-container focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-50 pointer-coarse:min-h-11"
+      place="w-full"
     >
       {hint ? (
         <span className="flex min-w-0 flex-col">
@@ -57,7 +66,7 @@ export function SettingSwitch({
       >
         <span className={`h-5 w-5 rounded-full ${value ? 'bg-on-primary' : 'bg-outline'}`} />
       </span>
-    </button>
+    </Surface>
   )
 }
 

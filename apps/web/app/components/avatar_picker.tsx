@@ -5,7 +5,7 @@ import { useStore } from '../lib/store'
 import type { ReactNode } from 'react'
 import type { AvatarKind } from '../lib/types'
 import { ColorField } from './color_field'
-import { Row, Stack } from './layout'
+import { Row, Stack, Surface } from './layout'
 import { UserAvatar } from './user_avatar'
 
 interface Props {
@@ -34,17 +34,23 @@ export function AvatarPicker({
 }: Props) {
   const theme = useStore(s => s.theme)
   const option = (value: AvatarKind, label: string) => (
-    <button
+    <Surface
+      as="button"
       type="button"
       title={`${label} avatar`}
       aria-pressed={kind === value}
       disabled={disabled}
       onClick={() => onKind(value)}
-      className={`flex flex-1 flex-col items-center gap-2 rounded-2xl border p-3 transition-colors ${
+      pad="md"
+      gap="sm"
+      tone="plain"
+      align="center"
+      look={`transition-colors border ${
         kind === value
           ? 'border-primary bg-primary-container/30'
           : 'border-outline-variant hover:bg-surface-container-high'
       }`}
+      place="flex-1"
     >
       {avatar ? (
         avatar(value, value === 'color' ? color : background)
@@ -57,7 +63,7 @@ export function AvatarPicker({
         />
       )}
       <span className="text-xs text-on-surface-variant">{label}</span>
-    </button>
+    </Surface>
   )
   return (
     <Stack gap="sm">

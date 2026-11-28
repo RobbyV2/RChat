@@ -560,6 +560,61 @@ body {
   padding-right: max(--spacing(--value(integer)), env(safe-area-inset-right));
 }
 
+/* A part of the screen's height. */
+@utility h-dvh-* {
+  height: calc(--value(integer) * 1dvh);
+}
+
+@utility max-h-dvh-* {
+  max-height: calc(--value(integer) * 1dvh);
+}
+
+@utility h-titlebar {
+  height: var(--titlebar-h);
+}
+
+/* The corners of the box around it. */
+@utility rounded-inherit {
+  border-radius: inherit;
+}
+
+/* The line around a badge on the server rail: the color of what is behind it. */
+@utility border-rail-cut {
+  border-color: var(--rail-cut, var(--color-surface-container-lowest));
+}
+
+/* A picture inside a server icon, and an icon inside its colored frame. */
+@utility icon-inset {
+  padding: 12%;
+}
+
+@utility icon-frame {
+  padding: 7%;
+}
+
+@utility transition-width {
+  transition-property: width;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+
+/* Sizes that keep a floating panel inside the screen, and scroll behaviours. */
+@utility max-h-screen-inset {
+  max-height: calc(100dvh - 1rem);
+}
+
+@utility max-w-screen-inset {
+  max-width: calc(100vw - 2rem);
+}
+
+@utility anchor-none {
+  overflow-anchor: none;
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+}
+
 @custom-variant keyboard (&:where([data-keyboard], [data-keyboard] *));
 @custom-variant pressed (&[aria-pressed='true']);
 @custom-variant expanded (&[aria-expanded='true'][aria-haspopup]);
@@ -720,6 +775,28 @@ body {
 .folder-icon:hover {
   background: var(--folder-hover, var(--color-primary-container));
   color: var(--folder-icon, var(--color-on-primary-container));
+}
+
+.folder-ink {
+  color: var(--folder-icon, var(--color-primary));
+}
+
+.folder-ink-p2p {
+  color: var(--folder-icon, var(--color-tertiary));
+}
+
+.folder-icon-p2p {
+  color: var(--folder-icon, var(--color-tertiary));
+}
+
+.folder-icon-p2p:hover {
+  background: var(--folder-hover, var(--color-tertiary-container));
+  color: var(--folder-icon, var(--color-on-tertiary-container));
+}
+
+.folder-badge-p2p {
+  background: var(--folder-icon, var(--color-tertiary));
+  color: var(--folder-on-icon, var(--color-on-tertiary));
 }
 
 .folder-badge {

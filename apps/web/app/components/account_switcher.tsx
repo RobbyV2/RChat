@@ -371,13 +371,21 @@ function AccountList({
                   >
                     <Surface tone="plain" radius="none" pad="2xs" inset="bar">
                       <Row gap="2xs">
-                        <button
+                        <Surface
+                          as="button"
                           type="button"
                           data-account-row={key}
                           aria-current={r.active ? 'true' : undefined}
                           {...longPress(() => setActions(key))}
                           onClick={() => select(r)}
-                          className="flex min-h-12 min-w-0 flex-1 items-center gap-3 rounded-lg px-2 text-left hover:bg-surface-container-highest"
+                          pad="sm"
+                          inset="sides"
+                          gap="md"
+                          row
+                          tone="plain"
+                          radius="md"
+                          look="min-h-12 text-left hover:bg-surface-container-highest"
+                          place="min-w-0 flex-1"
                         >
                           <ActorAvatar row={r} size={r.local ? 24 : 32} />
                           <span className="min-w-0 flex-1">
@@ -406,7 +414,7 @@ function AccountList({
                             <span aria-label="Unread" className="size-2 rounded-full bg-primary" />
                           )}
                           {r.active && <Check size={16} aria-label="Acting as" />}
-                        </button>
+                        </Surface>
                         {manage && own && r.saved && ordered.length > 1 && (
                           <OrderHandle
                             label={r.display}
@@ -564,7 +572,7 @@ export function SwitcherDialog({ initialManage }: { initialManage: boolean }) {
   return (
     <Sheet
       sheet={narrow}
-      float={{ at: 'top-2 left-20 max-h-[calc(100%-1rem)] w-[26rem]', backdrop: 'clear' }}
+      float={{ at: 'top-2 left-20 max-h-[calc(100%-1rem)] w-104', backdrop: 'clear' }}
       surface="base"
       onClose={close}
       aria-label={manage ? 'Manage accounts' : 'Switch account'}

@@ -286,7 +286,7 @@ function P2pDms({ peer, label }: { peer?: SwitcherRow; label?: string } = {}) {
     <section
       data-p2p-dms
       aria-label="P2P direct messages"
-      className={'flex shrink-0 flex-col pb-1' + (label ? '' : ' max-h-[45%]')}
+      className={'flex shrink-0 flex-col pb-1' + (label ? '' : ' max-h-9/20')}
     >
       <Surface pad="lg" inset="bar" tone="plain" radius="none" place="shrink-0">
         <Row gap="sm">
@@ -502,14 +502,18 @@ export function DmBlock({
           {label && (
             <Surface pad="md" inset="bar" tone="plain" radius="none">
               <Row gap="none">
-                <button
-                  className="flex min-w-0 flex-1 items-center gap-1 text-sm font-medium pointer-coarse:min-h-11"
+                <Row
+                  as="button"
                   aria-expanded={!collapsed}
                   onClick={() => collapse(!collapsed)}
+                  gap="2xs"
+                  text="sm"
+                  look="font-medium pointer-coarse:min-h-11"
+                  place="min-w-0 flex-1"
                 >
                   {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                   <span className="streamer truncate">{label}</span>
-                </button>
+                </Row>
                 <IconButton
                   icon={Plus}
                   label="New direct message"

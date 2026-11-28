@@ -94,7 +94,7 @@ export function ReAuthPrompt({
   const wordPassword = me.password_kind === 'words'
   return (
     <Stack as="fieldset" disabled={busy} gap="md">
-      <legend className="mb-3">Confirm your identity</legend>
+      <legend>Confirm your identity</legend>
       {ways.includes('password') && !me.password_temporary && me.has_password !== false && (
         <>
           <input

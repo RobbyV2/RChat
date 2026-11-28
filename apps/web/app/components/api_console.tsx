@@ -28,27 +28,31 @@ import { useStore } from '../lib/store'
 import { CodeBlock } from './code_block'
 import { SettingSwitch } from './settings_fields'
 import { Button, Cover, IconButton } from './controls'
-import { Row, Stack, Surface } from './layout'
+import { Grid, Inset, Row, Stack, Surface } from './layout'
 import { useCopied } from './ui'
 import { useInstanceLabel } from './instance_badge'
 import { TO_SCREEN } from '../lib/secret'
 import { time } from '../lib/platform/time'
 
-const METHOD_CLS: Record<Method, string> = {
+const METHOD_CLS = {
   GET: 'bg-secondary-container text-on-secondary-container',
   POST: 'bg-primary-container text-on-primary-container',
   PUT: 'bg-tertiary-container text-on-tertiary-container',
   PATCH: 'bg-tertiary-container text-on-tertiary-container',
   DELETE: 'bg-error-container text-on-error-container',
-}
+} as const satisfies Record<Method, string>
 
 export function MethodBadge({ method }: { method: Method }) {
   return (
-    <span
-      className={`shrink-0 rounded-md px-1.5 py-0.5 font-mono text-2xs font-semibold ${METHOD_CLS[method]}`}
+    <Inset
+      as="span"
+      pad="xs"
+      inset="chip"
+      look={`rounded-md font-mono text-2xs font-semibold ${METHOD_CLS[method]}`}
+      place="shrink-0"
     >
       {method}
-    </span>
+    </Inset>
   )
 }
 
@@ -247,7 +251,11 @@ function FieldInput({
 
 // A nested object or list: set in under a line along its left side.
 function Nested({ children }: { children: ReactNode }) {
-  return <div className="border-l-2 border-outline-variant pl-3">{children}</div>
+  return (
+    <Inset pad="md" inset="sides" look="border-l-2 border-outline-variant">
+      {children}
+    </Inset>
+  )
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -269,16 +277,15 @@ function ResponseView({ res }: { res: ApiResponse }) {
   return (
     <Stack as="section" aria-label="Response" gap="sm">
       <Row gap="sm" wrap>
-        <span
+        <Inset
           data-api-status={res.status}
-          className={`rounded-md px-2 py-0.5 font-mono text-xs font-semibold ${
-            ok
-              ? 'bg-primary-container text-on-primary-container'
-              : 'bg-error-container text-on-error-container'
-          }`}
+          as="span"
+          pad="sm"
+          inset="chip"
+          look={`rounded-md font-mono text-xs font-semibold ${ok ? 'bg-primary-container text-on-primary-container' : 'bg-error-container text-on-error-container'}`}
         >
           {res.status} {res.statusText}
-        </span>
+        </Inset>
         <span className="text-xs text-on-surface-variant">{res.ms} ms</span>
         <span className="text-xs text-on-surface-variant">{res.size} bytes</span>
       </Row>
@@ -299,14 +306,14 @@ function ResponseBody({ res }: { res: ApiResponse }) {
       <Surface pad="md" tone="base" radius="md">
         <details className="text-xs">
           <summary className="text-on-surface-variant">Headers ({res.headers.length})</summary>
-          <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 font-mono">
+          <Grid as="dl" cols="pair" gap="md" lineGap="2xs" look="font-mono">
             {res.headers.map(([k, v]) => (
               <div key={k} className="contents">
                 <dt className="text-on-surface-variant">{k}</dt>
                 <dd className="break-all text-on-surface">{v}</dd>
               </div>
             ))}
-          </dl>
+          </Grid>
         </details>
       </Surface>
       {res.text ? (

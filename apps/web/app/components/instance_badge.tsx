@@ -47,18 +47,26 @@ export function AccountLabel({ notice = false }: { notice?: boolean }) {
   )
 }
 
-export function InstanceChip({ host, className = '' }: { host: string; className?: string }) {
+export function InstanceChip({ host }: { host: string }) {
   const streamer = useStore(s => s.streamer)
   return (
-    <span
+    <Surface
       title={
         streamer ? 'Lives on another RChat instance' : `Lives on ${host}, another RChat instance`
       }
-      className={`inline-flex max-w-full min-w-0 items-center gap-1 rounded-full bg-tertiary-container px-2 py-0.5 text-2xs leading-4 font-medium text-on-tertiary-container ${className}`}
+      as="span"
+      pad="sm"
+      inset="chip"
+      gap="2xs"
+      row
+      tone="plain"
+      radius="full"
+      look="bg-tertiary-container text-2xs leading-4 font-medium text-on-tertiary-container"
+      place="inline-flex max-w-full min-w-0"
     >
       <Globe size={11} className="shrink-0" />
       <span className="streamer truncate">{host}</span>
-    </span>
+    </Surface>
   )
 }
 
@@ -71,14 +79,22 @@ export function RailInstance() {
   const signedIn = useStore(s => s.me !== null)
   const named = label !== host
   return (
-    <button
+    <Surface
       title={streamer ? 'Instance' : named ? `${label} (${host})` : host}
       aria-label={`Instance ${label}${named ? ` on ${host}` : ''}`}
       onClick={() => openDialog({ kind: 'settings' })}
       {...(signedIn
         ? longPress((x, y) => openActionMenu(x, y, { kind: 'home' }, undefined, acct))
         : {})}
-      className="flex w-15 shrink-0 flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+      as="button"
+      pad="2xs"
+      gap="3xs"
+      tone="plain"
+      radius="lg"
+      align="center"
+      ink="muted"
+      look="w-15 hover:bg-surface-container-high hover:text-on-surface"
+      place="shrink-0"
     >
       <Globe size={16} className="shrink-0" />
       <span className="streamer w-full truncate text-center text-3xs leading-3 font-semibold text-on-surface">
@@ -87,7 +103,7 @@ export function RailInstance() {
       {named && (
         <span className="streamer w-full truncate text-center text-3xs leading-3">{host}</span>
       )}
-    </button>
+    </Surface>
   )
 }
 
