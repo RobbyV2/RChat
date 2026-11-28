@@ -1955,7 +1955,13 @@ impl ResolvedChannel {
         self.send_rights(db).await.map(|_| ())
     }
 
-    pub async fn send_gate(&self, db: &Db) -> Result<(), ApiError> {
+    /// Sending here now: the decision `deliver` takes.
+    pub async fn send_right(&self, db: &Db) -> Result<SendRight<'_>, ApiError> {
+        self.send_gate(db).await?;
+        Ok(SendRight { channel: self })
+    }
+
+    async fn send_gate(&self, db: &Db) -> Result<(), ApiError> {
         let user = self.send_rights(db).await?;
         if self.slowmode <= 0 {
             return Ok(());
@@ -2120,6 +2126,43 @@ impl MsgScope {
     pub fn dm_users(&self) -> Option<&[String]> {
         self.dm_users.as_deref()
     }
+}
+
+/// The decision that the viewer may send in a channel now. Only `ResolvedChannel::send_right`
+/// makes one.
+pub struct SendRight<'a> {
+    channel: &'a ResolvedChannel,
+}
+
+impl<'a> SendRight<'a> {
+    pub fn channel(&self) -> &'a ResolvedChannel {
+        self.channel
+    }
+}
+
+/// The decision that the viewer may reply in a channel thread now. Only
+/// `ResolvedMessage::thread_right` makes one.
+pub struct ThreadRight<'a> {
+    channel: &'a ResolvedChannel,
+    root: i64,
+}
+
+impl<'a> ThreadRight<'a> {
+    pub fn channel(&self) -> &'a ResolvedChannel {
+        self.channel
+    }
+
+    pub fn root(&self) -> i64 {
+        self.root
+    }
+}
+
+/// Where a message goes, decided: the only input `deliver` takes.
+pub enum Dest<'a> {
+    Channel(SendRight<'a>),
+    Thread(ThreadRight<'a>),
+    Dm(DmWrite),
+    DmThread(DmWrite, i64),
 }
 
 /// A message as a site admin reaches it through instance powers, for the staff tools only.
@@ -2384,9 +2427,18 @@ impl ResolvedMessage {
         }
     }
 
-    /// Replying in the thread of this message (`id`), after its channel's `send_gate`: the first
-    /// reply also needs the channel's Start threads permission.
-    pub async fn thread_start_gate(&self, db: &Db, id: i64) -> Result<(), ApiError> {
+    /// Replying in the thread of this message (`id`) in a channel: its channel's send decision,
+    /// and for the first reply the channel's Start threads permission.
+    pub async fn thread_right(&self, db: &Db, id: i64) -> Result<ThreadRight<'_>, ApiError> {
+        let channel = self.thread_channel()?;
+        channel.send_gate(db).await?;
+        self.thread_start_gate(db, id).await?;
+        Ok(ThreadRight { channel, root: id })
+    }
+
+    /// The first reply in the thread of this message (`id`) needs the channel's Start threads
+    /// permission.
+    pub(crate) async fn thread_start_gate(&self, db: &Db, id: i64) -> Result<(), ApiError> {
         let channel = self.thread_channel()?;
         if channel.member_rights(db).await?.holds(held::THREADS) {
             return Ok(());
@@ -7116,7 +7168,11 @@ mod tests {
             .await
             .expect("site admins still see it");
         assert_eq!(
-            channel.send_gate(db).await.map_err(|e| e.0.as_u16()),
+            channel
+                .send_right(db)
+                .await
+                .map(|_| ())
+                .map_err(|e| e.0.as_u16()),
             Err(403),
             "no send right from the site admin flag"
         );
@@ -7126,7 +7182,11 @@ mod tests {
             .await
             .expect("slow");
         assert_eq!(
-            channel.send_gate(db).await.map_err(|e| e.0.as_u16()),
+            channel
+                .send_right(db)
+                .await
+                .map(|_| ())
+                .map_err(|e| e.0.as_u16()),
             Err(429),
             "slow mode applies"
         );

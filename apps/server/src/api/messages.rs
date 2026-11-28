@@ -12,7 +12,7 @@ use utoipa::{IntoParams, ToSchema};
 use crate::api::access::overwrite_sql::overwrite_sql;
 use crate::api::access::perms::held;
 use crate::api::access::{
-    Proof, ResolvedMessage, ThreadHome, channel_manager_servers, granted_servers,
+    Dest, Proof, ResolvedMessage, ThreadHome, channel_manager_servers, granted_servers,
     member_channel_rights, resolve_channel, resolve_dm, resolve_message,
 };
 use crate::api::admin::like_pattern;
@@ -2038,14 +2038,30 @@ async fn sender_rate(state: &AppState, sender: &str) -> Result<(), ApiError> {
 /// Stores a message sent to `place` after the access gate allowed it, and its group pings
 /// before the `message` event (a client reloading its unread counts on it finds them), then
 /// announces it: link previews, the `message` event and pings (forwards ping nobody).
+/// Where a decided destination files the message, and whose pings it may raise.
+fn placed<'a>(dest: &'a Dest<'a>) -> (Place, PingScope<'a>) {
+    match dest {
+        Dest::Channel(right) => (
+            Place::Channel(right.channel().id()),
+            PingScope::Channel(right.channel()),
+        ),
+        Dest::Thread(right) => (
+            Place::Thread(right.root()),
+            PingScope::Channel(right.channel()),
+        ),
+        Dest::Dm(write) => (Place::Dm(write.id()), PingScope::Dm(write)),
+        Dest::DmThread(write, root) => (Place::Thread(*root), PingScope::Dm(write)),
+    }
+}
+
 async fn deliver(
     state: &AppState,
     user: &User,
     req: SendReq,
-    place: Place,
-    scope: PingScope<'_>,
+    dest: Dest<'_>,
     claim: Option<&crate::api::scheduled::Claim>,
 ) -> Result<Message, ApiError> {
+    let (place, scope) = placed(&dest);
     if claim.is_some() && req.forward_of.is_some() {
         return Err(ApiError::invalid(
             "A scheduled message cannot be a forward",
@@ -2174,75 +2190,34 @@ pub(crate) async fn send_to(
     req: SendReq,
     claim: Option<&crate::api::scheduled::Claim>,
 ) -> Result<Message, ApiError> {
-    match to {
+    let db = &state.db;
+    let channel;
+    let root;
+    let dest = match to {
         SendTo::Channel(id) => {
             if req.forward_of.is_none() {
-                check_profanity(&state.db, ProfanityTarget::Messages, &req.content).await?;
+                check_profanity(db, ProfanityTarget::Messages, &req.content).await?;
             }
-            let channel = resolve_channel(&state.db, id, Some(user), &Proof::none()).await?;
-            channel.send_gate(&state.db).await?;
-            deliver(
-                state,
-                user,
-                req,
-                Place::Channel(id),
-                PingScope::Channel(&channel),
-                claim,
-            )
-            .await
+            channel = resolve_channel(db, id, Some(user), &Proof::none()).await?;
+            Dest::Channel(channel.send_right(db).await?)
         }
         SendTo::Thread(id) => {
-            let root = resolve_message(&state.db, id, Some(user), &Proof::none()).await?;
+            root = resolve_message(db, id, Some(user), &Proof::none()).await?;
             match root.thread_home()? {
-                ThreadHome::Channel(channel) => {
+                ThreadHome::Channel(_) => {
                     if req.forward_of.is_none() {
-                        check_profanity(&state.db, ProfanityTarget::Messages, &req.content).await?;
+                        check_profanity(db, ProfanityTarget::Messages, &req.content).await?;
                     }
-                    channel.send_gate(&state.db).await?;
-                    root.thread_start_gate(&state.db, id).await?;
-                    deliver(
-                        state,
-                        user,
-                        req,
-                        Place::Thread(id),
-                        PingScope::Channel(channel),
-                        claim,
-                    )
-                    .await
+                    Dest::Thread(root.thread_right(db, id).await?)
                 }
                 ThreadHome::Dm { id: dm, users: _ } => {
-                    let write = resolve_dm(&state.db, dm, user)
-                        .await?
-                        .writable(&state.db)
-                        .await?;
-                    deliver(
-                        state,
-                        user,
-                        req,
-                        Place::Thread(id),
-                        PingScope::Dm(&write),
-                        claim,
-                    )
-                    .await
+                    Dest::DmThread(resolve_dm(db, dm, user).await?.writable(db).await?, id)
                 }
             }
         }
-        SendTo::Dm(id) => {
-            let write = resolve_dm(&state.db, id, user)
-                .await?
-                .writable(&state.db)
-                .await?;
-            deliver(
-                state,
-                user,
-                req,
-                Place::Dm(id),
-                PingScope::Dm(&write),
-                claim,
-            )
-            .await
-        }
-    }
+        SendTo::Dm(id) => Dest::Dm(resolve_dm(db, id, user).await?.writable(db).await?),
+    };
+    deliver(state, user, req, dest, claim).await
 }
 
 /// Checks `reply_to` for a message `user` would send to `to`, as sending does.
@@ -9854,6 +9829,71 @@ mod tests {
             .collect();
         assert_eq!(through, want, "the channel index holds every message");
         crate::db::close(&state.db).await;
+    }
+
+    #[tokio::test]
+    async fn each_destination_files_and_pings_where_it_was_decided() {
+        let (state, path) = temp_state("dest_place").await;
+        let db = &state.db;
+        crate::db::NewUser::plain("bob").add(db).await;
+        add_member(db, "rchat", "alice", 0, 0, 0).await;
+        let alice = mem_user("alice", false);
+        let general: i64 =
+            sqlx::query("SELECT id FROM channels WHERE server = 'rchat' AND name = 'general'")
+                .fetch_one(db)
+                .await
+                .expect("general")
+                .try_get(0)
+                .expect("id");
+        let root: i64 = sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO messages(channel_id, author, content, created_at) VALUES({general}, 'alice', 'root', 1) RETURNING id")))
+            .fetch_one(db)
+            .await
+            .expect("root")
+            .try_get(0)
+            .expect("id");
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("id");
+        let channel = resolve_channel(db, general, Some(&alice), &Proof::none())
+            .await
+            .expect("channel");
+        let message = resolve_message(db, root, Some(&alice), &Proof::none())
+            .await
+            .expect("message");
+        let access = resolve_dm(db, dm, &alice).await.expect("dm");
+        let dests = [
+            Dest::Channel(channel.send_right(db).await.expect("send")),
+            Dest::Thread(message.thread_right(db, root).await.expect("thread")),
+            Dest::Dm(access.writable(db).await.expect("write")),
+            Dest::DmThread(access.writable(db).await.expect("write"), 7),
+        ];
+        type Filed = (Option<i64>, Option<i64>, Option<i64>, String);
+        let got: Vec<Filed> = dests
+            .iter()
+            .map(|dest| {
+                let (place, scope) = placed(dest);
+                let (channel, thread, dm) = match place {
+                    Place::Channel(id) => (Some(id), None, None),
+                    Place::Thread(id) => (None, Some(id), None),
+                    Place::Dm(id) => (None, None, Some(id)),
+                };
+                (channel, thread, dm, scope.key())
+            })
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (Some(general), None, None, format!("c{general}")),
+                (None, Some(root), None, format!("c{general}")),
+                (None, None, Some(dm), format!("d{dm}")),
+                (None, Some(7), None, format!("d{dm}")),
+            ]
+        );
+        done(state, path).await;
     }
 
     #[tokio::test]
