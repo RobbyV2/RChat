@@ -1,5 +1,6 @@
 'use client'
 
+import { Covered } from './covered'
 import { personName } from '../lib/names'
 import { Name } from './name'
 import { Lock, Volume2 } from 'lucide-react'
@@ -52,11 +53,12 @@ function SeatBody({
       >
         {face}
       </span>
-      <span
-        className={`streamer min-w-0 flex-1 truncate ${seat.speaking ? 'text-on-surface' : ''}`}
+      <Covered
+        what="names"
+        look={seat.speaking ? 'min-w-0 flex-1 truncate text-on-surface' : 'min-w-0 flex-1 truncate'}
       >
         {name}
-      </span>
+      </Covered>
       {seat.live && (
         <LiveBadge
           size="sm"

@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from '../covered'
 import { Button } from '../controls'
 import { Row, Stack, Surface } from '../layout'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -335,9 +336,14 @@ function P2pImportBody({
         </Row>
       ) : (
         <Stack gap="sm">
-          <p data-p2p-preview className="streamer text-sm break-words text-on-surface">
+          <Covered
+            what="preview"
+            as="p"
+            data-p2p-preview
+            look="text-sm break-words text-on-surface"
+          >
             {summaryText(unlocked.summary)}
-          </p>
+          </Covered>
           <p
             className={`text-xs ${unlocked.kind === 'replace' ? 'text-error' : 'text-on-surface-variant'}`}
           >

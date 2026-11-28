@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from '../components/covered'
 import { Button, IconButton } from '../components/controls'
 import { asAccount } from '../lib/people'
 import { useAccount } from '../lib/client/react'
@@ -206,12 +207,12 @@ function ChatRow({
           data-group-header={place.first ? '' : undefined}
           className={place.first ? 'widget-head' : 'sr-only'}
         >
-          <strong id={sender} className="streamer min-w-0 max-w-full truncate text-sm">
+          <Covered what="names" as="strong" id={sender} look="min-w-0 max-w-full truncate text-sm">
             <Masked
               text={message.author.display_name}
               own={message.author.username === client.account}
             />
-          </strong>
+          </Covered>
           <time
             id={time}
             className="text-xs text-on-surface-variant"
@@ -231,12 +232,12 @@ function ChatRow({
           >
             {message.reply_to.author && (
               <>
-                <span className="streamer">
+                <Covered what="names">
                   <Masked
                     text={message.reply_to.author.display_name}
                     own={message.reply_to.author.username === client.account}
                   />
-                </span>{' '}
+                </Covered>{' '}
                 ·{' '}
               </>
             )}
@@ -504,11 +505,11 @@ export default function WidgetPage() {
               <h2 className="text-sm font-medium">In voice</h2>
               <Stack as="ul" gap="2xs">
                 {room.users.map(u => (
-                  <li key={u} className="streamer break-words">
+                  <Covered what="names" as="li" key={u} look="break-words">
                     {isGuestName(u) ? guestLabel(u) : u}
                     {u === client.name ? ' (you)' : ''}
                     {client.statusOf(u).map(text => ` · ${text}`)}
-                  </li>
+                  </Covered>
                 ))}
               </Stack>
               {client.inVoice ? (

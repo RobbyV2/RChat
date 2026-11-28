@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from '../covered'
 import { Name, NameInput } from '../name'
 import { p2pKey, p2pName } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
@@ -84,7 +85,6 @@ import { GateNote } from '../gate_note'
 import { time } from '../../lib/platform/time'
 import { Button, IconButton, Tile } from '../controls'
 
-
 // When the conversation with a contact last had a message (0 without one).
 export const lastTsOf =
   (rooms: Record<string, { lastTs: number }>, me: string | null) => (ik: string) =>
@@ -137,10 +137,11 @@ function P2pRailTileBody({ actorLabel }: { actorLabel?: string }) {
       pressed={open}
     >
       {actorLabel ? (
-        <span className="streamer rounded-full outline-2 outline-dashed outline-tertiary">
+        <span className="rounded-full outline-2 outline-dashed outline-tertiary">
           <KeyAvatar
             person={identityPerson(identity.useP2p.getState().ik ?? identity.localId, 'own')}
             size={28}
+            covered
           />
         </span>
       ) : (
@@ -517,9 +518,9 @@ function RequestRow({ c }: { c: Contact }) {
         <p className="text-xs text-error">Uses the same name or account as one of your contacts.</p>
       )}
       {c.intros.map((t, i) => (
-        <p key={i} className="streamer text-sm break-words whitespace-pre-wrap">
+        <Covered what="about" as="p" key={i} look="text-sm break-words whitespace-pre-wrap">
           <Masked text={t} />
-        </p>
+        </Covered>
       ))}
     </Surface>
   )

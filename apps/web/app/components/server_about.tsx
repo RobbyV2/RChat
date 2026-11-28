@@ -1,5 +1,6 @@
 'use client'
 
+import { Covered } from './covered'
 import { Name, NameArea } from './name'
 import { serverCalled } from '../lib/names'
 import { useMemo, useState } from 'react'
@@ -189,9 +190,13 @@ export function AboutEditor({
           <Stack gap="xs">
             <span className="text-sm text-on-surface">Description</span>
             {about.text ? (
-              <p className="streamer text-sm break-words whitespace-pre-line text-on-surface-variant">
+              <Covered
+                what="about"
+                as="p"
+                look="text-sm break-words whitespace-pre-line text-on-surface-variant"
+              >
                 <Masked text={about.text} own={own} />
-              </p>
+              </Covered>
             ) : (
               <p className="text-sm text-on-surface-variant">No description.</p>
             )}

@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from './covered'
 import { asAccount } from '../lib/people'
 import { personName } from '../lib/names'
 import { Name, NameSelect } from './name'
@@ -511,7 +512,9 @@ export function DmBlock({
               <Row gap="none">
                 <SideRow onClick={() => collapse(!collapsed)} tone="section" open={!collapsed}>
                   {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-                  <span className="streamer truncate">{label}</span>
+                  <Covered what="channel" look="truncate">
+                    {label}
+                  </Covered>
                 </SideRow>
                 <IconButton
                   icon={Plus}
@@ -717,7 +720,9 @@ function DmSidebar({ dmId }: { dmId: number }) {
             <div key={g.origin}>
               {groups.length > 1 && (
                 <Surface pad="lg" inset="bar" tone="plain" radius="none">
-                  <h3 className="streamer text-xs font-semibold uppercase">{g.name}</h3>
+                  <Covered what="channel" as="h3" look="text-xs font-semibold uppercase">
+                    {g.name}
+                  </Covered>
                 </Surface>
               )}
               {g.owners.map(({ row, owner }) => (

@@ -1,5 +1,6 @@
 'use client'
 
+import { Covered } from './covered'
 import { Name } from './name'
 import { handleName } from '../lib/names'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
@@ -135,7 +136,7 @@ function ReactionTooltip({
         {streamer || names === null ? (
           peopleText(r.count)
         ) : (
-          <span className="streamer">{reactorsText(names, r.count)}</span>
+          <Covered what="names">{reactorsText(names, r.count)}</Covered>
         )}
       </span>
     </Surface>,
@@ -379,9 +380,9 @@ function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClo
           <Surface as="li" key={u.username} pad="sm" gap="md" row tone="plain" radius="lg">
             <ShownAvatar user={u} server={server} size={32} />
             <span className="min-w-0 flex-1">
-              <span className="streamer block truncate text-sm font-medium text-on-surface">
+              <Covered what="names" look="block truncate text-sm font-medium text-on-surface">
                 <ReactorName user={u} server={server} />
-              </span>
+              </Covered>
               <Name
                 of={handleName(u.username)}
                 look="block truncate text-xs text-on-surface-variant"

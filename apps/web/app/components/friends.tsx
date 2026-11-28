@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from './covered'
 import { ask, asked, together, type Ask } from '../lib/asks'
 import { OwnLoadNotice } from './own_load'
 
@@ -737,7 +738,7 @@ export function FriendPreview({
       role={result && !result.ok ? 'alert' : undefined}
       className={`text-xs ${result && !result.ok ? 'text-error' : 'text-primary'}`}
     >
-      <span className="streamer">{status}</span>
+      <Covered what="status">{status}</Covered>
     </p>
   )
   if (!profile && hidden)

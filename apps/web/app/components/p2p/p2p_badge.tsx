@@ -1,4 +1,6 @@
 'use client'
+import { accountLabel } from '../../lib/names'
+import { Name } from '../name'
 import { useP2pApp } from '../../lib/client/p2p_react'
 
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -133,7 +135,17 @@ export function PresenceDot({ presence }: { presence: Presence }) {
 // Identicons come from the identity key, so a look-alike name never gets the same picture. A
 // member's own background sits behind it; a color avatar is a disc of that color with the key
 // identicon as a mark in its corner, so the key-derived picture always shows.
-export function KeyAvatar({ person, size = 36 }: { person: Person; size?: number }) {
+export function KeyAvatar({
+  person,
+  size = 36,
+  covered = false,
+}: {
+  person: Person
+  size?: number
+  // A picture streamer mode hides: the viewer's own, outside a chat.
+  covered?: boolean
+}) {
+  const mark = covered ? 'streamer ' : ''
   const { username: ik, avatar_kind: kind, avatar_color: bg } = person
   const shade = validColor(bg) ? bg.toLowerCase() : null
   const disc = kind === 'color' && shade !== null
@@ -145,17 +157,17 @@ export function KeyAvatar({ person, size = 36 }: { person: Person; size?: number
     return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
   }, [ik, shade, disc])
   if (disc) {
-    const mark = Math.max(12, Math.round(size * 0.45))
+    const dot = Math.max(12, Math.round(size * 0.45))
     return (
       <span
-        className="relative inline-block shrink-0 rounded-full"
+        className={`${mark}relative inline-block shrink-0 rounded-full`}
         style={{ width: size, height: size, backgroundColor: shade }}
       >
         <img
           src={src}
           alt=""
-          width={mark}
-          height={mark}
+          width={dot}
+          height={dot}
           draggable={false}
           className="absolute -right-0.5 -bottom-0.5 rounded-full bg-surface-container-highest ring-2 ring-surface-container-low"
         />
@@ -169,7 +181,7 @@ export function KeyAvatar({ person, size = 36 }: { person: Person; size?: number
       width={size}
       height={size}
       draggable={false}
-      className="shrink-0 rounded-full bg-surface-container-highest"
+      className={`${mark}shrink-0 rounded-full bg-surface-container-highest`}
       style={shade ? { backgroundColor: shade } : undefined}
     />
   )
@@ -228,7 +240,7 @@ function BadgeSheet({ state, slot }: { state: BadgeState; slot: BadgeSlot }) {
         <Icon size={16} className="shrink-0" aria-hidden />
         {state === 'confirmed' && ok ? (
           <span className="min-w-0 truncate text-sm font-medium">
-            Confirmed as <span className="streamer">{ok.sub}</span>
+            Confirmed as <Name of={accountLabel(ok.sub)} />
           </span>
         ) : (
           <span className="text-sm font-medium">{CHIP[state].text}</span>
@@ -238,7 +250,7 @@ function BadgeSheet({ state, slot }: { state: BadgeState; slot: BadgeSlot }) {
         <p className="text-xs text-on-surface-variant">
           {state === 'expired' ? (
             <>
-              Was <span className="streamer">{ok.sub}</span> until {badgeDate(ok.exp * 1000)}.
+              Was <Name of={accountLabel(ok.sub)} /> until {badgeDate(ok.exp * 1000)}.
             </>
           ) : (
             <>Checked {badgeDate(ok.checked)}.</>
@@ -313,7 +325,7 @@ function AccountChipBody({ ik, size = 'full' }: { ik: string; size?: 'full' | 's
       {size === 'icon' ? null : state === 'confirmed' && sub ? (
         <span className="min-w-0 truncate">
           {size === 'full' && 'Confirmed as '}
-          <span className="streamer">{sub}</span>
+          <Name of={accountLabel(sub)} />
         </span>
       ) : (
         <span className="truncate">{size === 'short' ? short : text}</span>

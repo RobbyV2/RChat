@@ -1,5 +1,6 @@
 'use client'
 
+import { Covered } from './covered'
 import { ask, sendTo } from '../lib/asks'
 import { Name, NameInput } from './name'
 import { handleName, instanceAddress, instanceName } from '../lib/names'
@@ -281,28 +282,21 @@ export function AddInstanceFlow({
         </Stack>
       )}
       {error && (
-        <p role="alert" className="streamer text-error">
+        <Covered what="address" as="p" role="alert" look="text-error">
           {error}
-        </p>
+        </Covered>
       )}
       {target && (
         <Surface tone="base" radius="lg" pad="md" gap="sm">
           <Row gap="md">
-            <Surface
-              aria-hidden="true"
-              as="span"
-              pad="sm"
-              tone="primary"
-              radius="md"
-              look="streamer"
-            >
-              {target.info.name.slice(0, 1)}
+            <Surface aria-hidden="true" as="span" pad="sm" tone="primary" radius="md">
+              <Name of={instanceName(target.info.name.slice(0, 1))} />
             </Surface>
             <div>
               <Name as="strong" of={instanceName(target.info.name)} />
-              <p className="streamer text-xs">
+              <Covered what="address" as="p" look="text-xs">
                 {target.conn.host} · {target.info.version}
-              </p>
+              </Covered>
             </div>
           </Row>
           <p className="text-xs">
@@ -347,9 +341,9 @@ export function AddInstanceFlow({
         target &&
         (duplicate !== undefined ? (
           <>
-            <p role="status" className="streamer">
+            <Covered what="address" as="p" role="status">
               {alreadySignedIn(duplicate ?? 'guest', target.conn.host)}
-            </p>
+            </Covered>
             <Button variant="filled" size="md" onClick={() => useExisting(duplicate)}>
               Switch
             </Button>

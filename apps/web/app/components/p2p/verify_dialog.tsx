@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from '../covered'
 import { Name } from '../name'
 import { p2pName } from '../../lib/names'
 import { Button, Tab } from '../controls'
@@ -93,7 +94,12 @@ function VerifyDialogBody({ ik }: { ik: string }) {
               Compare these numbers with <Name of={p2pName(displayName(contact))} />, in person or
               on a call. If they match, nobody is in between.
             </p>
-            <div data-safety-number className="streamer font-mono text-base tracking-wider">
+            <Covered
+              what="secret"
+              as="div"
+              data-safety-number
+              look="font-mono text-base tracking-wider"
+            >
               <Surface pad="lg" tone="base" radius="lg">
                 <Grid cols={4} gap="2xs">
                   {groups.map((g, i) => (
@@ -101,10 +107,10 @@ function VerifyDialogBody({ ik }: { ik: string }) {
                   ))}
                 </Grid>
               </Surface>
-            </div>
-            <p className="streamer font-mono text-2xs text-on-surface-variant">
+            </Covered>
+            <Covered what="secret" as="p" look="font-mono text-2xs text-on-surface-variant">
               Their key {fingerprint(ik)}
-            </p>
+            </Covered>
           </Stack>
         ) : mode === 'show' ? (
           <Stack gap="sm">

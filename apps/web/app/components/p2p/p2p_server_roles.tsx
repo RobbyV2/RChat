@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from '../covered'
 import { Button, IconButton } from '../controls'
 import { Name } from '../name'
 import { p2pName } from '../../lib/names'
@@ -460,12 +461,14 @@ function MemberCardBody({ room, ik }: { room: string; ik: string }) {
         )}
       </Row>
       {bio && (
-        <p
+        <Covered
+          what="about"
+          as="p"
           data-p2p-member-bio
-          className="streamer text-xs break-words whitespace-pre-wrap text-on-surface"
+          look="text-xs break-words whitespace-pre-wrap text-on-surface"
         >
           <Masked text={bio} own={self} />
-        </p>
+        </Covered>
       )}
       {m.profileLocked && m.resetProfile && (
         <p data-p2p-member-locked className="text-xs text-on-surface-variant">

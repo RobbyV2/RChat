@@ -1,5 +1,7 @@
 'use client'
 
+import { instanceName } from '../lib/names'
+import { Name } from './name'
 import { identityPerson, pictured } from '../lib/people'
 import type { ActorTagRow } from '../lib/client/view_actor'
 import { UserAvatar } from './user_avatar'
@@ -19,9 +21,9 @@ export function InstanceTag({ origin, name }: { origin: string; name: string }) 
   return (
     <span
       aria-hidden="true"
-      className={`streamer inline-flex size-5 shrink-0 items-center justify-center rounded-md text-xs font-bold text-on-tag ${tagClass(origin)}`}
+      className={`inline-flex size-5 shrink-0 items-center justify-center rounded-md text-xs font-bold text-on-tag ${tagClass(origin)}`}
     >
-      {[...name][0]?.toUpperCase()}
+      <Name of={instanceName([...name][0]?.toUpperCase() ?? '')} />
     </span>
   )
 }
@@ -30,14 +32,18 @@ export function ActorAvatar({ row, size = 32 }: { row: ActorTagRow; size?: numbe
     <span
       aria-hidden="true"
       className={
-        'streamer inline-flex shrink-0 rounded-full ' +
+        'inline-flex shrink-0 rounded-full ' +
         (row.local ? 'outline-2 outline-offset-1 outline-dashed outline-tertiary' : '')
       }
     >
       {row.local ? (
-        <KeyAvatar person={identityPerson(row.ik ?? row.local, 'own')} size={size} />
+        <KeyAvatar person={identityPerson(row.ik ?? row.local, 'own')} size={size} covered />
       ) : (
-        <UserAvatar person={pictured(row.username ?? 'Guest', row.avatar, 'own')} size={size} />
+        <UserAvatar
+          person={pictured(row.username ?? 'Guest', row.avatar, 'own')}
+          size={size}
+          covered
+        />
       )}
     </span>
   )

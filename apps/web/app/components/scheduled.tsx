@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from './covered'
 import { OwnLoadNotice } from './own_load'
 
 // Send later and scheduled messages, the same for hosted and P2P places: the composers' Send
@@ -222,9 +223,9 @@ function PlaceLine({ label }: { label: ScheduledLabel | null }) {
   if (!label) return <span>{NOWHERE}</span>
   if (label.person) return <Name of={personCalled(label.person, label.by)} />
   const channel = label.channel ? (
-    <span className="streamer">
+    <Covered what="channel">
       #<Masked text={label.channel} />
-    </span>
+    </Covered>
   ) : null
   if (label.thread) return <span>Thread in {channel ?? 'a channel'}</span>
   return (

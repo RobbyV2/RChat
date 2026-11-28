@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from '../covered'
 import { ask, sendTo } from '../../lib/asks'
 import { NameInput } from '../name'
 import { useAccount } from '../../lib/client/react'
@@ -82,9 +83,9 @@ export function AuditSection() {
               <span className="min-w-0 flex-1 text-sm break-words">
                 {instanceAuditLine(e).map((p, i) =>
                   p.name ? (
-                    <span key={i} className="streamer">
+                    <Covered what="value" key={i}>
                       {p.text}
-                    </span>
+                    </Covered>
                   ) : (
                     <Fragment key={i}>{p.text}</Fragment>
                   )

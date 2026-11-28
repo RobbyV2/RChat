@@ -1,5 +1,6 @@
 'use client'
 
+import { Covered } from './covered'
 import { Name } from './name'
 import { accountLabel } from '../lib/names'
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
@@ -64,7 +65,7 @@ export function FriendGroups({
       {Array.from(groups, ([origin, accounts]) => (
         <Stack key={origin} gap="md">
           {groups.size > 1 && (
-            <h2 className="streamer text-xs font-semibold">
+            <Covered what="names" as="h2" look="text-xs font-semibold">
               <Surface as="span" tone="plain" radius="none" pad="sm" inset="bar">
                 <Row as="span" gap="sm">
                   <InstanceTag origin={origin} name={accounts[0].name} />
@@ -74,7 +75,7 @@ export function FriendGroups({
                   </span>
                 </Row>
               </Surface>
-            </h2>
+            </Covered>
           )}
           {accounts.map(entry => (
             <FriendAccountSection key={entry.account.renderKey} entry={entry}>

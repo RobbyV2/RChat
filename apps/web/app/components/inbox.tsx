@@ -1,5 +1,6 @@
 'use client'
 
+import { Covered } from './covered'
 import { ScheduledButton } from './scheduled'
 import { personName, serverCalled } from '../lib/names'
 import { Name } from './name'
@@ -123,10 +124,10 @@ function Place({ entry }: { entry: InboxEntry }) {
   return (
     <Row as="span" gap="2xs">
       <Hash size={12} className="shrink-0" />
-      <span className="streamer truncate">
+      <Covered what="channel" look="truncate">
         <Masked text={w.channel} own={own} />
         {w.thread ? ' (thread)' : ''}
-      </span>
+      </Covered>
       <span className="shrink-0">·</span>
       <Name of={serverCalled(w.serverName, own)} look="truncate" />
     </Row>
@@ -139,9 +140,9 @@ export function InboxAction({ entry }: { entry: Pick<InboxEntry, 'kind' | 'emoji
     return (
       <span className="text-on-surface-variant">
         mentioned @
-        <span className="streamer">
+        <Covered what="role">
           <Masked text={entry.role} />
-        </span>
+        </Covered>
       </span>
     )
   return <span className="text-on-surface-variant">{inboxAction(entry)}</span>

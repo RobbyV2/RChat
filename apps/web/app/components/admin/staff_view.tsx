@@ -1,5 +1,6 @@
 'use client'
 
+import { Covered } from '../covered'
 import { useState } from 'react'
 import { STAFF_REASON_MAX, STAFF_VIEW_MINUTES } from '../../lib/staff_view'
 import { useStore } from '../../lib/store'
@@ -30,7 +31,7 @@ function Confirm({ channel }: { channel: number }) {
       <Stack gap="lg">
         <p className="text-sm text-on-surface-variant">
           Your membership does not open{' '}
-          {name === null ? 'this channel' : <span className="streamer">#{name}</span>}. Confirm to
+          {name === null ? 'this channel' : <Covered what="channel">#{name}</Covered>}. Confirm to
           open it for {STAFF_VIEW_MINUTES} minutes. This is added to the audit log.
         </p>
         <Row gap="none">

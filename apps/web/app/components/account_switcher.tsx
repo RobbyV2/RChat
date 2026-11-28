@@ -1,7 +1,8 @@
 'use client'
 
+import { Covered } from './covered'
 import { Name, NameSelect } from './name'
-import { instanceName } from '../lib/names'
+import { instanceName, personCalled } from '../lib/names'
 import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
 import {
   ArrowDown,
@@ -98,12 +99,11 @@ export function AccountSwitcherTile() {
             </Inset>
           )}
         </span>
-        <span className="streamer w-full truncate text-xs font-semibold">
-          <Masked text={row.display} />
-        </span>
-        <span className="streamer w-full truncate text-3xs text-on-surface-variant">
-          <Masked text={group.name} />
-        </span>
+        <Name of={personCalled(row.display)} look="w-full truncate text-xs font-semibold" />
+        <Name
+          of={instanceName(group.name)}
+          look="w-full truncate text-3xs text-on-surface-variant"
+        />
       </CardButton>
     </div>
   )
@@ -342,12 +342,12 @@ function AccountList({
                 >
                   <Row gap="sm">
                     <InstanceTag origin={g.origin} name={g.name} />
-                    <span className="streamer min-w-0 flex-1 truncate text-sm font-semibold">
+                    <Covered what="names" look="min-w-0 flex-1 truncate text-sm font-semibold">
                       <Masked text={g.name} />{' '}
                       <small className="font-normal text-on-surface-variant">
                         <Masked text={g.host} />
                       </small>
-                    </span>
+                    </Covered>
                     {manage && model.groups.length > 1 && (
                       <OrderHandle
                         label={g.name}
@@ -401,14 +401,14 @@ function AccountList({
                         >
                           <ActorAvatar row={r} size={r.local ? 24 : 32} />
                           <span className="min-w-0 flex-1">
-                            <span className="streamer block truncate text-sm font-medium">
+                            <Covered what="names" look="block truncate text-sm font-medium">
                               <Masked text={r.display} />{' '}
                               {!r.local && r.username && (
                                 <small className="font-normal text-on-surface-variant">
                                   @<Masked text={r.username} />
                                 </small>
                               )}
-                            </span>
+                            </Covered>
                             <span className="block text-xs text-on-surface-variant">
                               {r.local ? 'P2P · ' : ''}
                               {r.status}

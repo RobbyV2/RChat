@@ -1,6 +1,7 @@
 'use client'
+import { Covered } from './covered'
 import { ask, asked, known as answered } from '../lib/asks'
-import { personCalled } from '../lib/names'
+import { personCalled, accountLabel } from '../lib/names'
 import { Name } from './name'
 
 import { ActorLabel, useActorSuffix, useViewActor } from './view_actor'
@@ -211,9 +212,12 @@ export function ProfileHandle({
   remote: string | null
 }) {
   return (
-    <p className="streamer truncate text-sm text-on-surface-variant">
-      @{remote ? formatQualified(user.username, remote) : user.username}
-    </p>
+    <Name
+      as="p"
+      of={accountLabel(remote ? formatQualified(user.username, remote) : user.username)}
+      before="@"
+      look="truncate text-sm text-on-surface-variant"
+    />
   )
 }
 
@@ -630,9 +634,13 @@ function CardBody({
                 </Row>
               )}
               {bio && !hidden && (
-                <p className="streamer text-sm break-words whitespace-pre-wrap text-on-surface">
+                <Covered
+                  what="about"
+                  as="p"
+                  look="text-sm break-words whitespace-pre-wrap text-on-surface"
+                >
                   <Masked text={bio} own={self} />
-                </p>
+                </Covered>
               )}
               {((self && me && !guest) || (self && server && editsProfile)) && (
                 <Row gap="md">
@@ -697,12 +705,13 @@ function CardBody({
                       <Row gap="md" align="baseline" justify="between">
                         <dt className="flex min-w-0 text-sm text-on-surface-variant">
                           <span className="shrink-0">Joined&nbsp;</span>
-                          <span
-                            className="streamer min-w-0 truncate"
+                          <Covered
+                            what="place"
+                            look="min-w-0 truncate"
                             title={streamer ? undefined : join.label}
                           >
                             <Masked text={serverName ?? join.name} own={ownServer} />
-                          </span>
+                          </Covered>
                         </dt>
                         <dd className="shrink-0 text-sm text-on-surface">
                           {join.joinedAt === null ? '…' : fmtDate(join.joinedAt)}

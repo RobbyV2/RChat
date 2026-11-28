@@ -483,9 +483,11 @@ function CoOwnerAsksBody() {
                 <Row gap="md" wrap>
                   <KeyAvatar person={identityPerson(a.from, 'request')} size={32} />
                   <p className="min-w-48 flex-1 text-sm">
-                    <span className="streamer font-medium">
-                      {c ? <Masked text={displayName(c)} /> : 'A contact'}
-                    </span>{' '}
+                    {c ? (
+                      <Name of={p2pName(displayName(c))} look="font-medium" />
+                    ) : (
+                      <span className="font-medium">A contact</span>
+                    )}{' '}
                     wants you as a co-owner of{' '}
                     <Name of={roomName(a.name || 'a new server')} look="font-medium" />.
                   </p>

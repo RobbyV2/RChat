@@ -1,5 +1,6 @@
 'use client'
 
+import { Covered } from '../covered'
 import type { ReactNode } from 'react'
 import { Lock } from 'lucide-react'
 import { patchFor, shownValue, sourceOf } from '../../lib/admin_config'
@@ -65,7 +66,7 @@ export function SourceNote({ row, flush = false }: { row: AdminRow; flush?: bool
           <span className="min-w-0 break-words">
             Server config says{' '}
             {row.kind === 'names' || row.kind === 'link' ? (
-              <span className="streamer">{said}</span>
+              <Covered what="value">{said}</Covered>
             ) : (
               said
             )}

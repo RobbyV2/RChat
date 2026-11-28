@@ -1,5 +1,6 @@
 'use client'
 
+import { Covered } from './covered'
 import { Button } from './controls'
 import { UNREADABLE_TEXT } from '../lib/sealing'
 import { memo, type ComponentType, type ReactNode } from 'react'
@@ -117,7 +118,9 @@ export function GroupedRow({
 }) {
   return (
     <Row gap="md" align="stretch" data-grouped>
-      <span className="streamer sr-only">{name}</span>
+      <Covered what="names" look="sr-only">
+        {name}
+      </Covered>
       <div className="relative shrink-0" style={{ width: size }}>
         {status ? (
           <span className={gutterStatusCls}>{status}</span>

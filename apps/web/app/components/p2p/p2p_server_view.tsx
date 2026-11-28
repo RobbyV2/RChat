@@ -1,6 +1,6 @@
 'use client'
 import { Name } from '../name'
-import { roomName } from '../../lib/names'
+import { roomName, p2pName } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
 import { PeerActorTag } from '../view_actor'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -88,7 +88,6 @@ import { time } from '../../lib/platform/time'
 // P2P servers in the app: their group at the bottom of the rail (dashed rings, the Waypoints
 // badge, folders of their own), and the open server: channels, the channel's messages and the
 // member list, laid out like an instance server.
-
 
 // ----- Counts -----
 
@@ -367,11 +366,12 @@ function P2pServerRailBody({ actorLabel }: { actorLabel?: string }) {
           data-peer-section
           title={actorLabel}
           aria-label={actorLabel}
-          className="streamer rounded-full outline-2 outline-offset-1 outline-dashed outline-tertiary"
+          className="rounded-full outline-2 outline-offset-1 outline-dashed outline-tertiary"
         >
           <KeyAvatar
             person={identityPerson(identity.useP2p.getState().ik ?? identity.localId, 'own')}
             size={24}
+            covered
           />
         </span>
       )}
@@ -942,11 +942,8 @@ function ServerInviteRowsBody() {
                     <Name as="p" of={roomName(i.name)} look="truncate text-sm font-medium" />
                     <AboutLine text={i.about.text} oneLine />
                     <p className="truncate text-xs text-on-surface-variant">
-                      From{' '}
-                      <span className="streamer">
-                        {c ? <Masked text={displayName(c)} /> : 'a contact'}
-                      </span>
-                      . Someone in it must be online to let you in.
+                      From {c ? <Name of={p2pName(displayName(c))} /> : 'a contact'}. Someone in it
+                      must be online to let you in.
                     </p>
                   </div>
                   <Button onClick={() => void p2pServer.declineInvite(i.room)}>Decline</Button>

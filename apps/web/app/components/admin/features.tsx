@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from '../covered'
 import { NameInput } from '../name'
 
 import { useId, useState, type ReactNode } from 'react'
@@ -285,7 +286,9 @@ function NamesControl({ row }: { row: AdminRow }) {
                   text="sm"
                   place="max-w-full min-w-0"
                 >
-                  <span className="streamer min-w-0 break-all">{entry}</span>
+                  <Covered what="value" look="min-w-0 break-all">
+                    {entry}
+                  </Covered>
                   <IconButton
                     icon={X}
                     label="Remove from the list"

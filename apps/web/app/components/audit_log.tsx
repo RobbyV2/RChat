@@ -1,9 +1,10 @@
 'use client'
 
+import { Covered } from './covered'
 import { IconButton } from './controls'
 import { ask } from '../lib/asks'
 import { personName } from '../lib/names'
-import { Name } from './name'
+import { Name, NameInput } from './name'
 
 import { useEffect, useState } from 'react'
 import {
@@ -245,7 +246,7 @@ function ActorField({
   }
   return (
     <div className="relative col-span-2 sm:col-span-1">
-      <input
+      <NameInput
         type="text"
         value={text}
         onChange={e => {
@@ -260,7 +261,8 @@ function ActorField({
         placeholder="Done by"
         title="Only entries by this member. Press Enter to use a username."
         aria-label="Done by"
-        className={`${smallField} ${value ? 'streamer' : ''}`}
+        named={!!value}
+        className={smallField}
       />
       {value && (
         <IconButton
@@ -337,13 +339,13 @@ export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?:
         <span className="block text-sm break-words text-on-surface">
           {sentence(entry).map((p, i) =>
             p.name ? (
-              <span key={i} className="streamer font-medium">
+              <Covered what="names" key={i} look="font-medium">
                 {p.person ? (
                   <AuditPerson part={p} server={server} />
                 ) : (
                   <Masked text={p.text} by={p.by} />
                 )}
-              </span>
+              </Covered>
             ) : (
               <span key={i}>{p.text}</span>
             )
@@ -401,9 +403,9 @@ export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?:
                       <>
                         <Swatch field={c.field} value={c.before} />
                         <span className="text-on-surface-variant line-through decoration-on-surface-variant/60">
-                          <span className={isNameValue(entry, c.field) ? 'streamer' : undefined}>
+                          <Covered what="value" on={isNameValue(entry, c.field)}>
                             {valueText(c.field, c.before)}
-                          </span>
+                          </Covered>
                         </span>
                         {c.after !== null && <span className="text-on-surface-variant"> → </span>}
                       </>
@@ -411,9 +413,9 @@ export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?:
                     {(c.after !== null || c.before === null) && (
                       <span>
                         <Swatch field={c.field} value={c.after} />
-                        <span className={isNameValue(entry, c.field) ? 'streamer' : undefined}>
+                        <Covered what="value" on={isNameValue(entry, c.field)}>
                           {valueText(c.field, c.after)}
-                        </span>
+                        </Covered>
                       </span>
                     )}
                   </dd>
@@ -422,11 +424,14 @@ export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?:
               {facts.map(([label, value]) => (
                 <div key={label} className="contents">
                   <dt className="text-on-surface-variant">{label}</dt>
-                  <dd
-                    className={`break-words text-on-surface ${isNameFact(label) ? 'streamer' : ''}`}
+                  <Covered
+                    as="dd"
+                    what="value"
+                    on={isNameFact(label)}
+                    look="break-words text-on-surface"
                   >
                     {value}
-                  </dd>
+                  </Covered>
                 </div>
               ))}
             </Grid>

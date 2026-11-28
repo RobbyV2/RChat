@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from '../covered'
 import { Name, NameInput } from '../name'
 import { p2pName } from '../../lib/names'
 import { PeerActorTag } from '../view_actor'
@@ -669,7 +670,9 @@ function ModerationLog({ v }: { v: ServerView }) {
                 {l.target && (
                   <>
                     {' '}
-                    <span className={l.targetKind === 'member' ? 'streamer' : ''}>{l.target}</span>
+                    <Covered what="names" on={l.targetKind === 'member'}>
+                      {l.target}
+                    </Covered>
                   </>
                 )}
               </span>
@@ -689,7 +692,10 @@ function ModerationLog({ v }: { v: ServerView }) {
             )}
             {l.facts.map(([k, val]) => (
               <p key={k} className="text-xs text-on-surface-variant">
-                {k}: <span className={k === 'For' ? 'streamer' : ''}>{val}</span>
+                {k}:{' '}
+                <Covered what="names" on={k === 'For'}>
+                  {val}
+                </Covered>
               </p>
             ))}
           </Surface>

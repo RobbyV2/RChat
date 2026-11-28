@@ -8,10 +8,12 @@ import type { Person } from '../lib/people'
 interface Props {
   person: Person
   size?: number
+  // A picture streamer mode hides: the viewer's own, outside a chat.
+  covered?: boolean
 }
 
 // The picture of an account, as the person given is drawn.
-export function UserAvatar({ person, size = 32 }: Props) {
+export function UserAvatar({ person, size = 32, covered = false }: Props) {
   const { username, avatar_kind: avatarKind, avatar_color: avatarColor } = person
   const background = identiconBackground(avatarKind, avatarColor)
   const src = useMemo(
@@ -28,12 +30,12 @@ export function UserAvatar({ person, size = 32 }: Props) {
       width={size}
       height={size}
       style={background ? { background } : undefined}
-      className="shrink-0 rounded-full bg-surface-container-highest"
+      className={`${covered ? 'streamer ' : ''}shrink-0 rounded-full bg-surface-container-highest`}
     />
   ) : (
     <span
       style={{ width: size, height: size, background: avatarColor ?? undefined }}
-      className="flex shrink-0 items-center justify-center rounded-full bg-avatar text-on-avatar"
+      className={`${covered ? 'streamer ' : ''}flex shrink-0 items-center justify-center rounded-full bg-avatar text-on-avatar`}
     >
       <User size={Math.round(size * 0.6)} strokeWidth={2.25} />
     </span>

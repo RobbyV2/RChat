@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from './covered'
 import { handleName, p2pName, roomName, serverName } from '../lib/names'
 import { asAccount, shownUser } from '../lib/people'
 import { personName } from '../lib/names'
@@ -663,10 +664,10 @@ function StageHeader({
           />
           <Row as="span" gap="2xs">
             {active ? 'In call with' : 'Calling'}
-            <span className="streamer truncate font-medium text-on-surface">
+            <Covered what="names" look="truncate font-medium text-on-surface">
               {name}
               {!active && '…'}
-            </span>
+            </Covered>
           </Row>
           <span aria-hidden>·</span>
           <span className="shrink-0">{video ? 'Video call' : 'Voice call'}</span>
@@ -741,9 +742,9 @@ export function DockPlace({ place, peer }: { place: string; peer?: UserRef }) {
   return peer ? (
     <Name of={personName(asAccount(peer, 'call'))} withUsername />
   ) : (
-    <span className="streamer">
+    <Covered what="place">
       <Masked text={place} />
-    </span>
+    </Covered>
   )
 }
 

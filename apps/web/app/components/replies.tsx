@@ -1,6 +1,6 @@
 'use client'
 
-import { personName } from '../lib/names'
+import { personName, p2pName } from '../lib/names'
 import { Name } from './name'
 import { useState, type ReactNode } from 'react'
 import { Forward, Image as ImageIcon, X } from 'lucide-react'
@@ -100,7 +100,6 @@ export function ReplyPreview({
   const viewer = useStore(s => s.me?.username)
   const authorKey = JSON.stringify([viewer, quote.id, quote.author?.username])
   const own = useOwn(quote.author?.username)
-  const streamer = useStore(s => s.streamer)
   const copy = useForwardAccess(
     quote.forward ? { forward: quote.forward, channel_id: null } : null,
     {
@@ -151,14 +150,13 @@ export function ReplyPreview({
       >
         {local ? <KeyAvatar person={author} size={16} /> : <UserAvatar person={author} size={16} />}
         {local ? (
-          <span
-            title={streamer ? undefined : author.username}
-            style={{ color }}
-            className="streamer min-w-0 truncate font-medium text-on-surface"
-          >
-            {quote.mention ? '@' : ''}
-            <Masked text={author.display_name} own={own} />
-          </span>
+          <Name
+            of={p2pName(author.display_name, own)}
+            titled={author.username}
+            color={color}
+            before={quote.mention ? '@' : ''}
+            look="min-w-0 truncate font-medium text-on-surface"
+          />
         ) : (
           <span
             style={{ color }}

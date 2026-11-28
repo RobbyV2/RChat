@@ -1,5 +1,6 @@
 'use client'
 
+import { Covered } from './covered'
 import { ask, sendTo } from '../lib/asks'
 import { asAccount, pictured } from '../lib/people'
 import { instanceName, personCalled, personName } from '../lib/names'
@@ -119,9 +120,13 @@ function SecretBox({
         <p className="text-sm font-medium text-on-surface">{label}</p>
         <Row gap="sm">
           <Surface pad="sm" tone="highest" radius="md" place="min-w-0 flex-1">
-            <code className="streamer font-mono text-xs break-all text-on-surface select-all">
+            <Covered
+              what="secret"
+              as="code"
+              look="font-mono text-xs break-all text-on-surface select-all"
+            >
               {value}
-            </code>
+            </Covered>
           </Surface>
           <IconButton
             icon={copied ? Check : Copy}

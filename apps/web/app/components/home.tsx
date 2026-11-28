@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from './covered'
 import { Name, NameSelect } from './name'
 import { handleName, instanceAddress, instanceName, personCalled } from '../lib/names'
 import { asAccount, identityPerson } from '../lib/people'
@@ -564,7 +565,9 @@ function RecentItem({
       }
       description={
         <Row as="span" gap="xs">
-          <span className="streamer truncate">{where}</span>
+          <Covered what="place" look="truncate">
+            {where}
+          </Covered>
           {p2p && <P2pBadge />}
         </Row>
       }
@@ -865,7 +868,9 @@ function UnreadRow({
         leading={glyph}
         label={
           <Row as="span" gap="xs">
-            <span className={`truncate font-semibold ${streamer ? 'streamer' : ''}`}>{name}</span>
+            <Covered what="names" on={streamer} look="truncate font-semibold">
+              {name}
+            </Covered>
             {p2p && <P2pBadge />}
           </Row>
         }

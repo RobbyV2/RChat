@@ -1,6 +1,6 @@
 'use client'
 import { ask, asked, sendTo } from '../lib/asks'
-import { instanceName } from '../lib/names'
+import { instanceName, accountLabel } from '../lib/names'
 import { Name } from './name'
 import { Loaded, useAccountRequest } from './loaded'
 import { RowsSkeleton } from './skeletons'
@@ -845,9 +845,11 @@ function ImportSections({
             </p>
             <p>
               Attach to{' '}
-              <span className="streamer">
-                {account.store.getState().me?.username}@{new URL(account.conn.origin).host}
-              </span>
+              <Name
+                of={accountLabel(
+                  `${account.store.getState().me?.username}@${new URL(account.conn.origin).host}`
+                )}
+              />
             </p>
             <Button variant="filled" size="md" onClick={() => setTrusted(true)}>
               I trust this app

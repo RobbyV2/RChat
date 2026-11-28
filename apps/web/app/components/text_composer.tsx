@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from './covered'
 import { useRef, useState, type Ref } from 'react'
 import { errorText } from '../lib/store'
 import { Button, LinkButton } from './controls'
@@ -61,7 +62,7 @@ export function TextComposer({
       {reply && (
         <Row gap="sm" justify="between" text="xs">
           <span className="truncate">
-            Reply to <span className="streamer">{reply}</span>
+            Reply to <Covered what="names">{reply}</Covered>
           </span>
           <LinkButton onClick={cancelReply}>Cancel reply</LinkButton>
         </Row>

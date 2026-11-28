@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from './covered'
 import { ask, asked } from '../lib/asks'
 import { Refreshed, useAccountRequest } from './loaded'
 
@@ -122,15 +123,20 @@ function Preview({ source, draft }: { source: ProfileEditorSource; draft: Profil
             >
               {source.avatar(user, 40)}
             </Surface>
-            <span className="streamer truncate text-sm font-semibold text-on-surface">
-              <Masked text={user.display_name} own />
-            </span>
+            <Name
+              of={personCalled(user.display_name, user.username, true)}
+              look="truncate text-sm font-semibold text-on-surface"
+            />
           </Inset>
         </Lift>
         <Inset pad="md" inset="bar">
-          <p className="streamer line-clamp-3 min-h-5 text-xs break-words whitespace-pre-wrap text-on-surface-variant">
+          <Covered
+            what="about"
+            as="p"
+            look="line-clamp-3 min-h-5 text-xs break-words whitespace-pre-wrap text-on-surface-variant"
+          >
             {bio ? <Masked text={bio} own /> : null}
-          </p>
+          </Covered>
         </Inset>
       </div>
     </Grid>
@@ -500,12 +506,14 @@ export function ProfileReset({
               look="truncate text-sm font-medium text-on-surface"
             />
             {source.subtitle !== null && (
-              <p
+              <Covered
+                what="names"
+                as="p"
                 data-profile-reset-who
-                className="streamer truncate text-xs text-on-surface-variant"
+                look="truncate text-xs text-on-surface-variant"
               >
                 <Masked text={source.subtitle} />
-              </p>
+              </Covered>
             )}
           </div>
         </Row>
@@ -547,10 +555,10 @@ export function ProfileReset({
                 <span className="min-w-0">
                   {RESET_LABELS[f]}
                   {f === 'name' && source.name !== null && (
-                    <span className="streamer text-on-surface-variant">
+                    <Covered what="names" look="text-on-surface-variant">
                       {' '}
                       (<Masked text={source.name} />)
-                    </span>
+                    </Covered>
                   )}
                 </span>
               </Row>

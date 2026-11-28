@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from '../covered'
 import { ask, asked } from '../../lib/asks'
 import { Name, NameInput } from '../name'
 import { handleName, personCalled } from '../../lib/names'
@@ -35,9 +36,9 @@ function UserServers({ username }: { username: string }) {
           {pages.items.map(sv => (
             <Surface key={sv.name} tone="base" radius="lg" pad="md">
               <Row gap="sm" wrap>
-                <span className="streamer min-w-24 flex-1 truncate text-sm">
+                <Covered what="names" look="min-w-24 flex-1 truncate text-sm">
                   {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
-                </span>
+                </Covered>
                 <Button onClick={() => void openServer(sv.name)}>Open</Button>
                 <Button onClick={() => openAdmin('servers', sv.name)}>Manage</Button>
               </Row>

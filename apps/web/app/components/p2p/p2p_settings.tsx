@@ -1,6 +1,6 @@
 'use client'
 import { Name, NameInput } from '../name'
-import { instanceName, p2pKey, p2pName } from '../../lib/names'
+import { instanceName, p2pKey, p2pName, accountLabel } from '../../lib/names'
 import { useAccount } from '../../lib/client/react'
 import { confirmIdentityRemoval, identityRecords } from '../../lib/client/identity_enrollment'
 import { client } from '../../lib/client/client'
@@ -154,7 +154,7 @@ function BadgeSetting() {
             'Asking the instance…'
           ) : live && badge ? (
             <>
-              Shown as <span className="streamer">{badge.sub}</span>. Renewed every day.
+              Shown as <Name of={accountLabel(badge.sub)} />. Renewed every day.
             </>
           ) : on ? (
             'On. Waiting for the instance to confirm it.'

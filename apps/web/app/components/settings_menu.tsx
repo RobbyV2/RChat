@@ -1,7 +1,7 @@
 'use client'
 import { OwnLoadNotice } from './own_load'
 import { Name } from './name'
-import { instanceAddress, instanceName, personCalled } from '../lib/names'
+import { instanceAddress, instanceName, personCalled, handleName } from '../lib/names'
 import { asAccount, pictured } from '../lib/people'
 import { useP2p } from '../lib/client/p2p_react'
 
@@ -299,9 +299,16 @@ function AccountCard() {
             of={personCalled(me ? me.display_name : 'Guest', null, true)}
             look="truncate font-medium text-on-surface"
           />
-          <p className="streamer truncate text-sm text-on-surface-variant">
-            {me ? `@${me.username}` : 'Browsing without an account'}
-          </p>
+          {me ? (
+            <Name
+              as="p"
+              of={handleName(me.username, true)}
+              before="@"
+              look="truncate text-sm text-on-surface-variant"
+            />
+          ) : (
+            <p className="truncate text-sm text-on-surface-variant">Browsing without an account</p>
+          )}
         </div>
       </Row>
       <div aria-hidden className="border-t border-outline-variant" />

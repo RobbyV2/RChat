@@ -1,5 +1,6 @@
 'use client'
 
+import { Covered } from './covered'
 import { Button, IconButton } from './controls'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Check, Slash, X } from 'lucide-react'
@@ -272,7 +273,7 @@ export function RuleEditor({
           border="top"
         >
           <p className="text-xs font-medium text-on-surface-variant">
-            Permissions for <span className="streamer">{label(current)}</span>
+            Permissions for <Covered what="role">{label(current)}</Covered>
           </p>
           {src.merges && subjectKind(current, src.everyone) === 'member' && (
             <Row role="group" aria-label="Member rule" gap="2xs" wrap>

@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from './covered'
 import { useP2p } from '../lib/client/p2p_react'
 
 import { useState, useSyncExternalStore } from 'react'
@@ -96,15 +97,15 @@ function OverrideRow({ o, now }: { o: Override; now: number }) {
           <Stack as="span" gap="none" place="min-w-0 flex-1">
             <span className="truncate text-sm text-on-surface">
               {o.prefix}
-              <span className="streamer">
+              <Covered what="names">
                 <Masked text={o.name} own={o.own} />
-              </span>
+              </Covered>
               {o.hint && (
                 <span className="text-on-surface-variant">
                   {' · '}
-                  <span className="streamer">
+                  <Covered what="names">
                     <Masked text={o.hint} />
-                  </span>
+                  </Covered>
                 </span>
               )}
             </span>

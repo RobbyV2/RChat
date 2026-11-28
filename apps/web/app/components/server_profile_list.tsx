@@ -1,5 +1,6 @@
 'use client'
 
+import { Covered } from './covered'
 import type { ReactNode } from 'react'
 import { Button } from './controls'
 import { Stack, Row } from './layout'
@@ -35,7 +36,9 @@ export function ServerProfileRow({ name, onEdit }: { name: ReactNode; onEdit: ()
   return (
     <li className="flex min-h-10 items-center">
       <Row gap="md" place="flex-1">
-        <span className="streamer min-w-0 flex-1 truncate text-sm text-on-surface">{name}</span>
+        <Covered what="names" look="min-w-0 flex-1 truncate text-sm text-on-surface">
+          {name}
+        </Covered>
         <Button onClick={onEdit} place="shrink-0">
           Edit
         </Button>

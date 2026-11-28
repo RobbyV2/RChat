@@ -1,5 +1,6 @@
 'use client'
 
+import { Covered } from './covered'
 import { ask, sendTo } from '../lib/asks'
 import { Button } from './controls'
 import { Name } from './name'
@@ -247,7 +248,9 @@ export function HostedRules({
         {subject.startsWith('u:') ? (
           <Name of={personCalled(nameOf(subject), subject.slice(2))} look="truncate" />
         ) : (
-          <span className={`truncate ${role ? 'streamer' : ''}`}>{label(subject)}</span>
+          <Covered what="role" on={!!role} look="truncate">
+            {label(subject)}
+          </Covered>
         )}
       </>
     )

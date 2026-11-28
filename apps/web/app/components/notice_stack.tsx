@@ -1,5 +1,6 @@
 'use client'
 
+import { Covered } from './covered'
 import { asAccount } from '../lib/people'
 import { IconButton } from './controls'
 import { useCallback, useEffect, useRef, useState, type FocusEvent } from 'react'
@@ -28,9 +29,9 @@ import { Inset, Stack } from './layout'
 
 function Pieces({ pieces }: { pieces: Piece[] }) {
   return pieces.map((p, i) => (
-    <span key={i} className={p.blur ? 'streamer' : undefined}>
+    <Covered key={i} what="names" on={!!p.blur}>
       <Masked text={p.text} />
-    </span>
+    </Covered>
   ))
 }
 

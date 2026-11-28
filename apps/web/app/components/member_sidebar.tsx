@@ -2,7 +2,7 @@
 
 import type { Person } from '../lib/people'
 import { Name } from './name'
-import { personName } from '../lib/names'
+import { personName, p2pName } from '../lib/names'
 import type { Cancel } from '../lib/clock'
 import { useEffect, useMemo, useState } from 'react'
 import { Crown } from 'lucide-react'
@@ -189,9 +189,11 @@ function MemberRow({
           <MemberName user={face.user} color={look.color} icon={icon} />
         ) : (
           <Row as="span" gap="2xs" place="min-w-0">
-            <span className="streamer min-w-0 truncate text-sm" style={{ color: look.color }}>
-              <Masked text={entry.name} own={entry.own} />
-            </span>
+            <Name
+              of={p2pName(entry.name, entry.own)}
+              color={look.color}
+              look="min-w-0 truncate text-sm"
+            />
             <RoleIcon emoji={icon?.emoji} role={icon?.role} />
           </Row>
         )}

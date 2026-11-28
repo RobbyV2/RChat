@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from './covered'
 import { asAccount, pictured } from '../lib/people'
 import { personName, serverCalled } from '../lib/names'
 import { Name } from './name'
@@ -272,9 +273,9 @@ export function ForwardBar({
               {shown.channel !== null && (
                 <>
                   {' > #'}
-                  <span className="streamer font-semibold text-on-surface">
+                  <Covered what="channel" look="font-semibold text-on-surface">
                     <Masked text={shown.channel} own={ownSource} />
-                  </span>
+                  </Covered>
                 </>
               )}
             </>

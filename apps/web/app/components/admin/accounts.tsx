@@ -1,5 +1,6 @@
 'use client'
 
+import { Covered } from '../covered'
 import { ask, asked, sendTo } from '../../lib/asks'
 import { Name, NameInput } from '../name'
 import { handleName, serverCalled } from '../../lib/names'
@@ -64,12 +65,14 @@ export function PasswordReveal({
         <div className="rounded-2xl border border-primary bg-primary-container/30">
           <Surface tone="plain" pad="md">
             <Row gap="sm">
-              <code
+              <Covered
+                what="secret"
+                as="code"
                 data-temp-password
-                className="streamer min-w-0 flex-1 font-mono text-base break-all text-on-surface select-all"
+                look="min-w-0 flex-1 font-mono text-base break-all text-on-surface select-all"
               >
                 {issued.temp_password}
-              </code>
+              </Covered>
               <IconButton
                 icon={copied ? Check : Copy}
                 label={copied ? 'Copied' : 'Copy the password'}
@@ -186,7 +189,7 @@ function RoleToggles({
             const on = roles.includes(role.id)
             return (
               <Chip key={role.id} on={on} onClick={() => onChange(toggledRole(roles, role.id))}>
-                <span className="streamer">{role.name}</span>
+                <Covered what="role">{role.name}</Covered>
               </Chip>
             )
           })}
