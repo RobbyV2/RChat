@@ -1,4 +1,4 @@
-import { hasBit, maskOr } from './perms'
+import { hasBit } from './perms'
 import { ChannelPermBit, Perm, type Channel, type ServerDetail } from './types'
 
 // A channel as an event or an update answer carries it has no `my_perms`: what you hold there
@@ -33,7 +33,7 @@ export interface ChannelCan {
   bypassSlowmode: boolean
 }
 
-const NAMES: Record<keyof ChannelCan, number> = {
+const NAMES: Record<keyof ChannelCan, bigint> = {
   send: ChannelPermBit.SendMessages,
   react: ChannelPermBit.AddReactions,
   attach: ChannelPermBit.AttachFiles,
@@ -50,7 +50,7 @@ const NAMES: Record<keyof ChannelCan, number> = {
 }
 
 // The answers of a channel mask. Without View channels it holds nothing.
-export const canOf = (mask: number): ChannelCan => {
+export const canOf = (mask: bigint): ChannelCan => {
   const seen = hasBit(mask, ChannelPermBit.ViewChannels)
   const out = {} as ChannelCan
   for (const key of Object.keys(NAMES) as (keyof ChannelCan)[])
@@ -67,7 +67,7 @@ const every = (on: boolean): ChannelCan => {
 export const CAN_ALL = every(true)
 export const CAN_NONE = every(false)
 
-const BASE_BITS: number[] = [
+const BASE_BITS: bigint[] = [
   ChannelPermBit.ViewChannels,
   ChannelPermBit.ReadHistory,
   ChannelPermBit.Connect,
@@ -75,7 +75,7 @@ const BASE_BITS: number[] = [
   ChannelPermBit.Video,
   ChannelPermBit.ViewMembers,
 ]
-const SEND_BITS: number[] = [
+const SEND_BITS: bigint[] = [
   ChannelPermBit.SendMessages,
   ChannelPermBit.AddReactions,
   ChannelPermBit.AttachFiles,
@@ -83,18 +83,18 @@ const SEND_BITS: number[] = [
   ChannelPermBit.CreatePolls,
   ChannelPermBit.StartThreads,
 ]
-const MOD_BITS: number[] = [
+const MOD_BITS: bigint[] = [
   Perm.DeleteMessages,
   Perm.MentionEveryone,
   ChannelPermBit.PinMessages,
   ChannelPermBit.BypassSlowmode,
 ]
-const maskOf = (bits: number[]) => bits.reduce((mask, bit) => maskOr(mask, bit), 0)
+const maskOf = (bits: bigint[]) => bits.reduce((mask, bit) => mask | bit, 0n)
 
 // The mask of a hosted channel whose details carry no `my_perms`, from a server that reports
 // none: what its read-only mark and your server permissions say, with Manage messages also
 // pinning and skipping slow mode.
-export const legacyMask = (readOnly: boolean, perms: number): number => {
+export const legacyMask = (readOnly: boolean, perms: bigint): bigint => {
   const messages = hasBit(perms, Perm.DeleteMessages)
   return maskOf([
     ...BASE_BITS,
@@ -115,9 +115,9 @@ export const legacyMask = (readOnly: boolean, perms: number): number => {
 export const unruledMask = (
   channel: Pick<Channel, 'restrict_view' | 'restrict_send'>,
   readOnly: boolean,
-  bits: number
-): number => {
-  const closed: number[] = [
+  bits: bigint
+): bigint => {
+  const closed: bigint[] = [
     ...(channel.restrict_view === true ? [ChannelPermBit.ViewChannels] : []),
     ...(channel.restrict_send === true || readOnly ? SEND_BITS : []),
   ]
@@ -128,7 +128,7 @@ export const unruledMask = (
     ? [...BASE_BITS, ...SEND_BITS, ChannelPermBit.BypassSlowmode]
     : []
   const mask = maskOf([...own, ...pass])
-  return hasBit(mask, ChannelPermBit.ViewChannels) ? mask : 0
+  return hasBit(mask, ChannelPermBit.ViewChannels) ? mask : 0n
 }
 
 // The mask the viewer holds in the hosted channel `channelId`, with their server permissions
@@ -138,9 +138,9 @@ export const unruledMask = (
 export const hostedMask = (
   detail: ServerDetail | undefined,
   channelId: number | null,
-  perms: number,
+  perms: bigint,
   member: boolean
-): number => {
+): bigint => {
   const channel = detail?.channels.find(c => c.id === channelId)
   const marked = channelId !== null && (detail?.read_only?.includes(channelId) ?? false)
   if (member && channel?.my_perms !== undefined) return channel.my_perms
@@ -152,10 +152,10 @@ export const hostedMask = (
 // The mask our identity holds in channel `ch` of a P2P room: 0 unless we are joined, and null
 // while the room or the channel is not loaded here.
 export const p2pMask = (
-  room: { me: string | null; channels: { id: string; perms: number }[] } | undefined,
+  room: { me: string | null; channels: { id: string; perms: bigint }[] } | undefined,
   ch: string
-): number | null => {
+): bigint | null => {
   if (!room) return null
-  if (room.me !== 'join') return 0
+  if (room.me !== 'join') return 0n
   return room.channels.find(c => c.id === ch)?.perms ?? null
 }

@@ -48,16 +48,16 @@ describe('guests in voice', () => {
 })
 
 describe('staff and guests in voice', () => {
-  const Kick = 4
-  const Timeout = 128
+  const Kick = 4n
+  const Timeout = 128n
 
   test('staff get only the actions their permissions allow, on guests only', () => {
-    expect(guestVoiceActions(name, 0, false)).toEqual([])
+    expect(guestVoiceActions(name, 0n, false)).toEqual([])
     expect(guestVoiceActions(name, Kick, false)).toEqual(['disconnect'])
     expect(guestVoiceActions(name, Timeout, false)).toEqual(['mute'])
     expect(guestVoiceActions(name, Timeout, true)).toEqual(['unmute'])
     expect(guestVoiceActions(name, Kick | Timeout, true)).toEqual(['unmute', 'disconnect'])
-    expect(guestVoiceActions('bob', 1023, false)).toEqual([])
+    expect(guestVoiceActions('bob', 1023n, false)).toEqual([])
   })
 
   test('a staff-muted peer is never played, whatever it sends', () => {

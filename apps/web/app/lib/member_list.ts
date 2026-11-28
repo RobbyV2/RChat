@@ -1,6 +1,6 @@
 // Who sees a server's member list, in hosted servers and P2P rooms, through the shared rule of
 // `perms.ts` (`memberListHidden`); the P2P `member_list` register; and the words for both.
-import { fromWire, known, maskOr, memberListHidden, type MembersHidden } from './perms'
+import { fromWire, known, memberListHidden, type MembersHidden } from './perms'
 import { MEMBERS_HIDDEN_LINE as OUTSIDE_LINE, seesMembers } from './profile_choice'
 import { ChannelPermBit } from './types'
 import { isRecord } from './bytes'
@@ -36,8 +36,8 @@ export const P2P_MEMBERS_NOTE =
 interface HostedPlace {
   hide_members?: boolean
   members_visible?: boolean
-  my_perms?: number
-  everyone_perms?: number
+  my_perms?: bigint
+  everyone_perms?: bigint
 }
 
 // Whether the viewer sees a hosted server's member list, in `channel` when given (its
@@ -48,7 +48,7 @@ export const hostedMembersHidden = (p: {
   siteAdmin: boolean
   member: boolean
   detail: HostedPlace | undefined
-  channel?: { my_perms?: number } | null
+  channel?: { my_perms?: bigint } | null
 }): MembersHidden | null => {
   const { siteOn, siteAdmin, member, detail, channel } = p
   if (detail?.hide_members === undefined)
@@ -64,13 +64,13 @@ export const hostedMembersHidden = (p: {
     return memberListHidden(
       {
         kind: 'visitor',
-        everyone: detail.everyone_perms ?? 0,
+        everyone: detail.everyone_perms ?? 0n,
         ...(here === undefined ? {} : { here }),
       },
       place
     )
   return memberListHidden(
-    { kind: 'member', server: detail.my_perms ?? 0, ...(here === undefined ? {} : { here }) },
+    { kind: 'member', server: detail.my_perms ?? 0n, ...(here === undefined ? {} : { here }) },
     place
   )
 }
@@ -164,11 +164,14 @@ export const p2pMembersHidden = (
   const place = { site: siteOn, hide: list.hide, outside: true }
   const roles = list.roles
   if (v.me !== 'join')
-    return memberListHidden({ kind: 'visitor', everyone: roles === null ? VIEW_MEMBERS : 0 }, place)
+    return memberListHidden(
+      { kind: 'visitor', everyone: roles === null ? VIEW_MEMBERS : 0n },
+      place
+    )
   const mine = v.members.find(m => m.ik === me)?.roles ?? []
   const holds = roles === null || mine.some(r => roles.includes(r))
   const bits = v.owners.includes(me) ? known(v.rules) : fromWire(v.perms, v.rules)
-  const server = holds ? maskOr(bits, VIEW_MEMBERS) : bits
-  const here = holds && !(ch !== null && list.channels.includes(ch)) ? VIEW_MEMBERS : 0
+  const server = holds ? bits | VIEW_MEMBERS : bits
+  const here = holds && !(ch !== null && list.channels.includes(ch)) ? VIEW_MEMBERS : 0n
   return memberListHidden({ kind: 'member', server, ...(ch === null ? {} : { here }) }, place)
 }

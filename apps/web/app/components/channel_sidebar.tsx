@@ -753,7 +753,7 @@ export function ChannelSidebar() {
 
   const view = useStore(s => s.view)
   const ownServer = useOwnServer(view?.kind === 'channel' ? view.server : null)
-  const perms = useStore(s => (s.view?.kind === 'channel' ? myPerms(s, s.view.server) : 0))
+  const perms = useStore(s => (s.view?.kind === 'channel' ? myPerms(s, s.view.server) : 0n))
   const panelPerms = useStore(s =>
     s.view?.kind === 'channel' ? serverAdminPerms(s, s.view.server) : 0
   )

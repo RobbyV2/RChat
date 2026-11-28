@@ -37,7 +37,7 @@ const GUEST = '@guest:3f9a1c2b00000000'
 
 // Alice in the server `s`; her role carries `perms`. `hushed`: the guest is muted for everyone
 // in voice channel 3.
-const staff = (perms: number, hushed = false, over: Partial<RChatState> = {}) =>
+const staff = (perms: bigint, hushed = false, over: Partial<RChatState> = {}) =>
   put({
     token: Secret.of('tok'),
     guest: false,
@@ -101,7 +101,7 @@ describe("staff's menu of a guest in voice", () => {
     expect(rows()).toEqual([MUTE, DISCONNECT])
     staff(Perm.TimeoutMembers | Perm.Kick, true)
     expect(rows()).toEqual([UNMUTE, DISCONNECT])
-    staff(0, false, { me: me('alice', { is_site_admin: true }) })
+    staff(0n, false, { me: me('alice', { is_site_admin: true }) })
     expect(rows()).toEqual([MUTE, DISCONNECT])
   })
 
@@ -109,7 +109,7 @@ describe("staff's menu of a guest in voice", () => {
     staff(Perm.TimeoutMembers | Perm.Kick)
     expect(open('s', 'bob')).toEqual({ has: false, menu: null })
     expect(open(null)).toEqual({ has: false, menu: null })
-    staff(0)
+    staff(0n)
     expect(open()).toEqual({ has: false, menu: null })
     staff(Perm.ManageChannels | Perm.DeleteMessages)
     expect(open()).toEqual({ has: false, menu: null })

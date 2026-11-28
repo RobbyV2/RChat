@@ -319,7 +319,7 @@ function CardBody({
   const remote = isHomeHost(target.instance, homeHost) ? null : (target.instance as string)
   const live = useStore(s => (server ? memberState(s, server, username) : undefined))
   const serverRoles = useStore(s => (server ? s.servers[server]?.roles : undefined))
-  const mine = useStore(s => (server ? myRolePerms(s, server) : 0))
+  const mine = useStore(s => (server ? myRolePerms(s, server) : 0n))
   const channelLocked = useStore(s =>
     server ? s.servers[server]?.role_limits?.channel_grants : undefined
   )
@@ -333,7 +333,7 @@ function CardBody({
         server)
       : null
   )
-  const perms = useStore(s => (server ? myPerms(s, server) : 0))
+  const perms = useStore(s => (server ? myPerms(s, server) : 0n))
   const rank = useStore(useShallow(s => (server ? myRank(s, server) : undefined)))
   const ranked = useStore(s => (server ? s.servers[server]?.roles_order_confirmed === true : false))
   const timeout = useMemberTimeout(server, username)

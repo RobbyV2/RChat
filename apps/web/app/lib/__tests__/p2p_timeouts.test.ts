@@ -337,20 +337,20 @@ describe('the view of a room with timeouts', () => {
     const { w } = room(false)
     const v = viewOf(summary(w), 'O')
     expect(v.timeouts).toBeUndefined()
-    expect(permItems(v.rules).some(i => i.bit === P.TimeoutMembers)).toBe(false)
+    expect(permItems(v.rules).some(i => i.bit === BigInt(P.TimeoutMembers))).toBe(false)
     expect(viewOf({ ...emptySummary(), rules: RULES_VERSION }, 'O').timeouts).toBeUndefined()
   })
 
   test('the permission is offered for roles and @everyone where timeouts are read', () => {
     const v = viewOf(summary(room().w), 'O')
     expect(v.timeouts).toBe(true)
-    expect(permItems(v.rules).find(i => i.bit === P.TimeoutMembers)).toMatchObject({
+    expect(permItems(v.rules).find(i => i.bit === BigInt(P.TimeoutMembers))).toMatchObject({
       name: 'TimeoutMembers',
-      bit: 16777216,
+      bit: 16777216n,
       hint: 'Stop members from chatting for a while',
     })
-    expect(everyoneItems(v.rules).some(i => i.bit === P.TimeoutMembers)).toBe(true)
-    expect(everyoneItems(RULES_VERSION).some(i => i.bit === P.TimeoutMembers)).toBe(false)
+    expect(everyoneItems(v.rules).some(i => i.bit === BigInt(P.TimeoutMembers))).toBe(true)
+    expect(everyoneItems(RULES_VERSION).some(i => i.bit === BigInt(P.TimeoutMembers))).toBe(false)
   })
 })
 

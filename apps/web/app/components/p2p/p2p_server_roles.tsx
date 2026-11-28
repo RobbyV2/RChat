@@ -109,14 +109,17 @@ const bitSwitches = (identity: P2pApp) => (v: ServerView, role: string, value: n
   const rules = v.rules
   const own = ownsP2pServer(v, identity.useP2p.getState().me)
   return {
-    value,
-    blockOf: (next: number) =>
-      rules >= RULES_NEXT
+    value: BigInt(value),
+    blockOf: (to: bigint) => {
+      const next = Number(to)
+      return rules >= RULES_NEXT
         ? bitsBlock(fromWire(v.perms, rules), own, fromWire(value, rules), fromWire(next, rules))
         : (next & ~value & ~v.perms) === 0
           ? null
-          : NO_GRANT,
-    onChange: (next: number) => {
+          : NO_GRANT
+    },
+    onChange: (to: bigint) => {
+      const next = Number(to)
       const bit = next ^ value
       void p2pServer.setRoleBit(v.id, role, bit, (next & bit) !== 0)
     },
@@ -668,18 +671,23 @@ function ChannelAccessBody({
     everyone,
     rows: Object.entries(over)
       .filter(([subj]) => subj.startsWith('r:') || subj.startsWith('u:'))
-      .map(([subject, o]) => ({ subject, allow: o.allow, deny: o.deny, merge: false })),
-    canonical: bits => fromWire(bits, rules),
+      .map(([subject, o]) => ({
+        subject,
+        allow: BigInt(o.allow),
+        deny: BigInt(o.deny),
+        merge: false,
+      })),
+    canonical: bits => fromWire(Number(bits), rules),
     mine: maskIn(over, channel),
     also: cat ? v.channels.filter(c => c.cat === cat.id && c.sync).map(c => maskIn(c.over, c)) : [],
     exempt: rules < RULES_NEXT || own,
     subjectOk: subj => mayWriteRow(v, subj),
     lock: subj => (mayWriteRow(v, subj) ? null : ROLE_LOCKED),
     merges: false,
-    write: (subj, o) => write(subj, o),
+    write: (subj, o) => write(subj, { allow: Number(o.allow), deny: Number(o.deny) }),
     clear: subj => write(subj, { allow: 0, deny: 0 }),
-    everyoneBits: v.everyone ?? 0,
-    roleBits: Object.fromEntries((v.roles ?? []).map(r => [`r:${r.id}`, r.bits])),
+    everyoneBits: BigInt(v.everyone ?? 0),
+    roleBits: Object.fromEntries((v.roles ?? []).map(r => [`r:${r.id}`, BigInt(r.bits)])),
     memberRoles: subj =>
       (v.members.find(m => `u:${m.ik}` === subj)?.roles ?? []).map(r => `r:${r}`),
     memberWho: subj =>

@@ -16,7 +16,7 @@ afterEach(() => {
 
 // The settings of `name` for alice: the owner, a member admin with only `perms`, or a plain
 // member for 0.
-const open = (perms: number | 'owner', name = 'garden', section?: ServerSettingsSection) => {
+const open = (perms: bigint | 'owner', name = 'garden', section?: ServerSettingsSection) => {
   Object.assign(initial, {
     token: 'tok',
     me: me('alice', {
@@ -26,7 +26,7 @@ const open = (perms: number | 'owner', name = 'garden', section?: ServerSettings
     members:
       perms === 'owner'
         ? {}
-        : { [name]: paged([member('alice', perms === 0 ? {} : { is_admin: true, perms })]) },
+        : { [name]: paged([member('alice', perms === 0n ? {} : { is_admin: true, perms })]) },
     activeDialog: section
       ? { kind: 'server_settings', server: name, section }
       : { kind: 'server_settings', server: name },
@@ -112,6 +112,6 @@ describe('hosted server settings', () => {
   })
 
   test('nobody without a permission in the server gets them', () => {
-    expect(open(0)).toBe('')
+    expect(open(0n)).toBe('')
   })
 })

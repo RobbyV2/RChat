@@ -45,7 +45,7 @@ const talk: Channel = { id: 3, name: 'talk', kind: 'voice', slowmode_seconds: 0 
 const chat = { id: 7, name: 'Chat', position: 0 }
 
 interface State {
-  perms?: number
+  perms?: bigint
   guest?: boolean
   unread?: boolean
   notify?: NotifyPrefs
@@ -69,7 +69,7 @@ const railState = (o: State = {}) => {
     servers: {
       s: serverDetail('s', {
         display_name: 'Space',
-        roles: [role(1, '#f00', o.perms ?? 0)],
+        roles: [role(1, '#f00', o.perms ?? 0n)],
         channels: o.channels ?? [general, random, talk],
         categories: [chat],
       }),
@@ -180,7 +180,7 @@ const effects = async (rows: ContextMenuItem[]) => {
 }
 
 test('server icon, member', () => {
-  railState({ perms: 0 })
+  railState({ perms: 0n })
   expect(labels(serverAt('s', null, 0))).toEqual([
     'Mark as read',
     'Mute Server',
@@ -363,7 +363,7 @@ test('a folder', async () => {
 })
 
 test('the home button offers only mark all, dimmed when nothing is unread', async () => {
-  railState({ perms: 0, unread: false })
+  railState({ perms: 0n, unread: false })
   const account = getHomeSession()
   useStore.setState(s => ({ settings: { ...s.settings, p2p: true } }))
   account.identities.setAccount('alice')
@@ -569,12 +569,12 @@ test('a category, as a member and as a manager', async () => {
 
 test('a separator, as a member and as a manager', async () => {
   const news = { id: 4, label: 'News', style: 'dots' as const, category_id: null, after: 1 }
-  const withSeparator = (perms: number) => {
+  const withSeparator = (perms: bigint) => {
     railState({ perms })
     useStore.setState(s => ({ servers: { s: { ...s.servers.s, separators: [news] } } }))
   }
   const separatorAt: Target = { kind: 'separator', server: 's', separator: news }
-  withSeparator(0)
+  withSeparator(0n)
   expect(labels(separatorAt)).toEqual([])
   withSeparator(Perm.ManageChannels)
   expect(labels(separatorAt)).toEqual([

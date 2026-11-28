@@ -3,7 +3,7 @@
 import { SwitchRow } from './controls'
 import { useState } from 'react'
 import { groupItems, matchItems, type PermItem } from '../lib/perm_source'
-import { hasBit, maskXor } from '../lib/perms'
+import { hasBit } from '../lib/perms'
 import { Stack } from './layout'
 import { fieldCls } from './ui'
 
@@ -17,9 +17,9 @@ export function PermGroups({
   locked,
 }: {
   items: PermItem[]
-  value: number
-  onChange: (next: number) => void
-  blockOf?: (next: number) => string | null
+  value: bigint
+  onChange: (next: bigint) => void
+  blockOf?: (next: bigint) => string | null
   locked?: string | null
 }) {
   const [q, setQ] = useState('')
@@ -43,7 +43,7 @@ export function PermGroups({
           </p>
           {g.items.map(item => {
             const on = hasBit(value, item.bit)
-            const next = maskXor(value, item.bit)
+            const next = value ^ item.bit
             const block = locked ?? blockOf?.(next) ?? null
             return (
               <SwitchRow

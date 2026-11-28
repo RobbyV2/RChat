@@ -23,7 +23,7 @@ import {
 } from './group_pings'
 import { lockState } from './profile_reset'
 import { CAN_ALL, canOf, hostedMask, type ChannelCan } from './channel_perms'
-import { hasBit, maskAnd, type Rank } from './perms'
+import { hasBit, type Rank } from './perms'
 import { STAFF, memberRank, outranks, outranksKnown, roleRank } from './hierarchy'
 import { canChangeRole, memberPerms, rolePerms, type Order } from './rules'
 import { shownParts } from './server_profile'
@@ -68,22 +68,22 @@ export const memberOf = (s: RChatState, server: string, username: string): Membe
 export const TIMED_OUT_PERMS = Perm.ViewAuditLog
 
 // Your own permissions in `server` as a member; while you are timed out, only the read ones.
-export const serverAdminPerms = (s: RChatState, server: string): number => {
+export const serverAdminPerms = (s: RChatState, server: string): bigint => {
   const { me } = s
-  if (!me) return 0
+  if (!me) return 0n
   const row = memberOf(s, server, me.username)
   const perms = row
     ? memberPerms(row, s.servers[server]?.roles ?? [])
     : (me.servers.find(x => x.name === server)?.is_admin ?? false)
       ? ALL_PERMS
-      : 0
-  return myTimeoutEnds(s, server) === null ? perms : maskAnd(perms, TIMED_OUT_PERMS)
+      : 0n
+  return myTimeoutEnds(s, server) === null ? perms : perms & TIMED_OUT_PERMS
 }
 
-export const myRolePerms = (s: RChatState, server: string): number =>
+export const myRolePerms = (s: RChatState, server: string): bigint =>
   rolePerms(s.me ? memberOf(s, server, s.me.username) : undefined, s.servers[server]?.roles ?? [])
 
-export const myPerms = (s: RChatState, server: string): number =>
+export const myPerms = (s: RChatState, server: string): bigint =>
   s.me?.is_site_admin ? ALL_PERMS : serverAdminPerms(s, server)
 
 // Your rank in `server`, when it orders its roles and your own roles are loaded.
@@ -116,7 +116,7 @@ export const channelCan = (
 ): ChannelCan => (server === null ? CAN_ALL : canOf(channelMask(s, server, channelId)))
 
 // The mask behind `channelCan`.
-export const channelMask = (s: RChatState, server: string, channelId: number | null): number =>
+export const channelMask = (s: RChatState, server: string, channelId: number | null): bigint =>
   hostedMask(
     s.servers[server],
     channelId,

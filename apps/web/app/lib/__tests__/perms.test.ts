@@ -11,13 +11,13 @@ const perms = (server: string) => serverAdminPerms(useStore.getState(), server)
 
 describe('serverAdminPerms', () => {
   test('no me -> 0', () => {
-    expect(perms('s')).toBe(0)
+    expect(perms('s')).toBe(0n)
   })
 
   test('loaded admin row with perms 0 -> ALL_PERMS', () => {
     useStore.setState({
       me: me('alice'),
-      members: { s: paged([member('alice', { is_admin: true, perms: 0 })]) },
+      members: { s: paged([member('alice', { is_admin: true, perms: 0n })]) },
     })
     expect(perms('s')).toBe(ALL_PERMS)
   })
@@ -50,7 +50,7 @@ describe('serverAdminPerms', () => {
       members: { s: paged([member('alice', { is_admin: false, role_ids: [] })]) },
       servers: { s: serverDetail('s', { roles: [role(1, '#f00', Perm.Kick)] }) },
     })
-    expect(perms('s')).toBe(0)
+    expect(perms('s')).toBe(0n)
   })
 
   test('no loaded row falls back to me.servers is_admin', () => {
@@ -65,7 +65,7 @@ describe('serverAdminPerms', () => {
         servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }],
       }),
     })
-    expect(perms('s')).toBe(0)
+    expect(perms('s')).toBe(0n)
   })
 })
 
@@ -73,7 +73,7 @@ describe('myPerms site-admin shortcut', () => {
   test('site admin gets ALL_PERMS even with no membership', () => {
     useStore.setState({ me: me('root', { is_site_admin: true }) })
     expect(myPerms(useStore.getState(), 's')).toBe(ALL_PERMS)
-    expect(serverAdminPerms(useStore.getState(), 's')).toBe(0)
+    expect(serverAdminPerms(useStore.getState(), 's')).toBe(0n)
   })
 
   test('non site admin defers to serverAdminPerms', () => {
@@ -86,7 +86,7 @@ describe('myPerms site-admin shortcut', () => {
 })
 
 describe('roleColor topmost', () => {
-  const roles = [role(1, '#111', 0), role(2, '#222', 0), role(3, '#333', 0)]
+  const roles = [role(1, '#111', 0n), role(2, '#222', 0n), role(3, '#333', 0n)]
 
   test('picks lowest-id (topmost) matching role', () => {
     expect(roleColor(roles, [3, 2])).toBe('#222')

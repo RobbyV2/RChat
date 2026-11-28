@@ -1,5 +1,5 @@
 import { ALL_PERMS, type Member, type Role } from './types'
-import { maskAnd, maskNot, type Rank } from './perms'
+import { type Rank } from './perms'
 
 // Ranks on hosted servers, as the shared permission rules order them: an admin with every
 // permission is an owner, another admin ranks by its permission set, anyone else by the highest
@@ -28,9 +28,9 @@ const above = (a: Rank, b: Rank) =>
 export const memberRank = (member: RankedMember | null | undefined, roles: RankedRole[]): Rank => {
   if (!member) return { tier: 'outside' }
   if (member.is_admin)
-    return member.perms === 0
+    return member.perms === 0n
       ? { tier: 'owner' }
-      : { tier: 'admin', adminMask: maskAnd(member.perms, ALL_PERMS) }
+      : { tier: 'admin', adminMask: member.perms & ALL_PERMS }
   const held = roles.filter(r => member.role_ids.includes(r.id)).map(roleRank)
   return held.reduce<Rank>((top, r) => (top.tier === 'role' && !above(r, top) ? top : r), {
     tier: 'plain',
@@ -52,8 +52,8 @@ export const outranks = (a: Rank, b: Rank): boolean => {
   if (a.tier !== b.tier) return TIERS.indexOf(a.tier) > TIERS.indexOf(b.tier)
   if (a.tier === 'role') return above(a, b)
   if (a.tier !== 'admin') return false
-  const [mine, theirs] = [a.adminMask ?? 0, b.adminMask ?? 0]
-  return mine !== theirs && maskAnd(theirs, maskNot(mine)) === 0
+  const [mine, theirs] = [a.adminMask ?? 0n, b.adminMask ?? 0n]
+  return mine !== theirs && (theirs & ~mine) === 0n
 }
 
 // The role order (highest first) with `id` moved one step up (`step` -1) or down (1): it trades

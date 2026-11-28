@@ -167,13 +167,13 @@ export interface ActionInput {
   self: boolean
   siteAdmin: boolean
   inServer: boolean
-  perms: number
-  member: { is_admin: boolean; perms: number } | null
-  targetPerms: number
+  perms: bigint
+  member: { is_admin: boolean; perms: bigint } | null
+  targetPerms: bigint
   channelLocked?: number[]
   channelDenies?: number[]
-  targetRolePerms?: number
-  myRolePerms?: number
+  targetRolePerms?: bigint
+  myRolePerms?: bigint
   timedOut?: boolean
   // The server shows server profiles, and a moderator's lock on this member's runs.
   profiles?: boolean
@@ -192,8 +192,8 @@ export const profileActions = ({
   perms,
   member,
   targetPerms,
-  targetRolePerms = 0,
-  myRolePerms = 0,
+  targetRolePerms = 0n,
+  myRolePerms = 0n,
   timedOut = false,
   profiles = false,
   profileLocked = false,

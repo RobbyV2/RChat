@@ -42,7 +42,7 @@ const member = (profile?: MemberLook): Member => ({
   is_admin: false,
   is_creator: false,
   online: false,
-  perms: 0,
+  perms: 0n,
   role_ids: [],
   ...(profile ? { profile } : {}),
 })

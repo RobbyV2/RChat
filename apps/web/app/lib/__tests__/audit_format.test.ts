@@ -52,11 +52,11 @@ describe('permission diffs', () => {
       added: ['Manage roles'],
       removed: [],
     })
-    expect(diffOf(Perm.Kick + Perm.PinMessages, 0, items).removed).toEqual([
+    expect(diffOf(Perm.Kick + Perm.PinMessages, 0n, items).removed).toEqual([
       'Kick and ban',
       'Pin messages',
     ])
-    expect(bitNames(0, items)).toEqual([])
+    expect(bitNames(0n, items)).toEqual([])
   })
 
   test('a stored diff is read defensively', () => {

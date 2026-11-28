@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { resetSessionCaches, useStore } from '../store'
 import { Perm, type Member, type Role, type ServerDetail, type WsEvent } from '../types'
 import { me, member, role, serverDetail, until } from './fixtures'
+import { writeJson } from '../api/masks'
 
 let clock: ManualTime
 beforeEach(() => {
@@ -26,7 +27,7 @@ let hold: Promise<void> | null = null
 let stale: Member[] = []
 
 const ranked = (id: number, position: number, over: Partial<Role> = {}): Role => ({
-  ...role(id, `#00000${id}`, 0),
+  ...role(id, `#00000${id}`, 0n),
   name: `r${id}`,
   position,
   ...over,
@@ -62,14 +63,13 @@ beforeEach(() => {
     const list = groups[key] ?? []
     if (hold) await hold
     if (url.pathname.endsWith('/members') && (p.get('top_hoisted') || p.get('unhoisted')))
-      return new Response(JSON.stringify(list), { status: 200 })
+      return new Response(writeJson(list), { status: 200 })
     if (url.pathname.endsWith('/members') && p.getAll('usernames').length) {
       const rows = p.getAll('usernames').flatMap(n => (directory[n] ? [directory[n]] : []))
-      return new Response(JSON.stringify(rows), { status: 200 })
+      return new Response(writeJson(rows), { status: 200 })
     }
-    if (url.pathname.endsWith('/members'))
-      return new Response(JSON.stringify(stale), { status: 200 })
-    return new Response(JSON.stringify(server()), { status: 200 })
+    if (url.pathname.endsWith('/members')) return new Response(writeJson(stale), { status: 200 })
+    return new Response(writeJson(server()), { status: 200 })
   }) as typeof fetch
   useStore.setState({
     guest: false,

@@ -39,7 +39,7 @@ const hosted = (account: AccountSession, server: string): PlaceSettings => {
         ] as const
       },
       ([here, perms, profiles]) => {
-        if (!here || perms === 0) return null
+        if (!here || perms === 0n) return null
         const viewer = { perms, builtin: server === 'rchat', profiles }
         return serverSettingsSections(viewer).map((id): SettingsSection => ({
           id,

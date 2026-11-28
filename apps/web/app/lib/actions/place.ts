@@ -236,7 +236,7 @@ const jumpToDate = async ({ acct, s }: ActionCtx, date: string) => {
 const textChannel = ({ channel }: ActionCtx) => channel?.kind === 'text'
 
 const may =
-  (...perms: number[]) =>
+  (...perms: bigint[]) =>
   ({ s, server }: ActionCtx) =>
     signedIn(s) && server !== null && perms.some(p => hasPerm(myPerms(s, server), p))
 
@@ -394,7 +394,7 @@ export const placeActions: Action[] = [
     group: 'settings',
     icon: Settings,
     available: ({ s, server }) =>
-      signedIn(s) && server !== null && serverAdminPerms(s, server) !== 0,
+      signedIn(s) && server !== null && serverAdminPerms(s, server) !== 0n,
     run: ({ acct, server }) => {
       if (server) acct.store.getState().openDialog({ kind: 'server_settings', server })
     },

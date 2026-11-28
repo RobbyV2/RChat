@@ -21,11 +21,11 @@ export interface PermsDiff {
 }
 
 // The names of the permissions in `bits`, as `items` label them.
-export const bitNames = (bits: number, items: readonly PermItem[]) =>
+export const bitNames = (bits: bigint, items: readonly PermItem[]) =>
   items.filter(i => hasBit(bits, i.bit)).map(i => i.label)
 
 // What a change of permissions from `before` to `after` turns on and off, by name.
-export const diffOf = (before: number, after: number, items: readonly PermItem[]): PermsDiff => ({
+export const diffOf = (before: bigint, after: bigint, items: readonly PermItem[]): PermsDiff => ({
   added: items.filter(i => hasBit(after, i.bit) && !hasBit(before, i.bit)).map(i => i.label),
   removed: items.filter(i => hasBit(before, i.bit) && !hasBit(after, i.bit)).map(i => i.label),
 })
@@ -96,7 +96,7 @@ export const RUN_MS = 60_000
 
 const text = (v: unknown) => (typeof v === 'string' ? v : null)
 
-const wire = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) ? v : 0)
+const wire = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) ? BigInt(v) : 0n)
 
 const roleName = (id: string, n: LogNames) =>
   id === 'everyone' ? '@everyone' : (n.role(id) ?? 'Deleted role')
@@ -159,7 +159,7 @@ const lineOf = (e: LogEvent, n: LogNames): LogLine => {
       return {
         ...base,
         ...ofRole(role),
-        facts: diffFacts(diffOf(on ? 0 : bit, on ? bit : 0, n.items)),
+        facts: diffFacts(diffOf(on ? 0n : bit, on ? bit : 0n, n.items)),
       }
     }
     case 'chperm': {
@@ -243,8 +243,8 @@ export function logLines(events: readonly LogEvent[], n: LogNames): LogLine[] {
     if (run.length > 1 && first.t === 'role_bits') {
       // Each bit as the run leaves it (its newest event) against before it (its oldest event
       // turned it over).
-      let added = 0
-      let removed = 0
+      let added = 0n
+      let removed = 0n
       for (const bit of new Set(run.map(e => wire(e.c.bit)))) {
         const of = run.filter(e => wire(e.c.bit) === bit)
         const after = of[0].c.on === true

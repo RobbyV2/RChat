@@ -1,7 +1,10 @@
 import { useRef } from 'react'
 
-// A text that is equal for two values with the same content, for dependency lists.
-export const stableKey = (value: unknown): string => JSON.stringify(value) ?? ''
+// A text that is equal for two values with the same content, for dependency lists. A permission
+// mask reads as its digits with an `n`.
+export const stableKey = (value: unknown): string =>
+  JSON.stringify(value, (_key, part: unknown) => (typeof part === 'bigint' ? `${part}n` : part)) ??
+  ''
 
 interface Held<T> {
   key: string

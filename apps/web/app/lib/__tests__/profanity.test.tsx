@@ -597,8 +597,8 @@ describe('in messages', () => {
         owners: [],
         rank: [0],
         roles: [
-          { id: 'R1', name: 'shit crew', below: true },
-          { id: 'R2', name: 'shit squad', below: true },
+          { id: 'R1', name: 'shit crew', below: true, bits: 0 },
+          { id: 'R2', name: 'shit squad', below: true, bits: 0 },
         ],
         members: people,
         channels: [],

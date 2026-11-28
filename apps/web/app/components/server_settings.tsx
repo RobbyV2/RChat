@@ -23,7 +23,7 @@ import { registerAppActions } from '../lib/actions'
 import { itemFor, openActionMenu, openChoiceMenu } from '../lib/actions/menu'
 import { ctxFor } from '../lib/actions/ctx'
 import type { Target } from '../lib/actions/types'
-import { baseBits, maskXor } from '../lib/perms'
+import { baseBits } from '../lib/perms'
 import { droppedOrder } from '../lib/hierarchy'
 import { REASON_MAX } from '../lib/reasons'
 import { HOSTED } from '../lib/perms'
@@ -149,7 +149,7 @@ const roleTarget = (
   role: Role,
   roles: Role[],
   version: number,
-  limit: number | undefined,
+  limit: bigint | undefined,
   limits: RoleLimits | undefined,
   after: () => void
 ): Target => {
@@ -189,7 +189,7 @@ function RoleRow({
   roles: Role[]
   version?: number
   refresh?: () => void
-  limit?: number
+  limit?: bigint
   limits?: RoleLimits
 }) {
   const acct = useAccount()
@@ -360,7 +360,7 @@ function RoleRow({
 }
 
 // What every member holds, last on the Roles page.
-function EveryoneRow({ server, limit }: { server: string; limit?: number }) {
+function EveryoneRow({ server, limit }: { server: string; limit?: bigint }) {
   const {
     lifetime: { inSession },
   } = useAccount()
@@ -369,7 +369,7 @@ function EveryoneRow({ server, limit }: { server: string; limit?: number }) {
   const exempt = useStore(s => {
     const me = s.me
     const m = me ? memberState(s, server, me.username) : null
-    return limit === undefined || (m?.is_admin === true && m.perms === 0)
+    return limit === undefined || (m?.is_admin === true && m.perms === 0n)
   })
   const setEveryonePerms = useStore(s => s.setEveryonePerms)
   const [open, setOpen] = useState(false)
@@ -389,9 +389,9 @@ function EveryoneRow({ server, limit }: { server: string; limit?: number }) {
         <PermGroups
           items={everyoneItems(HOSTED)}
           value={value}
-          blockOf={next => bitsBlock(mine ?? limit ?? 0, exempt, value, next)}
+          blockOf={next => bitsBlock(mine ?? limit ?? 0n, exempt, value, next)}
           onChange={next =>
-            void setEveryonePerms(server, next, maskXor(value, next)).then(inSession(() => {}))
+            void setEveryonePerms(server, next, value ^ next).then(inSession(() => {}))
           }
         />
       )}
@@ -411,7 +411,7 @@ export function RolesEditor({
   roles: Role[]
   version?: number
   refresh?: () => void
-  limit?: number
+  limit?: bigint
   limits?: RoleLimits
 }) {
   const acct = useAccount()
@@ -514,7 +514,7 @@ function RoleCreate({ server, refresh }: { server: string; refresh?: () => void 
   return (
     <RoleCreateForm
       onCreate={(name, color) =>
-        createRole(server, { name, color, perms: 0 }).then(inSession(() => refresh?.()))
+        createRole(server, { name, color, perms: 0n }).then(inSession(() => refresh?.()))
       }
     />
   )
@@ -822,7 +822,7 @@ export function ServerAppearance({
   } = account
   const detail = useStore(s => s.servers[server]) ?? fetched
   const theme = useStore(s => s.theme)
-  const showGear = useStore(s => serverAdminPerms(s, server) !== 0)
+  const showGear = useStore(s => serverAdminPerms(s, server) !== 0n)
   const savedBanner = detail?.banner_color ?? null
   const savedName = detail?.name_color ?? null
   const [banner, setBanner] = useState(savedBanner)
@@ -1159,9 +1159,9 @@ export function AdminPermsEditor({
 }: {
   server: string
   username: string
-  perms: number
+  perms: bigint
   refresh?: () => void
-  limit?: number
+  limit?: bigint
 }) {
   const {
     lifetime: { inSession },
@@ -1175,12 +1175,14 @@ export function AdminPermsEditor({
         items={PERM_ITEMS}
         value={value}
         allowed={
-          limit === undefined ? undefined : v => v === 0 || canSetAdminPerms(limit, false, perms, v)
+          limit === undefined
+            ? undefined
+            : v => v === 0n || canSetAdminPerms(limit, false, perms, v)
         }
         onChange={v => {
-          setLastBlocked(v === 0)
-          if (v !== 0)
-            void setAdminPerms(server, username, v === ALL_PERMS ? 0 : v).then(
+          setLastBlocked(v === 0n)
+          if (v !== 0n)
+            void setAdminPerms(server, username, v === ALL_PERMS ? 0n : v).then(
               inSession(() => refresh?.())
             )
         }}
@@ -1444,7 +1446,7 @@ function Settings({ server, section }: { server: string; section: ServerSettings
     void loadMembers(server)
   }, [server, loadMembers])
   const more = useCallback(() => void loadMembers(server), [server, loadMembers])
-  if (!detail || !me || perms === 0) return null
+  if (!detail || !me || perms === 0n) return null
   const loaded = cache?.list ?? []
   const admins = adminList.list
   const others = (found.active ? found.list : loaded).filter(m => !canAdmin || !m.is_admin)

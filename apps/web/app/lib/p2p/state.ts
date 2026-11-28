@@ -1,5 +1,5 @@
 import { bytesOf } from './canonical'
-import { bit, fromWire, hasBit, maskAnd, maskNot, maskOr, outranks as above } from '../perms'
+import { bit, fromWire, hasBit, outranks as above } from '../perms'
 import {
   CHANGE_PROFILE,
   channelPerms,
@@ -244,10 +244,10 @@ export const channelMaskOf = (s: Summary, ik: string, ch: string, F = chanFactsO
   if (rules >= RULES_NEXT || !hasBit(mask, bit('ViewChannels'))) return mask
   const roomWide = ['DeleteMessages', 'PinMessages', 'MentionEveryone']
     .map(bit)
-    .reduce((a, b) => maskOr(a, b), 0)
-  const held = maskAnd(fromWire(permsQ(F, ik), rules), roomWide)
-  const base = maskOr(maskAnd(mask, maskNot(roomWide)), held)
-  return skipsSlowMode(F, ik, ch, rules) ? maskOr(base, bit('BypassSlowmode')) : base
+    .reduce((a, b) => a | b, 0n)
+  const held = fromWire(permsQ(F, ik), rules) & roomWide
+  const base = (mask & ~roomWide) | held
+  return skipsSlowMode(F, ik, ch, rules) ? base | bit('BypassSlowmode') : base
 }
 
 // Roles, the highest first (rank order, position, then id).

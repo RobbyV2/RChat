@@ -9,6 +9,7 @@ import { PERM_ITEMS } from './rules'
 import { slowLabel } from './slowmode'
 import { durationText } from './timeouts'
 import type { AuditEntry } from './types'
+import { stableKey } from './stable_key'
 
 export type AuditGroup = 'member' | 'role' | 'channel' | 'server' | 'access' | 'message' | 'webhook'
 
@@ -112,7 +113,7 @@ const FIELD_LABELS: Record<string, string> = {
 
 export const fieldLabel = (field: string) => FIELD_LABELS[field] ?? field.replaceAll('_', ' ')
 
-export const permNames = (bits: number) => {
+export const permNames = (bits: bigint) => {
   const names = PERM_ITEMS.filter(p => hasBit(bits, p.bit)).map(p => p.label)
   return names.length ? names.join(', ') : 'None'
 }
@@ -122,6 +123,16 @@ const RULE_FIELDS = new Set(['can_view', 'can_send', 'can_read_history'])
 // Masks of a channel rule or of what everyone holds, named (like role and admin permissions) by
 // the shared rules once they are loaded.
 const MASK_FIELDS = new Set(['allow', 'deny', 'everyone_perms'])
+
+// A mask as an entry carries it: read as one by the API client, or a number under a mask field.
+const maskOf = (field: string, v: unknown): bigint | null =>
+  typeof v === 'bigint'
+    ? v
+    : typeof v === 'number' &&
+        Number.isSafeInteger(v) &&
+        (field === 'perms' || MASK_FIELDS.has(field))
+      ? BigInt(v)
+      : null
 
 const PASSWORD_MODES: Record<string, string> = {
   set: 'Set',
@@ -158,14 +169,16 @@ export function valueText(field: string, v: unknown): string {
     if (RULE_FIELDS.has(field)) return v ? 'Allowed' : 'Denied'
     return v ? 'On' : 'Off'
   }
+  const mask = maskOf(field, v)
+  if (mask !== null && loaded()) {
+    const named = permItems(HOSTED).filter(i => hasBit(mask, i.bit))
+    return named.length ? named.map(i => i.label).join(', ') : 'None'
+  }
+  if (mask !== null && field === 'perms') return permNames(mask)
+  if (typeof v === 'bigint') return String(v)
   if (typeof v === 'number') {
     if (field === 'slowmode_seconds') return slowLabel(v)
     if (field === 'upload_expiry') return durationText(v)
-    if ((field === 'perms' || MASK_FIELDS.has(field)) && loaded()) {
-      const named = permItems(HOSTED).filter(i => hasBit(v, i.bit))
-      return named.length ? named.map(i => i.label).join(', ') : 'None'
-    }
-    if (field === 'perms') return permNames(v)
     if (field === 'lock_until' && v >= FOREVER) return 'Until unlocked'
     if (field === 'expires_at' || field === 'until' || field === 'lock_until')
       return new Date(v * 1000).toLocaleString()
@@ -181,7 +194,7 @@ export function valueText(field: string, v: unknown): string {
   }
   const o = obj(v)
   if (o && typeof o.name === 'string') return field.includes('channel') ? `#${o.name}` : o.name
-  return JSON.stringify(v)
+  return stableKey(v)
 }
 
 const FACTS = [

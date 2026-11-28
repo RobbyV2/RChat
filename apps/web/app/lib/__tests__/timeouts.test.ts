@@ -118,9 +118,9 @@ describe('timeouts', () => {
         self: false,
         siteAdmin: false,
         inServer: true,
-        perms: 128,
-        member: { is_admin: false, perms: 0 },
-        targetPerms: 0,
+        perms: 128n,
+        member: { is_admin: false, perms: 0n },
+        targetPerms: 0n,
         timedOut: true,
       })
     ).toEqual(['timeout', 'untimeout'])

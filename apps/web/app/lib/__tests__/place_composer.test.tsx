@@ -552,7 +552,7 @@ placeContract(composer, (kind, world) => {
     expect(moved.gate.get().first).toEqual({ kind: 'moved', at: 5 })
     if (kind === 'p2pRoom') {
       const { ann, room } = world()
-      const joined = (perms: number) => ({
+      const joined = (perms: bigint) => ({
         servers: {
           [room]: {
             id: room,

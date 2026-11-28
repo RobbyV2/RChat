@@ -4,9 +4,6 @@ import {
   checkBitsEdit,
   checkOverwriteEdit,
   hasBit,
-  maskAnd,
-  maskNot,
-  maskOr,
   registry,
   type ChannelRules,
   type Ow,
@@ -99,7 +96,7 @@ export interface PermItem {
   hint?: string
   group: PermGroup
   // The bit in the side's units: a hosted mask bit, or a P2P wire bit.
-  bit: number
+  bit: bigint
   // Channel and category rules can carry it.
   channel: boolean
   // @everyone holds it by default.
@@ -123,7 +120,7 @@ export const permItems = (ruleset: number): PermItem[] =>
         label: text.label ?? b.label,
         ...(text.hint ? { hint: text.hint } : {}),
         group: GROUP_OF[b.name] ?? 'Management',
-        bit: hosted ? b.value : b.p2p!.value,
+        bit: hosted ? b.value : BigInt(b.p2p!.value),
         channel: b.scope === 'channel',
         everyone: b.everyone,
       },
@@ -170,15 +167,15 @@ export type Tri = 'allow' | 'inherit' | 'deny'
 export const TRIS: readonly Tri[] = ['allow', 'inherit', 'deny']
 export const TRI_TEXT: Record<Tri, string> = { allow: 'Allow', inherit: 'Inherit', deny: 'Deny' }
 
-export const triOf = (rule: Ow | undefined, bit: number): Tri =>
+export const triOf = (rule: Ow | undefined, bit: bigint): Tri =>
   rule && hasBit(rule.allow, bit) ? 'allow' : rule && hasBit(rule.deny, bit) ? 'deny' : 'inherit'
 
-export const withTri = (rule: Ow | undefined, bit: number, tri: Tri): Ow => {
-  const r = rule ?? { allow: 0, deny: 0 }
-  const off = (mask: number) => maskAnd(mask, maskNot(bit))
+export const withTri = (rule: Ow | undefined, bit: bigint, tri: Tri): Ow => {
+  const r = rule ?? { allow: 0n, deny: 0n }
+  const off = (mask: bigint) => mask & ~bit
   return {
-    allow: tri === 'allow' ? maskOr(r.allow, bit) : off(r.allow),
-    deny: tri === 'deny' ? maskOr(r.deny, bit) : off(r.deny),
+    allow: tri === 'allow' ? r.allow | bit : off(r.allow),
+    deny: tri === 'deny' ? r.deny | bit : off(r.deny),
   }
 }
 
@@ -190,7 +187,7 @@ export const NOT_BELOW = 'This role or member is not below you'
 // refused for someone who holds `mine` there, through the shared rules; null when it is not.
 // `exempt`: no check applies to them. `subjectOk`: the subject ranks below them.
 export const ruleBlock = (
-  mine: number,
+  mine: bigint,
   exempt: boolean,
   before: Ow | undefined,
   after: Ow | undefined,
@@ -211,10 +208,10 @@ export const ruleBlock = (
 // Why a role's or @everyone's permissions may not go from `before` to `after` (canonical) for
 // someone holding `mine`; null when they may.
 export const bitsBlock = (
-  mine: number,
+  mine: bigint,
   exempt: boolean,
-  before: number,
-  after: number
+  before: bigint,
+  after: bigint
 ): string | null => (checkBitsEdit(mine, exempt, before, after) === null ? null : NO_GRANT)
 
 // A channel or category rule in the side's units.
@@ -238,11 +235,11 @@ export interface RuleSource {
   everyone: string
   rows: RuleRow[]
   // Side units to canonical masks (P2P wire bits through the room's rules).
-  canonical: (bits: number) => number
+  canonical: (bits: bigint) => bigint
   // What we hold where the rules apply (canonical), what we hold in each channel a category's
   // rule is copied to (each change is checked there too), and whether no check applies to us.
-  mine: number
-  also: number[]
+  mine: bigint
+  also: bigint[]
   exempt: boolean
   // The subject ranks below us; `lock`: why nothing of its rule may change, or null.
   subjectOk: (subject: string) => boolean
@@ -254,8 +251,8 @@ export interface RuleSource {
   // For View as: @everyone's server permissions, each role's (by subject, side units), the
   // roles a member subject holds and who they are (an admin or owner), and the place's private
   // and read-only switches.
-  everyoneBits: number
-  roleBits: Record<string, number>
+  everyoneBits: bigint
+  roleBits: Record<string, bigint>
   memberRoles: (subject: string) => string[]
   memberWho?: (subject: string) => Who | undefined
   restrictView: boolean
@@ -291,7 +288,7 @@ const changeBlock = (
 }
 
 // Why setting `bit` of `subject`'s rule to `tri` is refused, or null.
-export const triBlock = (src: RuleSource, subject: string, bit: number, tri: Tri) => {
+export const triBlock = (src: RuleSource, subject: string, bit: bigint, tri: Tri) => {
   const before = rowOf(src, subject)
   return changeBlock(src, subject, before, withTri(before, bit, tri))
 }
@@ -310,11 +307,11 @@ export const modeBlock = (src: RuleSource, subject: string) => {
 // What `subject` holds where the rules apply (canonical): @everyone as a member without roles,
 // a role as a member holding only it, a member as who they are, with the roles they hold and
 // their own rule.
-export const viewAs = (src: RuleSource, subject: string): number => {
+export const viewAs = (src: RuleSource, subject: string): bigint => {
   const kind = subjectKind(subject, src.everyone)
   const held =
     kind === 'role' ? [subject] : kind === 'member' ? src.memberRoles(subject) : ([] as string[])
-  const roles = held.reduce((m, r) => maskOr(m, src.canonical(src.roleBits[r] ?? 0)), 0)
+  const roles = held.reduce((m, r) => m | src.canonical(src.roleBits[r] ?? 0n), 0n)
   const ev = canon(src, rowOf(src, src.everyone))
   const own = kind === 'member' ? rowOf(src, subject) : undefined
   const ch: ChannelRules = {
@@ -340,7 +337,7 @@ export const p2pMaskIn = (
   owner: boolean,
   held: readonly string[],
   ik: string,
-  over: Record<string, Ow>,
+  over: Record<string, { allow: number; deny: number }>,
   place: { restrictView: boolean; restrictSend: boolean },
   rules: number
 ) =>

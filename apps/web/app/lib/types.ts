@@ -10,52 +10,52 @@ import { hasBit } from './perms'
 export type AvatarKind = 'identicon' | 'color'
 
 export const Perm = {
-  ManageChannels: 1,
-  DeleteMessages: 2,
-  Kick: 4,
-  DeleteServer: 8,
-  ManageAdmins: 16,
-  MentionEveryone: 32,
-  ViewAuditLog: 64,
-  TimeoutMembers: 128,
-  ManageWebhooks: 256,
-  ManageReports: 512,
-  ManageServer: 4096,
-  ManageInvites: 8192,
-  ManageRoles: 16384,
-  AssignRoles: 32768,
-  ManageProfiles: 65536,
-  PinMessages: 536870912,
-  BypassSlowmode: 1073741824,
+  ManageChannels: 1n,
+  DeleteMessages: 2n,
+  Kick: 4n,
+  DeleteServer: 8n,
+  ManageAdmins: 16n,
+  MentionEveryone: 32n,
+  ViewAuditLog: 64n,
+  TimeoutMembers: 128n,
+  ManageWebhooks: 256n,
+  ManageReports: 512n,
+  ManageServer: 4096n,
+  ManageInvites: 8192n,
+  ManageRoles: 16384n,
+  AssignRoles: 32768n,
+  ManageProfiles: 65536n,
+  PinMessages: 536870912n,
+  BypassSlowmode: 1073741824n,
 } as const
 
-export const ALL_PERMS = 1610740735
+export const ALL_PERMS = 1610740735n
 
 // The permissions a channel rule can allow or deny besides Manage messages and Mention everyone.
 export const ChannelPermBit = {
-  ViewChannels: 131072,
-  SendMessages: 262144,
-  ReadHistory: 524288,
-  AddReactions: 1048576,
-  AttachFiles: 2097152,
-  EmbedLinks: 4194304,
-  CreatePolls: 8388608,
-  StartThreads: 16777216,
-  Connect: 33554432,
-  Speak: 67108864,
-  Video: 134217728,
-  PinMessages: 536870912,
-  BypassSlowmode: 1073741824,
-  ViewMembers: 34359738368,
+  ViewChannels: 131072n,
+  SendMessages: 262144n,
+  ReadHistory: 524288n,
+  AddReactions: 1048576n,
+  AttachFiles: 2097152n,
+  EmbedLinks: 4194304n,
+  CreatePolls: 8388608n,
+  StartThreads: 16777216n,
+  Connect: 33554432n,
+  Speak: 67108864n,
+  Video: 134217728n,
+  PinMessages: 536870912n,
+  BypassSlowmode: 1073741824n,
+  ViewMembers: 34359738368n,
 } as const
 
 // Change server profile: everyone starts with it, and a role can hold it. No channel rule does.
-export const CHANGE_PROFILE = 268435456
+export const CHANGE_PROFILE = 268435456n
 
 // Every bit a role may hold: the management bits and the ones everyone starts with.
-export const ROLE_BITS = 36507218943
+export const ROLE_BITS = 36507218943n
 
-export const hasPerm = (perms: number, perm: number) => hasBit(perms, perm)
+export const hasPerm = (perms: bigint, perm: bigint) => hasBit(perms, perm)
 
 export interface UserRef {
   username: string
@@ -153,7 +153,7 @@ export interface Channel {
   // Its permission rules copy its category's.
   perm_sync?: boolean
   // What you hold in the channel (server details only; events leave it out).
-  my_perms?: number
+  my_perms?: bigint
 }
 
 // How a category header is drawn: small capitals, or the name as written with a dotted or
@@ -192,7 +192,7 @@ export interface Role {
   id: number
   name: string
   color: string
-  perms: number
+  perms: bigint
   // anyone who can send may mention it
   mentionable?: boolean
   // Place in the server's role order: higher ranks higher.
@@ -213,8 +213,8 @@ export interface ChannelPerm {
   can_send: boolean
   can_read_history: boolean
   // The bits the rule allows and denies, and how a member's rule combines with their roles.
-  allow?: number
-  deny?: number
+  allow?: bigint
+  deny?: bigint
   mode?: 'override' | 'merge'
 }
 
@@ -253,7 +253,7 @@ export interface ServerProfilePatch {
 
 // What a rule is set to: masks, the three flags, or a rule as listed with its flags changed.
 export type ChannelPermInput =
-  | { subject: string; allow: number; deny: number; mode?: 'override' | 'merge' }
+  | { subject: string; allow: bigint; deny: bigint; mode?: 'override' | 'merge' }
   | Pick<ChannelPerm, 'subject' | 'can_view' | 'can_send' | 'can_read_history'>
   | ChannelPerm
 
@@ -261,7 +261,7 @@ export interface Member extends UserRef {
   is_admin: boolean
   is_creator: boolean
   online: boolean
-  perms: number
+  perms: bigint
   role_ids: number[]
   joined_via?: JoinedVia
   timeout?: TimeoutWire
@@ -408,8 +408,8 @@ export interface ServerDetail {
   roles_version?: number
   roles_order_confirmed?: boolean
   // What everyone in the server holds, and what you hold.
-  everyone_perms?: number
-  my_perms?: number
+  everyone_perms?: bigint
+  my_perms?: bigint
   role_limits?: RoleLimits
   member_count: number
   online_count: number
@@ -788,7 +788,7 @@ export interface ServerMatch {
 export interface ProfileMember {
   is_admin: boolean
   is_creator: boolean
-  perms: number
+  perms: bigint
   role_ids: number[]
   roles: Role[]
   joined_at: number
@@ -1332,7 +1332,7 @@ export type WsEvent =
   | { type: 'member_joined'; server: string; member: Member }
   | { type: 'member_left'; server: string; username: string }
   | { type: 'member_kicked'; server: string; username: string; banned: boolean }
-  | { type: 'admin_changed'; server: string; username: string; is_admin: boolean; perms: number }
+  | { type: 'admin_changed'; server: string; username: string; is_admin: boolean; perms: bigint }
   | { type: 'roles_changed'; server: string }
   | { type: 'role_updated'; server: string; role: Role }
   | {

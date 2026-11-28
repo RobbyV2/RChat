@@ -70,7 +70,7 @@ describe('permission registry', () => {
     expect(bits.length).toBeGreaterThan(10)
     for (const b of bits) {
       expect(typeof b.name).toBe('string')
-      expect(Number.isFinite(b.value)).toBe(true)
+      expect(typeof b.value).toBe('bigint')
       expect(['server', 'channel']).toContain(b.scope)
       expect(['live', 'reserved']).toContain(b.hosted)
     }

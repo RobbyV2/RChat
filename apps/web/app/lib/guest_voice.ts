@@ -31,7 +31,7 @@ export type GuestVoiceAction = 'mute' | 'unmute' | 'disconnect'
 // moderated here. Mute needs Timeout members, Disconnect needs Kick.
 export const guestVoiceActions = (
   name: string,
-  perms: number,
+  perms: bigint,
   hushed: boolean
 ): GuestVoiceAction[] => {
   if (!isGuestName(name)) return []

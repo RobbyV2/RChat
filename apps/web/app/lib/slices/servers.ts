@@ -1339,8 +1339,8 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         const rules = (list: ChannelPerm[]) =>
           list.map(r => ({
             subject: r.subject,
-            allow: r.allow ?? 0,
-            deny: r.deny ?? 0,
+            allow: r.allow ?? 0n,
+            deny: r.deny ?? 0n,
             merge: r.mode === 'merge',
           }))
         const members = [...new Set([...before, ...after].map(r => r.subject))]

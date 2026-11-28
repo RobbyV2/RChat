@@ -4,7 +4,7 @@ import { useEffect, useId, useState, type ReactNode } from 'react'
 import { SLOWMODE_MAX } from '../lib/rules'
 import { CUSTOM, SLOWMODE_PRESETS, customSeconds, isPreset, slowLabel } from '../lib/slowmode'
 import { restrictionItems, type RestrictKey } from '../lib/channel_access'
-import { hasBit, maskXor } from '../lib/perms'
+import { hasBit } from '../lib/perms'
 import type { Space } from '../lib/layout'
 import { Button, SwitchRow } from './controls'
 import { Row, Surface } from './layout'
@@ -53,7 +53,7 @@ export const GRANT_NOTE = 'You can only give permissions you have.'
 
 export interface PermItem {
   label: string
-  bit: number
+  bit: bigint
   hint?: string
 }
 
@@ -66,22 +66,22 @@ export function PermChecks({
   locked,
 }: {
   items: PermItem[]
-  value: number
-  onChange: (v: number) => void
-  allowed?: (v: number) => boolean
+  value: bigint
+  onChange: (v: bigint) => void
+  allowed?: (v: bigint) => boolean
   locked?: string | null
 }) {
   return (
     <Row gap="md" wrap>
       {items.map(({ label, bit, hint }) => {
-        const off = !!locked || (allowed !== undefined && !allowed(maskXor(value, bit)))
+        const off = !!locked || (allowed !== undefined && !allowed(value ^ bit))
         return (
           <Row as="label" key={bit} gap="xs" title={off ? (locked ?? GRANT_NOTE) : hint}>
             <input
               type="checkbox"
               checked={hasBit(value, bit)}
               disabled={off}
-              onChange={() => onChange(maskXor(value, bit))}
+              onChange={() => onChange(value ^ bit)}
               className={`accent-primary ${off ? 'opacity-60' : ''}`}
             />
             <span className={`text-sm ${off ? 'opacity-60' : ''}`}>{label}</span>

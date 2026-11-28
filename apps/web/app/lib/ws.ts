@@ -5,6 +5,7 @@ import type { TypingMsg } from './typing'
 import { TO_REQUEST, type Secret } from './secret'
 import { cause, label, logError } from './log'
 import { time } from './platform/time'
+import { readJson } from './api/masks'
 import type { Cancel } from './clock'
 
 const secure = (protocol: string) => protocol === 'https:' || protocol === 'wss:'
@@ -216,7 +217,7 @@ export class WsClient {
     ws.onmessage = e => {
       if (this.ws !== ws) return
       try {
-        this.onEvent(JSON.parse(e.data as string) as WsEvent)
+        this.onEvent(readJson(e.data as string) as WsEvent)
       } catch (err) {
         logError('ws parse', cause(err))
       }

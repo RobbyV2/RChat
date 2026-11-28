@@ -23,7 +23,7 @@ const role = (id: number, position: number, over: Partial<Role> = {}): Role => (
   id,
   name: `r${id}`,
   color: `#00000${id}`,
-  perms: 0,
+  perms: 0n,
   position,
   ...over,
 })

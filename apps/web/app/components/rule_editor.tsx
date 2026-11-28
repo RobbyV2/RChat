@@ -25,6 +25,7 @@ import {
   type Tri,
 } from '../lib/perm_source'
 import { hasBit, type Ow } from '../lib/perms'
+import { stableKey } from '../lib/stable_key'
 import { Row, Stack, Surface } from './layout'
 import { fieldCls, smallFieldCls } from './ui'
 
@@ -109,7 +110,7 @@ export function RuleEditor({
   const [local, setLocal] = useState<Record<string, RuleRow | null>>({})
   const queue = useRef<Promise<unknown>>(Promise.resolve())
   const inFlight = useRef(0)
-  const shownKey = JSON.stringify(src.rows)
+  const shownKey = stableKey(src.rows)
   useEffect(() => {
     if (inFlight.current === 0) setLocal({})
   }, [shownKey])
@@ -148,12 +149,12 @@ export function RuleEditor({
   const items = ruleItems(src.ruleset, src.place)
   const row = current ? view.rows.find(r => r.subject === current) : undefined
   const put = (subject: string, rule: Ow, merge: boolean) => {
-    const none = rule.allow === 0 && rule.deny === 0
+    const none = rule.allow === 0n && rule.deny === 0n
     if (none) setPending(p => [...p.filter(x => x !== subject), subject])
     setLocal(l => ({ ...l, [subject]: none ? null : { subject, ...rule, merge } }))
     enqueue(() => src.write(subject, rule, merge))
   }
-  const pick = (bit: number, tri: Tri) => {
+  const pick = (bit: bigint, tri: Tri) => {
     if (current) put(current, withTri(row, bit, tri), row?.merge ?? false)
   }
   const picker = memberPicker?.(add)

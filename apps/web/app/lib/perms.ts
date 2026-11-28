@@ -1,10 +1,22 @@
 // The permission rules shared with the server (`crates/perms`, compiled into `crates/wasm`).
 // `ready(load)` loads it (`perms_load.ts` has the loader for pages and workers). Every decision
-// below needs it loaded first. Masks are numbers in
-// canonical (hosted) values, exact below 2^53; `rules` is 0 for a hosted server and the rules
-// version for a P2P room.
+// below needs it loaded first. Masks are `bigint`s in canonical (hosted) values; a P2P wire mask
+// is a `number`, and only `fromWire` and `toWire` cross between the two. `rules` is 0 for a hosted
+// server and the rules version for a P2P room.
 
-import { arr, bool, lit, nullable, num, obj, parseJson, str, union, type Schema } from './schema'
+import {
+  arr,
+  bool,
+  int,
+  lit,
+  nullable,
+  num,
+  obj,
+  parseJson,
+  str,
+  union,
+  type Schema,
+} from './schema'
 
 type Tie = string | undefined
 
@@ -143,22 +155,17 @@ const rules = (): PermsModule => {
   return mod
 }
 
-// Bit arithmetic that stays exact up to 2^53: the bitwise operators cut numbers to 32 bits.
-const HALF = 2 ** 26
-const LOW = HALF - 1
-const HIGH = 2 ** 27 - 1
-const high = (x: number) => Math.floor(x / HALF)
-const low = (x: number) => x % HALF
-export const maskAnd = (a: number, b: number) => (high(a) & high(b)) * HALF + (low(a) & low(b))
-export const maskOr = (a: number, b: number) => (high(a) | high(b)) * HALF + (low(a) | low(b))
-export const maskNot = (a: number) => (~high(a) & HIGH) * HALF + (~low(a) & LOW)
-export const maskXor = (a: number, b: number) => (high(a) ^ high(b)) * HALF + (low(a) ^ low(b))
-export const hasBit = (mask: number, bit: number) => maskAnd(mask, bit) !== 0
+// The shared rules take and give masks as floats, exact below 2^53.
+const n = (mask: bigint) => Number(mask)
+const big = (mask: number) => BigInt(mask)
+const floats = (masks: bigint[]) => Float64Array.from(masks, Number)
+
+export const hasBit = (mask: bigint, bit: bigint) => (mask & bit) !== 0n
 
 export interface Bit {
   name: string
   label: string
-  value: number
+  value: bigint
   scope: 'server' | 'channel'
   everyone: boolean
   hosted: 'live' | 'reserved'
@@ -171,7 +178,7 @@ const BITS: Schema<Bit[]> = arr(
   obj({
     name: str(),
     label: str(),
-    value: num(),
+    value: int().map(big),
     scope: union(lit('server'), lit('channel')),
     everyone: bool,
     hosted: STATE,
@@ -184,30 +191,30 @@ export const registry = (): Bit[] => {
   if (!parsed.ok) throw new Error('The permission rules could not be read')
   return (bits = parsed.value)
 }
-export const bit = (name: string): number => {
+export const bit = (name: string): bigint => {
   const found = registry().find(b => b.name === name)
   if (found === undefined) throw new Error(`unknown permission ${name}`)
   return found.value
 }
 
 // What everyone holds on a hosted server that stores no mask of its own.
-export const baseBits = (): number =>
+export const baseBits = (): bigint =>
   registry()
     .filter(b => b.everyone && b.hosted === 'live')
-    .reduce((m, b) => maskOr(m, b.value), 0)
+    .reduce((m, b) => m | b.value, 0n)
 
-export const known = (ruleset: number) => rules().perms_known(ruleset)
+export const known = (ruleset: number) => big(rules().perms_known(ruleset))
 export const fromWire = (wire: number, ruleset: number) =>
-  rules().perms_from_wire(wire >>> 0, ruleset)
-export const toWire = (mask: number, ruleset: number, keep = 0) =>
-  rules().perms_to_wire(mask, ruleset, keep >>> 0)
+  big(rules().perms_from_wire(wire >>> 0, ruleset))
+export const toWire = (mask: bigint, ruleset: number, keep = 0) =>
+  rules().perms_to_wire(n(mask), ruleset, keep >>> 0)
 
 export type Who =
   | { kind: 'staff' }
   | { kind: 'owner' }
-  | { kind: 'admin'; mask: number; roles?: number }
-  | { kind: 'member'; roles: number }
-  | { kind: 'visitor'; signedIn: boolean; caps: number }
+  | { kind: 'admin'; mask: bigint; roles?: bigint }
+  | { kind: 'member'; roles: bigint }
+  | { kind: 'visitor'; signedIn: boolean; caps: bigint }
 
 // An admin's `roles` is the union of its role masks: only their base bits count.
 const whoArgs = (who: Who): [number, number, number] => {
@@ -217,17 +224,17 @@ const whoArgs = (who: Who): [number, number, number] => {
     case 'owner':
       return [1, 0, 0]
     case 'admin':
-      return [2, who.mask, who.roles ?? 0]
+      return [2, n(who.mask), n(who.roles ?? 0n)]
     case 'member':
-      return [3, who.roles, 0]
+      return [3, n(who.roles), 0]
     case 'visitor':
-      return [who.signedIn ? 5 : 4, who.caps, 0]
+      return [who.signedIn ? 5 : 4, n(who.caps), 0]
   }
 }
 
 export interface Ow {
-  allow: number
-  deny: number
+  allow: bigint
+  deny: bigint
 }
 
 export interface ChannelRules {
@@ -239,54 +246,60 @@ export interface ChannelRules {
   member?: Ow & { merge?: boolean }
 }
 
-export const serverBits = (who: Who, everyone: number, ruleset: number) =>
-  rules().perms_server_bits(...whoArgs(who), everyone, ruleset)
+export const serverBits = (who: Who, everyone: bigint, ruleset: number) =>
+  big(rules().perms_server_bits(...whoArgs(who), n(everyone), ruleset))
 
 export const channelMask = (
   who: Who,
-  everyone: number,
+  everyone: bigint,
   ch: ChannelRules,
   ruleset: number,
   timedOut = false,
   acting = true
 ) =>
-  rules().perms_channel_mask(
-    ...whoArgs(who),
-    everyone,
-    ch.everyone?.allow ?? 0,
-    ch.everyone?.deny ?? 0,
-    (ch.restrictView === true ? 1 : 0) |
-      (ch.restrictSend === true ? 2 : 0) |
-      (ch.voice === true ? 4 : 0) |
-      (ch.everyone ? 8 : 0) |
-      (ch.member ? 16 : 0) |
-      (timedOut ? 32 : 0) |
-      (acting ? 64 : 0),
-    Float64Array.from(ch.roles.flatMap(o => [o.allow, o.deny])),
-    ch.member?.allow ?? 0,
-    ch.member?.deny ?? 0,
-    ch.member?.merge === true ? 1 : 0,
-    ruleset
+  big(
+    rules().perms_channel_mask(
+      ...whoArgs(who),
+      n(everyone),
+      n(ch.everyone?.allow ?? 0n),
+      n(ch.everyone?.deny ?? 0n),
+      (ch.restrictView === true ? 1 : 0) |
+        (ch.restrictSend === true ? 2 : 0) |
+        (ch.voice === true ? 4 : 0) |
+        (ch.everyone ? 8 : 0) |
+        (ch.member ? 16 : 0) |
+        (timedOut ? 32 : 0) |
+        (acting ? 64 : 0),
+      floats(ch.roles.flatMap(o => [o.allow, o.deny])),
+      n(ch.member?.allow ?? 0n),
+      n(ch.member?.deny ?? 0n),
+      ch.member?.merge === true ? 1 : 0,
+      ruleset
+    )
   )
 
 // What a channel gives everyone before any role or member row.
 export const everyoneStage = (
-  everyone: number,
+  everyone: bigint,
   ch: Pick<ChannelRules, 'everyone' | 'restrictView' | 'restrictSend'>,
   ruleset: number
 ) =>
-  rules().perms_everyone_stage(
-    everyone,
-    ch.everyone?.allow ?? 0,
-    ch.everyone?.deny ?? 0,
-    (ch.restrictView === true ? 1 : 0) | (ch.restrictSend === true ? 2 : 0) | (ch.everyone ? 8 : 0),
-    ruleset
+  big(
+    rules().perms_everyone_stage(
+      n(everyone),
+      n(ch.everyone?.allow ?? 0n),
+      n(ch.everyone?.deny ?? 0n),
+      (ch.restrictView === true ? 1 : 0) |
+        (ch.restrictSend === true ? 2 : 0) |
+        (ch.everyone ? 8 : 0),
+      ruleset
+    )
   )
 
 // A hosted rule as stored: its masks and the three flags a rule with both masks 0 is read from.
 export interface StoredRule {
-  allow: number
-  deny: number
+  allow: bigint
+  deny: bigint
   merge?: boolean
   canView: boolean
   canSend: boolean
@@ -296,15 +309,15 @@ export interface StoredRule {
 // The row a hosted rule stands for. `member` says it is a member's rule.
 export const derivedRow = (rule: StoredRule, member: boolean): Ow & { merge: boolean } => {
   const [allow, deny, merge] = rules().perms_derived_row(
-    rule.allow,
-    rule.deny,
+    n(rule.allow),
+    n(rule.deny),
     (rule.canView ? 1 : 0) |
       (rule.canSend ? 2 : 0) |
       (rule.canReadHistory ? 4 : 0) |
       (member ? 8 : 0) |
       (rule.merge === true ? 16 : 0)
   )
-  return { allow, deny, merge: merge === 1 }
+  return { allow: big(allow), deny: big(deny), merge: merge === 1 }
 }
 
 export type Tier = 'outside' | 'plain' | 'role' | 'admin' | 'owner' | 'staff'
@@ -316,12 +329,12 @@ export interface Rank {
   tier: Tier
   pos?: number
   tie?: number | string
-  adminMask?: number
+  adminMask?: bigint
 }
 
 export interface Actor {
   rank: Rank
-  bits: number
+  bits: bigint
 }
 
 const rankArgs = (r: Rank): RankArgs => [
@@ -329,28 +342,35 @@ const rankArgs = (r: Rank): RankArgs => [
   r.pos ?? -1,
   typeof r.tie === 'number' ? r.tie : 0,
   typeof r.tie === 'number' ? undefined : (r.tie ?? ''),
-  r.adminMask ?? 0,
+  n(r.adminMask ?? 0n),
 ]
 
 export const outranks = (a: Rank, b: Rank) => rules().perms_outranks(...rankArgs(a), ...rankArgs(b))
 export const atLeast = (a: Rank, b: Rank) => rules().perms_at_least(...rankArgs(a), ...rankArgs(b))
 
-export const mayModerate = (a: Actor, t: Actor, need: number, guard: boolean) =>
-  rules().perms_may_moderate(...rankArgs(a.rank), a.bits, ...rankArgs(t.rank), t.bits, need, guard)
+export const mayModerate = (a: Actor, t: Actor, need: bigint, guard: boolean) =>
+  rules().perms_may_moderate(
+    ...rankArgs(a.rank),
+    n(a.bits),
+    ...rankArgs(t.rank),
+    n(t.bits),
+    n(need),
+    guard
+  )
 
 const held = (heldAbove: boolean | undefined) => (heldAbove === undefined ? 0 : heldAbove ? 2 : 1)
 
 // `heldAbove` is the extra test of the order guard: leave it out when the guard is off.
 export const managesRole = (a: Actor, role: Rank, heldAbove?: boolean) =>
-  rules().perms_manages_role(...rankArgs(a.rank), a.bits, ...rankArgs(role), held(heldAbove))
+  rules().perms_manages_role(...rankArgs(a.rank), n(a.bits), ...rankArgs(role), held(heldAbove))
 
-const NOBODY: Actor = { rank: { tier: 'outside' }, bits: 0 }
+const NOBODY: Actor = { rank: { tier: 'outside' }, bits: 0n }
 
 // `target` is left out when the actor gives the role to itself; `guard` is the order guard.
 export const mayAssign = (
   a: Actor,
   role: Rank,
-  roleBits: number,
+  roleBits: bigint,
   allowsOk: boolean,
   target: Actor | undefined,
   ruleset: number,
@@ -358,14 +378,14 @@ export const mayAssign = (
 ) =>
   rules().perms_may_assign(
     ...rankArgs(a.rank),
-    a.bits,
+    n(a.bits),
     ...rankArgs(role),
     guard,
-    roleBits,
+    n(roleBits),
     allowsOk,
     target !== undefined,
     ...rankArgs((target ?? NOBODY).rank),
-    (target ?? NOBODY).bits,
+    n((target ?? NOBODY).bits),
     ruleset
   )
 
@@ -373,25 +393,25 @@ export const mayAssign = (
 export const mayUnassign = (a: Actor, role: Rank, target: Actor | undefined, guard = false) =>
   rules().perms_may_unassign(
     ...rankArgs(a.rank),
-    a.bits,
+    n(a.bits),
     ...rankArgs(role),
     guard,
     target !== undefined,
     ...rankArgs((target ?? NOBODY).rank),
-    (target ?? NOBODY).bits
+    n((target ?? NOBODY).bits)
   )
 
-const NONE: Ow = { allow: 0, deny: 0 }
+const NONE: Ow = { allow: 0n, deny: 0n }
 export const granted = (before: Ow = NONE, after: Ow = NONE) =>
-  rules().perms_granted(before.allow, before.deny, after.allow, after.deny)
+  big(rules().perms_granted(n(before.allow), n(before.deny), n(after.allow), n(after.deny)))
 export const denied = (before: Ow = NONE, after: Ow = NONE) =>
-  rules().perms_denied(before.allow, before.deny, after.allow, after.deny)
+  big(rules().perms_denied(n(before.allow), n(before.deny), n(after.allow), n(after.deny)))
 
 export type Refusal = 'grants' | 'denies_moderation' | 'outranked'
 const REFUSALS: (Refusal | null)[] = [null, 'grants', 'denies_moderation', 'outranked']
 
 export const checkOverwriteEdit = (
-  actorMask: number,
+  actorMask: bigint,
   exempt: boolean,
   before: Ow | undefined,
   after: Ow | undefined,
@@ -401,23 +421,24 @@ export const checkOverwriteEdit = (
   const a = after ?? NONE
   return REFUSALS[
     rules().perms_check_overwrite_edit(
-      actorMask,
+      n(actorMask),
       exempt,
-      b.allow,
-      b.deny,
-      a.allow,
-      a.deny,
+      n(b.allow),
+      n(b.deny),
+      n(a.allow),
+      n(a.deny),
       subjectOk
     )
   ]
 }
 
 export const checkBitsEdit = (
-  actorBits: number,
+  actorBits: bigint,
   exempt: boolean,
-  before: number,
-  after: number
-): Refusal | null => REFUSALS[rules().perms_check_bits_edit(actorBits, exempt, before, after)]
+  before: bigint,
+  after: bigint
+): Refusal | null =>
+  REFUSALS[rules().perms_check_bits_edit(n(actorBits), exempt, n(before), n(after))]
 
 export const reorder = (current: number[], requested: number[], manageable: number[]) =>
   Array.from(
@@ -432,12 +453,12 @@ export const moved = (before: number[], after: number[]) =>
   Array.from(rules().perms_moved(Float64Array.from(before), Float64Array.from(after)))
 
 // The subjects (without newlines) whose mask gains View or Send.
-export const widens = (before: [string, number][], after: [string, number][]) => {
+export const widens = (before: [string, bigint][], after: [string, bigint][]) => {
   const out = rules().perms_widens(
     before.map(([s]) => s).join('\n'),
-    Float64Array.from(before.map(([, m]) => m)),
+    floats(before.map(([, m]) => m)),
     after.map(([s]) => s).join('\n'),
-    Float64Array.from(after.map(([, m]) => m))
+    floats(after.map(([, m]) => m))
   )
   return out === '' ? [] : out.split('\n')
 }
@@ -445,8 +466,8 @@ export const widens = (before: [string, number][], after: [string, number][]) =>
 // A channel rule as the sync check reads it: subject, allow, deny and whether it merges.
 export interface SyncRule {
   subject: string
-  allow: number
-  deny: number
+  allow: bigint
+  deny: bigint
   merge: boolean
 }
 
@@ -457,15 +478,15 @@ export interface SyncRule {
 export const widened = (
   before: SyncRule[],
   after: SyncRule[],
-  everyone: { subject: string; bits: number },
-  roleBits: Record<string, number>,
+  everyone: { subject: string; bits: bigint },
+  roleBits: Record<string, bigint>,
   memberRoles: Record<string, string[]>,
   place: { restrictView: boolean; restrictSend: boolean; voice: boolean },
   ruleset: number
 ) => {
   const members = Object.entries(memberRoles)
   const rows = (list: SyncRule[]) =>
-    Float64Array.from(list.flatMap(r => [r.allow, r.deny, r.merge ? 1 : 0]))
+    Float64Array.from(list.flatMap(r => [n(r.allow), n(r.deny), r.merge ? 1 : 0]))
   const roles = Object.entries(roleBits)
   const out = rules().perms_widened(
     before.map(r => r.subject).join('\n'),
@@ -473,9 +494,9 @@ export const widened = (
     after.map(r => r.subject).join('\n'),
     rows(after),
     everyone.subject,
-    everyone.bits,
+    n(everyone.bits),
     roles.map(([s]) => s).join('\n'),
-    Float64Array.from(roles.map(([, b]) => b)),
+    floats(roles.map(([, b]) => b)),
     members.map(([s]) => s).join('\n'),
     members.map(([, held]) => held.join(',')).join('\n'),
     (place.restrictView ? 1 : 0) | (place.restrictSend ? 2 : 0) | (place.voice ? 4 : 0),
@@ -504,8 +525,8 @@ const HIDDEN: (MembersHidden | null)[] = [null, 'site', 'server', 'channel', 'ou
 // what they hold there), or someone outside with @everyone's bits.
 export type Seer =
   | { kind: 'staff' }
-  | { kind: 'member'; server: number; here?: number }
-  | { kind: 'visitor'; everyone: number; here?: number }
+  | { kind: 'member'; server: bigint; here?: bigint }
+  | { kind: 'visitor'; everyone: bigint; here?: bigint }
 
 export interface ListPlace {
   site: boolean
@@ -520,11 +541,17 @@ export const memberListHidden = (seer: Seer, place: ListPlace): MembersHidden | 
     seer.kind === 'staff'
       ? rules().perms_member_list(0, 0, 0, false, flags)
       : seer.kind === 'member'
-        ? rules().perms_member_list(1, seer.server, seer.here ?? 0, seer.here !== undefined, flags)
+        ? rules().perms_member_list(
+            1,
+            n(seer.server),
+            n(seer.here ?? 0n),
+            seer.here !== undefined,
+            flags
+          )
         : rules().perms_member_list(
             2,
-            seer.everyone,
-            seer.here ?? 0,
+            n(seer.everyone),
+            n(seer.here ?? 0n),
             seer.here !== undefined,
             flags
           )

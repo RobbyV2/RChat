@@ -821,10 +821,10 @@ export interface RChatState {
   grantAdmin: (server: string, username: string) => Promise<void>
   revokeAdmin: (server: string, username: string) => Promise<void>
   transferAdmin: (server: string, username: string) => Promise<void>
-  setAdminPerms: (server: string, username: string, perms: number) => Promise<void>
+  setAdminPerms: (server: string, username: string, perms: bigint) => Promise<void>
   createRole: (
     server: string,
-    body: { name: string; color: string; perms: number }
+    body: { name: string; color: string; perms: bigint }
   ) => Promise<void>
   updateRole: (server: string, id: number, patch: import('./api').RolePatch) => Promise<void>
   deleteRole: (server: string, id: number) => Promise<void>
@@ -832,7 +832,7 @@ export interface RChatState {
   // `order`: every role id, the one shown highest first; null shows roles in role order.
   setRoleDisplay: (server: string, order: number[] | null, version: number) => Promise<void>
   // Changes only the bits of `mask` that everyone holds.
-  setEveryonePerms: (server: string, perms: number, mask: number) => Promise<void>
+  setEveryonePerms: (server: string, perms: bigint, mask: bigint) => Promise<void>
   confirmRoleOrder: (server: string, version: number) => Promise<void>
   assignRole: (server: string, id: number, username: string) => Promise<void>
   unassignRole: (server: string, id: number, username: string) => Promise<void>
@@ -840,7 +840,7 @@ export interface RChatState {
   clearChannelPerm: (id: number, subject: string) => Promise<void>
   setCategoryPerm: (
     id: number,
-    rule: { subject: string; allow: number; deny: number }
+    rule: { subject: string; allow: bigint; deny: bigint }
   ) => Promise<void>
   clearCategoryPerm: (id: number, subject: string) => Promise<void>
   // Copies the category's rules to the channel, asking first when that lets more people in.

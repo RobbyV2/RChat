@@ -5,6 +5,7 @@ import { Perm, type Member, type WsEvent } from '../types'
 import { PRESENCE_LOG_MAX, byCodePoint, onlineRows, onlineSection, onlineTotals } from '../presence'
 import { advance, me, member, paged, role, serverDetail, until } from './fixtures'
 import { home } from './home_instance'
+import { writeJson } from '../api/masks'
 
 let clock: ManualTime
 beforeEach(() => {
@@ -32,7 +33,7 @@ beforeEach(() => {
     const url = String(input)
     requests.push(url)
     const found = asked(url).flatMap(n => (directory[n] ? [directory[n]] : []))
-    return new Response(JSON.stringify(found), { status: 200 })
+    return new Response(writeJson(found), { status: 200 })
   }) as typeof fetch
   useStore.setState({
     guest: false,
@@ -41,7 +42,7 @@ beforeEach(() => {
       servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }],
     }),
     servers: {
-      s: serverDetail('s', { roles: [role(1, '#ff0000', 0), role(2, '#00ff00', Perm.Kick)] }),
+      s: serverDetail('s', { roles: [role(1, '#ff0000', 0n), role(2, '#00ff00', Perm.Kick)] }),
     },
     members: { s: paged([member('dave', { role_ids: [1] })]) },
     memberInfo: {},
@@ -75,20 +76,20 @@ describe('member lookups for authors', () => {
   })
 
   test('own row from the lookup drives server perms', async () => {
-    expect(serverAdminPerms(st(), 's')).toBe(0)
+    expect(serverAdminPerms(st(), 's')).toBe(0n)
     await st().ensureMembers('s', ['alice'])
     expect(serverAdminPerms(st(), 's')).toBe(Perm.Kick)
   })
 
   test('ws events keep cached rows current', async () => {
     await st().ensureMembers('s', ['bob', 'carol', 'zed'])
-    dispatch({ type: 'admin_changed', server: 's', username: 'bob', is_admin: true, perms: 4 })
+    dispatch({ type: 'admin_changed', server: 's', username: 'bob', is_admin: true, perms: 4n })
     dispatch({ type: 'presence_changed', server: 's', username: 'bob', online: true })
     await clock.pass(20)
     expect(memberOf(st(), 's', 'bob')).toEqual({
       ...member('bob', { role_ids: [1] }),
       is_admin: true,
-      perms: 4,
+      perms: 4n,
       online: true,
     })
     dispatch({
@@ -140,7 +141,7 @@ describe('the online section', () => {
   const frame = () => clock.pass(20)
   const shown = () => onlineRows(st().members.s.list, st().memberInfo.s).map(m => m.username)
   const json = (body: unknown, next?: string) =>
-    new Response(JSON.stringify(body), {
+    new Response(writeJson(body), {
       status: 200,
       headers: next ? { 'X-Next-Cursor': next } : {},
     })

@@ -125,7 +125,7 @@ const dmPin = by(43, 'bob', { channel_id: null, dm_id: 9, kind: 'pin', content: 
 const readOnlyBob = by(50, 'bob', { channel_id: 2 })
 
 interface State {
-  perms?: number
+  perms?: bigint
   owner?: boolean
   siteAdmin?: boolean
   guest?: boolean
@@ -138,7 +138,7 @@ interface State {
   view?: 'c1' | 'c2' | 'd9'
   thread?: Message
   // What alice holds in #news, when the server says so.
-  news?: number
+  news?: bigint
 }
 
 // Alice in server s (#general 1, read-only #news 2): her role r1 carries `perms`; bob holds
@@ -172,9 +172,9 @@ const state = (o: State = {}) => {
       s: serverDetail('s', {
         display_name: 'Space',
         roles: [
-          role(1, '#f00', o.perms ?? 0),
-          { ...role(2, '#0f0', 0), name: 'Moderator' },
-          { ...role(3, '#00f', 0), name: 'Helper' },
+          role(1, '#f00', o.perms ?? 0n),
+          { ...role(2, '#0f0', 0n), name: 'Moderator' },
+          { ...role(3, '#00f', 0n), name: 'Helper' },
         ],
         channels: [
           { id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 },
@@ -816,12 +816,12 @@ test('timed out, read-only and not a member: no edit, reply or pin', () => {
 test('a channel that says what you hold decides each action', () => {
   const B = ChannelPermBit
   const seen = B.ViewChannels + B.ReadHistory
-  const news = (held: number) => {
+  const news = (held: bigint) => {
     state({ view: 'c2', news: seen + held })
     return labels(at(readOnlyBob))
   }
   const rest = ['Forward', 'Direct Message', ...PERSON, 'Select Message']
-  expect(news(0)).toEqual([...rest, ...COPY_ALL])
+  expect(news(0n)).toEqual([...rest, ...COPY_ALL])
   expect(news(B.PinMessages)).toEqual([...rest, ...COPY_ALL])
   expect(news(B.PinMessages + B.SendMessages)).toEqual([
     'Reply',

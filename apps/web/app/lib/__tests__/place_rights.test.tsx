@@ -2,7 +2,6 @@ import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { AccountProvider } from '../client/react'
 import { CAN_ALL } from '../channel_perms'
-import { maskOr } from '../perms'
 import type { ServerView } from '../p2p/server'
 import { featureAt, isUnsupported } from '../place/feature'
 import { channelCanIn, rights, type ChannelKey } from '../place/rights'
@@ -11,13 +10,13 @@ import { ChannelPermBit, type ServerSummary } from '../types'
 import { serverDetail, textChannel } from './fixtures'
 import { placeContract, type ContractWorld, type Seat } from './helpers/place_contract'
 
-const mask = (...bits: number[]) => bits.reduce((all, bit) => maskOr(all, bit), 0)
+const mask = (...bits: bigint[]) => bits.reduce((all, bit) => all | bit, 0n)
 const READ = mask(ChannelPermBit.ViewChannels, ChannelPermBit.ReadHistory)
 const WRITE = mask(READ, ChannelPermBit.SendMessages)
 const TALK = mask(WRITE, ChannelPermBit.AddReactions, ChannelPermBit.StartThreads)
 
 // Gives a party `held` in the channel of their place, and answers the key of that channel.
-const hold = (world: ContractWorld, seat: Seat, held: number, joined = true): ChannelKey => {
+const hold = (world: ContractWorld, seat: Seat, held: bigint, joined = true): ChannelKey => {
   const { place } = seat
   if (place.kind === 'hostedServer') {
     const me = seat.account.store.getState().me!
@@ -61,7 +60,7 @@ placeContract(rights, (kind, world) => {
       const { ann } = world()
       expect(
         rightsOf(ann)
-          .can(hold(world(), ann, 0))
+          .can(hold(world(), ann, 0n))
           .get()
       ).toBe(CAN_ALL)
     })

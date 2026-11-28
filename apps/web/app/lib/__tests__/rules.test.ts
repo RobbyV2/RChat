@@ -53,29 +53,29 @@ describe('memberPerms', () => {
     { id: 1, perms: Perm.Kick },
     { id: 2, perms: Perm.ManageChannels },
   ]
-  const row = (is_admin: boolean, perms: number, role_ids: number[] = []) => ({
+  const row = (is_admin: boolean, perms: bigint, role_ids: number[] = []) => ({
     is_admin,
     perms,
     role_ids,
   })
 
   test('mirrors the server: admin perms 0 means all, roles only for non-admins', () => {
-    expect(memberPerms(null, roles)).toBe(0)
-    expect(memberPerms(undefined, roles)).toBe(0)
-    expect(memberPerms(row(true, 0, [2]), roles)).toBe(ALL_PERMS)
+    expect(memberPerms(null, roles)).toBe(0n)
+    expect(memberPerms(undefined, roles)).toBe(0n)
+    expect(memberPerms(row(true, 0n, [2]), roles)).toBe(ALL_PERMS)
     expect(memberPerms(row(true, Perm.Kick, [2]), roles)).toBe(Perm.Kick)
-    expect(memberPerms(row(false, 0, [1, 2]), roles)).toBe(Perm.Kick | Perm.ManageChannels)
-    expect(memberPerms(row(false, ALL_PERMS, [3]), roles)).toBe(0)
+    expect(memberPerms(row(false, 0n, [1, 2]), roles)).toBe(Perm.Kick | Perm.ManageChannels)
+    expect(memberPerms(row(false, ALL_PERMS, [3]), roles)).toBe(0n)
   })
 })
 
 describe('Manage reports', () => {
   test('is included in the full permission mask', () => {
-    expect(Perm.ManageReports).toBe(512)
+    expect(Perm.ManageReports).toBe(512n)
     expect(hasPerm(ALL_PERMS, Perm.ManageReports)).toBe(true)
-    expect(memberPerms({ is_admin: true, perms: 0, role_ids: [] }, [])).toBe(ALL_PERMS)
-    expect(adminMask(0)).toBe(ALL_PERMS)
-    expect(adminMask(Perm.Kick | Perm.ManageReports)).toBe(516)
+    expect(memberPerms({ is_admin: true, perms: 0n, role_ids: [] }, [])).toBe(ALL_PERMS)
+    expect(adminMask(0n)).toBe(ALL_PERMS)
+    expect(adminMask(Perm.Kick | Perm.ManageReports)).toBe(516n)
     expect(PERM_ITEMS.find(p => p.bit === Perm.ManageReports)).toEqual({
       label: 'Manage reports',
       bit: Perm.ManageReports,
@@ -86,7 +86,7 @@ describe('Manage reports', () => {
 
 describe('Reset server profiles', () => {
   test('is a permission of its own in the full mask', () => {
-    expect(Perm.ManageProfiles).toBe(65536)
+    expect(Perm.ManageProfiles).toBe(65536n)
     expect(ALL_PERMS & Perm.ManageProfiles).toBe(Perm.ManageProfiles)
     expect(adminMask(Perm.Kick)).toBe(Perm.Kick)
     expect(PERM_ITEMS.at(-1)).toEqual({
@@ -95,7 +95,7 @@ describe('Reset server profiles', () => {
       hint: "Clear and lock other members' server profiles",
     })
     expect(new Set(PERM_ITEMS.map(p => p.bit)).size).toBe(PERM_ITEMS.length)
-    expect(PERM_ITEMS.reduce((mask, p) => mask | p.bit, 0)).toBe(ALL_PERMS)
+    expect(PERM_ITEMS.reduce((mask, p) => mask | p.bit, 0n)).toBe(ALL_PERMS)
   })
 })
 
@@ -103,7 +103,7 @@ describe('canModerate', () => {
   test('needs a strict superset of the target perms', () => {
     const kick = Perm.Kick
     const channels = Perm.ManageChannels
-    expect(canModerate(kick, false, 0)).toBe(true)
+    expect(canModerate(kick, false, 0n)).toBe(true)
     expect(canModerate(kick, false, kick)).toBe(false)
     expect(canModerate(kick, false, ALL_PERMS)).toBe(false)
     expect(canModerate(kick, false, channels)).toBe(false)
@@ -125,53 +125,53 @@ describe('granting perms', () => {
     expect(canGrant(ma | kick, false, kick)).toBe(true)
     expect(canGrant(ma | kick, false, ma | kick)).toBe(true)
     expect(canGrant(ma | kick, false, Perm.DeleteServer)).toBe(false)
-    expect(canGrant(ma, false, 1 << 17)).toBe(true)
-    expect(canGrant(0, true, ALL_PERMS)).toBe(true)
-    expect(adminMask(0)).toBe(ALL_PERMS)
-    expect(adminMask(kick | (1 << 17))).toBe(kick)
+    expect(canGrant(ma, false, 1n << 17n)).toBe(true)
+    expect(canGrant(0n, true, ALL_PERMS)).toBe(true)
+    expect(adminMask(0n)).toBe(ALL_PERMS)
+    expect(adminMask(kick | (1n << 17n))).toBe(kick)
     expect(canPromote(ma | kick, false)).toBe(false)
     expect(canPromote(ALL_PERMS, false)).toBe(true)
     expect(canPromote(ma, true)).toBe(true)
-    expect(canTransferTo(ma | kick, false, 0)).toBe(false)
+    expect(canTransferTo(ma | kick, false, 0n)).toBe(false)
     expect(canTransferTo(ma | kick, false, kick)).toBe(true)
     expect(canTransferTo(ma, false, kick)).toBe(false)
   })
 
   test('assigning grants the role, taking it away moderates the member', () => {
     const del = Perm.DeleteServer
-    expect(canChangeRole(ma | kick, false, kick, false, false, 0)).toBe(true)
-    expect(canChangeRole(ma | kick, false, ma | kick, false, false, 0)).toBe(true)
-    expect(canChangeRole(ma | kick, false, del, false, false, 0)).toBe(false)
-    expect(canChangeRole(ma | kick, false, 0, false, false, ALL_PERMS)).toBe(true)
-    expect(canChangeRole(ALL_PERMS, false, ALL_PERMS, false, false, 0)).toBe(true)
-    expect(canChangeRole(ma | kick, false, 0, true, false, ma | kick)).toBe(false)
+    expect(canChangeRole(ma | kick, false, kick, false, false, 0n)).toBe(true)
+    expect(canChangeRole(ma | kick, false, ma | kick, false, false, 0n)).toBe(true)
+    expect(canChangeRole(ma | kick, false, del, false, false, 0n)).toBe(false)
+    expect(canChangeRole(ma | kick, false, 0n, false, false, ALL_PERMS)).toBe(true)
+    expect(canChangeRole(ALL_PERMS, false, ALL_PERMS, false, false, 0n)).toBe(true)
+    expect(canChangeRole(ma | kick, false, 0n, true, false, ma | kick)).toBe(false)
     expect(canChangeRole(ma | kick, false, ALL_PERMS, true, false, kick)).toBe(true)
     expect(canChangeRole(ma | kick, false, ALL_PERMS, true, true, ALL_PERMS)).toBe(true)
     expect(canChangeRole(ma, true, ALL_PERMS, false, false, ALL_PERMS)).toBe(true)
     expect(canChangeRole(ma, true, ALL_PERMS, true, false, ALL_PERMS)).toBe(true)
-    expect(canChangeRole(ma | kick, false, 0, false, false, 0, true)).toBe(false)
-    expect(canChangeRole(ma | kick, false, 0, true, false, 0, true)).toBe(false)
-    expect(canChangeRole(ma | kick, false, 0, true, true, ALL_PERMS, true)).toBe(false)
-    expect(canChangeRole(ma | kick, false, 0, true, true, ALL_PERMS)).toBe(true)
-    expect(canChangeRole(ma, true, 0, false, false, 0, true)).toBe(true)
-    expect(canChangeRole(ma, true, 0, true, true, 0, true)).toBe(true)
+    expect(canChangeRole(ma | kick, false, 0n, false, false, 0n, true)).toBe(false)
+    expect(canChangeRole(ma | kick, false, 0n, true, false, 0n, true)).toBe(false)
+    expect(canChangeRole(ma | kick, false, 0n, true, true, ALL_PERMS, true)).toBe(false)
+    expect(canChangeRole(ma | kick, false, 0n, true, true, ALL_PERMS)).toBe(true)
+    expect(canChangeRole(ma, true, 0n, false, false, 0n, true)).toBe(true)
+    expect(canChangeRole(ma, true, 0n, true, true, 0n, true)).toBe(true)
   })
 
   test('revoking admin or giving it up never raises anyone above the actor', () => {
     expect(canRevoke(ma | kick, false, kick, ALL_PERMS)).toBe(false)
     expect(canRevoke(ma | kick, false, kick, ma | kick)).toBe(true)
-    expect(canRevoke(ma | kick, false, 0, ALL_PERMS)).toBe(true)
-    expect(canRevoke(ma | kick, false, kick, 0)).toBe(true)
+    expect(canRevoke(ma | kick, false, 0n, ALL_PERMS)).toBe(true)
+    expect(canRevoke(ma | kick, false, kick, 0n)).toBe(true)
     expect(canRevoke(ALL_PERMS, false, kick, ALL_PERMS)).toBe(true)
     expect(canRevoke(ma, true, kick, ALL_PERMS)).toBe(true)
     expect(canTransferTo(ma | kick, false, kick, ALL_PERMS)).toBe(false)
     expect(canTransferTo(ma | kick, false, kick, kick)).toBe(true)
-    expect(canTransferTo(ma, true, 0, ALL_PERMS)).toBe(true)
+    expect(canTransferTo(ma, true, 0n, ALL_PERMS)).toBe(true)
   })
 
   test('editing or deleting a role needs its perms and every holder below you', () => {
     const limits = { held_above: [2], channel_grants: [3], channel_denies: [4] }
-    const role = (id: number, perms: number = kick) => ({ id, perms })
+    const role = (id: number, perms: bigint = kick) => ({ id, perms })
     expect(roleEditBlock(ma | kick, false, role(1), limits)).toBeNull()
     expect(roleEditBlock(ma | kick, false, role(1, Perm.DeleteServer), limits)).toContain(
       "permissions you don't have"
@@ -191,13 +191,13 @@ describe('granting perms', () => {
 
   test('admin perms can always be lowered, raised only within yours', () => {
     const del = Perm.DeleteServer
-    expect(canSetAdminPerms(ma | kick, false, 0, ALL_PERMS & ~kick)).toBe(true)
+    expect(canSetAdminPerms(ma | kick, false, 0n, ALL_PERMS & ~kick)).toBe(true)
     expect(canSetAdminPerms(ma | kick, false, del | kick, del)).toBe(true)
     expect(canSetAdminPerms(ma | kick, false, del, del | kick)).toBe(false)
     expect(canSetAdminPerms(ma | kick, false, del, kick)).toBe(true)
-    expect(canSetAdminPerms(ma | kick, false, kick, 0)).toBe(false)
+    expect(canSetAdminPerms(ma | kick, false, kick, 0n)).toBe(false)
     expect(canSetAdminPerms(ma | kick, false, kick, ma | kick)).toBe(true)
-    expect(canSetAdminPerms(ma, true, kick, 0)).toBe(true)
+    expect(canSetAdminPerms(ma, true, kick, 0n)).toBe(true)
   })
 })
 

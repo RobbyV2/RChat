@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { resetSessionCaches, roleLook, useStore } from '../store'
 import { Perm, type Member, type Role, type WsEvent } from '../types'
 import { advance, me, member, role, serverDetail, until } from './fixtures'
+import { writeJson } from '../api/masks'
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -11,7 +12,7 @@ let requests: string[] = []
 let groups: Record<string, Member[]> = {}
 
 const ranked = (id: number, position: number, over: Partial<Role> = {}): Role => ({
-  ...role(id, `#00000${id}`, 0),
+  ...role(id, `#00000${id}`, 0n),
   name: `r${id}`,
   position,
   ...over,
@@ -30,8 +31,8 @@ beforeEach(() => {
     const p = url.searchParams
     const key = p.get('unhoisted') ? 'rest' : (p.get('role') ?? '')
     if (url.pathname.endsWith('/members') && (p.get('top_hoisted') || p.get('unhoisted')))
-      return new Response(JSON.stringify(groups[key] ?? []), { status: 200 })
-    return new Response(JSON.stringify(serverDetail('s')), { status: 200 })
+      return new Response(writeJson(groups[key] ?? []), { status: 200 })
+    return new Response(writeJson(serverDetail('s')), { status: 200 })
   }) as typeof fetch
   useStore.setState({
     guest: false,
@@ -137,7 +138,7 @@ describe('role events', () => {
       await held
       const roles = [ranked(1, 3, { hoist: true }), ranked(2, 2), ranked(3, 1)]
       const detail = serverDetail('s', { display_name: 'loaded', roles, roles_version: 4 })
-      return new Response(JSON.stringify(detail), { status: 200 })
+      return new Response(writeJson(detail), { status: 200 })
     }) as typeof fetch
     dispatch({ type: 'roles_changed', server: 's' })
     await until(() => requests.includes('/api/servers/s'))

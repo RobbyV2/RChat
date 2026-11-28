@@ -11,6 +11,7 @@ import { parentOrigin, type WidgetMode, type WidgetRoom, type WidgetRoomMetadata
 import { sameSecret, Secret, TO_REQUEST } from './secret'
 import { readToken, writeToken } from './client/credentials'
 import { time } from './platform/time'
+import { readJson } from './api/masks'
 import type { Cancel } from './clock'
 
 type Event =
@@ -288,7 +289,7 @@ export class WidgetConnection {
     }
     ws.onmessage = e => {
       if (this.socket !== ws) return
-      const event: Event = JSON.parse(e.data)
+      const event = readJson(e.data as string) as Event
       switch (event.type) {
         case 'widget_ready':
           this.name = event.name

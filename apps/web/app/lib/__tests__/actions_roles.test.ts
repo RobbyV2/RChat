@@ -16,7 +16,7 @@ afterEach(() => {
   memoryStorage.clear()
 })
 
-const roles = [1, 2, 3, 4].map(id => ({ ...role(id, '#123456', 0), position: 5 - id }))
+const roles = [1, 2, 3, 4].map(id => ({ ...role(id, '#123456', 0n), position: 5 - id }))
 const order = roles.map(r => r.id)
 
 const at = (

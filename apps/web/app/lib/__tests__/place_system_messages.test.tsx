@@ -28,7 +28,7 @@ type Call = unknown[]
 
 // How a party stands in the place: its owner, a member whose role carries the named
 // permissions, or (hosted only) a hidden site admin.
-type Standing = 'owner' | 'site_admin' | { role: number }
+type Standing = 'owner' | 'site_admin' | { role: bigint }
 
 const GENERAL: Channel = { id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 }
 const RANDOM: Channel = { id: 2, name: 'random', kind: 'text', slowmode_seconds: 0 }
@@ -51,7 +51,7 @@ const seat = (
   const place = who.place as SystemPlace
   if (place.kind === 'hostedServer') {
     const me = who.account.store.getState().me!
-    const perms = typeof standing === 'object' ? standing.role : 0
+    const perms = typeof standing === 'object' ? standing.role : 0n
     const state = {
       me: {
         ...me,
@@ -88,7 +88,7 @@ const seat = (
     me: joined ? 'join' : 'leave',
     owner: standing === 'owner' ? who.name : 'Z',
     owners: [standing === 'owner' ? who.name : 'Z'],
-    perms: standing === 'owner' ? ~0 : typeof standing === 'object' ? standing.role : 0,
+    perms: standing === 'owner' ? ~0 : typeof standing === 'object' ? Number(standing.role) : 0,
     members: [],
     chans: {},
     voice: {},
@@ -138,10 +138,10 @@ placeContract(systemMessages, (kind, world) => {
     return
   }
   const hosted = kind === 'hostedServer'
-  const manage = hosted ? Perm.ManageServer : P.ManageServer
+  const manage = hosted ? Perm.ManageServer : BigInt(P.ManageServer)
   const others = hosted
     ? Perm.ManageChannels | Perm.ManageRoles | Perm.Kick | Perm.ManageInvites
-    : P.ManageChannels | P.ManageRoles | P.Kick | P.Ban | P.ManageMessages
+    : BigInt(P.ManageChannels | P.ManageRoles | P.Kick | P.Ban | P.ManageMessages)
   const where = () => (hosted ? world().server : world().room)
   // The keys of #random, #general and the voice channel.
   const [random, general, lounge] = hosted ? ['2', '1', '3'] : ['c2', 'c1', 'c3']
@@ -179,7 +179,7 @@ placeContract(systemMessages, (kind, world) => {
 
   test('whoever lacks Manage Server holds no way to change them', () => {
     const { ann, bob } = world()
-    const plain = seat(world(), ann, { role: 0 })
+    const plain = seat(world(), ann, { role: 0n })
     expect(systemMessagesOf(plain).editor.get()).toBeNull()
     const other = seat(world(), bob, { role: others })
     expect(systemMessagesOf(other).editor.get()).toBeNull()
@@ -194,7 +194,7 @@ placeContract(systemMessages, (kind, world) => {
 
   test('the right to change them comes and goes with the permission', () => {
     const { ann } = world()
-    const place = seat(world(), ann, { role: 0 })
+    const place = seat(world(), ann, { role: 0n })
     const { editor } = systemMessagesOf(place)
     let changes = 0
     const off = editor.subscribe(() => (changes += 1))
@@ -285,7 +285,7 @@ placeContract(systemMessages, (kind, world) => {
     }
     seat(world(), bob, { role: others })
     expect(here(bob, random)).toBeUndefined()
-    seat(world(), bob, { role: 0 })
+    seat(world(), bob, { role: 0n })
     expect(here(bob, random)).toBeUndefined()
   })
 

@@ -21,7 +21,7 @@ import {
   withTri,
   type RuleSource,
 } from '../perm_source'
-import { HOSTED, bit, fromWire, hasBit, maskOr, registry, toWire } from '../perms'
+import { HOSTED, bit, fromWire, hasBit, registry, toWire } from '../perms'
 import {
   P,
   RULES_NEXT,
@@ -67,16 +67,16 @@ describe('the permissions each side offers', () => {
   test('P2P rooms offer the wire bits their rules know, rules-5 bits only from rules 5', () => {
     const v4 = permItems(4)
     expect(v4.map(i => [i.name, i.bit])).toEqual([
-      ['ManageChannels', P.ManageChannels],
-      ['DeleteMessages', P.ManageMessages],
-      ['Kick', P.Kick],
-      ['MentionEveryone', P.MentionEveryone],
-      ['ManageServer', P.ManageServer],
-      ['ManageRoles', P.ManageRoles],
-      ['ViewChannels', P.ViewChannel],
-      ['SendMessages', P.SendMessages],
-      ['BanMembers', P.Ban],
-      ['CreateInvites', P.Invite],
+      ['ManageChannels', BigInt(P.ManageChannels)],
+      ['DeleteMessages', BigInt(P.ManageMessages)],
+      ['Kick', BigInt(P.Kick)],
+      ['MentionEveryone', BigInt(P.MentionEveryone)],
+      ['ManageServer', BigInt(P.ManageServer)],
+      ['ManageRoles', BigInt(P.ManageRoles)],
+      ['ViewChannels', BigInt(P.ViewChannel)],
+      ['SendMessages', BigInt(P.SendMessages)],
+      ['BanMembers', BigInt(P.Ban)],
+      ['CreateInvites', BigInt(P.Invite)],
     ])
     expect(v4.find(i => i.name === 'Kick')!.label).toBe('Kick')
     expect(v4.find(i => i.name === 'BanMembers')!.label).toBe('Ban')
@@ -154,35 +154,37 @@ describe('the three states of a permission in a rule', () => {
     const pin = ChannelPermBit.PinMessages
     const bypass = ChannelPermBit.BypassSlowmode
     let rule = withTri(undefined, pin, 'allow')
-    expect(rule).toEqual({ allow: pin, deny: 0 })
+    expect(rule).toEqual({ allow: pin, deny: 0n })
     rule = withTri(rule, bypass, 'deny')
     expect(triOf(rule, pin)).toBe('allow')
     expect(triOf(rule, bypass)).toBe('deny')
     expect(triOf(rule, VIEW)).toBe('inherit')
     rule = withTri(rule, pin, 'deny')
-    expect(rule).toEqual({ allow: 0, deny: maskOr(pin, bypass) })
+    expect(rule).toEqual({ allow: 0n, deny: pin | bypass })
     rule = withTri(withTri(rule, pin, 'inherit'), bypass, 'inherit')
-    expect(rule).toEqual({ allow: 0, deny: 0 })
+    expect(rule).toEqual({ allow: 0n, deny: 0n })
     expect(triOf(undefined, VIEW)).toBe('inherit')
   })
 
   test('refusals read as the shared rules decide them', () => {
-    const manager = maskOr(VIEW, SEND)
-    expect(ruleBlock(manager, false, undefined, { allow: SEND, deny: 0 }, true)).toBeNull()
+    const manager = VIEW | SEND
+    expect(ruleBlock(manager, false, undefined, { allow: SEND, deny: 0n }, true)).toBeNull()
     expect(
-      ruleBlock(manager, false, undefined, { allow: Perm.DeleteMessages, deny: 0 }, true)
+      ruleBlock(manager, false, undefined, { allow: Perm.DeleteMessages, deny: 0n }, true)
     ).toBe(NO_GRANT)
     expect(
-      ruleBlock(manager, false, undefined, { allow: 0, deny: Perm.DeleteMessages }, true)
+      ruleBlock(manager, false, undefined, { allow: 0n, deny: Perm.DeleteMessages }, true)
     ).toBe(NO_DENY)
-    const mod = maskOr(manager, Perm.DeleteMessages)
-    expect(ruleBlock(mod, false, undefined, { allow: 0, deny: Perm.DeleteMessages }, false)).toBe(
+    const mod = manager | Perm.DeleteMessages
+    expect(ruleBlock(mod, false, undefined, { allow: 0n, deny: Perm.DeleteMessages }, false)).toBe(
       NOT_BELOW
     )
-    expect(ruleBlock(0, true, undefined, { allow: Perm.DeleteMessages, deny: 0 }, false)).toBeNull()
-    expect(bitsBlock(Perm.Kick, false, 0, Perm.Kick)).toBeNull()
-    expect(bitsBlock(Perm.Kick, false, 0, Perm.ManageRoles)).toBe(NO_GRANT)
-    expect(bitsBlock(Perm.Kick, false, Perm.ManageRoles, 0)).toBeNull()
+    expect(
+      ruleBlock(0n, true, undefined, { allow: Perm.DeleteMessages, deny: 0n }, false)
+    ).toBeNull()
+    expect(bitsBlock(Perm.Kick, false, 0n, Perm.Kick)).toBeNull()
+    expect(bitsBlock(Perm.Kick, false, 0n, Perm.ManageRoles)).toBe(NO_GRANT)
+    expect(bitsBlock(Perm.Kick, false, Perm.ManageRoles, 0n)).toBeNull()
   })
 })
 
@@ -192,7 +194,7 @@ const hosted = (over: Partial<RuleSource> = {}): RuleSource => ({
   everyone: 'everyone',
   rows: [],
   canonical: bits => bits,
-  mine: maskOr(maskOr(VIEW, SEND), Perm.DeleteMessages),
+  mine: VIEW | SEND | Perm.DeleteMessages,
   also: [],
   exempt: false,
   subjectOk: subject => subject !== 'r:9',
@@ -200,8 +202,8 @@ const hosted = (over: Partial<RuleSource> = {}): RuleSource => ({
   merges: true,
   write: async () => undefined,
   clear: async () => undefined,
-  everyoneBits: maskOr(VIEW, SEND),
-  roleBits: { 'r:1': 0, 'r:9': 0 },
+  everyoneBits: VIEW | SEND,
+  roleBits: { 'r:1': 0n, 'r:9': 0n },
   memberRoles: subject => (subject === 'u:erin' ? ['r:1'] : []),
   restrictView: false,
   restrictSend: false,
@@ -210,7 +212,7 @@ const hosted = (over: Partial<RuleSource> = {}): RuleSource => ({
 
 describe("a place's rules as the editors read them", () => {
   test('each button says why it is refused, or nothing', () => {
-    const src = hosted({ rows: [{ subject: 'r:9', allow: 0, deny: 0, merge: false }] })
+    const src = hosted({ rows: [{ subject: 'r:9', allow: 0n, deny: 0n, merge: false }] })
     expect(triBlock(src, 'r:1', SEND, 'deny')).toBeNull()
     expect(triBlock(src, 'r:1', ChannelPermBit.PinMessages, 'allow')).toBe(NO_GRANT)
     expect(triBlock(src, 'r:1', Perm.DeleteMessages, 'deny')).toBeNull()
@@ -225,8 +227,8 @@ describe("a place's rules as the editors read them", () => {
 
   test('taking a rule away is refused when it stops allowing a moderation permission above you', () => {
     const rows = [
-      { subject: 'r:9', allow: Perm.DeleteMessages, deny: 0, merge: false },
-      { subject: 'r:1', allow: ChannelPermBit.PinMessages, deny: 0, merge: false },
+      { subject: 'r:9', allow: Perm.DeleteMessages, deny: 0n, merge: false },
+      { subject: 'r:1', allow: ChannelPermBit.PinMessages, deny: 0n, merge: false },
     ]
     const src = hosted({ rows })
     expect(clearBlock(src, 'r:9')).toBe(NOT_BELOW)
@@ -234,20 +236,20 @@ describe("a place's rules as the editors read them", () => {
   })
 
   test('switching a member rule between override and combine is checked as taking it away and back', () => {
-    const rows = [{ subject: 'u:bob', allow: 0, deny: Perm.DeleteMessages, merge: false }]
+    const rows = [{ subject: 'u:bob', allow: 0n, deny: Perm.DeleteMessages, merge: false }]
     expect(modeBlock(hosted({ rows }), 'u:bob')).toBeNull()
-    expect(modeBlock(hosted({ rows, mine: maskOr(VIEW, SEND) }), 'u:bob')).toBe(NO_GRANT)
+    expect(modeBlock(hosted({ rows, mine: VIEW | SEND }), 'u:bob')).toBe(NO_GRANT)
     expect(modeBlock(hosted({ rows, subjectOk: () => false }), 'u:bob')).toBe(NOT_BELOW)
     expect(modeBlock(hosted({ rows, exempt: true, subjectOk: () => false }), 'u:bob')).toBeNull()
   })
 
   test("a category's rule is checked in every channel it is copied to", () => {
-    const src = hosted({ also: [maskOr(VIEW, SEND)] })
+    const src = hosted({ also: [VIEW | SEND] })
     expect(triBlock(hosted(), 'r:1', Perm.DeleteMessages, 'deny')).toBeNull()
     expect(triBlock(src, 'r:1', Perm.DeleteMessages, 'deny')).toBe(NO_DENY)
     expect(triBlock(src, 'r:1', SEND, 'allow')).toBeNull()
-    const rows = [{ subject: 'r:1', allow: Perm.DeleteMessages, deny: 0, merge: false }]
-    expect(clearBlock(hosted({ rows, also: [maskOr(VIEW, SEND)] }), 'r:1')).toBeNull()
+    const rows = [{ subject: 'r:1', allow: Perm.DeleteMessages, deny: 0n, merge: false }]
+    expect(clearBlock(hosted({ rows, also: [VIEW | SEND] }), 'r:1')).toBeNull()
     expect(clearBlock(hosted({ rows, also: [VIEW], subjectOk: () => false }), 'r:1')).toBe(
       NOT_BELOW
     )
@@ -255,7 +257,7 @@ describe("a place's rules as the editors read them", () => {
 
   test('View as an admin or an owner keeps what they hold everywhere', () => {
     const rows = [
-      { subject: 'everyone', allow: 0, deny: maskOr(VIEW, Perm.DeleteMessages), merge: false },
+      { subject: 'everyone', allow: 0n, deny: VIEW | Perm.DeleteMessages, merge: false },
     ]
     const src = hosted({
       rows,
@@ -266,20 +268,20 @@ describe("a place's rules as the editors read them", () => {
             ? { kind: 'admin', mask: Perm.DeleteMessages }
             : undefined,
     })
-    expect(viewAs(src, 'u:plain')).toBe(0)
+    expect(viewAs(src, 'u:plain')).toBe(0n)
     expect(hasBit(viewAs(src, 'u:own'), Perm.DeleteMessages)).toBe(true)
     expect(hasBit(viewAs(src, 'u:adm'), Perm.DeleteMessages)).toBe(false)
   })
 
   test('View as follows @everyone, the roles held and a member rule', () => {
     const rows = [
-      { subject: 'everyone', allow: 0, deny: VIEW, merge: false },
-      { subject: 'r:1', allow: maskOr(VIEW, SEND), deny: 0, merge: false },
-      { subject: 'u:dave', allow: 0, deny: SEND, merge: false },
-      { subject: 'u:erin', allow: 0, deny: SEND, merge: true },
+      { subject: 'everyone', allow: 0n, deny: VIEW, merge: false },
+      { subject: 'r:1', allow: VIEW | SEND, deny: 0n, merge: false },
+      { subject: 'u:dave', allow: 0n, deny: SEND, merge: false },
+      { subject: 'u:erin', allow: 0n, deny: SEND, merge: true },
     ]
     const src = hosted({ rows, memberRoles: () => ['r:1'] })
-    expect(viewAs(src, 'everyone')).toBe(0)
+    expect(viewAs(src, 'everyone')).toBe(0n)
     const role = viewAs(src, 'r:1')
     expect([hasBit(role, VIEW), hasBit(role, SEND)]).toEqual([true, true])
     const dave = viewAs(src, 'u:dave')
@@ -297,20 +299,20 @@ describe("a place's rules as the editors read them", () => {
     const src = hosted({
       ruleset: 4,
       everyone: 'r:everyone',
-      canonical: bits => fromWire(bits, 4),
+      canonical: bits => fromWire(Number(bits), 4),
       rows: [
-        { subject: 'r:everyone', allow: 0, deny: P.SendMessages, merge: false },
-        { subject: 'r:A', allow: P.SendMessages, deny: 0, merge: false },
+        { subject: 'r:everyone', allow: 0n, deny: BigInt(P.SendMessages), merge: false },
+        { subject: 'r:A', allow: BigInt(P.SendMessages), deny: 0n, merge: false },
       ],
-      everyoneBits: P.ViewChannel | P.SendMessages,
-      roleBits: { 'r:A': 0 },
+      everyoneBits: BigInt(P.ViewChannel | P.SendMessages),
+      roleBits: { 'r:A': 0n },
       exempt: true,
     })
     const plain = viewAs(src, 'r:everyone')
     expect([hasBit(plain, VIEW), hasBit(plain, SEND)]).toEqual([true, false])
     const held = viewAs(src, 'r:A')
     expect([hasBit(held, VIEW), hasBit(held, SEND)]).toEqual([true, true])
-    expect(triBlock(src, 'r:A', P.ManageMessages, 'allow')).toBeNull()
+    expect(triBlock(src, 'r:A', BigInt(P.ManageMessages), 'allow')).toBeNull()
   })
 
   test('subjects list @everyone, then roles by rank, then members by name', () => {
@@ -330,9 +332,14 @@ describe("a place's rules as the editors read them", () => {
 // at position 5), a member 'p' (role 'low', position 1), a channel 'c' and a category 'k'.
 const wire = (...names: string[]) =>
   toWire(
-    names.map(bit).reduce((a, b) => a + b, 0),
+    names.map(bit).reduce((a, b) => a + b, 0n),
     RULES_NEXT
   )
+// A wire row in the editor's units.
+const side = (o: { allow: number; deny: number }) => ({
+  allow: BigInt(o.allow),
+  deny: BigInt(o.deny),
+})
 const room = (rows: Record<string, Record<string, { allow?: number; deny?: number }>>) =>
   ({
     rules: RULES_NEXT,
@@ -384,8 +391,8 @@ describe('the P2P editor and the room rules agree', () => {
           ruleset: RULES_NEXT,
           place,
           everyone: 'r:everyone',
-          canonical: bits => fromWire(bits, RULES_NEXT),
-          rows: Object.entries(over).map(([subject, o]) => ({ subject, ...o, merge: false })),
+          canonical: bits => fromWire(Number(bits), RULES_NEXT),
+          rows: Object.entries(over).map(([subject, o]) => ({ subject, ...side(o), merge: false })),
           mine: p2pMaskIn(
             permsQ(F, 'm'),
             false,
@@ -399,9 +406,10 @@ describe('the P2P editor and the room rules agree', () => {
         })
         for (const item of ruleItems(RULES_NEXT, place))
           for (const tri of TRIS) {
-            const before = over['r:low']
+            const before = over['r:low'] && side(over['r:low'])
             const after = withTri(before, item.bit, tri)
-            if (after.allow === (before?.allow ?? 0) && after.deny === (before?.deny ?? 0)) continue
+            if (after.allow === (before?.allow ?? 0n) && after.deny === (before?.deny ?? 0n))
+              continue
             const e = {
               id: 'e',
               t: 'chperm',
@@ -410,8 +418,8 @@ describe('the P2P editor and the room rules agree', () => {
               c: {
                 ch,
                 subj: 'r:low',
-                allow: after.allow,
-                deny: after.deny,
+                allow: Number(after.allow),
+                deny: Number(after.deny),
               } as unknown as AclContent,
             } as unknown as AclEv
             expect([ch, item.name, tri, triBlock(src, 'r:low', item.bit, tri) === null]).toEqual([
@@ -440,13 +448,13 @@ describe('the P2P editor and the room rules agree', () => {
       ruleset: RULES_NEXT,
       place: 'category',
       everyone: 'r:everyone',
-      canonical: bits => fromWire(bits, RULES_NEXT),
-      rows: [{ subject: 'r:mgr', ...over['r:mgr'], merge: false }],
+      canonical: bits => fromWire(Number(bits), RULES_NEXT),
+      rows: [{ subject: 'r:mgr', ...side(over['r:mgr']), merge: false }],
       mine,
     })
-    expect(triBlock(src, 'r:low', wire('BypassSlowmode'), 'allow')).toBeNull()
-    expect(triBlock(src, 'r:low', wire('BypassSlowmode'), 'deny')).toBeNull()
-    expect(triBlock(src, 'r:low', wire('AttachFiles'), 'allow')).toBeNull()
-    expect(triBlock(src, 'r:low', wire('DeleteMessages'), 'allow')).toBe(NO_GRANT)
+    expect(triBlock(src, 'r:low', BigInt(wire('BypassSlowmode')), 'allow')).toBeNull()
+    expect(triBlock(src, 'r:low', BigInt(wire('BypassSlowmode')), 'deny')).toBeNull()
+    expect(triBlock(src, 'r:low', BigInt(wire('AttachFiles')), 'allow')).toBeNull()
+    expect(triBlock(src, 'r:low', BigInt(wire('DeleteMessages')), 'allow')).toBe(NO_GRANT)
   })
 })

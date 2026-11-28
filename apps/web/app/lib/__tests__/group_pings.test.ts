@@ -83,8 +83,8 @@ beforeEach(() => {
           { id: 2, name: 'random', kind: 'text', slowmode_seconds: 0 },
         ],
         roles: [
-          { id: 7, name: 'Crew', color: '#22aa66', perms: 0, mentionable: true },
-          { id: 8, name: 'Staff', color: '#aa2266', perms: 0 },
+          { id: 7, name: 'Crew', color: '#22aa66', perms: 0n, mentionable: true },
+          { id: 8, name: 'Staff', color: '#aa2266', perms: 0n },
         ],
       }),
     },
@@ -172,7 +172,7 @@ describe('group mention helpers', () => {
   })
 
   test('pill names use role names and skip unknown roles', () => {
-    const roles = [{ id: 7, name: ' Night Owls ', color: '#fff', perms: 0 }]
+    const roles = [{ id: 7, name: ' Night Owls ', color: '#fff', perms: 0n }]
     expect(groupNames([everyone, here, crew, { kind: 'role', role_id: 99 }], roles)).toEqual([
       ['everyone', 'everyone'],
       ['here', 'here'],
@@ -182,8 +182,8 @@ describe('group mention helpers', () => {
 
   test('autocomplete offers groups only when allowed, mentionable roles always', () => {
     const roles = [
-      { id: 7, name: 'Crew', color: '#22aa66', perms: 0, mentionable: true },
-      { id: 8, name: 'Staff', color: '#aa2266', perms: 0 },
+      { id: 7, name: 'Crew', color: '#22aa66', perms: 0n, mentionable: true },
+      { id: 8, name: 'Staff', color: '#aa2266', perms: 0n },
     ]
     expect(groupSuggestions('', false, roles).map(g => g.label)).toEqual(['@Crew'])
     expect(groupSuggestions('', true, roles).map(g => g.label)).toEqual([

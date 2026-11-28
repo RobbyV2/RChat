@@ -14,10 +14,6 @@ import {
   fromWire,
   hasBit,
   known,
-  maskAnd,
-  maskNot,
-  maskOr,
-  maskXor,
   managesRole,
   mayAssign,
   mayModerate,
@@ -32,7 +28,6 @@ import {
   unload,
   widens,
   type Actor,
-  type Bit,
   type Ow,
   type PermsModule,
   type Rank,
@@ -191,32 +186,28 @@ const SEND_GROUP = [
   'CreatePolls',
   'StartThreads',
 ]
-const maskList = (list: MaskList): number => {
-  const one = (name: string): number =>
+const maskList = (list: MaskList): bigint => {
+  const one = (name: string): bigint =>
     name === 'OPEN'
       ? registry()
           .filter(b => b.everyone && b.scope === 'channel' && b.hosted === 'live')
-          .reduce((m, b) => maskOr(m, b.value), 0)
+          .reduce((m, b) => m | b.value, 0n)
       : name === 'SEND_GROUP'
-        ? SEND_GROUP.reduce((m, n) => maskOr(m, bit(n)), 0)
+        ? SEND_GROUP.reduce((m, n) => m | bit(n), 0n)
         : bit(name)
-  let m = 0
+  let m = 0n
   for (const v of list)
     m =
-      typeof v === 'number'
-        ? maskOr(m, v)
-        : v.startsWith('-')
-          ? maskAnd(m, maskNot(one(v.slice(1))))
-          : maskOr(m, one(v))
+      typeof v === 'number' ? m | BigInt(v) : v.startsWith('-') ? m & ~one(v.slice(1)) : m | one(v)
   return m
 }
 
-type Fit = (mask: number) => number
+type Fit = (mask: bigint) => bigint
 const rowOf = (r: RowCase, member: boolean, fit: Fit) =>
   derivedRow(
     {
-      allow: r.can === undefined ? fit(maskList(r.allow ?? [])) : 0,
-      deny: r.can === undefined ? fit(maskList(r.deny ?? [])) : 0,
+      allow: r.can === undefined ? fit(maskList(r.allow ?? [])) : 0n,
+      deny: r.can === undefined ? fit(maskList(r.deny ?? [])) : 0n,
       merge: r.merge === true,
       canView: r.can?.includes('v') === true,
       canSend: r.can?.includes('s') === true,
@@ -225,7 +216,7 @@ const rowOf = (r: RowCase, member: boolean, fit: Fit) =>
     member
   )
 
-const channelCase = (c: ChannelCase, ruleset: number, everyone: number, fit: Fit) => {
+const channelCase = (c: ChannelCase, ruleset: number, everyone: bigint, fit: Fit) => {
   const roles = fit(maskList(c.roles ?? []))
   const who: Who =
     c.who === 'staff' || c.who === 'owner'
@@ -363,11 +354,11 @@ for (const [name, build] of builds)
     test('voice follows View as recorded, in the mask and in what channel views carry', async () => {
       await load()
       const { bits, out } = cases.p2p4.voice_worlds
-      const voice = maskOr(maskOr(bit('Connect'), bit('Speak')), bit('Video'))
+      const voice = bit('Connect') | bit('Speak') | bit('Video')
       const subset = (k: number) => bits.reduce((m, b, i) => ((k >> i) & 1 ? m | b : m), 0)
-      const said = (m: number) => {
-        const v = maskAnd(m, voice)
-        return v === 0 ? '0' : v === voice ? '1' : '?'
+      const said = (m: bigint) => {
+        const v = m & voice
+        return v === 0n ? '0' : v === voice ? '1' : '?'
       }
       for (const rules of [2, 4]) {
         let mask = ''
@@ -417,7 +408,7 @@ for (const [name, build] of builds)
       await load()
       for (const c of cases.p2p5.channel) {
         const want = toWire(maskList(c.out), 5)
-        expect([c.name, toWire(channelCase(c, 5, 0, wire5), 5)]).toEqual([c.name, want])
+        expect([c.name, toWire(channelCase(c, 5, 0n, wire5), 5)]).toEqual([c.name, want])
         if (c.timed_out !== true)
           expect([c.name, channelPerms(factsOf5(c), 'p', 'v')]).toEqual([c.name, want])
       }
@@ -479,15 +470,17 @@ for (const [name, build] of builds)
 
     test('the registry is the fixture, and the TypeScript bit tables follow it', async () => {
       await load()
-      expect(registry()).toEqual(json<Bit[]>('perm_bits.json'))
+      expect(registry().map((b): unknown => ({ ...b, value: Number(b.value) }))).toEqual(
+        json<unknown[]>('perm_bits.json')
+      )
       for (const [name, value] of Object.entries(Perm))
         expect([name, bit(name)]).toEqual([name, value])
       for (const name of Object.keys(Perm))
         expect([name, registry().find(b => b.name === name)?.hosted]).toEqual([name, 'live'])
-      expect(Object.values(Perm).reduce((m, b) => maskOr(m, b), 0)).toBe(ALL_PERMS)
+      expect(Object.values(Perm).reduce((m, b) => m | b, 0n)).toBe(ALL_PERMS)
       const managed = registry()
         .filter(b => b.hosted === 'live' && !b.everyone)
-        .reduce((m, b) => maskOr(m, b.value), 0)
+        .reduce((m, b) => m | b.value, 0n)
       expect(managed).toBe(ALL_PERMS)
       const wire = new Map(registry().flatMap(b => (b.p2p ? [[b.name, b.p2p] as const] : [])))
       const names: Record<keyof typeof P, string> = {
@@ -512,7 +505,7 @@ for (const [name, build] of builds)
       expect(toWire(known(4), 4)).toBe(
         Object.entries(P).reduce((m, [name, b]) => (since(name) <= 4 ? m | b : m), 0)
       )
-      expect(toWire(0, 4, 1 << 20)).toBe(1 << 20)
+      expect(toWire(0n, 4, 1 << 20)).toBe(1 << 20)
     })
 
     test('ranks, edits, order and sync answer', async () => {
@@ -531,14 +524,14 @@ for (const [name, build] of builds)
       const view = bit('ViewChannels')
       const send = bit('SendMessages')
       const kick = bit('Kick')
-      expect(serverBits({ kind: 'admin', mask: kick, roles: 2 + view }, 0, 0)).toBe(kick + view)
+      expect(serverBits({ kind: 'admin', mask: kick, roles: 2n + view }, 0n, 0)).toBe(kick + view)
       const manager: Actor = {
         rank: { tier: 'role', pos: 3, tie: 1 },
         bits: bit('ManageRoles') + bit('AssignRoles') + kick,
       }
       const mid: Rank = { tier: 'role', pos: 2, tie: 1 }
       const low: Actor = { rank: { tier: 'role', pos: 1, tie: 1 }, bits: kick }
-      const plain: Actor = { rank: { tier: 'plain' }, bits: 0 }
+      const plain: Actor = { rank: { tier: 'plain' }, bits: 0n }
       expect(managesRole(manager, mid)).toBe(true)
       expect(managesRole(manager, manager.rank)).toBe(false)
       expect(managesRole(manager, mid, false)).toBe(false)
@@ -559,25 +552,25 @@ for (const [name, build] of builds)
       expect(mayAssign(manager, mid, kick, true, { ...low, bits: manager.bits }, 0, true)).toBe(
         false
       )
-      expect(mayAssign({ ...manager, bits: bit('ManageRoles') }, mid, 0, true, plain, 0)).toBe(
+      expect(mayAssign({ ...manager, bits: bit('ManageRoles') }, mid, 0n, true, plain, 0)).toBe(
         false
       )
       expect(mayUnassign(low, manager.rank, undefined)).toBe(true)
       expect(mayUnassign(manager, mid, low)).toBe(true)
       expect(mayUnassign(manager, manager.rank, low)).toBe(false)
       expect(mayUnassign(low, mid, manager)).toBe(false)
-      expect(checkOverwriteEdit(view, false, undefined, { allow: view, deny: 0 }, true)).toBe(null)
-      expect(checkOverwriteEdit(view, false, undefined, { allow: send, deny: 0 }, true)).toBe(
+      expect(checkOverwriteEdit(view, false, undefined, { allow: view, deny: 0n }, true)).toBe(null)
+      expect(checkOverwriteEdit(view, false, undefined, { allow: send, deny: 0n }, true)).toBe(
         'grants'
       )
-      expect(checkOverwriteEdit(0, false, undefined, { allow: 0, deny: 2 }, true)).toBe(
+      expect(checkOverwriteEdit(0n, false, undefined, { allow: 0n, deny: 2n }, true)).toBe(
         'denies_moderation'
       )
-      expect(checkOverwriteEdit(2, false, undefined, { allow: 0, deny: 2 }, false)).toBe(
+      expect(checkOverwriteEdit(2n, false, undefined, { allow: 0n, deny: 2n }, false)).toBe(
         'outranked'
       )
-      expect(checkBitsEdit(4, false, 0, 5)).toBe('grants')
-      expect(checkBitsEdit(4, true, 0, 5)).toBe(null)
+      expect(checkBitsEdit(4n, false, 0n, 5n)).toBe('grants')
+      expect(checkBitsEdit(4n, true, 0n, 5n)).toBe(null)
       expect(reorder([1, 2, 3, 4], [4, 1, 3, 2], [2, 3, 4])).toEqual([1, 4, 3, 2])
       expect(moved([1, 2, 3, 4], [4, 1, 2, 3])).toEqual([4])
       expect(
@@ -594,18 +587,16 @@ for (const [name, build] of builds)
   })
 
 describe('masks above 32 bits', () => {
-  test('the helpers are exact up to 2^53', () => {
-    const a = 2 ** 34 + 2 ** 31 + 5
-    const b = 2 ** 52 + 2 ** 34 + 4
-    expect(maskAnd(a, b)).toBe(2 ** 34 + 4)
-    expect(maskOr(a, b)).toBe(2 ** 52 + 2 ** 34 + 2 ** 31 + 5)
-    expect(maskNot(0)).toBe(2 ** 53 - 1)
-    expect(maskAnd(maskNot(a), a)).toBe(0)
-    expect(maskOr(maskNot(a), a)).toBe(2 ** 53 - 1)
-    expect(hasBit(a, 2 ** 31)).toBe(true)
-    expect(hasBit(a, 2 ** 32)).toBe(false)
-    expect(maskXor(a, b)).toBe(2 ** 52 + 2 ** 31 + 1)
-    expect(maskXor(maskXor(a, 2 ** 32), 2 ** 32)).toBe(a)
+  test('keep their high bits through the operators', () => {
+    const a = 2n ** 34n + 2n ** 31n + 5n
+    const b = 2n ** 52n + 2n ** 34n + 4n
+    expect(a & b).toBe(2n ** 34n + 4n)
+    expect(a | b).toBe(2n ** 52n + 2n ** 34n + 2n ** 31n + 5n)
+    expect(a & ~a).toBe(0n)
+    expect(hasBit(a, 2n ** 31n)).toBe(true)
+    expect(hasBit(a, 2n ** 32n)).toBe(false)
+    expect(a ^ b).toBe(2n ** 52n + 2n ** 31n + 1n)
+    expect(a ^ (2n ** 32n) ^ (2n ** 32n)).toBe(a)
   })
 })
 
@@ -619,6 +610,6 @@ describe('loading the rules', () => {
     })
     expect(failure instanceof Error).toBe(true)
     await ready(wasmBuild)
-    expect(known(4)).toBeGreaterThan(0)
+    expect(known(4) > 0n).toBe(true)
   })
 })

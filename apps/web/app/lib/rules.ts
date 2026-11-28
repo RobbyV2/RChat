@@ -1,14 +1,4 @@
-import {
-  HOSTED,
-  baseBits,
-  derivedRow,
-  everyoneStage,
-  hasBit,
-  maskAnd,
-  maskNot,
-  maskOr,
-  type Rank,
-} from './perms'
+import { HOSTED, baseBits, derivedRow, everyoneStage, hasBit, type Rank } from './perms'
 import { outranks, roleRank } from './hierarchy'
 import {
   ALL_PERMS,
@@ -27,7 +17,7 @@ import {
 import { plural } from './bytes'
 import { cleanBio } from './profile_fields'
 
-export const PERM_ITEMS: { label: string; bit: number; hint?: string }[] = [
+export const PERM_ITEMS: { label: string; bit: bigint; hint?: string }[] = [
   { label: 'Manage channels', bit: Perm.ManageChannels },
   {
     label: 'Manage messages',
@@ -151,15 +141,15 @@ export const memberPerms = (
   member: Pick<Member, 'is_admin' | 'perms' | 'role_ids'> | null | undefined,
   roles: Pick<Role, 'id' | 'perms'>[]
 ) => {
-  if (!member) return 0
-  if (member.is_admin) return member.perms === 0 ? ALL_PERMS : maskAnd(member.perms, ALL_PERMS)
-  return maskAnd(
-    roles.filter(r => member.role_ids.includes(r.id)).reduce((acc, r) => maskOr(acc, r.perms), 0),
+  if (!member) return 0n
+  if (member.is_admin) return member.perms === 0n ? ALL_PERMS : member.perms & ALL_PERMS
+  return (
+    roles.filter(r => member.role_ids.includes(r.id)).reduce((acc, r) => acc | r.perms, 0n) &
     ALL_PERMS
   )
 }
 
-const without = (bits: number, held: number) => maskAnd(bits, maskNot(held))
+const without = (bits: bigint, held: bigint) => bits & ~held
 
 // Your rank and theirs on a server whose role order decides who may moderate whom.
 export interface Order {
@@ -169,43 +159,43 @@ export interface Order {
 
 // Whether you may act on a member: you rank above them (`order`), or on a server whose role
 // order is unconfirmed their permissions are a strict subset of yours.
-export const canModerate = (perms: number, siteAdmin: boolean, target: number, order?: Order) =>
+export const canModerate = (perms: bigint, siteAdmin: boolean, target: bigint, order?: Order) =>
   siteAdmin ||
-  (order ? outranks(order.mine, order.theirs) : without(target, perms) === 0 && target !== perms)
+  (order ? outranks(order.mine, order.theirs) : without(target, perms) === 0n && target !== perms)
 
-export const canGrant = (perms: number, siteAdmin: boolean, granted: number) =>
-  siteAdmin || without(maskAnd(granted, ALL_PERMS), perms) === 0
+export const canGrant = (perms: bigint, siteAdmin: boolean, granted: bigint) =>
+  siteAdmin || without(granted & ALL_PERMS, perms) === 0n
 
 // Whether you may set a role's permissions from `current` to `next`: once the role order is
 // confirmed only the permissions it gains must be yours, before that all of them.
-export const canSetRoleBits = (perms: number, current: number, next: number, confirmed: boolean) =>
+export const canSetRoleBits = (perms: bigint, current: bigint, next: bigint, confirmed: boolean) =>
   canGrant(perms, false, confirmed ? without(next, current) : next)
 
-export const adminMask = (stored: number) => (stored === 0 ? ALL_PERMS : maskAnd(stored, ALL_PERMS))
+export const adminMask = (stored: bigint) => (stored === 0n ? ALL_PERMS : stored & ALL_PERMS)
 
-export const canPromote = (perms: number, siteAdmin: boolean) =>
+export const canPromote = (perms: bigint, siteAdmin: boolean) =>
   canGrant(perms, siteAdmin, ALL_PERMS)
 
 export const rolePerms = (
   member: Pick<Member, 'role_ids'> | null | undefined,
   roles: Pick<Role, 'id' | 'perms'>[]
-) => memberPerms(member && { is_admin: false, perms: 0, role_ids: member.role_ids }, roles)
+) => memberPerms(member && { is_admin: false, perms: 0n, role_ids: member.role_ids }, roles)
 
 export const REVOKE_RAISES =
   "They have roles with permissions you don't have, so removing their admin would give them those."
 
-export const canRevoke = (perms: number, siteAdmin: boolean, stored: number, roles: number) =>
-  without(maskAnd(roles, ALL_PERMS), adminMask(stored)) === 0 || canGrant(perms, siteAdmin, roles)
+export const canRevoke = (perms: bigint, siteAdmin: boolean, stored: bigint, roles: bigint) =>
+  without(roles & ALL_PERMS, adminMask(stored)) === 0n || canGrant(perms, siteAdmin, roles)
 
 export const canTransferTo = (
-  perms: number,
+  perms: bigint,
   siteAdmin: boolean,
-  storedPerms: number,
-  myRoles = 0
+  storedPerms: bigint,
+  myRoles = 0n
 ) => canGrant(perms, siteAdmin, adminMask(storedPerms)) && canGrant(perms, siteAdmin, myRoles)
 
-export const canSetAdminPerms = (perms: number, siteAdmin: boolean, stored: number, next: number) =>
-  (adminMask(next) & ~adminMask(stored)) === 0 || canGrant(perms, siteAdmin, adminMask(next))
+export const canSetAdminPerms = (perms: bigint, siteAdmin: boolean, stored: bigint, next: bigint) =>
+  (adminMask(next) & ~adminMask(stored)) === 0n || canGrant(perms, siteAdmin, adminMask(next))
 
 // How you and a role's holder rank: `below` says the role ranks below you, `order` is as for
 // `canModerate`.
@@ -217,18 +207,18 @@ export interface RoleStanding {
 const NO_STANDING: RoleStanding = { below: true }
 
 const canAssignRole = (
-  perms: number,
+  perms: bigint,
   siteAdmin: boolean,
-  rolePerms: number,
+  rolePerms: bigint,
   channelLocked: boolean,
   standing: RoleStanding
 ) => siteAdmin || (canGrant(perms, false, rolePerms) && standing.below && !channelLocked)
 
 const canUnassignRole = (
-  perms: number,
+  perms: bigint,
   siteAdmin: boolean,
   self: boolean,
-  targetPerms: number,
+  targetPerms: bigint,
   channelLocked: boolean,
   standing: RoleStanding
 ) =>
@@ -237,12 +227,12 @@ const canUnassignRole = (
     !channelLocked)
 
 export const canChangeRole = (
-  perms: number,
+  perms: bigint,
   siteAdmin: boolean,
-  rolePerms: number,
+  rolePerms: bigint,
   held: boolean,
   self: boolean,
-  targetPerms: number,
+  targetPerms: bigint,
   channelLocked = false,
   standing: RoleStanding = NO_STANDING
 ) =>
@@ -261,7 +251,7 @@ export const ROLE_NOT_BELOW = 'Only someone with a higher role can change this r
 // Why you can't change a role, or null. `rank` is yours when the server orders its roles;
 // `confirmed` says that order alone decides who manages a role.
 export const roleEditBlock = (
-  perms: number,
+  perms: bigint,
   siteAdmin: boolean,
   role: Pick<Role, 'id' | 'perms' | 'position'>,
   limits: RoleLimits = NO_ROLE_LIMITS,
@@ -283,7 +273,7 @@ export const roleEditBlock = (
 // staff, who move every role.
 export const movableRoles = (
   roles: Pick<Role, 'id' | 'perms' | 'position'>[],
-  perms: number | undefined,
+  perms: bigint | undefined,
   limits?: RoleLimits,
   rank?: Rank,
   confirmed = false
@@ -298,7 +288,7 @@ export const movableRoles = (
     .map(r => r.id)
 
 export const roleDeleteBlock = (
-  perms: number,
+  perms: bigint,
   siteAdmin: boolean,
   role: Pick<Role, 'id' | 'perms' | 'position'>,
   limits: RoleLimits = NO_ROLE_LIMITS,
@@ -319,8 +309,8 @@ export const ruleRow = (r: ChannelPerm) =>
     ? { allow: r.allow, deny: r.deny, merge: r.mode === 'merge' }
     : derivedRow(
         {
-          allow: 0,
-          deny: 0,
+          allow: 0n,
+          deny: 0n,
           canView: r.can_view,
           canSend: r.can_send,
           canReadHistory: r.can_read_history,
@@ -336,7 +326,7 @@ export const EVERYONE_SUBJECT = 'everyone'
 export const roleDenyEscapes = (
   channel: Pick<Channel, 'kind' | 'restrict_view' | 'restrict_send'>,
   rules: ChannelPerm[],
-  everyone?: number
+  everyone?: bigint
 ) => {
   const all = rules.find(r => r.subject === EVERYONE_SUBJECT)
   const stage = everyoneStage(
@@ -351,16 +341,14 @@ export const roleDenyEscapes = (
   const used =
     channel.kind === 'text'
       ? stage
-      : maskAnd(
-          stage,
-          ChannelPermBit.ViewChannels |
-            ChannelPermBit.Connect |
-            ChannelPermBit.Speak |
-            ChannelPermBit.Video
-        )
+      : stage &
+        (ChannelPermBit.ViewChannels |
+          ChannelPermBit.Connect |
+          ChannelPermBit.Speak |
+          ChannelPermBit.Video)
   return (
     hasBit(stage, ChannelPermBit.ViewChannels) &&
-    rules.some(r => r.subject.startsWith('r:') && maskAnd(ruleRow(r).deny, used) !== 0)
+    rules.some(r => r.subject.startsWith('r:') && (ruleRow(r).deny & used) !== 0n)
   )
 }
 

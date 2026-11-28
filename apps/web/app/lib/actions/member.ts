@@ -115,7 +115,7 @@ interface Seat {
   self: boolean
   // On a message's author rather than a member list row.
   message: boolean
-  perms: number
+  perms: bigint
   siteAdmin: boolean
   row: Member | undefined
   left: boolean
@@ -158,12 +158,12 @@ const seatOf = (ctx: ActionCtx): Seat | null => {
   }
 }
 
-const may = (ctx: ActionCtx, perm: number, test: (seat: Seat) => boolean) => {
+const may = (ctx: ActionCtx, perm: bigint, test: (seat: Seat) => boolean) => {
   const seat = seatOf(ctx)
   return !!seat && hasPerm(seat.perms, perm) && test(seat)
 }
 
-const moderates = (perm: number) => (ctx: ActionCtx) =>
+const moderates = (perm: bigint) => (ctx: ActionCtx) =>
   may(ctx, perm, seat => !seat.self && !seat.left && seat.over)
 
 // Runs `f` on the member a moderation row is about.
@@ -386,7 +386,7 @@ export const memberActions: Action[] = [
         ctx,
         Perm.ManageAdmins,
         ({ self, row, perms, siteAdmin, server }) =>
-          !self && canTransferTo(perms, siteAdmin, row?.perms ?? 0, myRolePerms(ctx.s, server))
+          !self && canTransferTo(perms, siteAdmin, row?.perms ?? 0n, myRolePerms(ctx.s, server))
       ),
     run: onSeat(({ server, user }, ctx) =>
       ctx.acct.store.menu.confirmTransfer(server, user.username)

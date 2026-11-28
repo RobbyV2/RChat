@@ -11,8 +11,6 @@ import {
   fromWire,
   hasBit,
   managesRole,
-  maskAnd,
-  maskNot,
   mayAssign,
   mayModerate,
   mayUnassign,
@@ -297,7 +295,7 @@ const split = (wire: number, rules: number) => {
   const mask = fromWire(wire, rules)
   return { mask, rest: wire & ~toWire(mask, rules) }
 }
-const splits = new Map<number, Map<number, { mask: number; rest: number }>>()
+const splits = new Map<number, Map<number, { mask: bigint; rest: number }>>()
 const splitOf = (wire: number, rules: number) => {
   let byWire = splits.get(rules)
   if (!byWire) splits.set(rules, (byWire = new Map()))
@@ -328,12 +326,12 @@ export function authCore(e: AclEv, x: AuthCtx, rules = rulesOf(x.rules)): boolea
     const mine = held()
     const asked = splitOf(bits, rules)
     return (
-      checkBitsEdit(mine.mask, false, 0, asked.mask) === null && (asked.rest & ~mine.rest) === 0
+      checkBitsEdit(mine.mask, false, 0n, asked.mask) === null && (asked.rest & ~mine.rest) === 0
     )
   }
   const outranks = (r: Rank) => above(tiered(x.me), tiered(r))
   const actor = (): Actor => ({ rank: tiered(x.me), bits: held().mask })
-  const at = (r: Rank): Actor => ({ rank: tiered(r), bits: 0 })
+  const at = (r: Rank): Actor => ({ rank: tiered(r), bits: 0n })
   const moderates = (need: number, to: string) =>
     mayModerate(actor(), at(x.rankT(to)), fromWire(need, rules), false)
   const manages = (r: Rank) => managesRole(actor(), tiered(r))
@@ -349,8 +347,7 @@ export function authCore(e: AclEv, x: AuthCtx, rules = rulesOf(x.rules)): boolea
       .rows(`r:${role}`)
       .every(
         ([ch, o]) =>
-          !live(ch) ||
-          maskAnd(fromWire(o.allow ?? 0, rules), maskNot(maskIn(Fr, chan, a, ch, rules))) === 0
+          !live(ch) || (fromWire(o.allow ?? 0, rules) & ~maskIn(Fr, chan, a, ch, rules)) === 0n
       )
   }
   const codeLive = (cid: string) => Fr.codeOk.has(cid) && !Fo.codeDead.has(cid)
@@ -403,7 +400,7 @@ export function authCore(e: AclEv, x: AuthCtx, rules = rulesOf(x.rules)): boolea
       if (!isMem || !Fr.roles.has(c.role) || Fr.owners.has(c.to)) return false
       const role = tiered(x.rankOf(c.role))
       const target = at(x.rankT(c.to))
-      if (rules < RULES_NEXT) return mayAssign(actor(), role, 0, true, target, rules)
+      if (rules < RULES_NEXT) return mayAssign(actor(), role, 0n, true, target, rules)
       // The role's permissions and what its overwrites allow must be within the author's.
       return mayAssign(
         actor(),
@@ -443,7 +440,7 @@ export function authCore(e: AclEv, x: AuthCtx, rules = rulesOf(x.rules)): boolea
       const row = (o: AclContent | undefined) => {
         const allow = fromWire(o?.allow ?? 0, rules)
         const deny = fromWire(o?.deny ?? 0, rules)
-        return allow === 0 && deny === 0 ? undefined : { allow, deny }
+        return allow === 0n && deny === 0n ? undefined : { allow, deny }
       }
       const mine = maskIn(Fr, chan, a, ch, rules)
       return checkOverwriteEdit(mine, false, row(chan.overwrite(ch, subj)), row(c), true) === null
@@ -602,7 +599,7 @@ function maskIn(
   P: string,
   ch: string,
   rules: number
-): number {
+): bigint {
   const c = chan.channel(ch)
   return maskUnder(
     permsQ(F, P),
@@ -628,12 +625,12 @@ export const maskUnder = (
   rows: { everyone: WireRow; roles: WireRow[]; member: WireRow },
   place: { restrictView: boolean; restrictSend: boolean },
   rules: number
-): number => {
+): bigint => {
   const row = (o: WireRow) =>
     o && { allow: fromWire(o.allow ?? 0, rules), deny: fromWire(o.deny ?? 0, rules) }
   return channelMask(
     owner ? { kind: 'owner' } : { kind: 'member', roles: fromWire(bits, rules) },
-    0,
+    0n,
     {
       everyone: row(rows.everyone),
       restrictView: place.restrictView,

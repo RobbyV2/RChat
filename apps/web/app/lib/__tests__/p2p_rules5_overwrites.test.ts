@@ -20,7 +20,7 @@ import { fromWire, toWire, bit } from '../perms'
 // 'mod' at position 3, with Manage messages) and a member 'p' (role 'low' at position 1).
 const wire = (...names: string[]) =>
   toWire(
-    names.map(bit).reduce((a, b) => a + b, 0),
+    names.map(bit).reduce((a, b) => a + b, 0n),
     RULES_NEXT
   )
 const BASE = wire('ViewChannels', 'SendMessages', 'AddReactions')
@@ -79,7 +79,7 @@ describe('channel overwrites under rules 5', () => {
     const current = room(RULES_VERSION, rows, P.ManageChannels | P.ManageMessages)
     const mask = (F: ChanFacts, who: string) => fromWire(channelPerms(F, who, 'c'), RULES_NEXT)
     expect(channelPerms(current, 'm', 'c')).toBe(0x7fffffff)
-    expect(mask(next, 'm') & bit('DeleteMessages')).toBe(0)
+    expect(mask(next, 'm') & bit('DeleteMessages')).toBe(0n)
     expect(mask(next, 'm') & bit('SendMessages')).toBe(bit('SendMessages'))
     expect(mask(next, 'o') & bit('DeleteMessages')).toBe(bit('DeleteMessages'))
     expect(canView(next, 'p', 'c')).toBe(false)

@@ -89,7 +89,7 @@ export function HostedMembers({
 }: {
   server: string
   roles: Role[]
-  perms: number
+  perms: bigint
 }) {
   const invites = hasPerm(perms, Perm.ManageInvites)
   const load = useAccountRequest(

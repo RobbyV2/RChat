@@ -10,7 +10,7 @@ import {
   unruledMask,
   withChannel,
 } from '../channel_perms'
-import { HOSTED, baseBits, channelMask, maskAnd, maskNot, maskOr } from '../perms'
+import { HOSTED, baseBits, channelMask } from '../perms'
 import { ChannelPermBit as B, Perm, type Channel, type ServerDetail } from '../types'
 
 const channel = (id: number, more: Partial<Channel> = {}): Channel => ({
@@ -22,24 +22,24 @@ const channel = (id: number, more: Partial<Channel> = {}): Channel => ({
 })
 
 test('a channel update without permissions keeps the ones already known', () => {
-  expect(keepMyPerms(channel(1, { my_perms: 7 }), channel(1, { name: 'new' }))).toEqual(
-    channel(1, { name: 'new', my_perms: 7 })
+  expect(keepMyPerms(channel(1, { my_perms: 7n }), channel(1, { name: 'new' }))).toEqual(
+    channel(1, { name: 'new', my_perms: 7n })
   )
-  expect(keepMyPerms(channel(1, { my_perms: 7 }), channel(1, { my_perms: 0 })).my_perms).toBe(0)
+  expect(keepMyPerms(channel(1, { my_perms: 7n }), channel(1, { my_perms: 0n })).my_perms).toBe(0n)
   expect(keepMyPerms(undefined, channel(1))).toEqual(channel(1))
-  expect(keepMyPerms(channel(1), channel(1, { my_perms: 3 })).my_perms).toBe(3)
+  expect(keepMyPerms(channel(1), channel(1, { my_perms: 3n })).my_perms).toBe(3n)
 })
 
 test('an update replaces only its own channel', () => {
-  const list = [channel(1, { my_perms: 7 }), channel(2, { my_perms: 9 })]
+  const list = [channel(1, { my_perms: 7n }), channel(2, { my_perms: 9n })]
   expect(withChannel(list, channel(2, { topic: 'hi' }))).toEqual([
-    channel(1, { my_perms: 7 }),
-    channel(2, { topic: 'hi', my_perms: 9 }),
+    channel(1, { my_perms: 7n }),
+    channel(2, { topic: 'hi', my_perms: 9n }),
   ])
   expect(withChannel(list, channel(3))).toEqual(list)
 })
 
-const held = (mask: number) =>
+const held = (mask: bigint) =>
   Object.entries(canOf(mask))
     .filter(([, on]) => on)
     .map(([name]) => name)
@@ -68,7 +68,7 @@ test('a mask answers each control, and nothing without View channels', () => {
 })
 
 test('a channel without its own answer follows its read-only mark and your permissions', () => {
-  expect(held(legacyMask(false, 0))).toEqual([
+  expect(held(legacyMask(false, 0n))).toEqual([
     'send',
     'react',
     'attach',
@@ -79,7 +79,7 @@ test('a channel without its own answer follows its read-only mark and your permi
     'speak',
     'video',
   ])
-  expect(held(legacyMask(true, 0))).toEqual(['connect', 'speak', 'video'])
+  expect(held(legacyMask(true, 0n))).toEqual(['connect', 'speak', 'video'])
   expect(held(legacyMask(true, Perm.DeleteMessages))).toEqual([
     'pin',
     'manage',
@@ -100,12 +100,12 @@ test('a hosted channel reads its own mask once a member has one', () => {
     read_only: [2],
   } as unknown as ServerDetail
   expect(held(hostedMask(detail, 1, Perm.DeleteMessages, true))).toEqual(['send'])
-  expect(canOf(hostedMask(detail, 1, 0, false)).connect).toBe(true)
-  expect(canOf(hostedMask(detail, 2, 0, true)).send).toBe(false)
+  expect(canOf(hostedMask(detail, 1, 0n, false)).connect).toBe(true)
+  expect(canOf(hostedMask(detail, 2, 0n, true)).send).toBe(false)
   expect(canOf(hostedMask(detail, 2, Perm.DeleteMessages, true)).manage).toBe(true)
-  expect(canOf(hostedMask(detail, 3, 0, true)).send).toBe(true)
-  expect(canOf(hostedMask(undefined, 1, 0, true)).send).toBe(true)
-  expect(canOf(hostedMask(detail, null, 0, true)).send).toBe(true)
+  expect(canOf(hostedMask(detail, 3, 0n, true)).send).toBe(true)
+  expect(canOf(hostedMask(undefined, 1, 0n, true)).send).toBe(true)
+  expect(canOf(hostedMask(detail, null, 0n, true)).send).toBe(true)
 })
 
 test('a channel without rules of its own reads like the shared rules evaluate it', () => {
@@ -123,14 +123,14 @@ test('a channel without rules of its own reads like the shared rules evaluate it
   ]
   const base = baseBits()
   for (let pick = 0; pick < 2 ** pool.length; pick++) {
-    const chosen = pool.filter((_, i) => (pick >> i) & 1).reduce((m, b) => maskOr(m, b), 0)
-    for (const bits of [chosen, maskOr(chosen, maskAnd(base, maskNot(B.ViewChannels)))])
+    const chosen = pool.filter((_, i) => (pick >> i) & 1).reduce((m, b) => m | b, 0n)
+    for (const bits of [chosen, chosen | (base & ~B.ViewChannels)])
       for (const flags of [0, 1, 2, 3]) {
         const restrictView = (flags & 1) !== 0
         const restrictSend = (flags & 2) !== 0
         const shared = channelMask(
           { kind: 'member', roles: bits },
-          0,
+          0n,
           { restrictView, restrictSend, roles: [] },
           HOSTED,
           false,
@@ -147,8 +147,8 @@ test('a channel without rules of its own reads like the shared rules evaluate it
 })
 
 test('a new channel follows the server permissions the server reports', () => {
-  const everyone = maskAnd(baseBits(), maskNot(B.AddReactions + B.AttachFiles))
-  const detail = (my: number) =>
+  const everyone = baseBits() & ~(B.AddReactions + B.AttachFiles)
+  const detail = (my: bigint) =>
     ({
       channels: [
         channel(1, { my_perms: B.ViewChannels }),
@@ -158,7 +158,7 @@ test('a new channel follows the server permissions the server reports', () => {
       read_only: [],
       my_perms: my,
     }) as unknown as ServerDetail
-  const plain = canOf(hostedMask(detail(everyone), 2, 0, true))
+  const plain = canOf(hostedMask(detail(everyone), 2, 0n, true))
   expect([plain.send, plain.react, plain.attach, plain.pin, plain.bypassSlowmode]).toEqual([
     true,
     false,
@@ -167,21 +167,21 @@ test('a new channel follows the server permissions the server reports', () => {
     false,
   ])
   const modr = canOf(
-    hostedMask(detail(maskOr(everyone, Perm.DeleteMessages)), 2, Perm.DeleteMessages, true)
+    hostedMask(detail(everyone | Perm.DeleteMessages), 2, Perm.DeleteMessages, true)
   )
   expect([modr.manage, modr.pin, modr.bypassSlowmode]).toEqual([true, false, false])
-  const mgr = canOf(hostedMask(detail(maskOr(everyone, Perm.ManageChannels)), 3, 0, true))
+  const mgr = canOf(hostedMask(detail(everyone | Perm.ManageChannels), 3, 0n, true))
   expect([mgr.send, mgr.react, mgr.bypassSlowmode, mgr.pin]).toEqual([true, true, true, false])
-  expect(hostedMask(detail(everyone), 3, 0, true)).toBe(0)
-  expect(held(hostedMask(detail(everyone), 1, 0, true))).toEqual([])
-  expect(canOf(hostedMask(detail(0), 2, 0, false)).react).toBe(true)
+  expect(hostedMask(detail(everyone), 3, 0n, true)).toBe(0n)
+  expect(held(hostedMask(detail(everyone), 1, 0n, true))).toEqual([])
+  expect(canOf(hostedMask(detail(0n), 2, 0n, false)).react).toBe(true)
 })
 
 test('a P2P channel gives its mask to a joined identity only', () => {
   const channels = [{ id: 'a', perms: B.ViewChannels + B.Connect }]
-  expect(held(p2pMask({ me: 'join', channels }, 'a') ?? 0)).toEqual(['connect'])
+  expect(held(p2pMask({ me: 'join', channels }, 'a') ?? 0n)).toEqual(['connect'])
   expect(p2pMask({ me: 'join', channels }, 'b')).toBeNull()
-  expect(p2pMask({ me: 'invite', channels }, 'a')).toBe(0)
-  expect(p2pMask({ me: null, channels }, 'a')).toBe(0)
+  expect(p2pMask({ me: 'invite', channels }, 'a')).toBe(0n)
+  expect(p2pMask({ me: null, channels }, 'a')).toBe(0n)
   expect(p2pMask(undefined, 'a')).toBeNull()
 })

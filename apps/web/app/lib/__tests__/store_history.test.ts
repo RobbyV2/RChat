@@ -419,7 +419,7 @@ describe('pending uploads', () => {
     hang()
     const held =
       ChannelPermBit.ViewChannels | ChannelPermBit.ReadHistory | ChannelPermBit.SendMessages
-    const chan = (id: number, mask: number) => ({ ...textChannel(id), my_perms: mask })
+    const chan = (id: number, mask: bigint) => ({ ...textChannel(id), my_perms: mask })
     useStore.setState({
       me: me('alice', {
         servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }],

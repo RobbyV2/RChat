@@ -842,7 +842,7 @@ describe('what you hold in the voice channel', () => {
     ChannelPermBit.Connect |
     ChannelPermBit.Speak |
     ChannelPermBit.Video
-  const details = (mask: number) =>
+  const details = (mask: bigint) =>
     useStore.setState({
       servers: {
         lounge: serverDetail('lounge', {
@@ -858,7 +858,7 @@ describe('what you hold in the voice channel', () => {
       username: 'alice',
       muted,
     })
-  const join = async (mask: number) => {
+  const join = async (mask: bigint) => {
     useStore.setState({
       me: me('alice', {
         servers: [{ name: 'lounge', display_name: 'Lounge', creator: null, is_admin: false }],
@@ -928,7 +928,7 @@ describe('what you hold in the voice channel', () => {
       servers: {
         ...st().servers,
         other: serverDetail('other', {
-          channels: [{ id: 9, name: 'v', kind: 'voice', slowmode_seconds: 0, my_perms: 0 }],
+          channels: [{ id: 9, name: 'v', kind: 'voice', slowmode_seconds: 0, my_perms: 0n }],
         }),
       },
     })

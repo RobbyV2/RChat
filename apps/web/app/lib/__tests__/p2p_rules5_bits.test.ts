@@ -27,7 +27,7 @@ import { bit, hasBit, toWire } from '../perms'
 
 const wire = (...names: string[]) =>
   toWire(
-    names.map(bit).reduce((a, b) => a + b, 0),
+    names.map(bit).reduce((a, b) => a + b, 0n),
     RULES_NEXT
   )
 const BASE = wire(
@@ -234,8 +234,8 @@ describe('what the page reads', () => {
   test('a channel view carries the mask the controls ask', () => {
     const lim = { name: 100, topic: 100 }
     const held = (s: Summary, who: string) =>
-      channelViews(s, who, 'join', lim).find(c => c.id === C)?.perms ?? 0
-    const names = (mask: number) =>
+      channelViews(s, who, 'join', lim).find(c => c.id === C)?.perms ?? 0n
+    const names = (mask: bigint) =>
       ['SendMessages', 'AddReactions', 'PinMessages', 'DeleteMessages', 'BypassSlowmode'].filter(
         n => hasBit(mask, bit(n))
       )

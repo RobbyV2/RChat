@@ -3,6 +3,7 @@ import { resetSessionCaches, useStore } from '../store'
 import { ChannelPermBit as B, type Channel, type ChannelPerm, type WsEvent } from '../types'
 import { me, member, role, serverDetail, until } from './fixtures'
 import { loadPerms } from './helpers/perms'
+import { writeJson } from '../api/masks'
 
 beforeAll(() => loadPerms())
 
@@ -14,7 +15,7 @@ let categoryRules: ChannelPerm[] = []
 let confirms: string[] = []
 let syncAnswer = 200
 
-const rule = (subject: string, allow: number, deny: number): ChannelPerm => ({
+const rule = (subject: string, allow: bigint, deny: bigint): ChannelPerm => ({
   subject,
   can_view: true,
   can_send: true,
@@ -43,13 +44,13 @@ beforeEach(() => {
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input))
     requests.push(`${init?.method ?? 'GET'} ${url.pathname}${init?.body ? ` ${init.body}` : ''}`)
-    const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 })
+    const json = (body: unknown) => new Response(writeJson(body), { status: 200 })
     if (url.pathname === '/api/channels/5/perms') return json(channelRules)
     if (url.pathname === '/api/categories/7/perms') return json(categoryRules)
     if (url.pathname.endsWith('/sync'))
       return syncAnswer === 200
         ? json({ ok: true })
-        : new Response(JSON.stringify({ error: 'Syncing lets r:9 see or send here.' }), {
+        : new Response(writeJson({ error: 'Syncing lets r:9 see or send here.' }), {
             status: syncAnswer,
           })
     if (url.pathname === '/api/servers/s/members' && url.searchParams.getAll('usernames').length)
@@ -65,7 +66,7 @@ beforeEach(() => {
       s: serverDetail('s', {
         channels: [plans],
         categories: [{ id: 7, name: 'Team', position: 0 }],
-        roles: [{ ...role(1, '#000001', 0), name: 'Mods' }],
+        roles: [{ ...role(1, '#000001', 0n), name: 'Mods' }],
       }),
     },
     askConfirm: c => {
@@ -83,14 +84,14 @@ const syncs = () => requests.filter(r => r.startsWith('POST'))
 
 describe('syncing a channel with its category', () => {
   test('a sync that lets nobody new in goes ahead without asking', async () => {
-    channelRules = [rule('r:1', B.ViewChannels, 0)]
+    channelRules = [rule('r:1', B.ViewChannels, 0n)]
     await st().syncChannelPerms('s', 5)
     expect(confirms).toEqual([])
     expect(syncs()).toEqual(['POST /api/channels/5/perms/sync {"confirm":false}'])
   })
 
   test('a sync that lets someone in names them first, then confirms it', async () => {
-    channelRules = [rule('r:1', 0, B.ViewChannels)]
+    channelRules = [rule('r:1', 0n, B.ViewChannels)]
     categoryRules = []
     await st().syncChannelPerms('s', 5)
     await until(() => syncs().length > 0)
@@ -100,11 +101,11 @@ describe('syncing a channel with its category', () => {
 
   test('a member subject counts with the roles they hold', async () => {
     channelRules = [
-      rule('everyone', 0, B.ViewChannels),
-      rule('r:1', B.ViewChannels, 0),
-      rule('u:carol', 0, B.ViewChannels),
+      rule('everyone', 0n, B.ViewChannels),
+      rule('r:1', B.ViewChannels, 0n),
+      rule('u:carol', 0n, B.ViewChannels),
     ]
-    categoryRules = [rule('everyone', 0, B.ViewChannels), rule('r:1', B.ViewChannels, 0)]
+    categoryRules = [rule('everyone', 0n, B.ViewChannels), rule('r:1', B.ViewChannels, 0n)]
     await st().syncChannelPerms('s', 5)
     await until(() => syncs().length > 0)
     expect(confirms).toEqual(['Syncing with Team lets carol see or send in #plans.'])

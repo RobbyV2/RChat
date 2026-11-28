@@ -8,7 +8,7 @@ import {
 import { ALL_PERMS, Perm } from '../types'
 
 const ALL = Object.keys(SERVER_SECTION_LABELS) as ServerSettingsSection[]
-const sections = (perms: number, builtin = false, profiles = true) =>
+const sections = (perms: bigint, builtin = false, profiles = true) =>
   serverSettingsSections({ perms, builtin, profiles })
 
 describe('serverSettingsSections', () => {
@@ -36,7 +36,7 @@ describe('serverSettingsSections', () => {
   })
 
   test('each permission opens its own sections', () => {
-    const cases: [number, ServerSettingsSection[]][] = [
+    const cases: [bigint, ServerSettingsSection[]][] = [
       [
         Perm.ManageServer,
         ['invites', 'overview', 'widgets', 'messages', 'uploads', 'profiles', 'access'],

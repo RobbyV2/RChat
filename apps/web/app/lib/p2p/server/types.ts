@@ -259,7 +259,7 @@ export type ChannelView = { id: string } & ChannelContent & {
     send: boolean
     exempt: boolean
     // What we hold in the channel, as a canonical mask (lib/perms.ts).
-    perms: number
+    perms: bigint
     over: Record<string, OverSum>
     // Every member sees it, so its name may leave the server (acl/rules.ts everyoneSees).
     everyoneSees: boolean

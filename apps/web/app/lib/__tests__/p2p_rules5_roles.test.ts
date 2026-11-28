@@ -16,7 +16,7 @@ import { bit, toWire } from '../perms'
 // (position 3) and 'p' holding role 'low' (position 1); role 'top' sits at position 9.
 const wire = (...names: string[]) =>
   toWire(
-    names.map(bit).reduce((a, b) => a + b, 0),
+    names.map(bit).reduce((a, b) => a + b, 0n),
     RULES_NEXT
   )
 const ASSIGN = wire('AssignRoles')

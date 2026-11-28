@@ -40,7 +40,7 @@ export const SERVER_SECTION_LABELS: Record<ServerSettingsSection, string> = {
 
 export interface ServerSettingsViewer {
   // The viewer's permissions in the server.
-  perms: number
+  perms: bigint
   // The built-in server every instance starts with.
   builtin: boolean
   // The site has server profiles on.
@@ -53,7 +53,7 @@ export const serverSettingsSections = ({
   builtin,
   profiles,
 }: ServerSettingsViewer): ServerSettingsSection[] => {
-  const can = (perm: number) => hasPerm(perms, perm)
+  const can = (perm: bigint) => hasPerm(perms, perm)
   const manage = can(Perm.ManageServer)
   const shown: Record<ServerSettingsSection, boolean> = {
     invites: true,

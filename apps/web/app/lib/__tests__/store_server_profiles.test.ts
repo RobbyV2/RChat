@@ -200,9 +200,9 @@ describe('your own server profile', () => {
 
   test('the editor stays shut for a member the server says may not change their profile', () => {
     const before = st().servers
-    useStore.setState({ servers: { s: serverDetail('s', { my_perms: CHANGE_PROFILE | 131072 }) } })
+    useStore.setState({ servers: { s: serverDetail('s', { my_perms: CHANGE_PROFILE | 131072n }) } })
     expect(mayEditProfile(st(), 's')).toBe(true)
-    useStore.setState({ servers: { s: serverDetail('s', { my_perms: 131072 }) } })
+    useStore.setState({ servers: { s: serverDetail('s', { my_perms: 131072n }) } })
     expect(mayEditProfile(st(), 's')).toBe(false)
     useStore.setState({ servers: before })
   })

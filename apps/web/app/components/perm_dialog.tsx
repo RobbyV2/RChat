@@ -165,7 +165,7 @@ export function HostedRules({
   const perms = myPerms(s, server)
   const siteAdmin = me?.is_site_admin ?? false
   const mine = me ? memberState(s, server, me.username) : null
-  const exempt = siteAdmin || (mine?.is_admin === true && mine.perms === 0)
+  const exempt = siteAdmin || (mine?.is_admin === true && mine.perms === 0n)
   const confirmed = detail.roles_order_confirmed === true
   const rank = myRank(s, server)
   const roleOf = (subject: string) => roles.find(r => `r:${r.id}` === subject)
@@ -213,7 +213,7 @@ export function HostedRules({
     memberWho: subject => {
       const m = memberState(s, server, subject.slice(2))
       if (!m?.is_admin) return undefined
-      return m.perms === 0
+      return m.perms === 0n
         ? { kind: 'owner' }
         : { kind: 'admin', mask: m.perms, roles: memberPerms({ ...m, is_admin: false }, roles) }
     },

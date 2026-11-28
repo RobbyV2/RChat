@@ -30,7 +30,7 @@ const member: Member = {
   is_admin: true,
   is_creator: false,
   online: true,
-  perms: 2,
+  perms: 2n,
   role_ids: [],
 }
 const members: RChatState['members'] =
@@ -124,7 +124,7 @@ const view: ServerView = {
       pos: 0,
       send: true,
       exempt: false,
-      perms: 0,
+      perms: 0n,
       over: {},
       everyoneSees: true,
       cat: null,

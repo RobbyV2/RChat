@@ -121,7 +121,7 @@ describe('placeCard', () => {
 })
 
 describe('roles and actions', () => {
-  const roles = [role(1, '#ff0000', 0), role(2, '#00ff00', 0), role(3, '#0000ff', 0)]
+  const roles = [role(1, '#ff0000', 0n), role(2, '#00ff00', 0n), role(3, '#0000ff', 0n)]
 
   test('held roles keep server order, free roles are the rest', () => {
     expect(heldRoles(roles, [3, 1]).map(r => r.id)).toEqual([1, 3])
@@ -134,11 +134,11 @@ describe('roles and actions', () => {
     self: false,
     siteAdmin: false,
     inServer: true,
-    perms: 0,
-    member: { is_admin: false, perms: 0 },
-    targetPerms: 0,
+    perms: 0n,
+    member: { is_admin: false, perms: 0n },
+    targetPerms: 0n,
   }
-  const admin = (perms: number) => ({ is_admin: true, perms })
+  const admin = (perms: bigint) => ({ is_admin: true, perms })
 
   test('plain members and guests get no controls', () => {
     expect(profileActions(base)).toEqual([])
@@ -157,11 +157,11 @@ describe('roles and actions', () => {
   test('kick and server ban need strictly more perms than the target', () => {
     const kick = { ...base, perms: Perm.Kick }
     expect(profileActions({ ...kick, targetPerms: Perm.Kick })).toEqual([])
-    expect(profileActions({ ...kick, member: admin(0), targetPerms: ALL_PERMS })).toEqual([])
+    expect(profileActions({ ...kick, member: admin(0n), targetPerms: ALL_PERMS })).toEqual([])
     expect(profileActions({ ...kick, targetPerms: Perm.ManageChannels })).toEqual([])
     const mod = { ...base, perms: Perm.Kick | Perm.ManageAdmins, targetPerms: Perm.Kick }
     expect(profileActions(mod)).toEqual(['kick', 'server_ban'])
-    const full = { ...base, perms: ALL_PERMS, member: admin(0), targetPerms: ALL_PERMS }
+    const full = { ...base, perms: ALL_PERMS, member: admin(0n), targetPerms: ALL_PERMS }
     expect(profileActions(full)).toEqual(['revoke', 'transfer'])
     expect(profileActions({ ...full, siteAdmin: true })).toEqual([
       'kick',
@@ -174,7 +174,7 @@ describe('roles and actions', () => {
   })
 
   test('profile resets need the permission, strictly more perms, a member who is not you and a server that shows profiles', () => {
-    const mod = { ...base, perms: Perm.ManageProfiles, targetPerms: 0, profiles: true }
+    const mod = { ...base, perms: Perm.ManageProfiles, targetPerms: 0n, profiles: true }
     expect(profileActions(mod)).toEqual(['profile_reset'])
     expect(profileActions({ ...mod, profileLocked: true })).toEqual([
       'profile_reset',
@@ -188,14 +188,14 @@ describe('roles and actions', () => {
   })
 
   test('timeouts need the permission, strictly more perms, and a member who is not you', () => {
-    const mod = { ...base, perms: Perm.TimeoutMembers, targetPerms: 0 }
+    const mod = { ...base, perms: Perm.TimeoutMembers, targetPerms: 0n }
     expect(profileActions(mod)).toEqual(['timeout'])
     expect(profileActions({ ...mod, timedOut: true })).toEqual(['timeout', 'untimeout'])
     expect(profileActions({ ...mod, self: true })).toEqual([])
     expect(profileActions({ ...mod, member: null })).toEqual([])
     expect(profileActions({ ...mod, targetPerms: Perm.TimeoutMembers })).toEqual([])
     expect(profileActions({ ...mod, targetPerms: Perm.Kick })).toEqual([])
-    expect(profileActions({ ...base, perms: Perm.Kick, targetPerms: 0 })).toEqual([
+    expect(profileActions({ ...base, perms: Perm.Kick, targetPerms: 0n })).toEqual([
       'kick',
       'server_ban',
     ])
@@ -212,7 +212,7 @@ describe('roles and actions', () => {
       'transfer',
     ])
     expect(profileActions({ ...ma, siteAdmin: true })).toEqual(['promote', 'transfer', 'site_ban'])
-    expect(profileActions({ ...ma, member: admin(0) })).toEqual(['revoke'])
+    expect(profileActions({ ...ma, member: admin(0n) })).toEqual(['revoke'])
     expect(profileActions({ ...ma, member: admin(Perm.ManageAdmins) })).toEqual([
       'revoke',
       'transfer',
@@ -263,24 +263,24 @@ describe('roles and actions', () => {
     expect(canEditRoles({ ...ma, member: null })).toBe(false)
     expect(canEditRoles({ ...base, perms: Perm.Kick })).toBe(false)
     expect(canEditRoles(higher)).toBe(true)
-    expect(roleEditable(ma, { perms: 0 }, false)).toBe(true)
+    expect(roleEditable(ma, { perms: 0n }, false)).toBe(true)
     expect(roleEditable(ma, { perms: Perm.Kick | Perm.AssignRoles }, false)).toBe(true)
     expect(roleEditable(ma, { perms: Perm.DeleteServer }, false)).toBe(false)
     expect(roleEditable(higher, { perms: Perm.Kick }, false)).toBe(true)
-    expect(roleEditable(higher, { perms: 0 }, true)).toBe(false)
-    expect(roleEditable({ ...higher, self: true }, { perms: 0 }, true)).toBe(true)
+    expect(roleEditable(higher, { perms: 0n }, true)).toBe(false)
+    expect(roleEditable({ ...higher, self: true }, { perms: 0n }, true)).toBe(true)
     expect(roleEditable(ma, { perms: ALL_PERMS }, true)).toBe(true)
     expect(roleEditable({ ...base, perms: ALL_PERMS }, { perms: ALL_PERMS }, false)).toBe(true)
     expect(roleEditable({ ...base, siteAdmin: true }, { perms: ALL_PERMS }, false)).toBe(true)
     const locked = { ...ma, channelLocked: [7] }
-    expect(roleEditable(locked, { id: 7, perms: 0 }, false)).toBe(false)
-    expect(roleEditable(locked, { id: 8, perms: 0 }, false)).toBe(true)
-    expect(roleEditable(locked, { id: 7, perms: 0 }, true)).toBe(true)
+    expect(roleEditable(locked, { id: 7, perms: 0n }, false)).toBe(false)
+    expect(roleEditable(locked, { id: 8, perms: 0n }, false)).toBe(true)
+    expect(roleEditable(locked, { id: 7, perms: 0n }, true)).toBe(true)
     const denies = { ...ma, self: true, channelDenies: [7] }
-    expect(roleEditable(denies, { id: 7, perms: 0 }, true)).toBe(false)
-    expect(roleEditable(denies, { id: 8, perms: 0 }, true)).toBe(true)
-    expect(roleEditable(denies, { id: 7, perms: 0 }, false)).toBe(true)
-    expect(roleEditable({ ...denies, siteAdmin: true }, { id: 7, perms: 0 }, true)).toBe(true)
+    expect(roleEditable(denies, { id: 7, perms: 0n }, true)).toBe(false)
+    expect(roleEditable(denies, { id: 8, perms: 0n }, true)).toBe(true)
+    expect(roleEditable(denies, { id: 7, perms: 0n }, false)).toBe(true)
+    expect(roleEditable({ ...denies, siteAdmin: true }, { id: 7, perms: 0n }, true)).toBe(true)
   })
 
   test('site ban only for site admins, and outside servers only that', () => {

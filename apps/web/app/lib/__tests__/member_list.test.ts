@@ -9,7 +9,7 @@ import {
   parseP2pMemberList,
   type P2pListPlace,
 } from '../member_list'
-import { baseBits, maskAnd, maskNot, maskOr } from '../perms'
+import { baseBits } from '../perms'
 import { Perm } from '../types'
 import { P } from '../p2p/state'
 
@@ -74,8 +74,8 @@ for (const [name, build] of builds)
     test('a hosted member follows View members, and a channel decides inside it', async () => {
       await loadPerms(build)
       const base = baseBits()
-      const without = maskAnd(base, maskNot(VIEW_MEMBERS))
-      const member = (my: number, here?: number) =>
+      const without = base & ~VIEW_MEMBERS
+      const member = (my: bigint, here?: bigint) =>
         hostedMembersHidden({
           siteOn: true,
           siteAdmin: false,
@@ -88,13 +88,13 @@ for (const [name, build] of builds)
       expect(member(base, without)).toBe('channel')
       expect(member(without, base)).toBeNull()
       expect(member(without, without)).toBe('server')
-      expect(member(maskOr(without, Perm.Kick), 0)).toBeNull()
+      expect(member(without | Perm.Kick, 0n)).toBeNull()
     })
 
     test('a hidden list stays with moderators and the site admin, the site switch with staff', async () => {
       await loadPerms(build)
       const base = baseBits()
-      const ask = (p: { my?: number; admin?: boolean; site?: boolean; member?: boolean }) =>
+      const ask = (p: { my?: bigint; admin?: boolean; site?: boolean; member?: boolean }) =>
         hostedMembersHidden({
           siteOn: p.site ?? true,
           siteAdmin: p.admin ?? false,
@@ -102,11 +102,11 @@ for (const [name, build] of builds)
           detail: { hide_members: true, members_visible: true, my_perms: p.my ?? base },
         })
       expect(ask({})).toBe('server')
-      expect(ask({ my: maskOr(base, Perm.TimeoutMembers) })).toBe('server')
+      expect(ask({ my: base | Perm.TimeoutMembers })).toBe('server')
       for (const bit of [Perm.ManageServer, Perm.ManageRoles, Perm.Kick])
-        expect(ask({ my: maskOr(base, bit) })).toBeNull()
+        expect(ask({ my: base | bit })).toBeNull()
       expect(ask({ admin: true, member: false })).toBeNull()
-      expect(ask({ my: maskOr(base, Perm.Kick), site: false })).toBe('site')
+      expect(ask({ my: base | Perm.Kick, site: false })).toBe('site')
       expect(ask({ admin: true, site: false })).toBeNull()
     })
 
@@ -117,9 +117,7 @@ for (const [name, build] of builds)
         hostedMembersHidden({ siteOn: true, siteAdmin: false, member: false, detail })
       expect(outside({ ...OPEN, everyone_perms: base })).toBeNull()
       expect(outside({ ...OPEN, members_visible: false, everyone_perms: base })).toBe('outside')
-      expect(outside({ ...OPEN, everyone_perms: maskAnd(base, maskNot(VIEW_MEMBERS)) })).toBe(
-        'server'
-      )
+      expect(outside({ ...OPEN, everyone_perms: base & ~VIEW_MEMBERS })).toBe('server')
       expect(outside({ members_visible: false })).toBe('outside')
       expect(outside({ members_visible: true })).toBeNull()
       expect(

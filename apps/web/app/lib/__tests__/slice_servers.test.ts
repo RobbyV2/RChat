@@ -78,7 +78,7 @@ describe('servers reducers', () => {
     const detail = serverDetail('s', {
       display_name: 'Old',
       channels: [channel],
-      roles: [role(1, '#ff0000', 0)],
+      roles: [role(1, '#ff0000', 0n)],
       member_count: 4,
       online_count: 2,
       banner_color: '#111111',

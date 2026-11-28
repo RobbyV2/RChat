@@ -114,7 +114,7 @@ export const member = (username: string, over: Partial<Member> = {}): Member => 
   is_admin: false,
   is_creator: false,
   online: false,
-  perms: 0,
+  perms: 0n,
   role_ids: [],
   ...over,
 })
@@ -157,7 +157,7 @@ export const me = (username: string, over: Partial<Me> = {}): Me => ({
   ...over,
 })
 
-export const role = (id: number, color: string, perms: number): Role => ({
+export const role = (id: number, color: string, perms: bigint): Role => ({
   id,
   name: `r${id}`,
   color,

@@ -51,7 +51,7 @@ const bobDm: DmSummary = { id: 9, other: bobby, is_self: false }
 const selfDm: DmSummary = { id: 4, other: user('alice'), is_self: true }
 
 interface State {
-  perms?: number
+  perms?: bigint
   siteAdmin?: boolean
   owner?: boolean
   guest?: boolean
@@ -69,9 +69,9 @@ interface State {
 // Alice in server s: her role r1 carries `perms`; bob holds Helper (r3); Moderator (r2) is free.
 const state = (o: State = {}) => {
   const roles = [
-    role(1, '#f00', o.perms ?? 0),
-    { ...role(2, '#0f0', 0), name: 'Moderator' },
-    { ...role(3, '#00f', 0), name: 'Helper' },
+    role(1, '#f00', o.perms ?? 0n),
+    { ...role(2, '#0f0', 0n), name: 'Moderator' },
+    { ...role(3, '#00f', 0n), name: 'Helper' },
   ]
   useStore.setState({
     token: o.guest ? null : Secret.of('tok'),
@@ -679,7 +679,7 @@ test('a stale role row runs nothing, a fresh one does', async () => {
   useStore.setState({
     servers: {
       s: serverDetail('s', {
-        roles: [role(1, '#f00', 0), { ...role(3, '#00f', 0), name: 'Helper' }],
+        roles: [role(1, '#f00', 0n), { ...role(3, '#00f', 0n), name: 'Helper' }],
       }),
     },
   })

@@ -3,7 +3,6 @@
 // Unix seconds; `after` bounds include their second and `before` bounds leave it out.
 
 import { Perm } from './types'
-import { maskOr } from './perms'
 
 // Any of these opens the member search.
 export const MEMBER_SEARCH_PERMS = [
@@ -12,7 +11,7 @@ export const MEMBER_SEARCH_PERMS = [
   Perm.ManageRoles,
   Perm.AssignRoles,
   Perm.ManageProfiles,
-].reduce<number>(maskOr, 0)
+].reduce((a, b) => a | b, 0n)
 
 export const MEMBER_SORTS = [
   'name',

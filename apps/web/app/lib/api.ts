@@ -102,6 +102,7 @@ import type {
   WebhookSecret,
 } from './webhooks'
 import { time } from './platform/time'
+import { readJson, writeJson } from './api/masks'
 
 // The API root (`.../api`); clients call it through `versionedBase` (see `api_version.ts`).
 export function resolveApiBase(
@@ -131,7 +132,9 @@ export class ApiError extends Error {
 const WAITS = new Set([429, 503])
 
 async function failed(response: Response): Promise<never> {
-  const error = await response.json().catch(() => ({ error: response.statusText }))
+  const error = await bodyOf<{ error?: string } | null>(response).catch(() => ({
+    error: response.statusText,
+  }))
   const message = error?.error || response.statusText || `HTTP ${response.status}`
   const wait = WAITS.has(response.status)
     ? retrySeconds(response.headers.get('Retry-After'), String(message))
@@ -186,9 +189,11 @@ export interface SendOptions {
 export const isJson = (res: Response) =>
   /^application\/(?:[\w.+-]*\+)?json\b/i.test(res.headers.get('content-type') ?? '')
 
+const bodyOf = async <T>(response: Response) => readJson(await response.text()) as T
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) return failed(response)
-  return response.json()
+  return bodyOf<T>(response)
 }
 
 const NEXT_CURSOR = 'X-Next-Cursor'
@@ -393,7 +398,7 @@ export class ApiClient {
       init.body = body
     } else if (body !== undefined) {
       headers['Content-Type'] = 'application/json'
-      init.body = JSON.stringify(body)
+      init.body = writeJson(body)
     }
     const url = `${under === 'root' ? this.root : this.base}${path}`
     // A request that refuses redirects fails like the network does when it meets one.
@@ -444,7 +449,7 @@ export class ApiClient {
   async page<T>(path: string, signal?: AbortSignal): Promise<Page<T>> {
     const response = await this.send('GET', path, undefined, { signal })
     if (!response.ok) return failed(response)
-    const items = (await response.json()) as T[]
+    const items = await bodyOf<T[]>(response)
     return { items, next: response.headers.get(NEXT_CURSOR) || null }
   }
 
@@ -610,7 +615,7 @@ export interface SharedConfig {
 export interface RolePatch {
   name?: string
   color?: string
-  perms?: number
+  perms?: bigint
   mentionable?: boolean
   // null removes it
   icon?: string | null
@@ -1027,12 +1032,12 @@ export const endpoints = (c: ApiClient) => ({
     c.req<unknown>('DELETE', `/servers/${seg(server)}/admins/${seg(username)}`),
   transferAdmin: (server: string, username: string) =>
     c.req<unknown>('POST', `/servers/${seg(server)}/transfer_admin`, { username }),
-  setAdminPerms: (server: string, username: string, perms: number) =>
+  setAdminPerms: (server: string, username: string, perms: bigint) =>
     c.req<unknown>('PATCH', `/servers/${seg(server)}/admins/${seg(username)}/perms`, {
       perms,
       mask: ALL_PERMS,
     }),
-  createRole: (server: string, body: { name: string; color: string; perms: number }) =>
+  createRole: (server: string, body: { name: string; color: string; perms: bigint }) =>
     c.req<Role>('POST', `/servers/${seg(server)}/roles`, body),
   updateRole: (server: string, id: number, patch: RolePatch) =>
     c.req<Role>('PATCH', `/servers/${seg(server)}/roles/${id}`, { ...patch, mask: ROLE_BITS }),
@@ -1054,8 +1059,8 @@ export const endpoints = (c: ApiClient) => ({
     c.page<ChannelPerm>(withCursor(`/channels/${id}/perms`, cursor)),
   setChannelPerm: (id: number, perm: ChannelPermInput) =>
     c.req<unknown>('PUT', `/channels/${id}/perms`, perm),
-  setEveryonePerms: (server: string, perms: number, mask?: number) =>
-    c.req<{ everyone_perms: number }>('PATCH', `/servers/${seg(server)}/everyone`, {
+  setEveryonePerms: (server: string, perms: bigint, mask?: bigint) =>
+    c.req<{ everyone_perms: bigint }>('PATCH', `/servers/${seg(server)}/everyone`, {
       perms,
       mask,
     }),
@@ -1086,7 +1091,7 @@ export const endpoints = (c: ApiClient) => ({
     c.req<unknown>('DELETE', `/channels/${id}/perms/${seg(subject)}`),
   categoryPerms: (id: number, cursor: string | null = null) =>
     c.page<ChannelPerm>(withCursor(`/categories/${id}/perms`, cursor)),
-  setCategoryPerm: (id: number, rule: { subject: string; allow: number; deny: number }) =>
+  setCategoryPerm: (id: number, rule: { subject: string; allow: bigint; deny: bigint }) =>
     c.req<unknown>('PUT', `/categories/${id}/perms`, rule),
   clearCategoryPerm: (id: number, subject: string) =>
     c.req<unknown>('DELETE', `/categories/${id}/perms/${seg(subject)}`),
