@@ -328,7 +328,9 @@ describe('P2P on Home', () => {
     )
     expect(order.every(at => at >= 0)).toBe(true)
     expect(order).toEqual([...order].sort((a, b) => a - b))
-    expect(html).toContain('<div class="grid min-w-0 grid-cols-1 lg:grid-cols-2 gap-(--space-lg) items-stretch">')
+    expect(html).toContain(
+      '<div class="grid min-w-0 grid-cols-1 lg:grid-cols-2 gap-(--space-lg) items-stretch">'
+    )
     useStore.setState({ dms: [dm(1, 'alice', true)], layout: emptyLayout })
     expect(
       /<section aria-labelledby="home-get-started" class="[^"]*lg:col-span-2/.test(render())
