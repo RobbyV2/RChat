@@ -166,7 +166,9 @@ describe('a P2P room or DM file', () => {
     expect(html).toContain('border-dashed border-tertiary/60')
     expect(html).toContain('aria-label="Download Mandy Save.zip"')
     expect(html.includes('disabled=""')).toBe(false)
-    expect(html).toContain('data-file-status="true" class="msg-part-loose text-xs text-on-surface-variant"')
+    expect(html).toContain(
+      'data-file-status="true" class="msg-part-loose text-xs text-on-surface-variant"'
+    )
     expect(html).toContain('Available from 2 online members')
     expect(html).toContain('844 KB')
     expect(html.includes('Expires')).toBe(false)
