@@ -78,6 +78,12 @@ export function createScheduledPart(parts: Pick<P2pParts, 'store' | 'dms'>, scop
     return false
   }
 
+  // Whether there is a page to hear coming back online or into view from.
+  const wakes =
+    typeof window !== 'undefined' &&
+    typeof window.addEventListener === 'function' &&
+    typeof document !== 'undefined' &&
+    typeof document.addEventListener === 'function'
   const onWake = () => state.scheduled?.poke()
   const onShown = () => {
     if (document.visibilityState === 'visible') onWake()
@@ -97,7 +103,7 @@ export function createScheduledPart(parts: Pick<P2pParts, 'store' | 'dms'>, scop
       if (now.servers !== was.servers || now.rooms !== was.rooms || now.contacts !== was.contacts)
         publish()
     })
-    if (typeof window !== 'undefined') {
+    if (wakes) {
       window.addEventListener('online', onWake)
       document.addEventListener('visibilitychange', onShown)
     }
@@ -111,7 +117,7 @@ export function createScheduledPart(parts: Pick<P2pParts, 'store' | 'dms'>, scop
     put.scheduled(null)
     unwatch?.()
     unwatch = null
-    if (typeof window !== 'undefined') {
+    if (wakes) {
       window.removeEventListener('online', onWake)
       document.removeEventListener('visibilitychange', onShown)
     }
