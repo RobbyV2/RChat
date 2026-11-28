@@ -68,7 +68,6 @@ import { groupPlaces, p2pCue } from '../../lib/message_groups'
 import { dayStarts } from '../../lib/date_dividers'
 import { DateDivider } from '../date_divider'
 import { UnreadDivider } from '../unread_banner'
-import { p2pUnread, p2pUnreadStart } from '../../lib/unread_banner'
 import { textBtn } from '../ui'
 import { ScheduledChip, SendLaterDialog, useDeviceItems, useDeviceOps } from '../scheduled'
 import { laterBlocked, type ComposerDraft } from '../../lib/scheduled'
@@ -724,24 +723,6 @@ export interface ChatBodyProps {
   lookOf?: (ik: string) => Look
 }
 
-// The open conversation's first unread message when it isn't loaded, looked up in storage once
-// per `key` (null: not needed).
-function useFirstUnread(key: string | null) {
-  const { p2pDm } = useP2pApp()!
-  const [found, setFound] = useState<{ key: string; id: string; ts: number } | null>(null)
-  useEffect(() => {
-    if (key === null) return
-    let live = true
-    void p2pDm.firstUnread().then(r => {
-      if (live && r) setFound({ key, ...r })
-    })
-    return () => {
-      live = false
-    }
-  }, [key, p2pDm])
-  return found && found.key === key ? found : null
-}
-
 function IdentityChatBody(props: ChatBodyProps) {
   const identity = useP2pApp()!
   const { profileName, p2pDm, p2pFiles } = identity
@@ -824,41 +805,13 @@ function IdentityChatBody(props: ChatBodyProps) {
   const fresh = newSince(shared, scroll.leftAt, me ?? undefined)
   const flash = useP2pFlash(listRef, scope, focus, num, shared, scroll.settle)
 
-  const start = useMemo(
-    () => p2pUnreadStart(messages, chat.readSeq, me, chat.more),
-    [messages, chat.readSeq, me, chat.more]
-  )
-  // Unread messages that aren't loaded (or may be older than the first loaded row).
-  const above =
-    (start.first < 0 || start.ambiguous) &&
-    !start.sent &&
-    !!chat.readSeq &&
-    (chat.unread ?? 0) > 0 &&
-    !chat.loading
-  const firstUnread = useFirstUnread(above ? `${chat.room}:${chat.ch ?? ''}:${chat.readSeq}` : null)
-  const divider = start.ambiguous
-    ? firstUnread && firstUnread.id === messages[0]?.id
-      ? 0
-      : -1
-    : start.first
+  const { divider, banner } = useLive(list.unread)
+  useEffect(() => list.watchUnread(), [list])
   const places = useMemo(
     () => groupPlaces(messages.map(p2pCue), new Set([divider])),
     [messages, divider]
   )
   const days = useMemo(() => dayStarts(rows.map(r => r.m.created_at)), [rows])
-  const unread = useMemo(
-    () =>
-      p2pUnread(
-        messages,
-        divider,
-        !chat.newer,
-        me,
-        { count: chat.unread ?? 0, seq: chat.unreadSeq ?? 0 },
-        firstUnread
-      ),
-    [messages, divider, chat.newer, me, chat.unread, chat.unreadSeq, firstUnread]
-  )
-
   const rowJump = useCallback(
     (n: number) => {
       const id = idOf(n)
@@ -933,17 +886,7 @@ function IdentityChatBody(props: ChatBodyProps) {
                 ? { first: messages[0].id, last: messages[messages.length - 1].id }
                 : null
             }
-            banner={
-              divider >= 0 || above
-                ? {
-                    unread,
-                    onJump: () => {
-                      const id = divider >= 0 ? messages[divider].id : firstUnread?.id
-                      if (id) list.jump(id)
-                    },
-                  }
-                : null
-            }
+            banner={banner ? { unread: banner, onJump: list.toUnread } : null}
             fresh={fresh}
             toBottom={scroll.toBottom}
             intro={props.intro}

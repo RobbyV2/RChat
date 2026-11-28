@@ -39,7 +39,7 @@ import {
   Volume2,
   type LucideIcon,
 } from 'lucide-react'
-import { lastOwn, newSince, unreadMark } from '../lib/lists'
+import { newSince } from '../lib/lists'
 import { SELF_DM_TEXT, SELF_DM_TITLE } from '../lib/dm_list'
 import { dayStarts } from '../lib/date_dividers'
 import { escapeMarksRead } from '../lib/follow'
@@ -71,7 +71,6 @@ import { callTone, type CallTone } from '../lib/voice_layout'
 import { callLogInfo } from '../lib/call_choice'
 import { UserAvatar } from './user_avatar'
 import { UnreadDivider } from './unread_banner'
-import { hostedUnread, type UnreadCount } from '../lib/unread_banner'
 import { DateDivider } from './date_divider'
 import { MarkdownMessage } from './markdown_message'
 import { ShownName } from './shown_user'
@@ -380,41 +379,6 @@ const unreadDivider = <UnreadDivider />
 // The new messages banner of a hosted list: counted from the loaded rows, or asked of the server
 // while the first unread message or the newest one isn't loaded (`away`: the unread part is above
 // or below what is loaded).
-function useHostedUnread(
-  scope: string | null,
-  messages: Message[],
-  first: number,
-  away: boolean,
-  tail: boolean,
-  after: number,
-  me: string | undefined
-) {
-  const { api } = useAccount()
-  const ask = scope !== null && (away || (first >= 0 && !tail))
-  const key = `${scope}:${after}`
-  const [counted, setCounted] = useState<{ key: string; count: UnreadCount } | null>(null)
-  useEffect(() => {
-    if (!ask || scope === null) return
-    let live = true
-    api.getUnreadCount(scope, after).then(
-      count => {
-        if (live) setCounted({ key, count })
-      },
-      () => {}
-    )
-    return () => {
-      live = false
-    }
-  }, [api, ask, scope, after, key])
-  const rows = useMemo(
-    () => messages.map(m => ({ id: m.id, author: m.author.username, created_at: m.created_at })),
-    [messages]
-  )
-  return useMemo(
-    () => hostedUnread(rows, first, tail, me, after, counted?.key === key ? counted.count : null),
-    [rows, first, tail, me, after, counted, key]
-  )
-}
 
 // A row of the hosted list: the notice its kind calls for, else the message.
 const HostedRow = memo(function HostedRow(props: RowProps) {
@@ -655,7 +619,6 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const messages = useStore(s => (s.view ? s.messages[viewKey(s.view)] : undefined)) ?? EMPTY
   const outgoing = useStore(s => (s.view ? s.outbox[viewKey(s.view)] : undefined)) ?? EMPTY_OUT
   const outCount = outgoing.length
-  const anchor = useStore(s => (s.view ? s.unreadAnchor[viewKey(s.view)] : undefined))
   const list = useMessages()
   const listState = useLive(list.state)
   const { older, newer } = listState
@@ -694,7 +657,6 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const scope = view && !isVoice ? viewKey(view) : null
   const detached = newer.more
   const snapEdge = useScrollAnchor(listRef, messages[0]?.id, older.loading || newer.loading)
-  const ids = useMemo(() => messages.map(m => m.id), [messages])
   const myName = me?.username
   const groupIds = useStore(s =>
     messages
@@ -710,23 +672,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
       ]),
     [messages, myName, groupIds]
   )
-  const ownLast = lastOwn(messages, me?.username)
-  const mark = unreadMark(ids, anchor, older.more, ownLast)
-  const dividerIndex = mark.divider
-  // Opened in older history: every loaded message is at or before the read marker.
-  const below =
-    !!anchor && dividerIndex < 0 && !mark.above && detached && (ids.at(-1) ?? 0) <= anchor
-  const unread = useHostedUnread(
-    scope,
-    messages,
-    dividerIndex,
-    mark.above || below,
-    !detached,
-    Math.max(anchor ?? 0, ownLast),
-    myName
-  )
-  const bannered =
-    !!scope && (mark.above || dividerIndex >= 0 || (below && (unread.count ?? 0) > 0))
+  const { divider: dividerIndex, banner: unread } = useLive(list.unread)
+  useEffect(() => list.watchUnread(), [list])
   const places = useMemo(
     () =>
       messagePlaces(
@@ -1055,7 +1002,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                 : null
             }
             banner={
-              bannered
+              unread
                 ? {
                     unread,
                     onJump: () => {
