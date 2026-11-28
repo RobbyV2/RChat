@@ -24,7 +24,6 @@ import {
   Lock,
   Menu,
   MoreVertical,
-  MessageSquareText,
   MessagesSquare,
   NotebookPen,
   Phone,
@@ -33,9 +32,7 @@ import {
   PhoneMissed,
   PhoneOff,
   PhoneOutgoing,
-  Reply,
   Search,
-  Trash2,
   Users,
   Video,
   VideoOff,
@@ -50,7 +47,7 @@ import { mentionLookups, mentionsUser } from '../lib/mentions'
 import { useChannelCan } from '../lib/place/use_rights'
 import { useHostedServer, useLive } from '../lib/place/react'
 import { slowTitle } from '../lib/slowmode'
-import { canQuote, repliesToMe } from '../lib/replies'
+import { repliesToMe } from '../lib/replies'
 import { messageRights, replyAccess } from '../lib/actions/message'
 import { actionPress, openActionMenu, useHasMenu } from '../lib/actions/menu'
 import type { Target } from '../lib/actions/types'
@@ -76,15 +73,13 @@ import { UserAvatar } from './user_avatar'
 import { UnreadDivider } from './unread_banner'
 import { hostedUnread, type UnreadCount } from '../lib/unread_banner'
 import { DateDivider } from './date_divider'
-import { WebhookBadge } from './webhooks'
-import { isWebhookAuthor } from '../lib/webhooks'
 import { MarkdownMessage } from './markdown_message'
-import { ShownName, useShown } from './shown_user'
+import { ShownName } from './shown_user'
 import { TypingIndicator } from './typing_indicator'
 import { MessageComposer } from './message_composer'
 import StatusClock from './status_clock'
 import { InboxButton } from './inbox'
-import { longPress, useMedia } from './context_menu'
+import { useMedia } from './context_menu'
 import { profileTrigger } from './profile_card'
 import { useCallShare, VoiceGrid } from './voice_grid'
 import { ChannelTopic } from './channel_topic'
@@ -93,25 +88,28 @@ import { useChatScroll, useFocusMessage, useScrollAnchor } from './viewport_heig
 import { Masked, useEscape, useOwnServer } from './ui'
 import { showsUsername } from '../lib/display_name'
 import { PingBadge, pingLabel } from './ping_badge'
-import { MessageToolbar, type ToolbarAction } from './message_toolbar'
-import { groupPadCls, gutterTimeCls } from './grouped_row'
-import { QuickReactions, ReactionBar, rowAt } from './reactions'
+import { groupPadCls } from './grouped_row'
+import { QuickReactions, rowAt } from './reactions'
 import { ReplyPreview } from './replies'
-import { MessageEditor, editAction } from './message_editor'
 import { canEdit as ownEditable } from '../lib/sed'
 import { canForward } from '../lib/forward'
-import { ForwardCard, forwardAction } from './forwards'
+import { ForwardCard } from './forwards'
 import { MessageList, NewerOnSight } from './message_list'
+import {
+  AuthorRow,
+  authorLook,
+  GroupedRow,
+  MessageRow,
+  type RowHandlers,
+  type RowProps,
+} from './message_row'
 import { useMessages } from '../lib/place/use_messages'
 import { PinNotice, PinsButton, PinsWindow, useCanPin } from './pins'
 import { ThreadsButton, ThreadsWindow } from './threads'
-import { PollCard } from './poll_card'
 import { SystemNotice } from './system_messages'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { isNotice, isSystem } from '../lib/system_messages'
-import type { Look } from '../lib/role_looks'
-import { RoleIcon } from './role_icon'
-import { MessageTime, ShortTime } from './timestamp'
+import { MessageTime } from './timestamp'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 import { BlockedComposer, BlockedList } from './blocking'
 import { Row, Stack, Surface, Inset } from './layout'
@@ -312,102 +310,6 @@ export function CallLogLine({
 
 const EMPTY_OUT: Outgoing[] = []
 
-export const avatarTriggerCls =
-  'block cursor-pointer rounded-full outline-offset-2 hover:opacity-85 focus-visible:outline-2 focus-visible:outline-primary'
-// The name color and role icon of a row's author, as row props.
-const authorLook = (look: Look) => ({
-  color: look.color,
-  icon: look.icon?.emoji,
-  iconRole: look.icon?.role,
-})
-
-// Avatar on the left; name and `meta` (the time) above `children` on the right.
-export function AuthorRow({
-  author,
-  server,
-  size,
-  color,
-  icon,
-  meta,
-  children,
-}: {
-  author: UserRef
-  server: string | null
-  size: number
-  color?: string
-  icon?: Look['icon']
-  meta: ReactNode
-  children: ReactNode
-}) {
-  const store = useStoreApi()
-  const shown = useShown(author, server)
-  return (
-    <Row gap="md" align="stretch">
-      <div className="shrink-0">
-        <span
-          {...profileTrigger(store, author, server, false)}
-          title="View profile"
-          className={avatarTriggerCls}
-        >
-          <UserAvatar person={shown} size={size} />
-        </span>
-      </div>
-      <div className="min-w-0 flex-1">
-        <Row gap="sm" align="baseline" wrap place="min-w-0">
-          <Name
-            of={personName(shown)}
-            withUsername
-            fit
-            link
-            {...profileTrigger(store, author, server)}
-            color={color}
-            place="min-w-0"
-            look="truncate text-sm font-medium"
-          />
-          <RoleIcon emoji={icon?.emoji} role={icon?.role} />
-          {isWebhookAuthor(author.username) && <WebhookBadge />}
-          {meta}
-        </Row>
-        {children}
-      </div>
-    </Row>
-  )
-}
-
-// A row that continues its author's group: the author for screen readers only, and hours and
-// minutes in the avatar's place while the row is hovered or holds keyboard focus. A `status`
-// (a send not delivered yet) takes the time's place and always shows.
-export function GroupedRow({
-  name,
-  ts,
-  size,
-  status,
-  children,
-}: {
-  name: ReactNode
-  ts: number
-  size: number
-  status?: ReactNode
-  children: ReactNode
-}) {
-  return (
-    <Row gap="md" align="stretch" data-grouped>
-      <span className="streamer sr-only">{name}</span>
-      <div className="relative shrink-0" style={{ width: size }}>
-        {status ? (
-          <span className={gutterStatusCls}>{status}</span>
-        ) : (
-          <ShortTime ts={ts} className={gutterTimeCls} />
-        )}
-      </div>
-      <div className="min-w-0 flex-1">{children}</div>
-    </Row>
-  )
-}
-
-const gutterStatusCls =
-  'absolute top-0 left-1/2 flex h-[22.75px] -translate-x-1/2 items-center text-on-surface-variant'
-
 // The other person in a DM's header: avatar and name, opening their profile.
 export function DmPeer({ other }: { other: UserRef }) {
   const store = useStoreApi()
@@ -432,10 +334,6 @@ export function DmPeer({ other }: { other: UserRef }) {
   )
 }
 
-export const timeMeta = (ts: number) => (
-  <MessageTime ts={ts} className="shrink-0 text-xs text-on-surface-variant" />
-)
-
 const authorKey = (messages: Message[], extra: string[] = []) =>
   [...new Set([...messages.map(m => m.author.username), ...extra])].sort().join('\n')
 
@@ -451,22 +349,11 @@ export const usePeopleKey = (messages: Message[], extra: string[] = []) => {
   return authorKey(messages, [...extra, ...mentioned])
 }
 
-// A message that mentions you: a warm wash and a bar on its left edge, in both themes.
-export const mentionRowCls =
-  'bg-mention before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-mention-bar hover:bg-mention-hover'
-
 // Forwarded text is a copy of someone else's words: its mentions never highlight or ping.
 export const mentionsMe = (m: Message, me: string | undefined) =>
   me !== undefined &&
   m.author.username !== me &&
   ((!m.forward && mentionsUser(m.content, me)) || repliesToMe(m, me))
-
-export const replyAction = (onClick: () => void): ToolbarAction => ({
-  key: 'reply',
-  label: 'Reply',
-  icon: Reply,
-  onClick,
-})
 
 export function useAuthorMembers(server: string | null, key: string) {
   const ensureMembers = useStore(s => s.ensureMembers)
@@ -529,85 +416,12 @@ function useHostedUnread(
   )
 }
 
-interface RowProps {
-  m: Message
-  // Its place in its author's group: only the first row shows the avatar, name and time.
-  first: boolean
-  last: boolean
-  mentioned: boolean
-  divider: boolean
-  flash: boolean
-  canDelete: boolean
-  canReact: boolean
-  canVote: boolean
-  canUnreact: boolean
-  canReply: boolean
-  canThread: boolean
-  canEdit: boolean
-  canForward: boolean
-  editing: boolean
-  server: string | null
-  color: string | undefined
-  // The emoji of the author's role icon and the role's name.
-  icon: string | undefined
-  iconRole: string | undefined
-  quoteColor: string | undefined
-  onMenu: (m: Message, x: number, y: number) => void
-  onReply: (m: Message) => void
-  onEdit: (m: Message) => void
-  onJump: (id: number) => void
-}
-
-const MessageRow = memo(function MessageRow({
-  m,
-  first,
-  last,
-  mentioned,
-  divider,
-  flash,
-  canDelete,
-  canReact,
-  canVote,
-  canUnreact,
-  canReply,
-  canThread,
-  canEdit,
-  canForward,
-  editing,
-  server,
-  color,
-  icon,
-  iconRole,
-  quoteColor,
-  onMenu,
-  onReply,
-  onEdit,
-  onJump,
-}: RowProps) {
-  const openThread = useStore(s => s.openThread)
-  const copyForward = useStore(s => s.copyForward)
-  const actions: ToolbarAction[] = []
-  if (canEdit && !editing) actions.push(editAction(() => onEdit(m)))
-  if (canReply && canQuote(m)) actions.push(replyAction(() => onReply(m)))
-  if (canForward) actions.push(forwardAction(() => copyForward(m)))
-  if (canThread && !isNotice(m))
-    actions.push({
-      key: 'thread',
-      label: 'Reply in thread',
-      icon: MessageSquareText,
-      onClick: () => void openThread(m),
-    })
-  if (canDelete)
-    actions.push({
-      key: 'delete',
-      label: 'Delete message (hold Shift to skip confirmation)',
-      icon: Trash2,
-      danger: true,
-      onClick: e => confirmDeleteMessage(m.id, e.shiftKey),
-    })
+// A row of the hosted list: the notice its kind calls for, else the message.
+const HostedRow = memo(function HostedRow(props: RowProps) {
+  const { m, server, divider, on } = props
   const mark = divider && unreadDivider
-  if (m.kind === 'pin') return <PinNotice m={m} server={server} divider={mark} onMenu={onMenu} />
-  if (isSystem(m)) return <SystemNotice m={m} server={server} divider={mark} onMenu={onMenu} />
+  if (m.kind === 'pin') return <PinNotice m={m} server={server} divider={mark} onMenu={on.menu} />
+  if (isSystem(m)) return <SystemNotice m={m} server={server} divider={mark} onMenu={on.menu} />
   if (m.kind === 'call')
     return (
       <div data-row data-mid={m.id}>
@@ -615,82 +429,7 @@ const MessageRow = memo(function MessageRow({
         <CallLogRow message={m} />
       </div>
     )
-  const body = (
-    <>
-      {m.forward ? (
-        <ForwardCard m={m} canDelete={canDelete} />
-      ) : m.kind === 'poll' ? (
-        <PollCard m={m} canVote={canVote} />
-      ) : (
-        <MarkdownMessage
-          message={m}
-          canDelete={canDelete}
-          editor={editing ? <MessageEditor /> : undefined}
-        />
-      )}
-      <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
-      {m.reply_count > 0 && (
-        <Surface
-          title="Open thread"
-          onClick={() => void openThread(m)}
-          as="button"
-          row
-          pad="md"
-          inset="chip"
-          gap="xs"
-          tone="base"
-          radius="full"
-          text="xs"
-          fit
-          look="msg-part font-medium text-primary hover:bg-surface-container-high"
-        >
-          <MessageSquareText size={12} />
-          {m.reply_count} {m.reply_count === 1 ? 'reply' : 'replies'}
-        </Surface>
-      )}
-    </>
-  )
-  return (
-    <div data-row data-mid={m.id}>
-      {mark}
-      <div
-        {...longPress((x, y) => onMenu(m, x, y))}
-        data-flash={flash ? '' : undefined}
-        data-mentioned={mentioned ? '' : undefined}
-        className={`group relative ${groupPadCls(first, last)} ${mentioned ? mentionRowCls : 'hover:bg-surface-container-low'}`}
-      >
-        {m.reply_to && (
-          <ReplyPreview quote={m.reply_to} avatar={36} color={quoteColor} onJump={onJump} />
-        )}
-        {first ? (
-          <AuthorRow
-            author={m.author}
-            server={server}
-            size={36}
-            color={color}
-            icon={icon && iconRole !== undefined ? { emoji: icon, role: iconRole } : undefined}
-            meta={timeMeta(m.created_at)}
-          >
-            {body}
-          </AuthorRow>
-        ) : (
-          <GroupedRow
-            name={<ShownName user={m.author} server={server} />}
-            ts={m.created_at}
-            size={36}
-          >
-            {body}
-          </GroupedRow>
-        )}
-        <MessageToolbar
-          m={m}
-          react={canReact}
-          actions={actions}
-          onMore={(x, y) => onMenu(m, x, y)}
-        />
-      </div>
-    </div>
-  )
+  return <MessageRow {...props} />
 })
 
 export const reactHeader = (m: Message, x: number, y: number): ContextMenuOptions => ({
@@ -1109,13 +848,24 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     (msg: Message, x: number, y: number) => menuRef.current(msg, x, y),
     []
   )
-  const rowReply = useCallback((msg: Message) => replyRef.current(msg), [])
-  const rowEdit = useCallback((msg: Message) => editRef.current(msg), [])
   const rowJump = useCallback(
     (id: number) => {
       if (scope) void jumpTo(scope, id)
     },
     [scope, jumpTo]
+  )
+  const store = useStoreApi()
+  const rowHandlers = useMemo<RowHandlers>(
+    () => ({
+      menu: rowMenu,
+      jump: rowJump,
+      edit: msg => editRef.current(msg),
+      reply: msg => replyRef.current(msg),
+      forward: msg => store.getState().copyForward(msg),
+      thread: msg => void store.getState().openThread(msg),
+      remove: (msg, skipConfirm) => confirmDeleteMessage(msg.id, skipConfirm),
+    }),
+    [rowMenu, rowJump, store, confirmDeleteMessage]
   )
 
   return (
@@ -1361,7 +1111,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
               divider={unreadDivider}
               row={(m, i) => (
                 <Selectable m={m} scope={scope}>
-                  <MessageRow
+                  <HostedRow
                     m={m}
                     first={places[i]?.first ?? true}
                     last={places[i]?.last ?? true}
@@ -1369,11 +1119,13 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                     divider={i === dividerIndex}
                     flash={flash === m.id}
                     canDelete={canDelete(m)}
+                    canTrim={canDelete(m)}
                     canReact={canReact}
                     canVote={canWrite}
                     canUnreact={canUnreact}
                     canReply={replies.quote}
-                    canThread={replies.thread}
+                    thread={replies.thread ? 'Reply in thread' : null}
+                    chip
                     canEdit={canEdit(m)}
                     canForward={forwardable(m)}
                     editing={editingId === m.id}
@@ -1389,10 +1141,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                           )
                         : undefined
                     }
-                    onMenu={rowMenu}
-                    onReply={rowReply}
-                    onEdit={rowEdit}
-                    onJump={rowJump}
+                    on={rowHandlers}
                   />
                 </Selectable>
               )}

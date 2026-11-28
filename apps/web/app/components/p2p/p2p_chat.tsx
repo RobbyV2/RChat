@@ -1,7 +1,6 @@
 'use client'
 import { Name } from '../name'
 import { personCalled } from '../../lib/names'
-import { shownUser } from '../../lib/people'
 import { PeerCodeButton } from './peer_code_button'
 import { useActorSuffix, usePeerActor } from '../view_actor'
 import { identityScopeKey } from '../../lib/p2p/app/host'
@@ -14,8 +13,8 @@ import { ChannelCanContext } from '../../lib/place/use_rights'
 import { NO_THREADS_TEXT, type ChannelCan } from '../../lib/channel_perms'
 
 import {
+  createContext,
   Fragment,
-  memo,
   useCallback,
   useContext,
   useEffect,
@@ -25,21 +24,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react'
-import {
-  ArrowLeft,
-  ArrowRight,
-  CircleAlert,
-  Check,
-  Clock,
-  EyeOff,
-  History,
-  Lock,
-  MessageSquareText,
-  Plus,
-  Reply,
-  Trash2,
-  X,
-} from 'lucide-react'
+import { CircleAlert, Clock, History, Lock, Plus, X } from 'lucide-react'
 import { useStore } from '../../lib/store'
 import { outgoing } from '../../lib/link_safety'
 import { actionPress, openActionMenu } from '../../lib/actions/menu'
@@ -48,17 +33,15 @@ import { peerChat } from '../../lib/actions/p2p_chat'
 import { noticeOpen } from '../../lib/home'
 import { useHome } from '../../lib/home_store'
 import { chatKey, chatScope, type P2pChat } from '../../lib/p2p/app'
-import { hiddenRemovedText, SLOW_HIDDEN_TEXT } from '../../lib/p2p/flows'
 import { messageActs, STORAGE_FULL_TEXT, PEER_FULL_TEXT, type P2pMessage } from '../../lib/p2p/dm'
 import { LIMITS as P2P_LIMITS } from '../../lib/p2p/content'
 import { clock } from '../../lib/slowmode'
 import { useCountdown } from '../../lib/countdown'
 import { newSince } from '../../lib/lists'
-import { systemParts } from '../../lib/system_messages'
 import type { Message } from '../../lib/types'
-import { P2pDm, P2pRoom, type ListKind } from '../../lib/place/place'
+import { isHosted, P2pDm, P2pRoom, type ListKind } from '../../lib/place/place'
 import { reactPickOf, shownOf } from '../../lib/place/shown'
-import { PlaceProvider, useLive } from '../../lib/place/react'
+import { PlaceProvider, useLive, usePlace } from '../../lib/place/react'
 import { messagesAt } from '../../lib/place/use_messages'
 import { MessageList } from '../message_list'
 import { ComposerField, fits } from '../composer_field'
@@ -66,41 +49,33 @@ import { useCompose } from '../../lib/place/use_composer'
 import type { ComposerList } from '../../lib/place/composer'
 import { chat as chatFeature } from '../../lib/place/chat'
 import { featureAt, isUnsupported } from '../../lib/place/feature'
-import { MarkdownMessage } from '../markdown_message'
-import { MessageEditor, editAction, type EditBinding } from '../message_editor'
-import { MessageToolbar, type ToolbarAction } from '../message_toolbar'
-import { QuickReactions, ReactionBar, rowAt } from '../reactions'
-import { ComposerBar, ReplyPreview } from '../replies'
+import { type EditBinding } from '../message_editor'
+import { QuickReactions, rowAt } from '../reactions'
+import { ComposerBar } from '../replies'
 import { clipAllowed, clipSourceNames } from '../../lib/forward_viewing'
 import { fwdSource, p2pDestination, p2pForward } from '../../lib/forward'
-import {
-  ForwardBar,
-  ForwardCard,
-  forwardAction,
-  useForwardClip,
-  useVouchedFiles,
-} from '../forwards'
+import { ForwardBar, useForwardClip, useVouchedFiles } from '../forwards'
 import { PinLine, PinsWindow } from '../pins'
 import { ThreadsWindow } from '../threads'
 import { TypingIndicator } from '../typing_indicator'
 import { EmojiPicker } from '../emoji_picker'
 import { longPress } from '../context_menu'
-import { MessageTime } from '../timestamp'
 import { useChatScroll, useFocusMessage } from '../viewport_height'
-import { GroupedRow, groupPadCls, mentionRowCls } from '../message_pane'
+import { authorLook, MessageRow, RemovedRow, SlowHiddenRow, type RowHandlers } from '../message_row'
+import { SystemNotice } from '../system_messages'
+import type { P2pApp } from '../../lib/p2p/app/runtime'
 import { groupPlaces, p2pCue } from '../../lib/message_groups'
 import { dayStarts } from '../../lib/date_dividers'
 import { DateDivider } from '../date_divider'
 import { UnreadDivider } from '../unread_banner'
 import { p2pUnread, p2pUnreadStart } from '../../lib/unread_banner'
-import { Masked, textBtn } from '../ui'
+import { textBtn } from '../ui'
 import { ScheduledChip, SendLaterDialog, useDeviceItems, useDeviceOps } from '../scheduled'
 import { laterBlocked, type ComposerDraft } from '../../lib/scheduled'
-import { KeyAvatar, P2pBadge } from './p2p_badge'
+import { P2pBadge } from './p2p_badge'
 import { AttachmentList, PendingFiles } from './p2p_files'
 import { namePasted } from '../message_composer'
 import { P2pCallRow } from './p2p_call'
-import { RoleIcon } from '../role_icon'
 import type { Look } from '../../lib/role_looks'
 import { Row, Stack, Surface } from '../layout'
 
@@ -162,268 +137,75 @@ function P2pIntroBody({ id, children }: { id: string; children: ReactNode }) {
   )
 }
 
-interface RowProps {
-  p: P2pMessage
-  m: Message
-  // Its place in its sender's group: only the first row shows the avatar, name and time.
-  first: boolean
-  last: boolean
-  mine: boolean
-  pendingTip: string
-  mentioned: boolean
-  divider: boolean
-  flash: boolean
+// What a list holds for its rows beside the messages: what its host lets us do here.
+export interface RowRules {
+  me: string | null
   canAct: boolean
-  // A timeout of ours: the row can be deleted and its files downloaded, nothing more.
-  timedOut?: boolean
-  canDelete: boolean
-  editing: EditBinding | null
-  // Where replies and edits of this row are written (the conversation, channel or thread).
-  draftKey: string
-  // A top-level message of a server channel: its thread can be made or opened.
+  // A timeout of ours: a row can be deleted and its files downloaded, nothing more.
+  timedOut: boolean
+  held: ChannelCan
+  // A top-level list of a place: its messages can start threads.
   threads: boolean
-  onMenu: (p: P2pMessage, m: Message, x: number, y: number) => void
-  // Puts the row on the forward clipboard.
-  onCopy: (p: P2pMessage, m: Message) => void
-  onJump: (num: number) => void
-  // The sender's name color, and the emoji and role name of their role icon.
-  color?: string
-  icon?: string
-  iconRole?: string
+  pendingTip: string
+  mayDelete: (p: P2pMessage) => boolean
 }
 
-// A sender's look as row props.
-export const rowLook = (look: Look | undefined) => ({
-  color: look?.color,
-  icon: look?.icon?.emoji,
-  iconRole: look?.icon?.role,
-})
-
-export const P2pRow = memo(function P2pRow({
-  p,
-  m,
-  first,
-  last,
-  mine,
-  pendingTip,
-  mentioned,
-  divider,
-  flash,
-  canAct,
-  timedOut = false,
-  canDelete,
-  editing,
-  draftKey,
-  threads,
-  onMenu,
-  onCopy,
-  onJump,
-  color,
-  icon,
-  iconRole,
-}: RowProps) {
-  const identity = useP2pApp()!
-  const { p2pDm, p2pThread } = identity
-
-  const acct = useAccount()
-  const vouchedAtts = useVouchedFiles(m.forward?.p2p)
-
-  const actions: ToolbarAction[] = []
+// A stored message as the props of its row.
+export const rowOf = (p: P2pMessage, rules: RowRules, identity: P2pApp) => {
+  const mine = p.sender === rules.me
   // From the old copy: read-only here.
-  const act = canAct && !p.archived
-  const held = useContext(ChannelCanContext)
-  const write = act && !timedOut
+  const act = rules.canAct && !p.archived
+  const write = act && !rules.timedOut
   const can = messageActs(p, write, mine)
-  const thread = threads ? peerChat.forIdentity(identity).threadAct(p, write && held.threads) : null
-  if (can.edit && !editing) actions.push(editAction(() => p2pDm.startEdit(draftKey, p.id)))
-  if (can.reply)
-    actions.push({
-      key: 'reply',
-      label: 'Reply',
-      icon: Reply,
-      onClick: () => p2pDm.startReply(draftKey, p.id),
-    })
-  if (can.forward) actions.push(forwardAction(() => onCopy(p, m)))
-  if (thread)
-    actions.push({
-      key: 'thread',
-      label: thread,
-      icon: MessageSquareText,
-      onClick: () => void p2pThread.open(p.id),
-    })
-  if (act && canDelete)
-    actions.push({
-      key: 'delete',
-      label: 'Delete message (hold Shift to skip confirmation)',
-      icon: Trash2,
-      danger: true,
-      onClick: e => peerChat.forIdentity(identity).confirmDelete(p.id, e.shiftKey, acct),
-    })
-  const status = mine ? (
-    p.failed ? (
-      <Row as="span" data-failed gap="xs" place="shrink-0">
-        <CircleAlert size={12} aria-hidden className="text-error" />
-        <span className="text-xs text-error">Not sent</span>
-        {canAct && (
-          <>
-            {!timedOut && (
-              <button
-                onClick={() => void p2pDm.retry(p.id)}
-                className="text-xs font-medium text-error hover:underline"
-              >
-                Retry
-              </button>
-            )}
-            <button
-              onClick={e => peerChat.forIdentity(identity).confirmDelete(p.id, e.shiftKey, acct)}
-              className="text-xs font-medium text-error hover:underline"
-            >
-              Delete
-            </button>
-          </>
-        )}
-      </Row>
-    ) : p.pending ? (
-      <span
-        data-pending
-        role="img"
-        title={pendingTip}
-        aria-label="Not delivered yet"
-        className="flex shrink-0 text-on-surface-variant"
-      >
-        <Clock size={12} />
-      </span>
-    ) : (
-      <span
-        data-delivered
-        role="img"
-        title="Delivered"
-        aria-label="Delivered"
-        className="flex shrink-0 text-on-surface-variant"
-      >
-        <Check size={12} />
-      </span>
-    )
-  ) : null
-  const name = <Masked text={m.author.display_name} by={m.author.username} />
-  const body = (
-    <>
-      {m.forward ? (
-        <ForwardCard m={m} canDelete={false} local />
-      ) : (
-        (m.content.trim() !== '' || editing) && (
-          <MarkdownMessage
-            message={m}
-            editor={editing ? <MessageEditor binding={editing} /> : undefined}
-          />
-        )
-      )}
-      <AttachmentList
-        att={vouchedAtts ?? p.fwd?.att ?? p.att}
-        canFetch={canAct}
-        own={!p.fwd && mine}
-        message={p.id}
-      />
-      <ReactionBar m={m} canReact={write && held.react} canRemove={write} />
-      {threads && !!p.replies && !p.archived && (
-        <button
-          title="Open thread"
-          data-p2p-thread-chip
-          onClick={() => void p2pThread.open(p.id)}
-          className="mt-1 flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1 text-xs font-medium text-primary hover:bg-surface-container-high"
-        >
-          <MessageSquareText size={12} />
-          {p.replies} {p.replies === 1 ? 'reply' : 'replies'}
-        </button>
-      )}
-    </>
-  )
-  return (
-    <div data-row data-mid={m.id} data-event={p.id}>
-      {divider && <UnreadDivider />}
-      <div
-        {...longPress((x, y) => onMenu(p, m, x, y))}
-        data-flash={flash ? '' : undefined}
-        data-mentioned={mentioned ? '' : undefined}
-        className={`group relative ${groupPadCls(first, last)} ${mentioned ? mentionRowCls : 'hover:bg-surface-container-low'}`}
-      >
-        {m.reply_to && <ReplyPreview quote={m.reply_to} avatar={36} local onJump={onJump} />}
-        {first ? (
-          <Row gap="md" align="stretch">
-            <div className="shrink-0 pt-0.5">
-              <KeyAvatar person={shownUser({ ...m.author, username: p.sender }, null)} size={36} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <Row gap="sm" align="baseline" wrap>
-                <span className="streamer min-w-0 truncate text-sm font-medium" style={{ color }}>
-                  {name}
-                </span>
-                <RoleIcon emoji={icon} role={iconRole} />
-                <MessageTime
-                  ts={m.created_at}
-                  className="shrink-0 text-xs text-on-surface-variant"
-                />
-                {p.late && (
-                  <span
-                    data-late
-                    title={`Sent ${new Date(p.sentTs).toLocaleString()}`}
-                    className="shrink-0 text-2xs text-on-surface-variant italic"
-                  >
-                    sent earlier, arrived later
-                  </span>
-                )}
-                {status}
-              </Row>
-              {body}
-            </div>
-          </Row>
-        ) : (
-          <GroupedRow
-            name={name}
-            ts={m.created_at}
-            size={36}
-            status={mine && p.pending && !p.failed ? status : undefined}
-          >
-            {body}
-          </GroupedRow>
-        )}
-        <MessageToolbar
-          m={m}
-          react={canAct && !timedOut && held.react}
-          actions={actions}
-          onMore={(x, y) => onMenu(p, m, x, y)}
-        />
-      </div>
-    </div>
-  )
-})
+  return {
+    event: p.id,
+    ik: p.sender,
+    server: null,
+    local: true,
+    Files: RowFiles,
+    mentioned: pingsMe(p, rules.me),
+    canEdit: can.edit,
+    canReply: can.reply,
+    canForward: can.forward,
+    thread: rules.threads
+      ? peerChat.forIdentity(identity).threadAct(p, write && rules.held.threads)
+      : null,
+    chip: rules.threads && !p.archived,
+    canDelete: act && rules.mayDelete(p),
+    canReact: write && rules.held.react,
+    canUnreact: write,
+    sent: mine ? (p.failed ? 'failed' : p.pending ? 'pending' : 'delivered') : undefined,
+    sentTip: rules.pendingTip,
+    canRetry: rules.canAct && !rules.timedOut,
+    canDrop: rules.canAct,
+    lateAt: p.late ? p.sentTs : undefined,
+  } as const
+}
 
-// "alice joined the party." in a server's system channel, made here from a member event.
-function P2pSystemRow({ m, divider }: { m: Message; divider: boolean }) {
-  const [before, after] = systemParts(m)
-  const join = m.kind === 'join'
-  const Arrow = join ? ArrowRight : ArrowLeft
+// Whether the files of the rows around can be fetched.
+export const CanFetchContext = createContext(false)
+
+function ListFiles({ m, place }: { m: Message; place: P2pRoom | P2pDm }) {
+  const shown = useLive(shownOf(place))
+  const canFetch = useContext(CanFetchContext)
+  const vouched = useVouchedFiles(m.forward?.p2p)
+  const id = shown.idOf(m.id)
+  const p = id === null ? undefined : shown.message(id)
+  if (!p) return null
   return (
-    <div data-row data-mid={m.id}>
-      {divider && <UnreadDivider />}
-      <div data-system={m.kind} className="flex items-start gap-3 px-4 py-1">
-        <span
-          className={`flex w-9 shrink-0 justify-center pt-0.5 ${join ? 'text-status-green' : 'text-error'}`}
-        >
-          <Arrow size={16} aria-hidden />
-        </span>
-        <p className="min-w-0 flex-1 text-sm text-on-surface-variant">
-          {before}
-          <Name
-            of={personCalled(m.author.display_name, m.author.username)}
-            look="font-medium text-on-surface"
-          />
-          {after}
-          <MessageTime ts={m.created_at} className="ml-2 text-xs opacity-70" />
-        </p>
-      </div>
-    </div>
+    <AttachmentList
+      att={vouched ?? p.fwd?.att ?? p.att}
+      canFetch={canFetch && (place.list === 'thread' || !p.archived)}
+      own={!p.fwd && p.sender === shown.me}
+      message={p.id}
+    />
   )
+}
+
+// The files a P2P message carries, under its text.
+function RowFiles({ m }: { m: Message }) {
+  const place = usePlace()
+  return place && !isHosted(place) ? <ListFiles m={m} place={place} /> : null
 }
 
 // "alice pinned a message to this channel. See all pinned messages."
@@ -486,45 +268,6 @@ export function useP2pFlash(
     if (focus && focusNum !== null) p2pDm.clearFocus()
   }, [focus, focusNum])
   return flash
-}
-
-// In place of a message sent around the time its author was removed.
-export function P2pHiddenRow({ m, divider }: { m: Message; divider: boolean }) {
-  const [before, after] = hiddenRemovedText('\u0000').split('\u0000')
-  return (
-    <div data-row data-mid={m.id}>
-      {divider && <UnreadDivider />}
-      <div data-p2p-hidden className="flex items-start gap-3 px-4 py-1">
-        <span className="flex w-9 shrink-0 justify-center pt-0.5 text-on-surface-variant">
-          <EyeOff size={16} aria-hidden />
-        </span>
-        <p className="min-w-0 flex-1 text-sm text-on-surface-variant italic">
-          {before}
-          <Name of={personCalled(m.author.display_name, m.author.username)} />
-          {after}
-          <MessageTime ts={m.created_at} className="ml-2 text-xs not-italic opacity-70" />
-        </p>
-      </div>
-    </div>
-  )
-}
-
-// In place of our own message slow mode hides.
-export function P2pSlowRow({ m, divider }: { m: Message; divider: boolean }) {
-  return (
-    <div data-row data-mid={m.id}>
-      {divider && <UnreadDivider />}
-      <div data-p2p-slow-hidden className="flex items-start gap-3 px-4 py-1">
-        <span className="flex w-9 shrink-0 justify-center pt-0.5 text-on-surface-variant">
-          <EyeOff size={16} aria-hidden />
-        </span>
-        <p className="min-w-0 flex-1 text-sm text-on-surface-variant italic">
-          {SLOW_HIDDEN_TEXT}
-          <MessageTime ts={m.created_at} className="ml-2 text-xs not-italic opacity-70" />
-        </p>
-      </div>
-    </div>
-  )
 }
 
 // A row shown in the open conversation or thread.
@@ -896,6 +639,36 @@ export function useP2pList({
       peerChat.forIdentity(identity).copyForP2p(p, m, ownName(p.sender), draftKey, acct),
     [ownName, draftKey, identity, acct]
   )
+  const live = shownOf(place)
+  // What this list does for its rows, with `jump` showing the message a quote answers.
+  const rowOn = useCallback(
+    (jump: (num: number) => void): RowHandlers => {
+      const stored = (m: Message) => {
+        const list = live.get()
+        const id = list.idOf(m.id)
+        return id === null ? undefined : list.message(id)
+      }
+      const withStored = (m: Message, run: (p: P2pMessage) => void) => {
+        const p = stored(m)
+        if (p) run(p)
+      }
+      return {
+        menu: (m, x, y) => withStored(m, p => menuRef.current.menu(p, m, x, y)),
+        jump,
+        edit: m => withStored(m, p => p2pDm.startEdit(draftKey, p.id)),
+        reply: m => withStored(m, p => p2pDm.startReply(draftKey, p.id)),
+        forward: m =>
+          withStored(m, p =>
+            peerChat.forIdentity(identity).copyForP2p(p, m, ownName(p.sender), draftKey, acct)
+          ),
+        thread: m => withStored(m, p => void identity.p2pThread.open(p.id)),
+        remove: (m, skipConfirm) =>
+          withStored(m, p => peerChat.forIdentity(identity).confirmDelete(p.id, skipConfirm, acct)),
+        retry: m => withStored(m, p => void p2pDm.retry(p.id)),
+      }
+    },
+    [live, draftKey, ownName, identity, acct, p2pDm]
+  )
   return {
     me,
     user,
@@ -910,6 +683,7 @@ export function useP2pList({
     editing,
     editingState,
     rowMenu,
+    rowOn,
     forwardRow,
     copyRow,
     picker,
@@ -1009,8 +783,8 @@ function IdentityChatBody(props: ChatBodyProps) {
     editing,
     editingState,
     rowMenu,
+    rowOn,
     forwardRow,
-    copyRow,
     picker,
     setPicker,
   } = useP2pList({
@@ -1092,6 +866,12 @@ function IdentityChatBody(props: ChatBodyProps) {
     },
     [idOf, list]
   )
+  const on = useMemo(() => rowOn(rowJump), [rowOn, rowJump])
+  const pendingTip = props.peerFull ? 'Their storage is full' : props.pendingTip
+  const rules = useMemo<RowRules>(
+    () => ({ me, canAct, timedOut, held, threads: true, pendingTip, mayDelete }),
+    [me, canAct, timedOut, held, pendingTip, mayDelete]
+  )
 
   const gapNote = props.gap && !chat.more && (
     <Surface data-p2p-gap pad="lg" tone="plain" radius="none">
@@ -1115,153 +895,153 @@ function IdentityChatBody(props: ChatBodyProps) {
 
   return (
     <PlaceProvider place={place}>
-      <main
-        {...props.dataAttr}
-        className="relative flex h-full min-w-0 flex-1 flex-col bg-surface"
-        data-share-drop-pane
-        onDragEnter={e => {
-          e.preventDefault()
-          if (!canDrop || !e.dataTransfer.types.includes('Files')) return
-          dragDepth.current += 1
-          setDragging(true)
-        }}
-        onDragOver={e => e.preventDefault()}
-        onDragLeave={() => {
-          dragDepth.current = Math.max(0, dragDepth.current - 1)
-          if (!dragDepth.current) setDragging(false)
-        }}
-        onDrop={e => {
-          e.preventDefault()
-          dragDepth.current = 0
-          setDragging(false)
-          if (canDrop) p2pFiles.add(key, Array.from(e.dataTransfer.files))
-        }}
-      >
-        {props.header}
-        {props.above}
-        <MessageList
-          list={list}
-          state={listState}
-          listRef={listRef}
-          contentRef={contentRef}
-          onScroll={scroll.onScroll}
-          loading={first}
-          positioned={scroll.positioned}
-          ends={
-            messages.length
-              ? { first: messages[0].id, last: messages[messages.length - 1].id }
-              : null
-          }
-          banner={
-            divider >= 0 || above
-              ? {
-                  unread,
-                  onJump: () => {
-                    const id = divider >= 0 ? messages[divider].id : firstUnread?.id
-                    if (id) list.jump(id)
-                  },
-                }
-              : null
-          }
-          fresh={fresh}
-          toBottom={scroll.toBottom}
-          intro={props.intro}
-          empty={
-            !chat.loading &&
-            messages.length === 0 && (
-              <div className="h-full text-center text-on-surface-variant opacity-70">
-                <Surface pad="xl" tone="plain" radius="none" place="h-full">
-                  <Stack gap="2xs" align="center" justify="center" place="flex-1">
-                    {props.empty}
-                  </Stack>
-                </Surface>
-              </div>
-            )
-          }
-          lightbox={{ rows: () => ({ ids: messages.map(p => p.id), places }), forward: forwardRow }}
-          head={gapNote}
+      <CanFetchContext.Provider value={canAct}>
+        <main
+          {...props.dataAttr}
+          className="relative flex h-full min-w-0 flex-1 flex-col bg-surface"
+          data-share-drop-pane
+          onDragEnter={e => {
+            e.preventDefault()
+            if (!canDrop || !e.dataTransfer.types.includes('Files')) return
+            dragDepth.current += 1
+            setDragging(true)
+          }}
+          onDragOver={e => e.preventDefault()}
+          onDragLeave={() => {
+            dragDepth.current = Math.max(0, dragDepth.current - 1)
+            if (!dragDepth.current) setDragging(false)
+          }}
+          onDrop={e => {
+            e.preventDefault()
+            dragDepth.current = 0
+            setDragging(false)
+            if (canDrop) p2pFiles.add(key, Array.from(e.dataTransfer.files))
+          }}
         >
-          {rows.map(({ p, m }, i) => (
-            <Fragment key={p.id}>
-              {days.has(i) && <DateDivider at={m.created_at} />}
-              {p.system?.kind === 'pin' ? (
-                <P2pPinRow
-                  p={p}
-                  m={m}
-                  divider={i === divider}
-                  place={chat.ch ? 'channel' : 'conversation'}
-                  onMenu={(row, x, y) => rowMenu(row, m, x, y)}
-                />
-              ) : p.system ? (
-                <P2pSystemRow m={m} divider={i === divider} />
-              ) : p.removed ? (
-                <P2pHiddenRow m={m} divider={i === divider} />
-              ) : p.slowHidden ? (
-                <P2pSlowRow m={m} divider={i === divider} />
-              ) : p.call ? (
-                <P2pCallRow p={p} me={me} />
-              ) : (
-                <P2pRow
-                  p={p}
-                  m={m}
-                  first={places[i]?.first ?? true}
-                  last={places[i]?.last ?? true}
-                  mine={p.sender === me}
-                  pendingTip={props.peerFull ? 'Their storage is full' : props.pendingTip}
-                  mentioned={pingsMe(p, me)}
-                  divider={i === divider}
-                  flash={flash === m.id}
-                  canAct={canAct && !p.archived}
-                  timedOut={timedOut}
-                  canDelete={mayDelete(p)}
-                  editing={editing && editingState?.id === p.id ? editing : null}
-                  draftKey={key}
-                  threads
-                  onMenu={rowMenu}
-                  onCopy={copyRow}
-                  onJump={rowJump}
-                  {...rowLook(props.lookOf?.(p.sender))}
-                />
-              )}
-            </Fragment>
-          ))}
-        </MessageList>
-        <div className="relative shrink-0">
-          <TypingIndicator scope={null} bg="bg-surface" names={typingNames} />
-          {!disabled && (storageFull || props.peerFull) && (
-            <NoteBar data-p2p-full role="status">
-              <CircleAlert size={16} className="shrink-0 text-error" aria-hidden />
-              {storageFull ? STORAGE_FULL_TEXT : PEER_FULL_TEXT}
-            </NoteBar>
-          )}
-          <P2pComposer
-            draftKey={key}
-            channelTextOnly={props.channelTextOnly}
-            scope={scope}
-            title={props.title}
-            placeholder={props.placeholder}
-            nameOf={name}
-            disabled={disabled}
-          />
-        </div>
-        <PinsWindow canUnpin={canAct && !timedOut && mayPin} />
-        <ThreadsWindow />
-        {picker && (
-          <EmojiPicker
-            anchor={picker.anchor?.isConnected ? picker.anchor : null}
-            side="top"
-            align="end"
-            label="Add reaction"
-            onPick={e => react(picker.m, e, false)}
-            onClose={() => setPicker(null)}
-          />
-        )}
-        {dragging && (
-          <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-tertiary bg-surface/80 font-medium text-tertiary">
-            Drop files to send peer-to-peer
+          {props.header}
+          {props.above}
+          <MessageList
+            list={list}
+            state={listState}
+            listRef={listRef}
+            contentRef={contentRef}
+            onScroll={scroll.onScroll}
+            loading={first}
+            positioned={scroll.positioned}
+            ends={
+              messages.length
+                ? { first: messages[0].id, last: messages[messages.length - 1].id }
+                : null
+            }
+            banner={
+              divider >= 0 || above
+                ? {
+                    unread,
+                    onJump: () => {
+                      const id = divider >= 0 ? messages[divider].id : firstUnread?.id
+                      if (id) list.jump(id)
+                    },
+                  }
+                : null
+            }
+            fresh={fresh}
+            toBottom={scroll.toBottom}
+            intro={props.intro}
+            empty={
+              !chat.loading &&
+              messages.length === 0 && (
+                <div className="h-full text-center text-on-surface-variant opacity-70">
+                  <Surface pad="xl" tone="plain" radius="none" place="h-full">
+                    <Stack gap="2xs" align="center" justify="center" place="flex-1">
+                      {props.empty}
+                    </Stack>
+                  </Surface>
+                </div>
+              )
+            }
+            lightbox={{
+              rows: () => ({ ids: messages.map(p => p.id), places }),
+              forward: forwardRow,
+            }}
+            head={gapNote}
+          >
+            {rows.map(({ p, m }, i) => (
+              <Fragment key={p.id}>
+                {days.has(i) && <DateDivider at={m.created_at} />}
+                {p.system?.kind === 'pin' ? (
+                  <P2pPinRow
+                    p={p}
+                    m={m}
+                    divider={i === divider}
+                    place={chat.ch ? 'channel' : 'conversation'}
+                    onMenu={(row, x, y) => rowMenu(row, m, x, y)}
+                  />
+                ) : p.system ? (
+                  <SystemNotice
+                    m={m}
+                    server={null}
+                    divider={i === divider && <UnreadDivider />}
+                    local
+                  />
+                ) : p.removed ? (
+                  <RemovedRow m={m} divider={i === divider} />
+                ) : p.slowHidden ? (
+                  <SlowHiddenRow m={m} divider={i === divider} />
+                ) : p.call ? (
+                  <P2pCallRow p={p} me={me} />
+                ) : (
+                  <MessageRow
+                    m={m}
+                    first={places[i]?.first ?? true}
+                    last={places[i]?.last ?? true}
+                    divider={i === divider}
+                    flash={flash === m.id}
+                    editing={editing && editingState?.id === p.id ? editing : false}
+                    {...rowOf(p, rules, identity)}
+                    {...authorLook(props.lookOf?.(p.sender))}
+                    on={on}
+                  />
+                )}
+              </Fragment>
+            ))}
+          </MessageList>
+          <div className="relative shrink-0">
+            <TypingIndicator scope={null} bg="bg-surface" names={typingNames} />
+            {!disabled && (storageFull || props.peerFull) && (
+              <NoteBar data-p2p-full role="status">
+                <CircleAlert size={16} className="shrink-0 text-error" aria-hidden />
+                {storageFull ? STORAGE_FULL_TEXT : PEER_FULL_TEXT}
+              </NoteBar>
+            )}
+            <P2pComposer
+              draftKey={key}
+              channelTextOnly={props.channelTextOnly}
+              scope={scope}
+              title={props.title}
+              placeholder={props.placeholder}
+              nameOf={name}
+              disabled={disabled}
+            />
           </div>
-        )}
-      </main>
+          <PinsWindow canUnpin={canAct && !timedOut && mayPin} />
+          <ThreadsWindow />
+          {picker && (
+            <EmojiPicker
+              anchor={picker.anchor?.isConnected ? picker.anchor : null}
+              side="top"
+              align="end"
+              label="Add reaction"
+              onPick={e => react(picker.m, e, false)}
+              onClose={() => setPicker(null)}
+            />
+          )}
+          {dragging && (
+            <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-tertiary bg-surface/80 font-medium text-tertiary">
+              Drop files to send peer-to-peer
+            </div>
+          )}
+        </main>
+      </CanFetchContext.Provider>
     </PlaceProvider>
   )
 }

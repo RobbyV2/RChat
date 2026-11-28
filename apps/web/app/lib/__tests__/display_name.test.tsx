@@ -16,7 +16,8 @@ import { personName } from '../names'
 import { shownUser } from '../people'
 import { MaskedWords } from '../../components/ui'
 import { MarkdownMessage } from '../../components/markdown_message'
-import { AuthorRow, DmPeer } from '../../components/message_pane'
+import { DmPeer } from '../../components/message_pane'
+import { AuthorRow } from '../../components/message_row'
 import { SystemNotice } from '../../components/system_messages'
 import { ActorHit } from '../../components/audit_log'
 import { PreviewLine } from '../../components/invite_card'
@@ -26,7 +27,7 @@ import { DockPlace, Tile } from '../../components/voice_grid'
 import { VOICE_STATUS_ON } from '../voice_status'
 import { CreatorNote } from '../../components/webhooks_dialog'
 import { ReplyPreview } from '../../components/replies'
-import { P2pRow } from '../../components/p2p/p2p_chat'
+import { PeerRow } from './helpers/peer_row'
 import { asMessage } from '../p2p/shown_message'
 import { PlaceProvider } from '../place/react'
 import { peerPlace } from './helpers/peer_place'
@@ -481,25 +482,7 @@ test('a P2P message quotes the sender it answers by P2P name', () => {
   const m = asMessage(p, 2, 1, ik => shownPeer().p2pUser(ik, names[ik]), BOB_KEY)
   const html = render(
     <PlaceProvider place={peerPlace(shownPeer(), { me: BOB_KEY })}>
-      <P2pRow
-        p={p}
-        m={m}
-        mine
-        pendingTip=""
-        mentioned={false}
-        divider={false}
-        flash={false}
-        first
-        last
-        canAct
-        canDelete
-        editing={null}
-        draftKey="dm"
-        threads={false}
-        onMenu={() => {}}
-        onCopy={() => {}}
-        onJump={() => {}}
-      />
+      <PeerRow app={shownPeer()} p={p} m={m} rules={{ me: BOB_KEY, mayDelete: () => true }} />
     </PlaceProvider>
   )
   const quote = html.slice(html.indexOf('data-reply-to'), html.indexOf('sounds good'))

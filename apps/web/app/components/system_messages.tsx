@@ -24,6 +24,8 @@ import { longPress } from './context_menu'
 import { MessageTime } from './timestamp'
 import { profileTrigger } from './profile_card'
 import { fieldCls, FieldError } from './ui'
+import { Name } from './name'
+import { personCalled } from '../lib/names'
 import { ShownName } from './shown_user'
 import { Inset, Row, Stack } from './layout'
 
@@ -32,12 +34,15 @@ export function SystemNotice({
   m,
   server,
   divider,
+  local = false,
   onMenu,
 }: {
   m: Message
   server: string | null
   divider: ReactNode
-  onMenu: (m: Message, x: number, y: number) => void
+  // A place that knows people by key: the name opens no profile.
+  local?: boolean
+  onMenu?: (m: Message, x: number, y: number) => void
 }) {
   const store = useStoreApi()
   const [before, after] = systemParts(m)
@@ -47,14 +52,14 @@ export function SystemNotice({
     <div data-row data-mid={m.id}>
       {divider}
       <Inset
-        {...longPress((x, y) => onMenu(m, x, y))}
+        {...(onMenu ? longPress((x, y) => onMenu(m, x, y)) : {})}
         data-system={m.kind}
         row
         pad="lg"
         inset="line"
         gap="md"
         align="start"
-        look="hover:bg-surface-container-low"
+        look={onMenu ? 'hover:bg-surface-container-low' : undefined}
       >
         <span
           className={`flex h-lh w-9 shrink-0 items-center justify-center ${join ? 'text-status-green' : 'text-error'}`}
@@ -63,13 +68,20 @@ export function SystemNotice({
         </span>
         <p className="min-w-0 flex-1 text-sm text-on-surface-variant">
           {before}
-          <ShownName
-            user={m.author}
-            server={server}
-            link
-            {...profileTrigger(store, m.author, server)}
-            look="font-medium text-on-surface"
-          />
+          {local ? (
+            <Name
+              of={personCalled(m.author.display_name, m.author.username)}
+              look="font-medium text-on-surface"
+            />
+          ) : (
+            <ShownName
+              user={m.author}
+              server={server}
+              link
+              {...profileTrigger(store, m.author, server)}
+              look="font-medium text-on-surface"
+            />
+          )}
           {after} <MessageTime ts={m.created_at} className="text-xs opacity-70" />
         </p>
       </Inset>

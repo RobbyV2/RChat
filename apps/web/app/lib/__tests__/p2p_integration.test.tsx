@@ -550,7 +550,7 @@ describe('threads in a P2P conversation', () => {
     const header = html.slice(html.indexOf('<header'), html.indexOf('</header>'))
     expect(header).toContain('data-threads-button')
     expect(header).toContain('title="Threads" aria-label="Threads"')
-    expect(html).toContain('data-p2p-thread-chip')
+    expect(html).toContain('data-thread-chip')
     expect(readText(html)).toContain('2 replies')
   })
 

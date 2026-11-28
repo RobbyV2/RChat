@@ -18,17 +18,16 @@ import { newSince } from '../../lib/lists'
 import type { Message } from '../../lib/types'
 import { PlaceProvider, useP2pRoom } from '../../lib/place/react'
 import { EmojiPicker } from '../emoji_picker'
+import { authorLook, MessageRow, RemovedRow, SlowHiddenRow } from '../message_row'
 import { ThreadPanelView } from '../thread_panel'
 import { TypingIndicator } from '../typing_indicator'
 import { PresentBar, useChatScroll } from '../viewport_height'
 import { textBtn, useEscape } from '../ui'
 import {
   P2pComposer,
-  P2pHiddenRow,
-  P2pRow,
-  P2pSlowRow,
-  pingsMe,
-  rowLook,
+  CanFetchContext,
+  rowOf,
+  type RowRules,
   useP2pFlash,
   useP2pList,
 } from './p2p_chat'
@@ -179,9 +178,8 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
     react,
     editing,
     editingState,
-    rowMenu,
+    rowOn,
     forwardRow,
-    copyRow,
     picker,
     setPicker,
   } = useP2pList({
@@ -255,32 +253,32 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
     [idOf]
   )
 
+  const onRoot = useMemo(() => rowOn(jumpMain), [rowOn, jumpMain])
+  const onReply = useMemo(() => rowOn(jumpHere), [rowOn, jumpHere])
+  const { pendingTip } = f
+  const rules = useMemo<RowRules>(
+    () => ({ me, canAct, timedOut, held, threads: false, pendingTip, mayDelete }),
+    [me, canAct, timedOut, held, pendingTip, mayDelete]
+  )
+  const rootRules = useMemo<RowRules>(() => ({ ...rules, mayDelete: () => false }), [rules])
+
   const row = (r: { p: P2pMessage; m: Message }, root: boolean, place: GroupPlace) => {
     const { p, m } = r
-    if (p.removed) return <P2pHiddenRow key={p.id} m={m} divider={false} />
-    if (p.slowHidden) return <P2pSlowRow key={p.id} m={m} divider={false} />
+    if (p.removed) return <RemovedRow key={p.id} m={m} divider={false} />
+    if (p.slowHidden) return <SlowHiddenRow key={p.id} m={m} divider={false} />
     return (
-      <P2pRow
+      <MessageRow
         key={p.id}
-        p={p}
         m={m}
         first={place.first}
         last={place.last}
-        mine={p.sender === me}
-        pendingTip={f.pendingTip}
-        mentioned={pingsMe(p, me)}
         divider={false}
         flash={flash === m.id}
-        canAct={canAct}
-        timedOut={timedOut}
-        canDelete={!root && mayDelete(p)}
-        editing={editing && editingState?.id === p.id ? editing : null}
-        draftKey={key}
-        threads={false}
-        onMenu={rowMenu}
-        onCopy={copyRow}
-        onJump={root ? jumpMain : jumpHere}
-        {...rowLook(f.lookOf?.(p.sender))}
+        inThread
+        editing={editing && editingState?.id === p.id ? editing : false}
+        {...rowOf(p, root ? rootRules : rules, identity)}
+        {...authorLook(f.lookOf?.(p.sender))}
+        on={root ? onRoot : onReply}
       />
     )
   }
@@ -288,81 +286,86 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
   return (
     <ChannelCanContext.Provider value={held}>
       <PlaceProvider place={place}>
-        <div data-p2p-thread className="contents">
-          <LightboxList rows={() => ({ ids: list.map(r => r.p.id), places })} forward={forwardRow}>
-            <ThreadPanelView
-              peer
-              onClose={p2pThread.close}
-              overlays={
-                scroll.positioned &&
-                fresh > 0 && <PresentBar count={fresh} onJump={scroll.toBottom} />
-              }
-              listRef={listRef}
-              contentRef={contentRef}
-              onScroll={scroll.onScroll}
-              head={
-                t.more && (
-                  <Surface pad="sm" tone="plain" radius="none" align="center">
-                    <button onClick={() => void p2pThread.loadOlder()} className={textBtn}>
-                      Show older replies
-                    </button>
-                  </Surface>
-                )
-              }
-              root={
-                head ? (
-                  row(head, true, ALONE)
-                ) : (
-                  <Surface pad="lg" tone="plain" radius="none">
-                    <p className="text-sm text-on-surface-variant italic">
-                      {t.loading ? 'Loading…' : 'Message unavailable'}
-                    </p>
-                  </Surface>
-                )
-              }
-              count={t.head?.replies ?? replies.length}
-              replies={list.map((r, i) => (
-                <Fragment key={r.p.id}>
-                  {days.has(i) && <DateDivider at={r.m.created_at} />}
-                  {row(r, false, places[i] ?? ALONE)}
-                </Fragment>
-              ))}
-              tail={
-                t.loading &&
-                replies.length === 0 &&
-                (t.head?.replies ?? 1) > 0 && (
-                  <MessageListSkeleton seed={scope} variant="panel" label="Loading replies" />
-                )
-              }
-              footer={
-                <>
-                  <TypingIndicator scope={null} bg="bg-surface-container-low" names={f.typers} />
-                  <P2pComposer
-                    draftKey={key}
-                    list="thread"
-                    channelTextOnly={f.textOnly}
-                    unstarted={!t.loading && !t.head?.replies && replies.length === 0}
-                    scope={scope}
-                    title="the thread"
-                    placeholder="Message thread"
-                    nameOf={name}
-                    disabled={disabled}
-                  />
-                </>
-              }
-            />
-          </LightboxList>
-          {picker && (
-            <EmojiPicker
-              anchor={picker.anchor?.isConnected ? picker.anchor : null}
-              side="top"
-              align="end"
-              label="Add reaction"
-              onPick={e => react(picker.m, e, false)}
-              onClose={() => setPicker(null)}
-            />
-          )}
-        </div>
+        <CanFetchContext.Provider value={canAct}>
+          <div data-p2p-thread className="contents">
+            <LightboxList
+              rows={() => ({ ids: list.map(r => r.p.id), places })}
+              forward={forwardRow}
+            >
+              <ThreadPanelView
+                peer
+                onClose={p2pThread.close}
+                overlays={
+                  scroll.positioned &&
+                  fresh > 0 && <PresentBar count={fresh} onJump={scroll.toBottom} />
+                }
+                listRef={listRef}
+                contentRef={contentRef}
+                onScroll={scroll.onScroll}
+                head={
+                  t.more && (
+                    <Surface pad="sm" tone="plain" radius="none" align="center">
+                      <button onClick={() => void p2pThread.loadOlder()} className={textBtn}>
+                        Show older replies
+                      </button>
+                    </Surface>
+                  )
+                }
+                root={
+                  head ? (
+                    row(head, true, ALONE)
+                  ) : (
+                    <Surface pad="lg" tone="plain" radius="none">
+                      <p className="text-sm text-on-surface-variant italic">
+                        {t.loading ? 'Loading…' : 'Message unavailable'}
+                      </p>
+                    </Surface>
+                  )
+                }
+                count={t.head?.replies ?? replies.length}
+                replies={list.map((r, i) => (
+                  <Fragment key={r.p.id}>
+                    {days.has(i) && <DateDivider at={r.m.created_at} />}
+                    {row(r, false, places[i] ?? ALONE)}
+                  </Fragment>
+                ))}
+                tail={
+                  t.loading &&
+                  replies.length === 0 &&
+                  (t.head?.replies ?? 1) > 0 && (
+                    <MessageListSkeleton seed={scope} variant="panel" label="Loading replies" />
+                  )
+                }
+                footer={
+                  <>
+                    <TypingIndicator scope={null} bg="bg-surface-container-low" names={f.typers} />
+                    <P2pComposer
+                      draftKey={key}
+                      list="thread"
+                      channelTextOnly={f.textOnly}
+                      unstarted={!t.loading && !t.head?.replies && replies.length === 0}
+                      scope={scope}
+                      title="the thread"
+                      placeholder="Message thread"
+                      nameOf={name}
+                      disabled={disabled}
+                    />
+                  </>
+                }
+              />
+            </LightboxList>
+            {picker && (
+              <EmojiPicker
+                anchor={picker.anchor?.isConnected ? picker.anchor : null}
+                side="top"
+                align="end"
+                label="Add reaction"
+                onPick={e => react(picker.m, e, false)}
+                onClose={() => setPicker(null)}
+              />
+            )}
+          </div>
+        </CanFetchContext.Provider>
       </PlaceProvider>
     </ChannelCanContext.Provider>
   )

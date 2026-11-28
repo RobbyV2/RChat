@@ -6,11 +6,12 @@ import { createPeerFixture } from './peer_fixture'
 import { formatStamp, fullTime } from '../timestamps'
 import type { P2pMessage } from '../p2p/dm'
 import type { Outgoing } from '../store_types'
-import { GroupedRow, OutgoingRow, groupPadCls } from '../../components/message_pane'
+import { OutgoingRow, groupPadCls } from '../../components/message_pane'
+import { GroupedRow } from '../../components/message_row'
 import { Name } from '../../components/name'
 import { personName } from '../names'
 import { shownUser } from '../people'
-import { P2pRow } from '../../components/p2p/p2p_chat'
+import { PeerRow } from './helpers/peer_row'
 import { MessageToolbar } from '../../components/message_toolbar'
 import { msg, user } from './fixtures'
 
@@ -114,11 +115,13 @@ const p2pRow = (
   rights: { timedOut?: boolean; canDelete?: boolean } = {}
 ) => {
   const owner = testAccount('bob')
-  createPeerFixture(owner, 'bob')
+  const app = createPeerFixture(owner, 'bob')
+  const stored = { ...p, ...over }
   return renderToStaticMarkup(
     <AccountProvider session={owner}>
-      <P2pRow
-        p={{ ...p, ...over }}
+      <PeerRow
+        app={app}
+        p={stored}
         m={msg(1, {
           author: user('ik-bob', { display_name: 'Bobby' }),
           content: 'hello there',
@@ -126,20 +129,12 @@ const p2pRow = (
         })}
         first={first}
         last={last}
-        mine={mine}
-        pendingTip="Waiting for them to come online"
-        mentioned={false}
-        divider={false}
-        flash={false}
-        canAct
-        timedOut={rights.timedOut}
-        canDelete={rights.canDelete ?? false}
-        editing={null}
-        draftKey="room"
-        threads={false}
-        onMenu={() => {}}
-        onCopy={() => {}}
-        onJump={() => {}}
+        rules={{
+          me: mine ? stored.sender : null,
+          pendingTip: 'Waiting for them to come online',
+          timedOut: rights.timedOut ?? false,
+          mayDelete: () => rights.canDelete ?? false,
+        }}
       />
     </AccountProvider>
   )

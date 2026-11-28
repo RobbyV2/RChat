@@ -3,40 +3,30 @@ import { PeerActorTag, ViewActorTag } from './view_actor'
 import { useAccount } from '../lib/client/react'
 
 import { useEffect, useMemo, useRef, type ReactNode, type RefObject } from 'react'
-import { MessageSquareText, Trash2 } from 'lucide-react'
-import { MessageToolbar, type ToolbarAction } from './message_toolbar'
-import { ReactionBar } from './reactions'
+import { MessageSquareText } from 'lucide-react'
 import { useChannelCan } from '../lib/place/use_rights'
 import { useHostedServer } from '../lib/place/react'
 import { messageRights, replyAccess } from '../lib/actions/message'
 import { actionPress, openActionMenu } from '../lib/actions/menu'
 import { myRank, roleColor, roleLook, threadKey, useStore } from '../lib/store'
-import type { Look } from '../lib/role_looks'
 import { outranksKnown } from '../lib/hierarchy'
 import { useShallow } from 'zustand/react/shallow'
 import type { Message } from '../lib/types'
 import type { Outgoing } from '../lib/store_types'
 import { findById } from '../lib/window'
 import { newSince } from '../lib/lists'
-import { MarkdownMessage } from './markdown_message'
 import { MessageComposer } from './message_composer'
 import { TypingIndicator } from './typing_indicator'
-import { ShownName } from './shown_user'
 import {
-  AuthorRow,
-  GroupedRow,
   OutboxRows,
-  groupPadCls,
-  mentionRowCls,
   mentionsMe,
   reactHeader,
-  replyAction,
-  timeMeta,
   useAuthorMembers,
   useMemberLookup,
   usePeopleKey,
 } from './message_pane'
-import { longPress, useMedia } from './context_menu'
+import { authorLook, MessageRow, type RowHandlers } from './message_row'
+import { useMedia } from './context_menu'
 import {
   EdgeSentinel,
   OlderLoading,
@@ -49,20 +39,13 @@ import { PanelHeader, useEscape } from './ui'
 import { LightboxList } from './media_lightbox'
 import { BlockedComposer, BlockedList } from './blocking'
 import { MessageListSkeleton } from './skeletons'
-import { ReplyPreview } from './replies'
 import { canQuote } from '../lib/replies'
 import { canForward } from '../lib/forward'
-import { ForwardCard, forwardAction } from './forwards'
-import { PollCard } from './poll_card'
 import { canEdit as ownEditable } from '../lib/sed'
-import { MessageEditor, editAction } from './message_editor'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { BulkJobBar, Selectable, SelectionBar, openSelectionMenu } from './selection'
 import { Row, Surface } from './layout'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
-
-// The name color and role icon of an author, as `AuthorRow` props.
-const authorOf = (look: Look) => ({ color: look.color, icon: look.icon })
 
 const EMPTY: Message[] = []
 const NO_SENDS: Outgoing[] = []
@@ -303,88 +286,48 @@ export default function ThreadPanel() {
     )
   }
 
-  const row = (m: Message, { first, last }: GroupPlace) => {
-    const mentioned = mentionsMe(m, me?.username)
-    const editing = editingId === m.id
-    const actions: ToolbarAction[] = []
-    if (canEdit(m) && !editing) actions.push(editAction(() => editMsg(m)))
-    if (canReply(m)) actions.push(replyAction(() => replyTo(m)))
-    if (forwardable(m)) actions.push(forwardAction(() => copyForward(m)))
-    if (m.id !== root.id && canDelete(m))
-      actions.push({
-        key: 'delete',
-        label: 'Delete reply (hold Shift to skip confirmation)',
-        icon: Trash2,
-        danger: true,
-        onClick: e => store.menu.confirmDeleteMessage(m.id, e.shiftKey),
-      })
-    const quote = m.reply_to
-    const body = (
-      <>
-        {m.forward ? (
-          <ForwardCard m={m} canDelete={canDelete(m)} />
-        ) : m.kind === 'poll' ? (
-          <PollCard m={m} canVote={canWrite} />
-        ) : (
-          <MarkdownMessage
-            message={m}
-            canDelete={canDelete(m)}
-            editor={editing ? <MessageEditor /> : undefined}
-          />
-        )}
-        <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
-      </>
-    )
-    return (
-      <div
-        key={m.id}
-        data-row
-        data-mid={m.id}
-        data-flash={flash === m.id ? '' : undefined}
-        data-mentioned={mentioned ? '' : undefined}
-        {...longPress(rowMenu(m))}
-        className={`group relative ${groupPadCls(first, last)} ${mentioned ? mentionRowCls : 'hover:bg-surface-container'}`}
-      >
-        {quote && (
-          <ReplyPreview
-            quote={quote}
-            avatar={30}
-            color={
-              quote.author
-                ? roleColor(roles, memberFor(quote.author.username)?.role_ids ?? [])
-                : undefined
-            }
-            onJump={m.id === root.id ? jumpMain : jump}
-          />
-        )}
-        {first ? (
-          <AuthorRow
-            author={m.author}
-            server={server}
-            size={30}
-            {...authorOf(roleLook(roles, memberFor(m.author.username)?.role_ids ?? []))}
-            meta={timeMeta(m.created_at)}
-          >
-            {body}
-          </AuthorRow>
-        ) : (
-          <GroupedRow
-            name={<ShownName user={m.author} server={server} />}
-            ts={m.created_at}
-            size={30}
-          >
-            {body}
-          </GroupedRow>
-        )}
-        <MessageToolbar
-          m={m}
-          react={canReact}
-          actions={actions}
-          onMore={(x, y) => rowMenu(m)(x, y)}
-        />
-      </div>
-    )
-  }
+  const handlers = (root: boolean): RowHandlers => ({
+    menu: (m, x, y) => rowMenu(m)(x, y),
+    jump: root ? jumpMain : jump,
+    edit: editMsg,
+    reply: replyTo,
+    forward: copyForward,
+    thread: () => {},
+    remove: (m, skipConfirm) => store.menu.confirmDeleteMessage(m.id, skipConfirm),
+  })
+  const onRoot = handlers(true)
+  const onReply = handlers(false)
+
+  const row = (m: Message, { first, last }: GroupPlace) => (
+    <MessageRow
+      key={m.id}
+      m={m}
+      first={first}
+      last={last}
+      mentioned={mentionsMe(m, me?.username)}
+      divider={false}
+      flash={flash === m.id}
+      inThread
+      server={server}
+      {...authorLook(roleLook(roles, memberFor(m.author.username)?.role_ids ?? []))}
+      quoteColor={
+        m.reply_to?.author
+          ? roleColor(roles, memberFor(m.reply_to.author.username)?.role_ids ?? [])
+          : undefined
+      }
+      canEdit={canEdit(m)}
+      canReply={canReply(m)}
+      canForward={forwardable(m)}
+      thread={null}
+      canDelete={m.id !== root.id && canDelete(m)}
+      canTrim={canDelete(m)}
+      canReact={canReact}
+      canUnreact={canUnreact}
+      canVote={canWrite}
+      editing={editingId === m.id}
+      on={m.id === root.id ? onRoot : onReply}
+    />
+  )
 
   return (
     <LightboxList
