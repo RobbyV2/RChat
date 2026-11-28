@@ -229,5 +229,19 @@ placeContract(channels, (kind, world) => {
     expect(html).toContain('Deck')
     expect(html).toContain(`<b>voice ${ids[2]}</b>`)
     expect(html).toContain('aria-expanded="true"')
+    expect(html).toContain('>Channels<')
+    expect(html).toContain('aria-label="Create category"')
+    expect(html).toContain('aria-label="Create channel"')
+  })
+
+  test('a new category is asked for on the side of the place', () => {
+    const calls: unknown[][] = []
+    const here = listed(calls)
+    if (hosted)
+      world().ann.account.store.setState({
+        openDialog: (d: unknown) => void calls.push(['dialog', d]),
+      } as never)
+    here.addCategory(4, 5)
+    if (hosted) expect(calls).toEqual([['dialog', { kind: 'category', server: world().server }]])
   })
 })

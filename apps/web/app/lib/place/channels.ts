@@ -1,4 +1,4 @@
-import { openActionMenu } from '../actions/menu'
+import { actionPress, openActionMenu } from '../actions/menu'
 import { categoryStyleOf, channelGroups, roomGroups, separatorStyleOf } from '../categories'
 import type { AccountSession } from '../client/session'
 import type { P2pApp } from '../p2p/app/runtime'
@@ -114,6 +114,8 @@ export interface Channels {
   draft: Live<ChannelDraft | null>
   // Opens the field that names a new channel in `category` (null: outside any).
   startCreate: (category: string | null) => void
+  // Asks for a new category's name, from a control at a point.
+  addCategory: (x: number, y: number) => void
   nameDraft: (name: string) => void
   setDraftKind: (kind: 'text' | 'voice') => void
   setDraftTextOnly: (on: boolean) => void
@@ -305,6 +307,7 @@ const hosted = (account: AccountSession, server: string): Channels => {
       initial: state(true),
       subscribe: changed => store.subscribe(changed),
     },
+    addCategory: () => store.getState().openDialog({ kind: 'category', server }),
     open: key => void store.getState().openChannel(server, Number(key)),
     setOpen: (category, open) =>
       store.getState().setCategoriesCollapsed(server, [Number(category)], !open),
@@ -506,6 +509,16 @@ const peer = (app: P2pApp, room: string): Channels => {
           stop()
         }
       },
+    },
+    addCategory: (x, y) => {
+      const v = view()
+      if (v)
+        actionPress(
+          'p2p_category_create',
+          { kind: 'p2p_server', v, folder: null, at: 0 },
+          app.owner,
+          app
+        )?.(x, y)
     },
     open: key => void p2pServer.openChannel(key),
     setOpen: fold,

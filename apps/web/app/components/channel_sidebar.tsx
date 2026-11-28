@@ -6,7 +6,7 @@ import { Name, NameSelect } from './name'
 import { useP2pApp, useP2p, P2pProvider } from '../lib/client/p2p_react'
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { ChevronDown, FolderPlus, ListFilter, Pin, Plus, UserPlus } from 'lucide-react'
+import { ChevronDown, ListFilter, Pin, Plus, UserPlus } from 'lucide-react'
 import {
   badgePings,
   myPerms,
@@ -883,29 +883,6 @@ export function ChannelSidebar() {
           openActionMenu(x, y, { kind: 'server', server, folder: null, at: 0 }, undefined, acct)
         }
       />
-      <Surface pad="lg" inset="bar" tone="plain" radius="none">
-        <Row gap="sm" justify="between">
-          <span className="text-xs font-medium tracking-wider text-on-surface-variant uppercase">
-            Channels
-          </span>
-          {canManage && (
-            <Row as="span" gap="3xs">
-              <IconButton
-                icon={FolderPlus}
-                label="Create category"
-                size="sm"
-                onClick={() => openDialog({ kind: 'category', server })}
-              />
-              <IconButton
-                icon={Plus}
-                label="Create channel"
-                size="sm"
-                onClick={() => listed.startCreate(null)}
-              />
-            </Row>
-          )}
-        </Row>
-      </Surface>
       <ChannelList
         channels={listed}
         state={listState}

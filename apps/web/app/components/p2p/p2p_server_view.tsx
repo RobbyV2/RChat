@@ -451,21 +451,6 @@ function P2pServerSidebarBody() {
       className="flex h-full w-60 shrink-0 flex-col border-r border-dashed border-tertiary/40 bg-surface-container-low"
     >
       <ServerHead v={v} />
-      <Surface pad="lg" inset="bar" tone="plain" radius="none">
-        <Row gap="sm" justify="between">
-          <span className="text-xs font-medium tracking-wider text-on-surface-variant uppercase">
-            Channels
-          </span>
-          {listState.canManage && (
-            <IconButton
-              icon={Plus}
-              label="Create channel"
-              size="sm"
-              onClick={() => listed.startCreate(null)}
-            />
-          )}
-        </Row>
-      </Surface>
       <PlaceProvider place={place ?? P2pRoom.open(identity, v.id)}>
         <ChannelList
           channels={listed}

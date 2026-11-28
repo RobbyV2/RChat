@@ -1,7 +1,7 @@
 'use client'
 
 import type { ReactNode, Ref } from 'react'
-import { ChevronDown, Hash, Lock, Plus, Volume2 } from 'lucide-react'
+import { ChevronDown, FolderPlus, Hash, Lock, Plus, Volume2 } from 'lucide-react'
 import {
   unfolded,
   unfoldedRows,
@@ -296,27 +296,52 @@ export function ChannelList({
 
   const loose = drag?.zoneOf(null)
   return (
-    <div ref={drag?.scope} className="flex-1 overflow-y-auto">
-      <Stack gap="md">
-        <div
-          data-drop-zone={loose}
-          data-drop-label={loose === undefined ? undefined : 'No category'}
-          className={zoneCls(loose, state.loose.length === 0 && state.categories.length > 0)}
-        >
-          {state.loose.map(listRow)}
-          {createRow(null)}
-        </div>
-        {state.categories.length > 0 && (
-          <Stack data-drop-zone={drag?.categoriesZone} gap="md">
-            {state.categories.map(categoryBlock)}
-          </Stack>
-        )}
-        {state.empty !== null && (
-          <Surface pad="lg" inset="bar" tone="plain" radius="none">
-            <p className="text-sm text-on-surface-variant">{state.empty}</p>
-          </Surface>
-        )}
-      </Stack>
-    </div>
+    <>
+      <Surface pad="lg" inset="bar" tone="plain" radius="none">
+        <Row gap="sm" justify="between">
+          <span className="text-xs font-medium tracking-wider text-on-surface-variant uppercase">
+            Channels
+          </span>
+          {state.canManage && (
+            <Row as="span" gap="3xs">
+              <IconButton
+                icon={FolderPlus}
+                label="Create category"
+                size="sm"
+                onClick={e => channels.addCategory(e.clientX, e.clientY)}
+              />
+              <IconButton
+                icon={Plus}
+                label="Create channel"
+                size="sm"
+                onClick={() => channels.startCreate(null)}
+              />
+            </Row>
+          )}
+        </Row>
+      </Surface>
+      <div ref={drag?.scope} className="flex-1 overflow-y-auto">
+        <Stack gap="md">
+          <div
+            data-drop-zone={loose}
+            data-drop-label={loose === undefined ? undefined : 'No category'}
+            className={zoneCls(loose, state.loose.length === 0 && state.categories.length > 0)}
+          >
+            {state.loose.map(listRow)}
+            {createRow(null)}
+          </div>
+          {state.categories.length > 0 && (
+            <Stack data-drop-zone={drag?.categoriesZone} gap="md">
+              {state.categories.map(categoryBlock)}
+            </Stack>
+          )}
+          {state.empty !== null && (
+            <Surface pad="lg" inset="bar" tone="plain" radius="none">
+              <p className="text-sm text-on-surface-variant">{state.empty}</p>
+            </Surface>
+          )}
+        </Stack>
+      </div>
+    </>
   )
 }
