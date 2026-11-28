@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { ApiError } from '../api'
 import {
+  background,
   canRetry,
   controlLabel,
   fieldLine,
@@ -205,5 +206,36 @@ describe('the words in a line', () => {
     expect(fieldLine(r, 'name')).toBe('Too long')
     expect(fieldLine(r, 'bio')).toBeNull()
     expect(fieldLine(null, 'name')).toBeNull()
+  })
+})
+
+describe('a failure nobody is waiting on', () => {
+  const recorded = (run: () => void) => {
+    const calls: unknown[][] = []
+    const warn = console.warn
+    console.warn = (...args: unknown[]) => void calls.push(args)
+    try {
+      run()
+    } finally {
+      console.warn = warn
+    }
+    return calls
+  }
+
+  test('is recorded with what it was and why, and the caller goes on', () => {
+    const failed = new ApiError('Down', 500)
+    const calls = recorded(() => {
+      expect(background('marking read failed')(failed)).toBeUndefined()
+      expect(background('refreshing failed', null)(failed)).toBeNull()
+    })
+    expect(calls).toHaveLength(2)
+    expect(calls[0]).toEqual(['marking read failed', 'unavailable', failed])
+  })
+
+  test('a request that got no answer is left to the connection state', () => {
+    const calls = recorded(() =>
+      background('marking read failed')(new TypeError('Failed to fetch'))
+    )
+    expect(calls).toEqual([])
   })
 })

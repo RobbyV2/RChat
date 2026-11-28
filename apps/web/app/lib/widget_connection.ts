@@ -1,3 +1,4 @@
+import { background } from './api_errors'
 import { clientOnly } from './instances'
 import { ApiError, createApi } from './api'
 import { guestSessionHeaders, postGuest } from './guest_chat'
@@ -521,7 +522,7 @@ export class WidgetConnection {
     this.heldDraft = null
     if (sameSecret(readToken(this.storageKey), token)) writeToken(this.storageKey, null)
     void this.useSession(null, null)
-    if (token) void this.api.logout(token).catch(() => {})
+    if (token) void this.api.logout(token).catch(background('revoking a widget session failed'))
   }
   // Other copies of this widget under the same embedding origin share its saved sign-in.
   syncLogin = (event: StorageEvent) => {

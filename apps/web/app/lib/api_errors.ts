@@ -1,4 +1,5 @@
 import { ApiError } from './api'
+import { cause, label, logWarn } from './log'
 
 // Why a request was refused, as the app reasons about it. `denied` is an answer with no reason:
 // the caller cannot open the thing, or it is not there. `offline` is a request that never got an
@@ -215,3 +216,25 @@ export const refusalView = (r: Refusal): RefusalView => {
 // The line under `field`, when the refusal is about it.
 export const fieldLine = (r: Refusal | null, field: string): string | null =>
   r !== null && r.fields.includes(field) ? r.message : null
+
+// The handler for a failure of work nobody is waiting on (marking something read, revoking a
+// token on the way out, a background refresh): the next sync does it again, so the person is not
+// told, but the failure is recorded with what it was and why. A request that got no answer is
+// left to the connection state the app already shows. `fallback` is what the caller goes on with.
+export function background<const W extends string>(
+  what: string extends W ? never : W
+): (error: unknown) => undefined
+export function background<const W extends string, F>(
+  what: string extends W ? never : W,
+  fallback: F
+): (error: unknown) => F
+export function background<const W extends string, F>(
+  what: string extends W ? never : W,
+  fallback?: F
+) {
+  return (error: unknown) => {
+    const refusal = refusalOf(error)
+    if (refusal.kind !== 'offline') logWarn(what, label(refusal.kind), cause(error))
+    return fallback
+  }
+}

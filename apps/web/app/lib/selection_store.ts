@@ -1,3 +1,4 @@
+import { background } from './api_errors'
 import type { AccountSession } from './client/session'
 // The store's message selection actions, bulk delete jobs and their events, kept apart from
 // store.ts. The rules of what is picked live in `selection.ts`.
@@ -501,8 +502,9 @@ export const selectionSlice = (d: SelectionDeps) => {
       const jobs = await live(api.bulkJobs())
       const running = jobs.filter(j => j.status === 'running')
       set({ bulkJobs: Object.fromEntries(running.map(j => [j.scope, j])) })
-    } catch {
+    } catch (e) {
       // A failed load leaves the jobs as they were; the next resync tries again.
+      background('loading bulk jobs failed')(e)
     }
   }
 

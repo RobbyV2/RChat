@@ -1,3 +1,4 @@
+import { background } from '../api_errors'
 import { createApi } from '../api'
 import { mergeGroupPings } from '../group_pings'
 import { readLocal, writeLocal } from '../instances'
@@ -194,7 +195,7 @@ export function createAccountCounts(account: AccountSession) {
     try {
       const [{ items, more }, friends] = await Promise.all([
         api.getUnreads(),
-        api.friendSummary().catch(() => null),
+        api.friendSummary().catch(background('loading the friend summary failed', null)),
       ])
       await account.deliveryLock.ifIdle(origin, owner, () => {
         if (

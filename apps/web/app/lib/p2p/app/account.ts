@@ -1,3 +1,4 @@
+import { background } from '../../api_errors'
 import { client } from '../../client/client'
 import type { AccountSession } from '../../client/session'
 import { instanceLabel } from '../../instance_label'
@@ -477,7 +478,7 @@ export function createAccountPart(
       label: homeLabel,
       request: (ik, ts, proof) => account.api.p2pBinding(ik, ts, proof),
       sub: parts.badge.accountSub,
-      onIssued: () => void sv.refreshBadge().catch(() => {}),
+      onIssued: () => void sv.refreshBadge().catch(background('refreshing the P2P badge failed')),
       limits: deps.badge,
     })
     return { dms: d, servers: sv, pingLog, calls, badges, keeper }

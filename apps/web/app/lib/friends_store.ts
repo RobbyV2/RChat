@@ -1,3 +1,4 @@
+import { background } from './api_errors'
 import { client } from './client/client'
 import type { AccountSession } from './client/session'
 // The store's friends actions and events, kept apart from store.ts. `friendsSlice` gets the
@@ -167,7 +168,8 @@ export const friendsSlice = (d: FriendsDeps) => {
     const until = pingUntil(get().pings[FRIENDS_SCOPE])
     if (!until) return
     set(s => ({ pings: clearPings(s.pings, FRIENDS_SCOPE, until) }))
-    if (get().token) void api.friendsSeen(until).catch(() => {})
+    if (get().token)
+      void api.friendsSeen(until).catch(background('marking friend requests seen failed'))
   }
 
   const putFriend = (f: Friend) =>

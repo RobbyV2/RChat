@@ -1,3 +1,4 @@
+import { background } from '../api_errors'
 import { acceptHostedPolicy } from '../client/hosted_policy'
 import type { AccountSession } from '../client/session'
 // Servers and their members: server details, the member lists and lookups, channel layout
@@ -757,7 +758,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       void fetchMemberInfo(
         server,
         kept.map(([n]) => n)
-      ).catch(() => {})
+      ).catch(background('loading member rows failed'))
   }
 
   const forgetMemberInfo = (server: string) => {
@@ -1430,7 +1431,8 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
           !listed.has(n) &&
           !memberPending.has(pendingKey(server, n))
       )
-      if (missing.length) await fetchMemberInfo(server, missing).catch(() => {})
+      if (missing.length)
+        await fetchMemberInfo(server, missing).catch(background('loading member rows failed'))
     },
 
     loadMissingOnline: async server => {

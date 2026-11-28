@@ -1,3 +1,4 @@
+import { background } from '../api_errors'
 import { readLocal, setMediaCookie, writeLocal } from '../instances'
 import {
   moveInstance,
@@ -366,7 +367,7 @@ export function signOutSwitcherAccount(origin: string, username: string | null) 
     const token = readToken(accountStorage(conn).token(username))
     if (token) {
       if (forgetCredential(conn, username, token)) setMediaCookie(conn, null)
-      void conn.api.logout(token).catch(() => {})
+      void conn.api.logout(token).catch(background('revoking a session failed'))
     }
   } else {
     // A saved guest may be parked before its first bootstrap.

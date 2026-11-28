@@ -1,3 +1,4 @@
+import { background } from '../api_errors'
 import type { AccountSession } from '../client/session'
 // Reads and pings: the read marks and their queue, ping badges, group pings and the unread list.
 
@@ -118,7 +119,8 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
     noteSeen(key, until)
     set(s => ({ pings: clearPings(s.pings, key, until) }))
     const lastRead = key[0] === 't' ? 0 : (get().reads[key]?.lastRead ?? 0)
-    if (get().token) void api.postRead(key, lastRead, false, until).catch(() => {})
+    if (get().token)
+      void api.postRead(key, lastRead, false, until).catch(background('marking pings seen failed'))
   }
 
   let unreadsReady: Promise<void> = Promise.resolve()
@@ -349,7 +351,10 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
         for (const key of chunk) {
           const at = reads[key]?.lastRead ?? 0
           if (key[0] === 't') {
-            if (failed) void api.postRead(key, 0, false, seenPings.get(key) ?? 0).catch(() => {})
+            if (failed)
+              void api
+                .postRead(key, 0, false, seenPings.get(key) ?? 0)
+                .catch(background('marking a thread read failed'))
           } else if (at > 0) {
             if (failed) readQueue.mark(key, at)
             else readQueue.seen(key, at)
@@ -440,7 +445,10 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
         const key = pingKey(ping)
         noteSeen(key, ping.id)
         const lastRead = key[0] === 't' ? 0 : (get().reads[key]?.lastRead ?? 0)
-        if (get().token) void api.postRead(key, lastRead, false, ping.id).catch(() => {})
+        if (get().token)
+          void api
+            .postRead(key, lastRead, false, ping.id)
+            .catch(background('marking a ping seen failed'))
       }
       if (!alert.toast) return
       const host = ping.server !== null ? s.servers[ping.server] : undefined

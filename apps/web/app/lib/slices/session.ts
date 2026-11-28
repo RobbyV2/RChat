@@ -1,3 +1,4 @@
+import { background } from '../api_errors'
 import { readyIdentities, runDeletion } from '../account_deletion'
 import {
   clearConfirmationHint,
@@ -1421,7 +1422,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     return (token: Secret) => {
       const issuer = api.base === base ? api : createApi(base, 'omit')
       if (issuer !== api) issuer.prefix = prefix
-      return issuer.logout(token).catch(() => undefined)
+      return issuer.logout(token).catch(background('revoking a session failed'))
     }
   }
 
@@ -1851,7 +1852,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       if (!get().token || !get().me) return
       const before = get().me
       const mark = sessionMark()
-      const fresh = await api.me().catch(() => null)
+      const fresh = await api.me().catch(background('refreshing the account failed', null))
       if (mark === sessionMark() && fresh)
         set(s =>
           s.me?.username === fresh.username &&

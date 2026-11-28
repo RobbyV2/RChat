@@ -1,5 +1,7 @@
 'use client'
 
+import { refusalOf, type Refusal } from '../lib/api_errors'
+import { ErrorNotice } from './notices'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAccount } from '../lib/client/react'
 import { openActionMenu } from '../lib/actions/menu'
@@ -140,17 +142,23 @@ export function HostedMembers({
   const invites = hasPerm(perms, Perm.ManageInvites)
   const [filters, setFilters] = useState<MemberFilters>(NO_FILTERS)
   const [passwords, setPasswords] = useState<ServerPassword[]>([])
+  const [refused, setRefused] = useState<Refusal | null>(null)
+  const [asked, setAsked] = useState(0)
   useEffect(() => {
     if (!invites) return
     let live = true
     api.listPasswords(server).then(
-      p => live && setPasswords(p.passwords),
-      () => {}
+      p => {
+        if (!live) return
+        setPasswords(p.passwords)
+        setRefused(null)
+      },
+      (e: unknown) => live && setRefused(refusalOf(e))
     )
     return () => {
       live = false
     }
-  }, [api, server, invites])
+  }, [api, server, invites, asked])
   const shown = allowedFilters(filters, { created: true, via: invites })
   const found = useHostedSearch(server, hostedQuery(shown))
   const choices = useMemo(
@@ -166,6 +174,13 @@ export function HostedMembers({
   return (
     <Stack data-hosted-members gap="sm">
       <MemberFilterBar value={shown} onChange={setFilters} choices={choices} />
+      {refused && (
+        <ErrorNotice
+          refusal={refused}
+          lead="Could not load the invites to filter by."
+          retry={() => setAsked(n => n + 1)}
+        />
+      )}
       <Stack gap="none">
         <MemberTable created label="Members">
           {found.list.map(hit => (

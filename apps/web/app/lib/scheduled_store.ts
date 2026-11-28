@@ -1,3 +1,4 @@
+import { background } from './api_errors'
 import type { AccountSession } from './client/session'
 // The store's hosted scheduled messages: the list the instance keeps for this account, its
 // actions and the `scheduled_updated` and `scheduled_removed` events, kept apart from store.ts.
@@ -84,8 +85,9 @@ export const scheduledSlice = (d: ScheduledDeps) => {
       const page = await live(api.listScheduled({ limit: 1 }))
       if (at === sessionMark())
         patch(s => ({ ...s, counts: { waiting: page.waiting, failed: page.failed } }))
-    } catch {
+    } catch (e) {
       // An older instance or a failed load leaves the counts unknown; the next resync asks again.
+      background('loading scheduled counts failed')(e)
     }
   }
 
@@ -117,8 +119,9 @@ export const scheduledSlice = (d: ScheduledDeps) => {
           api.listScheduled({ scope: scope || undefined, after: more ? pages[scope] : null })
         )
         if (at === sessionMark()) take(page, scope)
-      } catch {
+      } catch (e) {
         // Shown as nothing loaded; opening the place again tries again.
+        background('loading scheduled messages failed')(e)
       }
     },
     // Schedules the draft at `key` as written (through `shape`), at `at` (ms): the draft and the
