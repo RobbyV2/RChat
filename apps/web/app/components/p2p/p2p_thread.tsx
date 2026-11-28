@@ -5,12 +5,10 @@ import { withP2pIdentity } from '../../lib/client/p2p_react'
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { ChannelCanContext, useChannelCan } from '../../lib/place/use_rights'
-import { CAN_ALL, type ChannelCan } from '../../lib/channel_perms'
 
 import { Fragment, useCallback, useMemo } from 'react'
 import { threadKey, threadScope, type P2pThread } from '../../lib/p2p/app'
 import type { P2pMessage } from '../../lib/p2p/dm'
-import type { ServerView } from '../../lib/p2p/server'
 import type { Message } from '../../lib/types'
 import { PlaceProvider, useLive } from '../../lib/place/react'
 import { EmojiPicker } from '../emoji_picker'
@@ -18,12 +16,8 @@ import { ListedRow, useRowFlags } from '../listed_row'
 import { rowsAt } from '../../lib/place/use_rows'
 import { ThreadPanelView, ThreadTail, useThreadScroll } from '../thread_panel'
 import { openThreadAt } from '../../lib/place/use_thread'
-import { composeAt } from '../../lib/place/use_composer'
 import { P2pDm, P2pRoom } from '../../lib/place/place'
-import { useGate } from '../composer_gate'
 import { CanFetchContext, RowFiles, useP2pFlash, useP2pList } from './p2p_chat'
-import { usePeerTimeoutEnds } from '../timeout_dialog'
-import { useDmFacts } from './p2p_dm_pane'
 import { groupPlaces, p2pCue, type GroupPlace } from '../../lib/message_groups'
 import { dayStarts } from '../../lib/date_dividers'
 import { DateDivider } from '../date_divider'
@@ -33,100 +27,29 @@ import { LightboxList } from '../media_lightbox'
 // the replies stored here and a composer, through the same panel as instance threads.
 
 const EMPTY: P2pMessage[] = []
-const NONE: string[] = []
 const ALONE: GroupPlace = { first: true, last: true }
-
-// What a thread's rows and composer need from where it is.
-interface ThreadFacts {
-  ownName: (ik: string) => string
-  mayDelete: (p: P2pMessage) => boolean
-  typers: string[]
-  pendingTip: string
-  // A server thread's rules for acting, a timeout among them; a conversation acts while its
-  // composer is open.
-  canAct?: boolean
-  timedOut?: boolean
-  // What we hold in a server thread's channel; a conversation holds nothing back.
-  can?: ChannelCan
-}
 
 function P2pThreadPanelBody() {
   const t = useP2p(s => s.thread)
-  const v = useP2p(s => (s.thread?.ch ? s.servers[s.thread.room] : undefined))
-  if (!t) return null
-  if (!t.ch) return <ConversationThread key={`${t.room}/${t.root}`} t={t} />
-  return v ? <ServerThread key={`${t.room}/${t.root}`} t={t} v={v} /> : null
+  const known = useP2p(s => !s.thread?.ch || s.servers[s.thread.room] !== undefined)
+  return t && known ? <ThreadBody key={`${t.room}/${t.root}`} t={t} /> : null
 }
 
-function ServerThread({ t, v }: { t: P2pThread; v: ServerView }) {
-  const identity = useP2pApp()!
-  const { memberName, profileName } = identity
-  const me = useP2p(s => s.me)
-  const typers = useP2p(s => s.serverTyping[threadKey(t)] ?? NONE)
-  const room = v.id
-  const nameOf = useCallback((ik: string) => memberName(room, ik), [room])
-  const timedOut = usePeerTimeoutEnds(v.timedOutUntil)
-  const place = P2pRoom.open(identity, v.id)
-  const held = useChannelCan(place, t.ch)
-  const moderator = held.manage && timedOut === null
-  const mayDelete = useCallback((p: P2pMessage) => p.sender === me || moderator, [me, moderator])
-  const ownName = useCallback((ik: string) => profileName(ik, room), [room])
-  const { acts: canAct } = useGate(composeAt(place, 'thread'))
-  const names = useMemo(() => typers.map(nameOf), [typers, nameOf])
-  return (
-    <ThreadBody
-      t={t}
-      f={{
-        ownName,
-        mayDelete,
-        typers: names,
-        pendingTip: 'Waiting for a member to come online',
-        canAct,
-        timedOut: timedOut !== null,
-        can: held,
-      }}
-    />
-  )
-}
-
-function ConversationThread({ t }: { t: P2pThread }) {
+function ThreadBody({ t }: { t: P2pThread }) {
   const identity = useP2pApp()!
   const { profileName } = identity
-  const facts = useDmFacts()
-  const { mayDelete, peerIk, peerRaw, peerName } = facts
-  const typingIks = useP2p(s => s.typing[threadKey(t)] ?? NONE)
-  const ownName = useCallback((ik: string) => profileName(ik), [])
-  const typers = useMemo(
-    () => typingIks.filter(ik => ik === peerIk).map(() => peerRaw),
-    [typingIks, peerIk, peerRaw]
-  )
-  return (
-    <ThreadBody
-      t={t}
-      f={{
-        ownName,
-        mayDelete,
-        typers,
-        pendingTip: `Waiting for ${peerName} to come online`,
-      }}
-    />
-  )
-}
-
-function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
-  const identity = useP2pApp()!
-  const { ownName, mayDelete } = f
 
   const me = useP2p(s => s.me)
   const key = threadKey(t)
   const scope = identityScopeKey(identity.localId, threadScope(t))
   const focus = useP2p(s => (s.focus?.room === key ? s.focus : null))
-  const gate = useGate(
-    composeAt(t.ch ? P2pRoom.open(identity, t.room) : P2pDm.open(identity, t.room), 'thread')
-  )
-  const canAct = f.canAct ?? !gate.shut
-  const timedOut = f.timedOut ?? false
-  const held = f.can ?? CAN_ALL
+  const home = t.ch ? P2pRoom.open(identity, t.room) : P2pDm.open(identity, t.room)
+  const { acts: canAct, timedOut } = useRowFlags(rowsAt(home, 'thread'))
+  const held = useChannelCan(home, t.ch)
+  const moderator = t.ch !== null && held.manage && !timedOut
+  const mayDelete = useCallback((p: P2pMessage) => p.sender === me || moderator, [me, moderator])
+  const ownRoom = t.ch ? t.room : undefined
+  const ownName = useCallback((ik: string) => profileName(ik, ownRoom), [profileName, ownRoom])
   const replies = t.messages ?? EMPTY
   const {
     rows,
