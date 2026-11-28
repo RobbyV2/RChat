@@ -1,23 +1,13 @@
 'use client'
-import { Refreshed, useAccountRequest } from './loaded'
+import { Loaded, More, Refreshed, useAccountPages, useAccountRequest } from './loaded'
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useAccount } from '../lib/client/react'
 import { openActionMenu } from '../lib/actions/menu'
-import { errorText, roleColor, useStore } from '../lib/store'
+import { roleColor, useStore } from '../lib/store'
 import { memberState } from '../lib/selectors'
-import {
-  EMPTY_PAGES,
-  NO_FILTERS,
-  allowedFilters,
-  hostedQuery,
-  pageFailed,
-  pageLoaded,
-  pagesNote,
-  type MemberFilters,
-  type SearchPages,
-} from '../lib/member_filters'
-import { searchRetryAfter } from '../lib/search'
+import { NO_FILTERS, allowedFilters, hostedQuery, type MemberFilters } from '../lib/member_filters'
+import { memberSearchPage } from '../lib/asks'
 import { Perm, hasPerm, type MemberHit, type Role, type ServerPassword } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { Badge } from './profile_card'
@@ -25,11 +15,7 @@ import { MemberName, MemberTimeout } from './member_sidebar'
 import { passwordName } from './server_access'
 import { useShownMembers } from './shown_user'
 import { MemberFilterBar, MemberTable, MemberTableRow } from './member_table'
-import { Button } from './controls'
-import { Row, Stack, Surface } from './layout'
-import { Sentinel } from './ui'
-import { time } from '../lib/platform/time'
-import type { Cancel } from '../lib/clock'
+import { Stack } from './layout'
 
 // Server settings' members of a hosted server: the search route with filters, for members who
 // may kick, time out or handle roles.
@@ -38,57 +24,21 @@ const SEARCH_DEBOUNCE = 250
 
 export { MEMBER_SEARCH_PERMS } from '../lib/member_filters'
 
+// The members a filter finds, a page at a time, asked for after a pause while the filter changes.
+// Each page is noted in the store, so rows follow kicks, roles and timeouts.
 function useHostedSearch(server: string, query: string) {
-  const {
-    api,
-    store,
-    lifetime: { inSession },
-  } = useAccount()
-  const setError = useStore(s => s.setError)
+  const { store } = useAccount()
   const rememberMember = useStore(s => s.rememberMember)
-  const [found, setFound] = useState<SearchPages<MemberHit>>(EMPTY_PAGES)
-  const epoch = useRef(0)
-  const retry = useRef<Cancel | null>(null)
-  const fetchFrom = useCallback(
-    async function fetchPage(cursor: string | null, mine: number) {
-      setFound(f => ({ ...f, loading: true, failed: undefined }))
-      try {
-        const page = await api.searchMembers(server, query, cursor)
-        if (epoch.current !== mine) return
-        for (const m of page.items) rememberMember(server, m.username, m)
-        store.menu.noteMemberTimeouts(server, page.items)
-        setFound(f => pageLoaded(f, cursor, page.items, page.next))
-      } catch (e) {
-        if (epoch.current !== mine) return
-        const wait = searchRetryAfter(e)
-        setFound(f => pageFailed(f, cursor, wait))
-        if (wait !== null)
-          retry.current = time().after(wait * 1000, () => {
-            if (epoch.current === mine) void fetchPage(cursor, mine)
-          })
-        else inSession(setError)(errorText(e))
-      }
-    },
-    [api, store, server, query, rememberMember, setError, inSession]
+  const [found] = useAccountPages(
+    memberSearchPage(server, query, members => {
+      for (const m of members) rememberMember(server, m.username, m)
+      store.menu.noteMemberTimeouts(server, members)
+    }),
+    hit => hit.username,
+    [server, query, store, rememberMember],
+    { delayMs: SEARCH_DEBOUNCE }
   )
-  useEffect(() => {
-    const mine = ++epoch.current
-    setFound(EMPTY_PAGES)
-    const t = time().after(SEARCH_DEBOUNCE, () => void fetchFrom(null, mine))
-    return () => {
-      t()
-      retry.current?.()
-    }
-  }, [fetchFrom])
-  const more = useCallback(() => {
-    if (found.loading || found.next === null || found.failed !== undefined) return
-    void fetchFrom(found.next, epoch.current)
-  }, [found, fetchFrom])
-  const again = useCallback(() => {
-    if (found.failed === undefined) return
-    void fetchFrom(found.failed, epoch.current)
-  }, [found, fetchFrom])
-  return { ...found, more, again }
+  return found
 }
 
 function HitRow({ server, hit, roles }: { server: string; hit: MemberHit; roles: Role[] }) {
@@ -189,24 +139,18 @@ function MemberSearch({
     <Stack data-hosted-members gap="sm">
       <MemberFilterBar value={shown} onChange={setFilters} choices={choices} />
       {notice}
-      <Stack gap="none">
-        <MemberTable created label="Members">
-          {found.list.map(hit => (
-            <HitRow key={hit.username} server={server} hit={hit} roles={roles} />
-          ))}
-        </MemberTable>
-        {pagesNote(found) && (
-          <Surface as="p" role="status" pad="sm" inset="bar" tone="plain" radius="none">
-            <Row as="span" gap="sm" wrap>
-              <span className="text-sm text-on-surface-variant">{pagesNote(found)}</span>
-              {found.failed !== undefined && <Button onClick={found.again}>Try again</Button>}
-            </Row>
-          </Surface>
+      <Loaded load={found} what="members" empty="No matching members.">
+        {members => (
+          <Stack gap="none">
+            <MemberTable created label="Members">
+              {members.items.map(hit => (
+                <HitRow key={hit.username} server={server} hit={hit} roles={roles} />
+              ))}
+            </MemberTable>
+            <More pages={members} auto />
+          </Stack>
         )}
-        {found.next !== null && !found.loading && found.failed === undefined && (
-          <Sentinel key={found.next} onVisible={found.more} />
-        )}
-      </Stack>
+      </Loaded>
     </Stack>
   )
 }

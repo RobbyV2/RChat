@@ -1,3 +1,4 @@
+import { searchResults } from './helpers/loads'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ChannelSidebar, DmBlock } from '../../components/channel_sidebar'
@@ -173,10 +174,7 @@ describe('where skeletons show', () => {
       renderToStaticMarkup(
         <SearchView
           channels={undefined}
-          hits={[]}
-          loading={loading}
-          hasMore
-          pageKey="0:"
+          results={searchResults({ loading, hasMore: true, pageKey: '0:' })}
           seed={{ q, n: 0 }}
           onRun={() => {}}
           onClose={() => {}}

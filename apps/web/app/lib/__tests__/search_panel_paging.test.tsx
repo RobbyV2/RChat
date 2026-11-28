@@ -1,3 +1,5 @@
+import { ApiError } from '../api'
+import { searchResults } from './helpers/loads'
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { endOfList, shortSearch } from '../search'
@@ -32,10 +34,7 @@ const view = (
   renderToStaticMarkup(
     <SearchView
       channels={undefined}
-      hits={hits}
-      loading={loading}
-      hasMore={hasMore}
-      pageKey="0:a"
+      results={searchResults({ hits, loading, hasMore, pageKey: '0:a' })}
       seed={{ q, n: 0 }}
       scrollForMore={scrollForMore ?? undefined}
       onRun={() => {}}
@@ -44,6 +43,28 @@ const view = (
   )
 
 describe('search panel paging', () => {
+  test('a first page that fails says so with a way to ask again, and a later one under the hits', () => {
+    const failure = new ApiError('Busy', 503)
+    const draw = (hits: SearchHit[]) =>
+      renderToStaticMarkup(
+        <SearchView
+          channels={undefined}
+          results={searchResults({ hits, hasMore: true, failure })}
+          seed={{ q: 'weekly', n: 0 }}
+          onRun={() => {}}
+          onClose={() => {}}
+        />
+      )
+    const first = draw([])
+    expect(first).toContain('Could not load results.')
+    expect(first).toContain('Try again')
+    expect(first).not.toContain('No results.')
+    const later = draw([HIT])
+    expect(later).toContain('Could not load more results.')
+    expect(later).toContain('Try again')
+    expect(later).not.toContain('Could not load results.')
+  })
+
   test('an empty page shows no final message while it has a continuation', () => {
     expect(view('meeting notes', { hasMore: true })).not.toContain('No results.')
     expect(view('meeting notes', { hasMore: false })).toContain('No results.')

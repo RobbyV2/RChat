@@ -2,9 +2,8 @@
 
 import { personName } from '../lib/names'
 import { Name } from './name'
-import { useAccount } from '../lib/client/react'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   ChevronDown,
   Hash,
@@ -18,7 +17,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { errorText, useStore } from '../lib/store'
+import { useStore } from '../lib/store'
 import {
   AUDIT_GROUPS,
   NO_FILTERS,
@@ -41,7 +40,9 @@ import type { AuditEntry, UserRef } from '../lib/types'
 import { nameWithUsername } from '../lib/display_name'
 import { useMemberSearch } from './member_search'
 import { UserAvatar } from './user_avatar'
-import { Dialog, Masked, Sentinel, fieldCls } from './ui'
+import { Dialog, Masked, fieldCls } from './ui'
+import { auditPage } from '../lib/asks'
+import { Loaded, More, useAccountPages } from './loaded'
 import { Grid, Inset, Row, Stack, Surface } from './layout'
 import { useLooksFor, useShown, useShownMembers } from './shown_user'
 import { usePermissionRules } from './use_permission_rules'
@@ -63,15 +64,6 @@ const ICONS: Record<AuditGroup, LucideIcon> = {
 
 const smallField = `${fieldCls} w-full`
 
-interface LogState {
-  list: AuditEntry[]
-  next: string | null
-  loading: boolean
-  loaded: boolean
-}
-
-const EMPTY: LogState = { list: [], next: null, loading: false, loaded: false }
-
 export default function AuditLogDialog() {
   const dialog = useStore(s => s.activeDialog)
   return dialog?.kind === 'audit_log' ? <AuditLog server={dialog.server} /> : null
@@ -86,13 +78,20 @@ function useDebounced<T>(value: T, ms: number): T {
   return out
 }
 
+// The entries of one page run, with the looks of the people they name.
+function AuditRows({ entries, server }: { entries: AuditEntry[]; server: string }) {
+  useLooksFor(server, peopleIn(entries))
+  return (
+    <Stack as="ul" gap="3xs">
+      {entries.map(e => (
+        <AuditRow key={e.id} entry={e} server={server} />
+      ))}
+    </Stack>
+  )
+}
+
 function AuditLog({ server }: { server: string }) {
-  const {
-    api,
-    lifetime: { inSession },
-  } = useAccount()
   const openDialog = useStore(s => s.openDialog)
-  const setError = useStore(s => s.setError)
   usePermissionRules()
   const [group, setGroup] = useState<AuditGroup | ''>('')
   const [actor, setActor] = useState('')
@@ -102,46 +101,7 @@ function AuditLog({ server }: { server: string }) {
   const target = useDebounced(targetText, TEXT_DEBOUNCE)
   const filters: AuditFilters = { ...NO_FILTERS, group, actor, target, from, to }
   const query = useStable(auditQuery(filters))
-  const [log, setLog] = useState<LogState>(EMPTY)
-  const epoch = useRef(0)
-  useLooksFor(server, peopleIn(log.list))
-
-  const fetchFrom = useCallback(
-    async (cursor: string | null, mine: number) => {
-      const showError = inSession(setError)
-      setLog(s => ({ ...s, loading: true }))
-      try {
-        const page = await api.listAudit(server, cursor, query)
-        if (epoch.current !== mine) return
-        setLog(s => {
-          const base = cursor === null ? [] : s.list
-          const seen = new Set(base.map(e => e.id))
-          return {
-            list: [...base, ...page.items.filter(e => !seen.has(e.id))],
-            next: page.next,
-            loading: false,
-            loaded: true,
-          }
-        })
-      } catch (e) {
-        if (epoch.current !== mine) return
-        setLog(s => ({ ...s, loading: false, loaded: true, next: null }))
-        showError(errorText(e))
-      }
-    },
-    [server, query, setError]
-  )
-
-  useEffect(() => {
-    const mine = ++epoch.current
-    setLog(EMPTY)
-    void fetchFrom(null, mine)
-  }, [fetchFrom])
-
-  const more = useCallback(() => {
-    if (log.loading || log.next === null) return
-    void fetchFrom(log.next, epoch.current)
-  }, [log, fetchFrom])
+  const [log] = useAccountPages(auditPage(server, query), entry => entry.id, [server, query])
 
   const filtered = Object.keys(query).length > 0
   const back = () => openDialog({ kind: 'server_settings', server, section: 'audit' })
@@ -201,27 +161,29 @@ function AuditLog({ server }: { server: string }) {
             </Row>
           </label>
         </Grid>
-        {log.list.length > 0 && (
-          <Stack as="ul" gap="3xs">
-            {log.list.map(e => (
-              <AuditRow key={e.id} entry={e} server={server} />
-            ))}
-          </Stack>
-        )}
-        {log.loaded && !log.loading && log.list.length === 0 && (
-          <Surface tone="plain" pad="md">
-            <p className="text-center text-sm text-on-surface-variant">
-              {filtered ? 'Nothing matches these filters.' : 'Nothing has been logged yet.'}
-            </p>
-          </Surface>
-        )}
-        {log.loading && <p className="text-sm text-on-surface-variant">Loading…</p>}
-        {log.next !== null && !log.loading && <Sentinel key={log.list.length} onVisible={more} />}
-        {log.loaded && log.next === null && log.list.length > 0 && (
-          <p className="text-center text-xs text-on-surface-variant">
-            Entries are kept for 90 days.
-          </p>
-        )}
+        <Loaded
+          load={log}
+          what="the audit log"
+          empty={
+            <Surface tone="plain" pad="md">
+              <p className="text-center text-sm text-on-surface-variant">
+                {filtered ? 'Nothing matches these filters.' : 'Nothing has been logged yet.'}
+              </p>
+            </Surface>
+          }
+        >
+          {found => (
+            <>
+              <AuditRows entries={found.items} server={server} />
+              <More pages={found} auto />
+              {found.more === null && !found.loadingMore && found.refusal === null && (
+                <p className="text-center text-xs text-on-surface-variant">
+                  Entries are kept for 90 days.
+                </p>
+              )}
+            </>
+          )}
+        </Loaded>
       </Stack>
     </Dialog>
   )

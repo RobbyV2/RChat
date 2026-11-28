@@ -3,6 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { useStore } from '../store'
 import { ThreadsPanel, type useThreadPages } from '../../components/threads'
 import type { ThreadRow } from '../thread_list'
+import { ApiError } from '../api'
+import type { Pages } from '../load'
+import { loadOf, pagesOf } from './helpers/loads'
 import { me, msg, user } from './fixtures'
 
 // Server rendering reads the store's initial state, so the test state goes there too.
@@ -28,17 +31,12 @@ const row = (id: number, over: Partial<ThreadRow> = {}): ThreadRow => ({
   ...over,
 })
 
-const list = (
-  rows: ThreadRow[] | null,
-  over: Partial<ReturnType<typeof useThreadPages>> = {}
-): ReturnType<typeof useThreadPages> => ({
+type List = ReturnType<typeof useThreadPages>
+
+const list = (rows: ThreadRow[], over: Partial<List> = {}): List => ({
   query: '',
   search: () => {},
-  rows,
-  next: null,
-  failed: false,
-  more: () => {},
-  retry: () => {},
+  pages: loadOf<Pages<ThreadRow>>(make => (rows.length ? make.ready(pagesOf(rows)) : make.empty())),
   ...over,
 })
 
@@ -88,7 +86,18 @@ describe('the Threads list', () => {
     const searched = panel(list([], { query: 'zz' }))
     expect(searched).toContain('No matching threads')
     expect(searched).toContain('aria-label="Clear search"')
-    expect(panel(list(null))).toContain('Loading threads')
-    expect(panel(list(null, { failed: true }))).toContain('Retry')
+    expect(panel(list([], { pages: loadOf(make => make.loading()) }))).toContain(
+      'aria-label="Loading threads"'
+    )
+    const failed = panel(
+      list([], {
+        pages: loadOf(
+          make => make.failed(new ApiError('Busy', 503)),
+          () => {}
+        ),
+      })
+    )
+    expect(failed).toContain('Could not load threads.')
+    expect(failed).toContain('Try again')
   })
 })

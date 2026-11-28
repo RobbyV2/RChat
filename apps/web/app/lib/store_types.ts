@@ -251,6 +251,8 @@ export interface SearchState {
   hasMore: boolean
   loading: boolean
   cursor?: string | null
+  // What the last page failed with; the page can be asked for again.
+  failed?: unknown
 }
 
 export interface VoiceSession {

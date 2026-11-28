@@ -116,6 +116,8 @@ export interface P2pSearch {
   loading: boolean
   // The index is still being built (results may be missing).
   indexing: boolean
+  // What the last page failed with; the page can be asked for again.
+  failed?: unknown
 }
 
 export interface P2pState {

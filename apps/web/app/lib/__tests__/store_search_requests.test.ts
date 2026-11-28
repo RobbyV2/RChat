@@ -55,10 +55,12 @@ const waitFor = async (holds: () => boolean) => {
   expect(holds()).toBe(true)
 }
 
+const failure = (e: unknown) => (e instanceof Error ? e.message : null)
+
 const shown = () => ({
   ids: st().search.results.map(r => r.message.id),
   loading: st().search.loading,
-  error: st().error,
+  error: failure(st().search.failed) ?? st().error,
 })
 
 const ask = (q: string, fresh = true) => void st().searchRun(args(q), fresh)

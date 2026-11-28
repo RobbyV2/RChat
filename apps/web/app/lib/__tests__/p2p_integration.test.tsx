@@ -1,3 +1,4 @@
+import { pagesOf, readyLoad } from './helpers/loads'
 import { flush } from './helpers/test_clock'
 import { peerStorage } from '../client/keys'
 import { peerChat } from '../actions/p2p_chat'
@@ -587,11 +588,7 @@ describe('threads in a P2P conversation', () => {
         list={{
           query: '',
           search: () => {},
-          rows,
-          next: null,
-          failed: false,
-          more: () => {},
-          retry: () => {},
+          pages: readyLoad(pagesOf(rows)),
         }}
         server={null}
         peer

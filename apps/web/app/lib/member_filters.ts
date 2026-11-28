@@ -89,59 +89,6 @@ export const p2pMemberRow = (m: {
   via: m.via?.id ?? null,
 })
 
-// A page of hosted search results as it loads: the next cursor stays when a page fails, so
-// the list goes on from there.
-export interface SearchPages<T> {
-  list: T[]
-  next: string | null
-  loading: boolean
-  // The cursor of the page that failed and waits for Try again (null for the first page).
-  failed: string | null | undefined
-}
-
-export const EMPTY_PAGES: SearchPages<never> = {
-  list: [],
-  next: null,
-  loading: true,
-  failed: undefined,
-}
-
-export const pageLoaded = <T extends { username: string }>(
-  f: SearchPages<T>,
-  cursor: string | null,
-  items: readonly T[],
-  next: string | null
-): SearchPages<T> => {
-  const base = cursor === null ? [] : f.list
-  const seen = new Set(base.map(m => m.username))
-  return {
-    list: [...base, ...items.filter(m => !seen.has(m.username))],
-    next,
-    loading: false,
-    failed: undefined,
-  }
-}
-
-// A page that failed: it is asked again after `retry` seconds when the server said when, and
-// otherwise waits for Try again.
-export const pageFailed = <T>(
-  f: SearchPages<T>,
-  cursor: string | null,
-  retry: number | null
-): SearchPages<T> => ({
-  ...f,
-  next: cursor,
-  loading: retry !== null,
-  failed: retry === null ? cursor : undefined,
-})
-
-// What the list says under its rows.
-export const pagesNote = (f: SearchPages<unknown>) => {
-  if (f.failed !== undefined) return "Couldn't load members."
-  if (f.list.length > 0) return null
-  return f.loading || f.next !== null ? 'Searching…' : 'No matching members.'
-}
-
 // The search text as both sides compare it: trimmed, lowercase, without NUL, at most
 // `QUERY_MAX` characters.
 export const queryText = (raw: string) =>

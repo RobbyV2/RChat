@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
-  EMPTY_PAGES,
   NO_FILTERS,
   QUERY_MAX,
   ROLES_MAX,
@@ -20,15 +19,11 @@ import {
   lastDay,
   matches,
   p2pMemberRow,
-  pageFailed,
-  pageLoaded,
-  pagesNote,
   parseFilters,
   queryText,
   toggleRole,
   type MemberFilters,
   type MemberRow,
-  type SearchPages,
 } from '../member_filters'
 import { buildSummary, type Summary } from '../p2p/acl/summary'
 import type { RoomRecord } from '../p2p/db'
@@ -368,44 +363,7 @@ describe('P2P members', () => {
   })
 })
 
-describe('hosted search pages', () => {
-  const hit = (username: string) => ({ username })
-  test('pages add up without repeats, and a new search starts over', () => {
-    const one = pageLoaded(EMPTY_PAGES, null, [hit('a'), hit('b')], 'c1')
-    expect(one).toEqual({
-      list: [hit('a'), hit('b')],
-      next: 'c1',
-      loading: false,
-      failed: undefined,
-    })
-    const two = pageLoaded(one, 'c1', [hit('b'), hit('c')], null)
-    expect(two.list.map(h => h.username)).toEqual(['a', 'b', 'c'])
-    expect(pageLoaded(two, null, [hit('z')], null).list).toEqual([hit('z')])
-  })
-
-  test('a failed page keeps its cursor, waits when told how long, else waits for Try again', () => {
-    const one: SearchPages<{ username: string }> = pageLoaded(EMPTY_PAGES, null, [hit('a')], 'c1')
-    expect(pageFailed(one, 'c1', 2)).toEqual({
-      ...one,
-      next: 'c1',
-      loading: true,
-      failed: undefined,
-    })
-    const stuck = pageFailed(one, 'c1', null)
-    expect(stuck).toEqual({ ...one, next: 'c1', loading: false, failed: 'c1' })
-    expect(pageFailed(EMPTY_PAGES, null, null).failed).toBeNull()
-  })
-
-  test('the list says no matches only when nothing more can come', () => {
-    expect(pagesNote(EMPTY_PAGES)).toBe('Searching…')
-    expect(pagesNote({ ...EMPTY_PAGES, loading: false, next: 'c1' })).toBe('Searching…')
-    expect(pagesNote({ ...EMPTY_PAGES, loading: false })).toBe('No matching members.')
-    expect(pagesNote({ ...EMPTY_PAGES, loading: false, failed: null })).toBe(
-      "Couldn't load members."
-    )
-    expect(pagesNote({ ...EMPTY_PAGES, list: [hit('a')], loading: false })).toBeNull()
-  })
-
+describe('a P2P member row', () => {
   test('a P2P member reads with its lowercase name, join time in seconds and code', () => {
     expect(
       p2pMemberRow({ ik: 'K', name: 'Zoë', roles: ['r'], joinedAt: 12_345, via: { id: 'c' } })

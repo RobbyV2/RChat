@@ -19,6 +19,7 @@ import { resetSessionCaches, useStore } from '../store'
 import type { ForwardRef, Message, MessageLocation } from '../types'
 import { channelTarget, markPersonally, requestViewing, useViewing } from '../viewing'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
+import { searchResults } from './helpers/loads'
 
 // Server rendering reads the store's initial state, so the test state goes there too.
 const initial = useStore.getInitialState()
@@ -67,25 +68,25 @@ const search = (m: Message) =>
   renderToStaticMarkup(
     <SearchView
       channels={undefined}
-      hits={[
-        {
-          key: String(m.id),
-          channel: 'general',
-          server: 'club',
-          ownPlace: false,
-          author: null,
-          createdAt: m.created_at,
-          content: m.content,
-          own: false,
-          forwarded: true,
-          file: null,
-          copy: { message: m, server: 'club' },
-          onOpen: () => {},
-        },
-      ]}
-      loading={false}
-      hasMore={false}
-      pageKey="0"
+      seed={{ q: 'folio', n: 0 }}
+      results={searchResults({
+        hits: [
+          {
+            key: String(m.id),
+            channel: 'general',
+            server: 'club',
+            ownPlace: false,
+            author: null,
+            createdAt: m.created_at,
+            content: m.content,
+            own: false,
+            forwarded: true,
+            file: null,
+            copy: { message: m, server: 'club' },
+            onOpen: () => {},
+          },
+        ],
+      })}
       scrollForMore={() => false}
       onRun={() => {}}
       onClose={() => {}}
@@ -238,25 +239,25 @@ test('a hit from a closed room offers its own reveal instead of its text', () =>
   const html = renderToStaticMarkup(
     <SearchView
       channels={undefined}
-      hits={[
-        {
-          key: '50',
-          channel: 'proofroom',
-          server: 'club',
-          ownPlace: false,
-          author: null,
-          createdAt: 1,
-          content: '',
-          own: false,
-          forwarded: false,
-          file: null,
-          reveal: target,
-          onOpen: () => {},
-        },
-      ]}
-      loading={false}
-      hasMore={false}
-      pageKey="0"
+      seed={{ q: 'folio', n: 0 }}
+      results={searchResults({
+        hits: [
+          {
+            key: '50',
+            channel: 'proofroom',
+            server: 'club',
+            ownPlace: false,
+            author: null,
+            createdAt: 1,
+            content: '',
+            own: false,
+            forwarded: false,
+            file: null,
+            reveal: target,
+            onOpen: () => {},
+          },
+        ],
+      })}
       scrollForMore={() => false}
       onRun={() => {}}
       onClose={() => {}}

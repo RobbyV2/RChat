@@ -6,6 +6,8 @@ import { shortSearch, type SearchArgs } from '../search'
 import type { Message, SearchResult, UserRef } from '../types'
 import type { ViewingTarget } from '../viewing'
 import { defineFeature } from './feature'
+import { fromLive, type Load, type LoadMaker } from '../load'
+import { time } from '../platform/time'
 import { built, type Live } from './live'
 
 // The filters as typed; `channel` is a channel id ('' for any).
@@ -60,10 +62,16 @@ export interface SearchState {
   note: string | null
   // Whether the search is an identity's (over what this device stores) and not an account's.
   byIdentity: boolean
+  // What the last page failed with (null: nothing); the page can be asked for again.
+  failure: unknown
 }
 
 export interface Search {
   state: Live<SearchState>
+  // The results as a load: loading until the first page is here, refused when it did not come,
+  // empty when nothing matches. A later page that fails leaves the hits with `failure` beside
+  // them. Asking again runs the last search afresh.
+  results: Live<Load<SearchState>>
   // A first page (`fresh`) or the next one.
   run: (f: SearchFilters, fresh: boolean) => void
   close: () => void
@@ -72,6 +80,31 @@ export interface Search {
   steps: (q: string) => boolean
   // Keeps what the results need loaded; the answer stops it.
   watch: () => () => void
+}
+
+// What a search shows for its state: the hits once there are some (a search that found none yet
+// and can go on counts, so its way to older messages shows), else that it is loading, refused or
+// without a match.
+export const searchLoad = (s: SearchState, make: LoadMaker<SearchState>): Load<SearchState> => {
+  if (s.hits.length > 0) return make.ready(s)
+  if (s.failure !== null) return make.failed(s.failure)
+  if (s.loading) return make.loading()
+  return s.hasMore ? make.ready(s) : make.empty()
+}
+
+// A search with its results as a load. Asking again runs the last filters afresh.
+const withResults = (search: Omit<Search, 'results'>): Search => {
+  let last: SearchFilters | null = null
+  return {
+    ...search,
+    run: (f, fresh) => {
+      last = f
+      search.run(f, fresh)
+    },
+    results: fromLive(time(), search.state, searchLoad, () => {
+      if (last) search.run(last, true)
+    }),
+  }
 }
 
 const hosted = (account: AccountSession, server: string | null): Search => {
@@ -133,9 +166,10 @@ const hosted = (account: AccountSession, server: string | null): Search => {
         seed: { q: search.seed ?? null, n: search.seedN ?? 0 },
         note: null,
         byIdentity: false,
+        failure: search.failed ?? null,
       }
     })
-  return {
+  return withResults({
     state: {
       get: state(false),
       initial: state(true),
@@ -177,7 +211,7 @@ const hosted = (account: AccountSession, server: string | null): Search => {
       run()
       return store.subscribe(run)
     },
-  }
+  })
 }
 
 const peer = (app: P2pApp, room: string | null): Search => {
@@ -220,8 +254,9 @@ const peer = (app: P2pApp, room: string | null): Search => {
         ? 'Searches messages stored on this device. Still indexing, so some may be missing.'
         : 'Searches messages stored on this device',
       byIdentity: true,
+      failure: search.failed ?? null,
     }))
-  return {
+  return withResults({
     state: {
       get: state(false),
       initial: state(true),
@@ -242,7 +277,7 @@ const peer = (app: P2pApp, room: string | null): Search => {
     close: () => p2pSearch.close(),
     steps: () => false,
     watch: () => () => {},
-  }
+  })
 }
 
 // Search from a place: an account searches its instance, an identity what its device stores.

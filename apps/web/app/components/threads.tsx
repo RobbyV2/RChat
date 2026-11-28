@@ -4,7 +4,7 @@ import { Name } from './name'
 import { p2pName } from '../lib/names'
 import { shownUser } from '../lib/people'
 import { useAccount } from '../lib/client/react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MessageSquareText, MessagesSquare, Search, X } from 'lucide-react'
 import { openActionMenu } from '../lib/actions/menu'
 import { useForwardAccess } from '../lib/forward_access'
@@ -16,7 +16,6 @@ import { threads as threadsFeature, type ThreadPage, type Threads } from '../lib
 import {
   THREADS_SEARCH,
   THREADS_TITLE,
-  mergeRows,
   repliesText,
   rootLine,
   threadsEmpty,
@@ -30,10 +29,10 @@ import { SpoilerLine } from './replies'
 import { ShownAvatar, ShownName } from './shown_user'
 import { MessageTime } from './timestamp'
 import { KeyAvatar } from './p2p/p2p_badge'
-import { Button, IconButton } from './controls'
+import { IconButton } from './controls'
 import { Row, Stack, Surface } from './layout'
-import { Sentinel, useOwn } from './ui'
-import { time } from '../lib/platform/time'
+import { useOwn } from './ui'
+import { Loaded, More, usePages } from './loaded'
 
 function ThreadsToggle({ threads, narrowHidden }: { threads: Threads; narrowHidden: boolean }) {
   const open = useLive(threads.state).open !== null
@@ -58,70 +57,23 @@ export function ThreadsButton({ narrowHidden = false }: { narrowHidden?: boolean
   return isUnsupported(here) ? null : <ThreadsToggle threads={here} narrowHidden={narrowHidden} />
 }
 
-interface ListState {
-  rows: ThreadRow[] | null
-  next: string | null
-  failed: boolean
-}
-
-const START: ListState = { rows: null, next: null, failed: false }
-
 // The rows of a Threads list for `query`, a page at a time from `load`: a new query starts over
 // after a short pause while typing.
 export function useThreadPages(
   load: (query: string, cursor: string | null) => Promise<ThreadPage>
 ) {
-  const [query, setQuery] = useState('')
-  const [list, setList] = useState<ListState>(START)
-  const [retries, setRetries] = useState(0)
+  const [query, search] = useState('')
   const loadRef = useRef(load)
-  const gen = useRef(0)
-  const busy = useRef(false)
   useEffect(() => {
     loadRef.current = load
   })
-  useEffect(() => {
-    const at = ++gen.current
-    const t = time().after(query.trim() ? 250 : 0, () => {
-      loadRef
-        .current(query, null)
-        .then(page => {
-          if (gen.current === at) setList({ rows: page.items, next: page.next, failed: false })
-        })
-        .catch(() => {
-          if (gen.current === at) setList({ ...START, failed: true })
-        })
-    })
-    return () => t()
-  }, [query, retries])
-  const more = useCallback(() => {
-    const cursor = list.next
-    if (busy.current || cursor === null || list.rows === null) return
-    busy.current = true
-    const at = gen.current
-    loadRef
-      .current(query, cursor)
-      .then(page => {
-        if (gen.current !== at) return
-        setList(cur => ({ ...cur, rows: mergeRows(cur.rows ?? [], page.items), next: page.next }))
-      })
-      .catch(() => {
-        if (gen.current === at) setList(cur => ({ ...cur, next: null }))
-      })
-      .finally(() => {
-        busy.current = false
-      })
-  }, [list, query])
-  const search = (q: string) => {
-    gen.current += 1
-    setList(cur => ({ ...cur, next: null }))
-    setQuery(q)
-  }
-  const retry = () => {
-    setList(START)
-    setRetries(n => n + 1)
-  }
-  return { query, search, ...list, more, retry }
+  const [pages] = usePages<ThreadRow>(
+    cursor => loadRef.current(query, cursor),
+    r => r.key,
+    [query],
+    { delayMs: query.trim() ? 250 : 0 }
+  )
+  return { query, search, pages }
 }
 
 // `peer`: a P2P list, whose authors carry their identity key as `username` and show as P2P
@@ -241,7 +193,7 @@ export function ThreadsPanel({
   onOpen: (row: ThreadRow) => void
   onJump: (row: ThreadRow) => void
 }) {
-  const { query, search, rows, next, failed, more, retry } = list
+  const { query, search, pages } = list
   const empty = threadsEmpty(query.trim() !== '', selfDm)
   return (
     <HeaderPopover
@@ -283,39 +235,42 @@ export function ThreadsPanel({
         border="top"
         place="min-h-0 flex-1 overflow-y-auto overscroll-contain"
       >
-        {rows === null && !failed && (
-          <Surface pad="xl" tone="plain" radius="none">
-            <p className="text-center text-sm text-on-surface-variant">Loading threads</p>
-          </Surface>
-        )}
-        {rows === null && failed && (
-          <Surface pad="xl" gap="sm" align="center" tone="plain" radius="none">
-            <span className="text-sm text-on-surface-variant">Couldn&apos;t load threads.</span>
-            <Button onClick={retry}>Retry</Button>
-          </Surface>
-        )}
-        {rows !== null && rows.length === 0 && (
-          <Surface data-threads-empty pad="2xl" gap="sm" align="center" tone="plain" radius="none">
-            <MessagesSquare size={36} className="text-on-surface-variant opacity-70" />
-            <p className="text-center text-base font-semibold text-on-surface">{empty.title}</p>
-            <p className="text-center text-sm text-on-surface-variant">{empty.body}</p>
-          </Surface>
-        )}
-        {rows !== null && rows.length > 0 && (
-          <Stack as="ul" gap="sm" aria-label={THREADS_TITLE}>
-            {rows.map(r => (
-              <ThreadEntry
-                key={r.key}
-                row={r}
-                server={server}
-                peer={peer}
-                onOpen={() => onOpen(r)}
-                onJump={() => onJump(r)}
-              />
-            ))}
-          </Stack>
-        )}
-        {rows !== null && next !== null && <Sentinel key={rows.length} onVisible={more} />}
+        <Loaded
+          load={pages}
+          what="threads"
+          empty={
+            <Surface
+              data-threads-empty
+              pad="2xl"
+              gap="sm"
+              align="center"
+              tone="plain"
+              radius="none"
+            >
+              <MessagesSquare size={36} className="text-on-surface-variant opacity-70" />
+              <p className="text-center text-base font-semibold text-on-surface">{empty.title}</p>
+              <p className="text-center text-sm text-on-surface-variant">{empty.body}</p>
+            </Surface>
+          }
+        >
+          {found => (
+            <>
+              <Stack as="ul" gap="sm" aria-label={THREADS_TITLE}>
+                {found.items.map(r => (
+                  <ThreadEntry
+                    key={r.key}
+                    row={r}
+                    server={server}
+                    peer={peer}
+                    onOpen={() => onOpen(r)}
+                    onJump={() => onJump(r)}
+                  />
+                ))}
+              </Stack>
+              <More pages={found} auto />
+            </>
+          )}
+        </Loaded>
       </Surface>
     </HeaderPopover>
   )
@@ -337,7 +292,10 @@ function ThreadsList({ threads }: { threads: Threads }) {
   const list = useThreadPages(threads.page)
   return (
     <ThreadsPanel
-      list={{ ...list, rows: list.rows && state.shown(list.rows) }}
+      list={{
+        ...list,
+        pages: list.pages.map(found => ({ ...found, items: state.shown(found.items) })),
+      }}
       selfDm={state.selfDm}
       server={state.server}
       peer={state.byKey}

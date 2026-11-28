@@ -8,7 +8,6 @@ import {
   useCallback,
   useEffect,
   useId,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -26,21 +25,12 @@ import {
   DEFAULT_VIEW,
   DM_PLACE,
   KIND_FILTERS,
-  OWN_MARK_MS,
-  allRead,
-  freshSource,
-  hasMore,
   inboxAction,
   inboxPreview,
-  markedRead,
-  mergeEntries,
-  refreshHead,
   refreshOnCount,
-  sourcesToLoad,
   type InboxAdapter,
   type InboxEntry,
   type InboxView,
-  type SourceState,
 } from '../lib/inbox'
 import { useAccount, useStoreApi, useLiveSessions } from '../lib/client/react'
 import { PingBadge, pingLabel } from './ping_badge'
@@ -57,10 +47,10 @@ import { INSTANCE_INBOX } from '../lib/inbox_source'
 import { longPress, useMedia } from './context_menu'
 import { useStable } from '../lib/stable_key'
 import { time } from '../lib/platform/time'
-import type { Cancel } from '../lib/clock'
-
-const freshSources = (adapters: InboxAdapter[]): Record<string, SourceState> =>
-  Object.fromEntries(adapters.map(a => [a.id, freshSource()]))
+import { inboxLoads, type InboxLoads } from '../lib/inbox_list'
+import { useLive } from '../lib/place/react'
+import { Loaded, useLoad } from './loaded'
+import { FailureNotice } from './notices'
 
 // Notifications that badge, from the store and from sources that count their own (P2P).
 export const useInboxCount = () => {
@@ -85,161 +75,31 @@ export function useTotalInboxCount() {
 // fetches the first page again and merges it in front of what is loaded, so new and cleared
 // notifications show up and deeper pages stay. A lower count right after this panel marked
 // something read is skipped (`markedHere`): the list already shows it.
-function useInbox(view: InboxView) {
+function useInbox(view: InboxView): InboxLoads {
   const { inbox } = useAccount()
   const adapters = useSyncExternalStore(
     inbox.subscribeAdapters,
     inbox.inboxAdapters,
     inbox.inboxAdapters
   )
-  const [request, setRequest] = useState({ adapters, view })
-  const active = useRef<typeof request | null>(null)
-  const generation = useRef(0)
-  const markedUntil = useRef(0)
-  const [sources, setSources] = useState(() => freshSources(adapters))
-  if (request.adapters !== adapters || request.view !== view) {
-    setRequest({ adapters, view })
-    setSources(freshSources(adapters))
-  }
-  // Invalidate old handlers as soon as a different provider, registry or view commits.
-  useLayoutEffect(() => {
-    active.current = request
-    markedUntil.current = 0
-    return () => {
-      active.current = null
-    }
-  }, [request])
-  const isCurrent = useCallback(
-    () => active.current === request && inbox.inboxAdapters() === adapters,
-    [request, inbox, adapters]
+  const loads = useMemo(
+    () => inboxLoads(time(), adapters, view, () => inbox.inboxAdapters() === adapters),
+    [inbox, adapters, view]
   )
-  const live = useRef(sources)
-  live.current = sources
-
-  const fetchPage = useCallback(
-    (id: string, cursor: string | null, at: number) => {
-      const adapter = adapters.find(a => a.id === id)
-      if (!adapter) return
-      setSources(s => ({ ...s, [id]: { ...(s[id] ?? freshSource()), loading: true } }))
-      adapter.load(view, cursor).then(
-        page => {
-          if (!isCurrent() || generation.current !== at) return
-          setSources(s => {
-            const prev = s[id] ?? freshSource()
-            if (cursor === null) return { ...s, [id]: refreshHead(prev, page) }
-            const seen = new Set(prev.entries.map(e => e.key))
-            return {
-              ...s,
-              [id]: {
-                entries: [...prev.entries, ...page.entries.filter(e => !seen.has(e.key))],
-                next: page.next,
-                done: page.next === null,
-                loading: false,
-                failed: false,
-              },
-            }
-          })
-        },
-        () => {
-          if (!isCurrent() || generation.current !== at) return
-          setSources(s => ({
-            ...s,
-            [id]: { ...(s[id] ?? freshSource()), loading: false, failed: true },
-          }))
-        }
-      )
-    },
-    [adapters, view, isCurrent]
-  )
-
-  const reload = useCallback(() => {
-    if (!isCurrent()) return
-    generation.current += 1
-    for (const a of adapters) fetchPage(a.id, null, generation.current)
-  }, [isCurrent, adapters, fetchPage])
-
-  useEffect(reload, [reload])
-
-  const markedHere = () => {
-    markedUntil.current = time().now() + OWN_MARK_MS
-  }
+  useEffect(() => loads.start(), [loads])
   const count = useInboxCount()
-  const lastCount = useRef({ request, count })
-  const timer = useRef<Cancel | null>(null)
+  const lastCount = useRef({ loads, count })
   useEffect(() => {
     const before = lastCount.current
-    lastCount.current = { request, count }
+    lastCount.current = { loads, count }
     if (
-      before.request !== request ||
-      !refreshOnCount(before.count, count, markedUntil.current, time().now())
+      before.loads !== loads ||
+      !refreshOnCount(before.count, count, loads.markedUntil(), time().now())
     )
       return
-    timer.current?.()
-    timer.current = time().after(400, () => {
-      timer.current = null
-      reload()
-    })
-  }, [count, reload, request])
-  useEffect(
-    () => () => {
-      timer.current?.()
-    },
-    []
-  )
-
-  const loadMore = useCallback(() => {
-    if (!isCurrent()) return
-    for (const id of sourcesToLoad(live.current)) {
-      const cur = live.current[id]
-      if (cur?.next) fetchPage(id, cur.next, generation.current)
-    }
-  }, [fetchPage, isCurrent])
-
-  const entries = useMemo(() => mergeEntries(sources), [sources])
-  useEntryLooks(entries)
-  const more = hasMore(sources)
-  const loading = Object.values(sources).some(s => s.loading)
-  const failed = Object.values(sources).some(s => s.failed)
-
-  const adapterOf = (id: string) => adapters.find(a => a.id === id)
-  const open = (entry: InboxEntry, onClose?: (jumped: boolean) => void) => {
-    const adapter = adapterOf(entry.adapter)
-    if (!adapter || !isCurrent()) return
-    if (entry.unread && adapter.canPreview?.(entry) !== false) {
-      markedHere()
-      void adapter.markRead(entry).catch(() => {})
-    }
-    onClose?.(true)
-    void adapter.open(entry)
-  }
-
-  const read = (entry: InboxEntry) => {
-    const adapter = adapterOf(entry.adapter)
-    if (!adapter || !isCurrent()) return
-    markedHere()
-    setSources(s => markedRead(s, entry.key, view.unread))
-    void adapter.markRead(entry).then(
-      () => {},
-      () => reload()
-    )
-  }
-
-  const readAll = () => {
-    if (!isCurrent()) return
-    const shown = entries
-    markedHere()
-    setSources(s => allRead(s, view.unread))
-    void Promise.allSettled(
-      adapters.map(a =>
-        a.markAll(
-          view,
-          shown.filter(e => e.adapter === a.id)
-        )
-      )
-    ).then(reload)
-  }
-
-  return { adapterOf, open, read, readAll, entries, more, loading, failed, loadMore, reload }
+    return time().after(400, () => loads.reload())
+  }, [count, loads])
+  return loads
 }
 
 function Place({ entry }: { entry: InboxEntry }) {
@@ -292,7 +152,7 @@ const entryServer = (entry: InboxEntry) =>
   entry.adapter === INSTANCE_INBOX && entry.where.kind === 'channel' ? entry.where.server : null
 
 // Asks once per server for the member rows of the actors listed, so rows show server names.
-function useEntryLooks(entries: readonly InboxEntry[]) {
+function EntryLooks({ entries }: { entries: readonly InboxEntry[] }) {
   const ensureMembers = useStore(s => s.ensureMembers)
   const key = useMemo(() => {
     const by = new Map<string, Set<string>>()
@@ -307,6 +167,7 @@ function useEntryLooks(entries: readonly InboxEntry[]) {
   useEffect(() => {
     for (const [server, names] of wanted) void ensureMembers(server, names)
   }, [wanted, ensureMembers])
+  return null
 }
 
 function EntryRow({
@@ -433,18 +294,17 @@ function EntryRow({
 // (`jumped`).
 export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void }) {
   const [view, setView] = useState<InboxView>(DEFAULT_VIEW)
-  const { adapterOf, open, read, readAll, entries, more, loading, failed, loadMore, reload } =
-    useInbox(view)
+  const inbox = useInbox(view)
+  const list = useLoad(inbox.list)
+  const anyUnread = useLive(inbox.anyUnread)
   const ids = useId()
   const tabId = (unread: boolean) => `${ids}-${unread ? 'unread' : 'all'}`
   const panelId = `${ids}-list`
   const servers = useStore(s => s.me?.servers)
   const streamer = useStore(s => s.streamer)
   const mask = useMask()
-  const anyUnread = entries.some(e => e.unread)
 
   const set = (patch: Partial<InboxView>) => setView(v => ({ ...v, ...patch }))
-  const empty = !loading && !failed && entries.length === 0 && !more
 
   return (
     <Stack gap="none" place="h-full min-h-0 w-full">
@@ -465,7 +325,7 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
             icon={CheckCheck}
             label="Mark all as read"
             disabled={!anyUnread}
-            onClick={readAll}
+            onClick={inbox.readAll}
             place="ml-auto"
           />
           <ScheduledButton />
@@ -556,39 +416,50 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
         pad="xs"
         place="min-h-0 flex-1 overflow-y-auto"
       >
-        {empty && (
-          <Surface tone="plain" radius="none" pad="2xl" gap="sm" align="center">
-            <AtSign size={28} className="text-on-surface-variant" />
-            <span className="text-center text-sm text-on-surface-variant">
-              {view.unread ? "You're all caught up." : 'No notifications yet.'}
-            </span>
-          </Surface>
-        )}
-        {failed && (
-          <Surface tone="plain" radius="none" pad="xl" gap="sm" align="center">
-            <span className="text-center text-sm text-on-surface-variant">
-              Couldn&apos;t load notifications.
-            </span>
-            <Button onClick={reload}>Try again</Button>
-          </Surface>
-        )}
-        <ul aria-label={view.unread ? 'Unread notifications' : 'All notifications'}>
-          {entries.map(e => (
-            <EntryRow
-              key={e.key}
-              adapter={adapterOf(e.adapter)}
-              entry={e}
-              onOpen={entry => open(entry, onClose)}
-              onRead={read}
-            />
-          ))}
-        </ul>
-        {more && !failed && !loading && <Sentinel key={entries.length} onVisible={loadMore} />}
-        {loading && (entries.length === 0 || more) && (
-          <Surface tone="plain" radius="none" pad="md" inset="bar">
-            <p className="text-center text-xs text-on-surface-variant">Loading</p>
-          </Surface>
-        )}
+        <Loaded
+          load={list}
+          what="notifications"
+          empty={
+            <Surface tone="plain" radius="none" pad="2xl" gap="sm" align="center">
+              <AtSign size={28} className="text-on-surface-variant" />
+              <span className="text-center text-sm text-on-surface-variant">
+                {view.unread ? "You're all caught up." : 'No notifications yet.'}
+              </span>
+            </Surface>
+          }
+        >
+          {found => (
+            <>
+              <EntryLooks entries={found.entries} />
+              <ul aria-label={view.unread ? 'Unread notifications' : 'All notifications'}>
+                {found.entries.map(e => (
+                  <EntryRow
+                    key={e.key}
+                    adapter={inbox.adapterOf(e.adapter)}
+                    entry={e}
+                    onOpen={entry => inbox.open(entry, onClose)}
+                    onRead={inbox.read}
+                  />
+                ))}
+              </ul>
+              {found.failure !== null ? (
+                <FailureNotice
+                  error={found.failure}
+                  lead="Could not load all notifications."
+                  retry={inbox.reload}
+                />
+              ) : found.loadingMore ? (
+                found.more && (
+                  <Surface tone="plain" radius="none" pad="md" inset="bar">
+                    <p className="text-center text-xs text-on-surface-variant">Loading</p>
+                  </Surface>
+                )
+              ) : (
+                found.more && <Sentinel key={found.entries.length} onVisible={inbox.loadMore} />
+              )}
+            </>
+          )}
+        </Loaded>
       </Surface>
     </Stack>
   )
@@ -596,46 +467,52 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
 
 // The newest unread notifications, for Home. Opens the full inbox for the rest.
 export function InboxPreview({ max = 5, beforeOpen }: { max?: number; beforeOpen?: () => void }) {
-  const { adapterOf, open, read, entries, more, loading, failed, reload } = useInbox(DEFAULT_VIEW)
+  const inbox = useInbox(DEFAULT_VIEW)
+  const list = useLoad(inbox.list)
   const setOpen = useStore(s => s.setInboxOpen)
-  const shown = entries.slice(0, max)
 
   return (
     <Stack gap="none">
-      {failed ? (
-        <Surface tone="plain" radius="none" pad="md">
-          <Row gap="sm">
-            <span className="text-sm text-on-surface-variant">
-              Couldn&apos;t load notifications.
-            </span>
-            <Button onClick={reload}>Try again</Button>
-          </Row>
-        </Surface>
-      ) : (loading || more) && shown.length === 0 ? (
-        <RowsSkeleton rows={2} label="Loading notifications" />
-      ) : shown.length === 0 ? (
-        <Surface tone="plain" radius="none" pad="md">
-          <Row as="p" gap="sm">
-            <AtSign size={16} className="shrink-0 text-on-surface-variant" />
-            <span className="text-sm text-on-surface-variant">You&apos;re all caught up.</span>
-          </Row>
-        </Surface>
-      ) : (
-        <ul aria-label="Unread notifications">
-          {shown.map(e => (
-            <EntryRow
-              key={e.key}
-              adapter={adapterOf(e.adapter)}
-              entry={e}
-              onOpen={e => {
-                beforeOpen?.()
-                open(e)
-              }}
-              onRead={read}
-            />
-          ))}
-        </ul>
-      )}
+      <Loaded
+        load={list}
+        what="notifications"
+        skeleton={<RowsSkeleton rows={2} label="Loading notifications" />}
+        empty={
+          <Surface tone="plain" radius="none" pad="md">
+            <Row as="p" gap="sm">
+              <AtSign size={16} className="shrink-0 text-on-surface-variant" />
+              <span className="text-sm text-on-surface-variant">You&apos;re all caught up.</span>
+            </Row>
+          </Surface>
+        }
+      >
+        {found => (
+          <>
+            <EntryLooks entries={found.entries} />
+            <ul aria-label="Unread notifications">
+              {found.entries.slice(0, max).map(e => (
+                <EntryRow
+                  key={e.key}
+                  adapter={inbox.adapterOf(e.adapter)}
+                  entry={e}
+                  onOpen={entry => {
+                    beforeOpen?.()
+                    inbox.open(entry)
+                  }}
+                  onRead={inbox.read}
+                />
+              ))}
+            </ul>
+            {found.failure !== null && (
+              <FailureNotice
+                error={found.failure}
+                lead="Could not load all notifications."
+                retry={inbox.reload}
+              />
+            )}
+          </>
+        )}
+      </Loaded>
       <Button
         onClick={() => {
           beforeOpen?.()

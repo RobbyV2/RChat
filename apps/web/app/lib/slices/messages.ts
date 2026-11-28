@@ -2283,9 +2283,9 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           try {
             page = await ask(searchParams(args, cursor, guest ? guestServers : null))
           } catch (e) {
-            if (!current()) return
-            set({ search: { results, hasMore: true, loading: false, cursor } })
-            throw e
+            if (current())
+              set({ search: { results, hasMore: true, loading: false, cursor, failed: e } })
+            return
           }
           if (!current()) return
           const next = addSearchPage(results, page.items, page.next)

@@ -511,10 +511,14 @@ export function createServersPart(
       const page =
         q.from?.length === 0
           ? { hits: [], next: null }
-          : await sv
-              .search(q, fresh ? null : cur.next)
-              .catch(() => ({ hits: [] as SearchHit[], next: null }))
+          : await sv.search(q, fresh ? null : cur.next).catch((error: unknown) => ({ error }))
       if (gen !== searchGen) return
+      if ('error' in page) {
+        useP2p.setState(st => ({
+          search: { ...st.search, loading: false, failed: page.error },
+        }))
+        return
+      }
       useP2p.setState(st => ({
         search: {
           hits: (fresh ? page.hits : [...st.search.hits, ...page.hits]).filter(h =>

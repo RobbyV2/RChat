@@ -4,7 +4,7 @@ import { Name } from './name'
 import { personCalled, serverCalled } from '../lib/names'
 import { PeerActorTag, ViewActorTag } from './view_actor'
 import { useAccount, useStoreApi } from '../lib/client/react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { FileText, Hash, Search } from 'lucide-react'
 import { useMask } from '../lib/store'
 import { dayEndTs, dayStartTs, endOfList } from '../lib/search'
@@ -29,7 +29,11 @@ import {
   type Search as SearchFeature,
   type SearchFilters,
   type SearchHit,
+  type SearchState,
 } from '../lib/place/search'
+import type { Load } from '../lib/load'
+import { Loaded, useLoad } from './loaded'
+import { FailureNotice } from './notices'
 import { MemberAvatar } from './p2p/p2p_badge'
 import { time } from '../lib/platform/time'
 
@@ -105,10 +109,7 @@ function HitAuthor({ r }: { r: SearchHit }) {
 export function SearchView({
   peer = false,
   channels,
-  hits,
-  loading,
-  hasMore,
-  pageKey,
+  results,
   seed,
   note,
   scrollForMore,
@@ -118,11 +119,7 @@ export function SearchView({
   peer?: boolean
   // The "in:" choices (the current server's channels), or none.
   channels: { id: string; name: string }[] | undefined
-  hits: SearchHit[]
-  loading: boolean
-  hasMore: boolean
-  // Changes with every page, so the next one loads when the end shows again.
-  pageKey: string
+  results: Load<SearchState>
   // A query to start with; a new `n` puts its text in the field again.
   seed?: { q: string | null; n: number }
   // Shown under the filters (where the search looks).
@@ -168,14 +165,7 @@ export function SearchView({
   const runRef = useRef(onRun)
   runRef.current = onRun
   const stepped = active && (scrollForMore?.(args.q) ?? false)
-  // Nothing found yet while the search runs.
-  const first = active && loading && hits.length === 0
-  const steppedRef = useRef(stepped)
-  steppedRef.current = stepped
-  const pageRef = useRef(pageKey)
-  pageRef.current = pageKey
   const listRef = useRef<HTMLDivElement>(null)
-  const [end] = useState(endOfList)
   useEscape(onClose, 'panel')
 
   useEffect(() => {
@@ -185,16 +175,6 @@ export function SearchView({
   }, [args.q, args.from, channelId, hasFile, args.beforeTs, args.afterTs, active])
 
   const more = useCallback(() => runRef.current(argsRef.current, false), [])
-  const endShown = useCallback(() => {
-    if (end.sight(true, pageRef.current, steppedRef.current)) more()
-  }, [end, more])
-  const endHidden = useCallback(() => {
-    end.sight(false, pageRef.current, steppedRef.current)
-  }, [end])
-  const scrolled = useCallback(() => {
-    const top = listRef.current?.scrollTop ?? 0
-    if (end.scroll(top, pageRef.current, steppedRef.current)) more()
-  }, [end, more])
 
   const dateField = (
     label: string,
@@ -262,7 +242,7 @@ export function SearchView({
         </Row>
         {note && <p className="text-xs text-on-surface-variant">{note}</p>}
       </Surface>
-      <div ref={listRef} onScroll={scrolled} className="anchor-none flex-1 overflow-y-auto">
+      <div ref={listRef} className="anchor-none flex-1 overflow-y-auto">
         <Inset pad="sm" safe>
           {!active && (
             <Surface pad="xl" tone="plain" radius="none">
@@ -271,49 +251,105 @@ export function SearchView({
               </p>
             </Surface>
           )}
-          {active && !loading && hits.length === 0 && !hasMore && (
-            <Surface pad="xl" tone="plain" radius="none">
-              <p className="text-center text-sm text-on-surface-variant">No results.</p>
-            </Surface>
-          )}
-          {first && <MessageListSkeleton seed="search" variant="search" label="Loading results" />}
-          {hits.map(r => (
-            <PreviewRow
-              key={r.key}
-              onOpen={r.onOpen}
-              className="block w-full rounded-xl text-left hover:bg-surface-container-high"
+          {(active || results.status === 'ready') && (
+            <Loaded
+              load={results}
+              what="results"
+              skeleton={
+                <MessageListSkeleton seed="search" variant="search" label="Loading results" />
+              }
+              empty={
+                <Surface pad="xl" tone="plain" radius="none">
+                  <p className="text-center text-sm text-on-surface-variant">No results.</p>
+                </Surface>
+              }
             >
-              <Surface pad="md" gap="2xs" tone="plain" radius="none">
-                <p className="text-xs text-on-surface-variant">
-                  <Row as="span" gap="2xs">
-                    <Hash size={12} className="shrink-0" />
-                    <span className="truncate">
-                      <Masked text={r.channel} own={r.ownPlace} />
-                    </span>
-                    <span className="shrink-0">·</span>
-                    <Name of={serverCalled(r.server, r.ownPlace)} look="truncate" />
-                  </Row>
-                </p>
-                <Row gap="sm">
-                  <HitAuthor r={r} />
-                  <MessageTime
-                    ts={r.createdAt}
-                    className="shrink-0 text-xs text-on-surface-variant"
-                  />
-                  {r.forwarded && (
-                    <span className="text-xs">
-                      <ForwardedTag />
-                    </span>
-                  )}
-                </Row>
-                <HitText r={r} />
-              </Surface>
-            </PreviewRow>
-          ))}
-          {active && hasMore && (
-            <Sentinel key={pageKey} onVisible={endShown} onHidden={endHidden} />
+              {found => (
+                <Hits found={found} active={active} stepped={stepped} list={listRef} more={more} />
+              )}
+            </Loaded>
           )}
-          {stepped && !first && (hasMore || loading) && (
+        </Inset>
+      </div>
+    </div>
+  )
+}
+
+// The hits of a search, with the way to its next page: on sight, or (`stepped`) one page for each
+// scroll to the end and a button. A page that failed says so under the hits.
+function Hits({
+  found,
+  active,
+  stepped,
+  list,
+  more,
+}: {
+  found: SearchState
+  // Whether a search is typed: without one the hits of the last search stay, with no next page.
+  active: boolean
+  stepped: boolean
+  list: RefObject<HTMLDivElement | null>
+  more: () => void
+}) {
+  const { hits, loading, hasMore, pageKey, failure } = found
+  const steppedRef = useRef(stepped)
+  steppedRef.current = stepped
+  const pageRef = useRef(pageKey)
+  pageRef.current = pageKey
+  const [end] = useState(endOfList)
+  const endShown = useCallback(() => {
+    if (end.sight(true, pageRef.current, steppedRef.current)) more()
+  }, [end, more])
+  const endHidden = useCallback(() => {
+    end.sight(false, pageRef.current, steppedRef.current)
+  }, [end])
+  useEffect(() => {
+    const el = list.current
+    if (!el) return
+    const scrolled = () => {
+      if (end.scroll(el.scrollTop, pageRef.current, steppedRef.current)) more()
+    }
+    el.addEventListener('scroll', scrolled, { passive: true })
+    return () => el.removeEventListener('scroll', scrolled)
+  }, [list, end, more])
+  return (
+    <>
+      {hits.map(r => (
+        <PreviewRow
+          key={r.key}
+          onOpen={r.onOpen}
+          className="block w-full rounded-xl text-left hover:bg-surface-container-high"
+        >
+          <Surface pad="md" gap="2xs" tone="plain" radius="none">
+            <p className="text-xs text-on-surface-variant">
+              <Row as="span" gap="2xs">
+                <Hash size={12} className="shrink-0" />
+                <span className="truncate">
+                  <Masked text={r.channel} own={r.ownPlace} />
+                </span>
+                <span className="shrink-0">·</span>
+                <Name of={serverCalled(r.server, r.ownPlace)} look="truncate" />
+              </Row>
+            </p>
+            <Row gap="sm">
+              <HitAuthor r={r} />
+              <MessageTime ts={r.createdAt} className="shrink-0 text-xs text-on-surface-variant" />
+              {r.forwarded && (
+                <span className="text-xs">
+                  <ForwardedTag />
+                </span>
+              )}
+            </Row>
+            <HitText r={r} />
+          </Surface>
+        </PreviewRow>
+      ))}
+      {!active ? null : failure !== null ? (
+        <FailureNotice error={failure} lead="Could not load more results." retry={more} />
+      ) : (
+        <>
+          {hasMore && <Sentinel key={pageKey} onVisible={endShown} onHidden={endHidden} />}
+          {stepped && (hasMore || loading) && (
             <div className="flex min-h-9 items-center justify-center">
               {loading ? (
                 <p className="text-xs text-on-surface-variant">Searching</p>
@@ -322,14 +358,14 @@ export function SearchView({
               )}
             </div>
           )}
-          {loading && !stepped && !first && (
+          {loading && !stepped && (
             <Surface pad="md" tone="plain" radius="none">
               <p className="text-center text-xs text-on-surface-variant">Searching</p>
             </Surface>
           )}
-        </Inset>
-      </div>
-    </div>
+        </>
+      )}
+    </>
   )
 }
 
@@ -342,15 +378,13 @@ export default function SearchPanel() {
 
 function SearchOf({ of }: { of: SearchFeature }) {
   const state = useLive(of.state)
+  const results = useLoad(of.results)
   useEffect(() => of.watch(), [of])
   return (
     <SearchView
       peer={state.byIdentity}
       channels={state.channels}
-      hits={state.hits}
-      loading={state.loading}
-      hasMore={state.hasMore}
-      pageKey={state.pageKey}
+      results={results}
       seed={state.seed ?? undefined}
       note={state.note}
       scrollForMore={of.steps}
