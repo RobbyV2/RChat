@@ -483,7 +483,7 @@ test('a P2P message quotes the sender it answers by P2P name', () => {
   const m = asMessage(p, 2, 1, ik => shownPeer().p2pUser(ik, names[ik]), BOB_KEY)
   const html = render(
     <PlaceProvider place={peerPlace(shownPeer(), { me: BOB_KEY })}>
-      <PeerRow app={shownPeer()} p={p} m={m} rules={{ me: BOB_KEY, mayDelete: () => true }} />
+      <PeerRow app={shownPeer()} p={p} m={m} me={BOB_KEY} />
     </PlaceProvider>
   )
   const quote = html.slice(html.indexOf('data-reply-to'), html.indexOf('sounds good'))

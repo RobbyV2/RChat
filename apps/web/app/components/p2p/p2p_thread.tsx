@@ -14,14 +14,15 @@ import type { ServerView } from '../../lib/p2p/server'
 import type { Message } from '../../lib/types'
 import { PlaceProvider, useLive } from '../../lib/place/react'
 import { EmojiPicker } from '../emoji_picker'
-import { ListedRow } from '../listed_row'
+import { ListedRow, useRowFlags } from '../listed_row'
+import { rowsAt } from '../../lib/place/use_rows'
 import { ThreadPanelView, ThreadTail, useThreadScroll } from '../thread_panel'
 import { openThreadAt } from '../../lib/place/use_thread'
 import { composeAt } from '../../lib/place/use_composer'
 import { P2pDm, P2pRoom } from '../../lib/place/place'
 import { useGate } from '../composer_gate'
 import { TypingIndicator } from '../typing_indicator'
-import { CanFetchContext, rowOf, type RowRules, useP2pFlash, useP2pList } from './p2p_chat'
+import { CanFetchContext, RowFiles, useP2pFlash, useP2pList } from './p2p_chat'
 import { usePeerTimeoutEnds } from '../timeout_dialog'
 import { useDmFacts } from './p2p_dm_pane'
 import { groupPlaces, p2pCue, type GroupPlace } from '../../lib/message_groups'
@@ -200,12 +201,7 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
 
   const onRoot = useMemo(() => rowOn(jumpMain), [rowOn, jumpMain])
   const onReply = useMemo(() => rowOn(jumpHere), [rowOn, jumpHere])
-  const { pendingTip } = f
-  const rules = useMemo<RowRules>(
-    () => ({ me, canAct, timedOut, held, threads: false, pendingTip, mayDelete }),
-    [me, canAct, timedOut, held, pendingTip, mayDelete]
-  )
-  const rootRules = useMemo<RowRules>(() => ({ ...rules, mayDelete: () => false }), [rules])
+  const flags = useRowFlags(rowsAt(place, 'thread'))
 
   const row = (r: { p: P2pMessage; m: Message }, root: boolean, place: GroupPlace) => {
     const { p, m } = r
@@ -219,8 +215,8 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
         flash={flash === m.id}
         inThread
         editing={editing && editingState?.id === p.id ? editing : false}
-        {...rowOf(p, root ? rootRules : rules, identity)}
-        hidden={p.removed ? 'removed' : p.slowHidden ? 'slow' : undefined}
+        {...flags.of(m, root)}
+        Files={RowFiles}
         on={root ? onRoot : onReply}
       />
     )

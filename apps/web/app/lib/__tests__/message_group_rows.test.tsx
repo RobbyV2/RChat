@@ -111,7 +111,7 @@ const p2pRow = (
   last: boolean,
   over: Partial<P2pMessage> = {},
   mine = false,
-  rights: { timedOut?: boolean; canDelete?: boolean } = {}
+  timedOut = false
 ) => {
   const owner = testAccount('bob')
   const app = createPeerFixture(owner, 'bob')
@@ -128,12 +128,8 @@ const p2pRow = (
         })}
         first={first}
         last={last}
-        rules={{
-          me: mine ? stored.sender : null,
-          pendingTip: 'Waiting for them to come online',
-          timedOut: rights.timedOut ?? false,
-          mayDelete: () => rights.canDelete ?? false,
-        }}
+        me={mine ? stored.sender : null}
+        timedOut={timedOut}
       />
     </AccountProvider>
   )
@@ -173,8 +169,7 @@ describe('a P2P row', () => {
 
   test('timed out, your own message keeps Delete and its download, and loses Reply, Edit and reactions', () => {
     const file = { h: 'h1', size: 10, blocks: 1, name: 'a.txt', mime: 'text/plain' }
-    const own = (timedOut: boolean) =>
-      p2pRow(true, true, { att: [file] }, true, { timedOut, canDelete: true })
+    const own = (timedOut: boolean) => p2pRow(true, true, { att: [file] }, true, timedOut)
     const free = own(false)
     for (const label of ['Edit', 'Reply', 'Add reaction'])
       expect(free).toContain(`aria-label="${label}"`)
@@ -183,7 +178,7 @@ describe('a P2P row', () => {
     expect(timed).toContain('aria-label="Download a.txt"')
     for (const label of ['Edit', 'Reply', 'Add reaction'])
       expect(timed).not.toContain(`aria-label="${label}"`)
-    const failed = p2pRow(true, true, { failed: true }, true, { timedOut: true, canDelete: true })
+    const failed = p2pRow(true, true, { failed: true }, true, true)
     expect(failed).toContain('>Delete</button>')
     expect(failed).not.toContain('>Retry</button>')
   })

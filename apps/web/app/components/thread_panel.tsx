@@ -5,29 +5,21 @@ import { useAccount } from '../lib/client/react'
 
 import { useEffect, useMemo, useRef, type ReactNode, type RefObject } from 'react'
 import type { OpenThread, ThreadState } from '../lib/place/thread'
+import { useRows } from '../lib/place/use_rows'
+import { useRowFlags } from './listed_row'
 import { useThread } from '../lib/place/use_thread'
 import { MessageSquareText } from 'lucide-react'
-import { useChannelCan } from '../lib/place/use_rights'
-import { useHostedServer, useLive } from '../lib/place/react'
-import { messageRights, replyAccess } from '../lib/actions/message'
+import { useLive } from '../lib/place/react'
+import { messageRights } from '../lib/actions/message'
 import { actionPress, openActionMenu } from '../lib/actions/menu'
-import { myRank, threadKey, useStore } from '../lib/store'
-import { outranksKnown } from '../lib/hierarchy'
-import { useShallow } from 'zustand/react/shallow'
+import { threadKey, useStore } from '../lib/store'
 import type { Message } from '../lib/types'
 import type { Outgoing } from '../lib/store_types'
 import { findById } from '../lib/window'
 import { newSince } from '../lib/lists'
 import { Composer } from './composer'
 import { TypingIndicator } from './typing_indicator'
-import {
-  OutboxRows,
-  mentionsMe,
-  reactHeader,
-  useAuthorMembers,
-  useMemberLookup,
-  usePeopleKey,
-} from './message_pane'
+import { OutboxRows, reactHeader, useAuthorMembers, usePeopleKey } from './message_pane'
 import { MessageRow, type RowHandlers } from './message_row'
 import { useMedia } from './context_menu'
 import {
@@ -42,10 +34,6 @@ import { PanelHeader, useEscape } from './ui'
 import { LightboxList } from './media_lightbox'
 import { BlockedComposer, BlockedList } from './blocking'
 import { MessageListSkeleton } from './skeletons'
-import { canQuote } from '../lib/replies'
-import { canForward } from '../lib/forward'
-import { canEdit as ownEditable } from '../lib/sed'
-import { useMyTimeoutEnds } from './timeout_dialog'
 import { BulkJobBar, Selectable, SelectionBar, openSelectionMenu } from './selection'
 import { ChatWorkNotices } from './own_load'
 import { Inset, Row, Surface } from './layout'
@@ -285,18 +273,12 @@ export default function ThreadPanel() {
     useStore(s => (s.panel?.kind === 'thread' ? s.messages[`t${s.panel.root.id}`] : undefined)) ??
     EMPTY
   const me = useStore(s => s.me)
-  const guest = useStore(s => s.guest)
-  const detail = useStore(s => (s.view?.kind === 'channel' ? s.servers[s.view.server] : undefined))
-  const roles = detail?.roles
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
-  const timedOutEnds = useMyTimeoutEnds(server)
   const dmOther = useStore(s => {
     const id = s.panel?.kind === 'thread' ? s.panel.root.dm_id : null
     const dm = id !== null ? s.dms.find(d => d.id === id) : undefined
     return dm && s.blocked[dm.other.username] ? dm.other : null
   })
-  const memberFor = useMemberLookup(server)
-  const rank = useStore(useShallow(s => (server ? myRank(s, server) : undefined)))
   const people = useMemo(() => (root ? [root, ...replies] : replies), [root, replies])
   useAuthorMembers(server, usePeopleKey(people))
   const key = useStore(s => (s.panel?.kind === 'thread' ? threadKey(s.panel.root.id) : null))
@@ -334,31 +316,11 @@ export default function ThreadPanel() {
   )
   const rootAt = root?.created_at ?? null
 
-  const canUnreact = me !== null && !guest
-  const inDm = root !== null && root.dm_id !== null
-  const can = useChannelCan(useHostedServer(server), root?.channel_id ?? null)
-  const acting =
-    canUnreact &&
-    root !== null &&
-    (inDm
-      ? !dmOther
-      : server !== null && me.servers.some(x => x.name === server) && timedOutEnds === null)
-  const canWrite = acting && can.send
-  const canReact = acting && can.react
-  const canQuoteHere = useStore(
-    s => replyAccess(s, server, root?.channel_id ?? null, canWrite, inDm).quote
-  )
+  const flags = useRowFlags(useRows('thread'))
 
   if (!root || !key) return null
-  const canDelete = (m: Message) =>
-    me !== null &&
-    (m.author.username === me.username ||
-      (can.manage && outranksKnown(rank, memberFor(m.author.username), roles)))
 
-  const canReply = (m: Message) => canQuoteHere && canQuote(m)
-  const forwardable = (m: Message) => canUnreact && canForward(m)
   const replyTo = (m: Message) => startReply(key, m)
-  const canEdit = (m: Message) => canWrite && ownEditable(m, me?.username)
   const editMsg = (m: Message) => startEdit(key, m)
   const jump = (id: number) => thread.jump(String(id))
   const jumpMain = (id: number) => {
@@ -396,20 +358,10 @@ export default function ThreadPanel() {
       m={m}
       first={first}
       last={last}
-      mentioned={mentionsMe(m, me?.username)}
+      {...flags.of(m, m.id === root.id)}
       divider={false}
       flash={flash === m.id}
       inThread
-      server={server}
-      canEdit={canEdit(m)}
-      canReply={canReply(m)}
-      canForward={forwardable(m)}
-      thread={null}
-      canDelete={m.id !== root.id && canDelete(m)}
-      canTrim={canDelete(m)}
-      canReact={canReact}
-      canUnreact={canUnreact}
-      canVote={canWrite}
       editing={editingId === m.id}
       on={m.id === root.id ? onRoot : onReply}
     />

@@ -1,11 +1,11 @@
 import { MessageRow, type RowHandlers } from '../../../components/message_row'
-import { CanFetchContext, rowOf, type RowRules } from '../../../components/p2p/p2p_chat'
+import { CanFetchContext, RowFiles } from '../../../components/p2p/p2p_chat'
 import type { P2pApp } from '../../p2p/app/runtime'
 import type { P2pMessage } from '../../p2p/dm'
-import { CAN_ALL } from '../../channel_perms'
 import { P2pDm } from '../../place/place'
 import { PlaceProvider } from '../../place/react'
 import { shownOf } from '../../place/shown'
+import { rowsAt } from '../../place/use_rows'
 import type { Message } from '../../types'
 import { seedPeer } from './peer_place'
 
@@ -19,38 +19,30 @@ export const NO_HANDLERS: RowHandlers = {
   remove: () => {},
 }
 
-// A stored P2P message as the conversation that holds it draws it, under `rules` (everything
-// allowed unless said).
+// A stored P2P message as the conversation with a mutual contact draws it, for the identity `me`.
 export function PeerRow({
   app,
   p,
   m,
   first = true,
   last = true,
-  rules = {},
+  me = null,
+  timedOut = false,
 }: {
   app: P2pApp
   p: P2pMessage
   m: Message
   first?: boolean
   last?: boolean
-  rules?: Partial<RowRules>
+  me?: string | null
+  timedOut?: boolean
 }) {
-  const all: RowRules = {
-    me: null,
-    canAct: true,
-    timedOut: false,
-    held: CAN_ALL,
-    threads: false,
-    pendingTip: '',
-    mayDelete: () => false,
-    ...rules,
-  }
   seedPeer(app, {
-    me: all.me,
+    me,
+    contacts: [{ ik: 'them', name: 'them', state: 'mutual' }] as never,
     chat: {
       room: 'dm',
-      peer: '',
+      peer: 'them',
       messages: [p],
       more: false,
       loading: false,
@@ -59,18 +51,20 @@ export function PeerRow({
     },
   })
   const place = P2pDm.open(app, 'dm')
-  const id = shownOf(place).get().num.get(p.id) ?? m.id
+  const row = { ...m, id: shownOf(place).get().num.get(p.id) ?? m.id }
+  const flags = rowsAt(place, 'main')
   return (
     <PlaceProvider place={place}>
-      <CanFetchContext.Provider value={all.canAct}>
+      <CanFetchContext.Provider value>
         <MessageRow
-          m={{ ...m, id }}
+          m={row}
           first={first}
           last={last}
           divider={false}
           flash={false}
           editing={false}
-          {...rowOf(p, all, app)}
+          {...flags.get().of(row, { timedOut })}
+          Files={RowFiles}
           on={NO_HANDLERS}
         />
       </CanFetchContext.Provider>

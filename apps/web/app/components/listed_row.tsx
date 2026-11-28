@@ -1,6 +1,11 @@
 'use client'
 
-import { memo } from 'react'
+import { memo, useMemo } from 'react'
+import { useLive } from '../lib/place/react'
+import type { Live } from '../lib/place/live'
+import type { RowsState } from '../lib/place/rows'
+import type { Message } from '../lib/types'
+import { usePeerTimeoutEnds } from './timeout_dialog'
 import { isSystem } from '../lib/system_messages'
 import { CallRow } from './call_row'
 import { MessageRow, RemovedRow, SlowHiddenRow, type RowProps } from './message_row'
@@ -9,6 +14,21 @@ import { SystemNotice } from './system_messages'
 import { UnreadDivider } from './unread_banner'
 
 const unreadDivider = <UnreadDivider />
+
+// What the rows of a list may do right now: `of(m)` gives a row's flags (`root`: the row heads
+// the open thread), following the reader's timeout as it runs out.
+export function useRowFlags(rows: Live<RowsState>) {
+  const state = useLive(rows)
+  const timedOut = usePeerTimeoutEnds(state.until ?? undefined) !== null
+  return useMemo(
+    () => ({
+      acts: state.acts,
+      timedOut,
+      of: (m: Message, root = false) => state.of(m, { timedOut, root }),
+    }),
+    [state, timedOut]
+  )
+}
 
 // One row of a message list, whichever place it is in: the line its kind calls for (a pin, a
 // join or leave, a call, a message hidden from the reader), else the message.

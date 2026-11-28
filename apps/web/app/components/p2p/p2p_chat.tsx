@@ -29,7 +29,7 @@ import { peerChat } from '../../lib/actions/p2p_chat'
 import { noticeOpen } from '../../lib/home'
 import { useHome } from '../../lib/home_store'
 import { chatKey, chatScope, type P2pChat } from '../../lib/p2p/app'
-import { messageActs, STORAGE_FULL_TEXT, PEER_FULL_TEXT, type P2pMessage } from '../../lib/p2p/dm'
+import { STORAGE_FULL_TEXT, PEER_FULL_TEXT, type P2pMessage } from '../../lib/p2p/dm'
 import { LIMITS as P2P_LIMITS } from '../../lib/p2p/content'
 import { newSince } from '../../lib/lists'
 import type { Message } from '../../lib/types'
@@ -48,13 +48,13 @@ import { PinsWindow } from '../pins'
 import { useGate } from '../composer_gate'
 import { GateNote } from '../gate_note'
 import { composeAt } from '../../lib/place/use_composer'
-import { ListedRow } from '../listed_row'
+import { ListedRow, useRowFlags } from '../listed_row'
+import { rowsAt } from '../../lib/place/use_rows'
 import { ThreadsWindow } from '../threads'
 import { TypingIndicator } from '../typing_indicator'
 import { EmojiPicker } from '../emoji_picker'
 import { useChatScroll, useFocusMessage } from '../viewport_height'
 import { type RowHandlers } from '../message_row'
-import type { P2pApp } from '../../lib/p2p/app/runtime'
 import { groupPlaces, p2pCue } from '../../lib/message_groups'
 import { dayStarts } from '../../lib/date_dividers'
 import { DateDivider } from '../date_divider'
@@ -100,50 +100,6 @@ function P2pIntroBody({ id, children }: { id: string; children: ReactNode }) {
   )
 }
 
-// What a list holds for its rows beside the messages: what its host lets us do here.
-export interface RowRules {
-  me: string | null
-  canAct: boolean
-  // A timeout of ours: a row can be deleted and its files downloaded, nothing more.
-  timedOut: boolean
-  held: ChannelCan
-  // A top-level list of a place: its messages can start threads.
-  threads: boolean
-  pendingTip: string
-  mayDelete: (p: P2pMessage) => boolean
-}
-
-// A stored message as the props of its row.
-export const rowOf = (p: P2pMessage, rules: RowRules, identity: P2pApp) => {
-  const mine = p.sender === rules.me
-  // From the old copy: read-only here.
-  const act = rules.canAct && !p.archived
-  const write = act && !rules.timedOut
-  const can = messageActs(p, write, mine)
-  return {
-    event: p.id,
-    server: null,
-    local: true,
-    Files: RowFiles,
-    mentioned: pingsMe(p, rules.me),
-    canEdit: can.edit,
-    canReply: can.reply,
-    canForward: can.forward,
-    thread: rules.threads
-      ? peerChat.forIdentity(identity).threadAct(p, write && rules.held.threads)
-      : null,
-    chip: rules.threads && !p.archived,
-    canDelete: act && rules.mayDelete(p),
-    canReact: write && rules.held.react,
-    canUnreact: write,
-    sent: mine ? (p.failed ? 'failed' : p.pending ? 'pending' : 'delivered') : undefined,
-    sentTip: rules.pendingTip,
-    canRetry: rules.canAct && !rules.timedOut,
-    canDrop: rules.canAct,
-    lateAt: p.late ? p.sentTs : undefined,
-  } as const
-}
-
 // Whether the files of the rows around can be fetched.
 export const CanFetchContext = createContext(false)
 
@@ -165,15 +121,10 @@ function ListFiles({ m, place }: { m: Message; place: P2pRoom | P2pDm }) {
 }
 
 // The files a P2P message carries, under its text.
-function RowFiles({ m }: { m: Message }) {
+export function RowFiles({ m }: { m: Message }) {
   const place = usePlace()
   return place && !isHosted(place) ? <ListFiles m={m} place={place} /> : null
 }
-
-// Whether a row pings us: it mentions us, answers us, or mentions everyone.
-export const pingsMe = (p: P2pMessage, me: string | null) =>
-  p.sender !== me &&
-  ((me !== null && p.mentions.includes(me)) || p.reply?.sender === me || p.everyone === true)
 
 // The row a jump focused (`focus`), flashed once it shows; the focus is cleared then.
 export function useP2pFlash(
@@ -511,11 +462,7 @@ function IdentityChatBody(props: ChatBodyProps) {
   )
   const on = useMemo(() => rowOn(rowJump), [rowOn, rowJump])
   const { shut } = useGate(composeAt(place, 'main'))
-  const pendingTip = props.peerFull ? 'Their storage is full' : props.pendingTip
-  const rules = useMemo<RowRules>(
-    () => ({ me, canAct, timedOut, held, threads: true, pendingTip, mayDelete }),
-    [me, canAct, timedOut, held, pendingTip, mayDelete]
-  )
+  const flags = useRowFlags(rowsAt(place, 'main'))
 
   const gapNote = props.gap && !chat.more && (
     <Surface data-p2p-gap pad="lg" tone="plain" radius="none">
@@ -610,9 +557,8 @@ function IdentityChatBody(props: ChatBodyProps) {
                   divider={i === divider}
                   flash={flash === m.id}
                   editing={editing && editingState?.id === p.id ? editing : false}
-                  {...rowOf(p, rules, identity)}
-                  hidden={p.removed ? 'removed' : p.slowHidden ? 'slow' : undefined}
-                  pinned={p.system?.target ?? null}
+                  {...flags.of(m)}
+                  Files={RowFiles}
                   on={on}
                 />
               </Fragment>

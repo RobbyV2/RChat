@@ -9,7 +9,6 @@ import { useP2pApp } from '../lib/client/p2p_react'
 import { useAccount, useStoreApi } from '../lib/client/react'
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useShallow } from 'zustand/react/shallow'
 import {
   Clock,
   Hash,
@@ -26,27 +25,22 @@ import { newSince } from '../lib/lists'
 import { SELF_DM_TEXT, SELF_DM_TITLE } from '../lib/dm_list'
 import { dayStarts } from '../lib/date_dividers'
 import { escapeMarksRead } from '../lib/follow'
-import { mentionLookups, mentionsUser } from '../lib/mentions'
+import { mentionLookups } from '../lib/mentions'
 import { useChannelCan } from '../lib/place/use_rights'
 import { useHostedServer, useLive } from '../lib/place/react'
 import { slowTitle } from '../lib/slowmode'
-import { repliesToMe } from '../lib/replies'
-import { messageRights, replyAccess } from '../lib/actions/message'
+import { messageRights } from '../lib/actions/message'
 import { actionPress, openActionMenu, useHasMenu } from '../lib/actions/menu'
 import type { Target } from '../lib/actions/types'
 import {
-  byUsername,
   confirmDeleteMessage,
-  myRank,
   useStore,
   viewKey,
   allPings,
-  groupMentionsMe,
   type ContextMenuOptions,
   type Outgoing,
 } from '../lib/store'
-import { outranksKnown } from '../lib/hierarchy'
-import type { Member, Message, UserRef } from '../lib/types'
+import type { Message, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { UnreadDivider } from './unread_banner'
 import { DateDivider } from './date_divider'
@@ -68,15 +62,14 @@ import { PingBadge, pingLabel } from './ping_badge'
 import { groupPadCls } from './grouped_row'
 import { QuickReactions, rowAt } from './reactions'
 import { ReplyPreview } from './replies'
-import { canEdit as ownEditable } from '../lib/sed'
-import { canForward } from '../lib/forward'
 import { ForwardCard } from './forwards'
 import { MessageList, NewerOnSight } from './message_list'
 import { AuthorRow, GroupedRow, type RowHandlers } from './message_row'
 import { useFace } from '../lib/place/use_looks'
+import { useRows } from '../lib/place/use_rows'
 import { useMessages } from '../lib/place/use_messages'
 import { PinsButton, PinsWindow, useCanPin } from './pins'
-import { ListedRow } from './listed_row'
+import { ListedRow, useRowFlags } from './listed_row'
 import { ThreadsButton, ThreadsWindow } from './threads'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { isNotice } from '../lib/system_messages'
@@ -141,12 +134,6 @@ export const usePeopleKey = (messages: Message[], extra: string[] = []) => {
   return authorKey(messages, [...extra, ...mentioned])
 }
 
-// Forwarded text is a copy of someone else's words: its mentions never highlight or ping.
-export const mentionsMe = (m: Message, me: string | undefined) =>
-  me !== undefined &&
-  m.author.username !== me &&
-  ((!m.forward && mentionsUser(m.content, me)) || repliesToMe(m, me))
-
 export function useAuthorMembers(server: string | null, key: string) {
   const ensureMembers = useStore(s => s.ensureMembers)
   const cached = useStore(s => (server ? s.memberInfo[server] !== undefined : false))
@@ -154,17 +141,6 @@ export function useAuthorMembers(server: string | null, key: string) {
   useEffect(() => {
     if (server && key) void ensureMembers(server, key.split('\n'))
   }, [server, key, cached, trim, ensureMembers])
-}
-
-export function useMemberLookup(server: string | null) {
-  const list = useStore(s => (server ? s.members[server]?.list : undefined))
-  const known = useStore(s => (server ? s.memberInfo[server] : undefined))
-  return useCallback(
-    (username: string): Member | undefined =>
-      (list ? byUsername(list).get(username) : undefined) ??
-      (known && Object.hasOwn(known, username) ? (known[username] ?? undefined) : undefined),
-    [list, known]
-  )
 }
 
 const unreadDivider = <UnreadDivider />
@@ -401,7 +377,6 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const focus = useStore(s => (s.view ? s.focus[viewKey(s.view)] : undefined))
   const menuPings = useStore(allPings)
   const memberServer = view?.kind === 'channel' ? view.server : null
-  const memberFor = useMemberLookup(memberServer)
   useAuthorMembers(memberServer, usePeopleKey(messages, me ? [me.username] : []))
   const jumpTo = useStore(s => s.jumpTo)
   const startReply = useStore(s => s.startReply)
@@ -432,21 +407,6 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const scope = view && !isVoice ? viewKey(view) : null
   const detached = newer.more
   const snapEdge = useScrollAnchor(listRef, messages[0]?.id, older.loading || newer.loading)
-  const myName = me?.username
-  const groupIds = useStore(s =>
-    messages
-      .filter(m => groupMentionsMe(s, m))
-      .map(m => m.id)
-      .join(',')
-  )
-  const mentionedIds = useMemo(
-    () =>
-      new Set([
-        ...messages.filter(m => mentionsMe(m, myName)).map(m => m.id),
-        ...(groupIds ? groupIds.split(',').map(Number) : []),
-      ]),
-    [messages, myName, groupIds]
-  )
   const { divider: dividerIndex, banner: unread } = useLive(list.unread)
   useEffect(() => list.watchUnread(), [list])
   const places = useMemo(
@@ -517,39 +477,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     )
   }
 
-  const canUnreact = me !== null && !guest
+  const flags = useRowFlags(useRows('main'))
   const timedOutEnds = useMyTimeoutEnds(view?.kind === 'channel' ? view.server : null)
-  const acting =
-    canUnreact &&
-    (view?.kind === 'dm' ||
-      (view?.kind === 'channel' &&
-        me.servers.some(x => x.name === view.server) &&
-        timedOutEnds === null))
-  const canWrite = acting && can.send
-  const canReact = acting && can.react
-  const replies = useStore(
-    useShallow(s =>
-      replyAccess(
-        s,
-        memberServer,
-        view?.kind === 'channel' ? view.channelId : null,
-        canWrite,
-        view?.kind === 'dm'
-      )
-    )
-  )
-
-  const rank = useStore(useShallow(s => (memberServer ? myRank(s, memberServer) : undefined)))
-  const canDelete = (m: Message) =>
-    me !== null &&
-    (m.author.username === me.username ||
-      (view?.kind === 'channel' &&
-        can.manage &&
-        outranksKnown(rank, memberFor(m.author.username), detail?.roles)))
-
-  const canEdit = (m: Message) => canWrite && ownEditable(m, me?.username)
-
-  const forwardable = (m: Message) => canUnreact && canForward(m)
 
   const replyTo = (msg: Message) => {
     if (scope) startReply(scope, msg)
@@ -843,21 +772,10 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                     m={m}
                     first={places[i]?.first ?? true}
                     last={places[i]?.last ?? true}
-                    mentioned={mentionedIds.has(m.id)}
+                    {...flags.of(m)}
                     divider={i === dividerIndex}
                     flash={flash === m.id}
-                    canDelete={canDelete(m)}
-                    canTrim={canDelete(m)}
-                    canReact={canReact}
-                    canVote={canWrite}
-                    canUnreact={canUnreact}
-                    canReply={replies.quote}
-                    thread={replies.thread ? 'Reply in thread' : null}
-                    chip
-                    canEdit={canEdit(m)}
-                    canForward={forwardable(m)}
                     editing={editingId === m.id}
-                    server={memberServer}
                     on={rowHandlers}
                   />
                 </Selectable>
