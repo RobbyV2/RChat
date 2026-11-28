@@ -245,6 +245,31 @@ async fn scheduled_sends_through_the_send_path_at_its_time() {
 }
 
 #[tokio::test]
+async fn an_account_that_must_change_its_password_sends_nothing() {
+    let (state, path) = temp_state("scheduled_temp_password").await;
+    let db = &state.db;
+    let p = place(&state).await;
+    let t = ago(300);
+    let row = due(&state, json!({ "channel_id": p.general }), "later", t).await;
+    let before = num(db, "SELECT COUNT(*) FROM messages").await;
+    sqlx::query(
+        "INSERT INTO temp_passwords(username, issued_at, expires_at) VALUES('alice', $1, NULL)",
+    )
+    .bind(t)
+    .execute(db)
+    .await
+    .expect("temp password");
+    assert_eq!(run_due_at(&state, now()).await.expect("run"), 0);
+    let (status, error, sent) = status_of(db, row.id).await;
+    assert_eq!(
+        (status.as_str(), error.as_deref(), sent),
+        ("failed", Some(crate::api::CHANGE_FIRST), None)
+    );
+    assert_eq!(num(db, "SELECT COUNT(*) FROM messages").await, before);
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
 async fn scheduled_send_checks_the_gate_at_send_time() {
     let (state, path) = temp_state("scheduled_gate").await;
     let db = &state.db;

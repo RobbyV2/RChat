@@ -1160,7 +1160,14 @@ async fn run_one(state: &AppState, claimed: Claimed, t: i64) -> sqlx::Result<boo
             .await?;
         return Ok(false);
     };
+    let user = User {
+        temp: crate::db::temp_password(&state.db, &username).await?,
+        ..user
+    };
     let outcome = match (to, user.suspended_at) {
+        (Some(_), None) if crate::api::restricted(&state.db, &user).await => {
+            Err(crate::api::change_first())
+        }
         (Some(to), None) => {
             let req = SendReq {
                 mention_reply,
