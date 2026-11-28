@@ -17,6 +17,7 @@ export type ReasonKind =
   | 'confirm'
   | 'forced'
   | 'keys'
+  | 'perm'
 
 export interface Reason {
   kind: ReasonKind
