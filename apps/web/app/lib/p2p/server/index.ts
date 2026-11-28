@@ -1883,6 +1883,7 @@ export class Servers {
       reply?: string
       fwd?: Fwd
       att?: Attachment[]
+      emb?: RichEmbed[]
       thread?: string
     }
   ) {

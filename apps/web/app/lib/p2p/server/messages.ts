@@ -121,6 +121,7 @@ export async function send(
     reply?: string
     fwd?: Fwd
     att?: Attachment[]
+    emb?: RichEmbed[]
     thread?: string
   }
 ) {
@@ -141,6 +142,7 @@ export async function send(
   if (msg.att?.length) content.att = msg.att
   if (msg.fwd) content.fwd = msg.fwd
   else {
+    if (msg.emb?.length) content.emb = msg.emb
     const mentions = cx
       .mentionables(room)
       .filter(m => mentionsIn(msg.body, m.names))

@@ -1,3 +1,4 @@
+import type { RichEmbed } from '../types'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { isRecord } from '../bytes'
 import { looksLikeEmoji } from '../emoji'
@@ -84,6 +85,8 @@ export interface MsgContent {
   mentions?: string[]
   fwd?: Fwd
   att?: Attachment[]
+  // Rich embeds, read only when shown (`shownEmbeds`).
+  emb?: RichEmbed[]
   // P2P servers: the channel, a mention of everyone (shown as one only when the sender may), and
   // the thread's root (a top-level message of the same channel).
   ch?: string

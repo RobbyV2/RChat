@@ -418,6 +418,14 @@ describe('P2P DMs', () => {
     expect(theirs.flat().every(x => x === m1)).toBe(true)
   })
 
+  test('a message with an embed shows it on the other side', async () => {
+    const { a, b, room } = await pair()
+    const card = { title: 'Card', description: 'Shown to Bob' }
+    await a.dms.send(await a.dms.room(room), { body: 'see', emb: [card] })
+    await eventually(async () => (await view(b, a)).some(m => m.emb?.[0]?.title === 'Card'), 'card')
+    expect((await view(b, a)).find(m => m.body === 'see')?.emb).toEqual([card])
+  })
+
   test('messages, replies, edits, reactions, pins and deletes both ways', async () => {
     const { a, b, room } = await pair()
     const m1 = await a.dms.send(await a.dms.room(room), { body: 'hi bob' })

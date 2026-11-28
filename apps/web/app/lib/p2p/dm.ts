@@ -1195,7 +1195,14 @@ export class Dms {
 
   async send(
     w: DmRoom,
-    msg: { body: string; reply?: string; fwd?: Fwd; att?: Attachment[]; thread?: string }
+    msg: {
+      body: string
+      reply?: string
+      fwd?: Fwd
+      att?: Attachment[]
+      emb?: RichEmbed[]
+      thread?: string
+    }
   ) {
     const room = await this.live(w)
     const rec = await this.deps.store.room(room)
@@ -1210,7 +1217,10 @@ export class Dms {
     if (msg.reply) content.reply = msg.reply
     if (msg.att?.length) content.att = msg.att
     if (msg.fwd) content.fwd = msg.fwd
-    else if (rec && mentionsIn(msg.body, this.mentionNames(rec.peer))) content.mentions = [rec.peer]
+    else {
+      if (msg.emb?.length) content.emb = msg.emb
+      if (rec && mentionsIn(msg.body, this.mentionNames(rec.peer))) content.mentions = [rec.peer]
+    }
     return this.create(room, 'msg', fitForward(content))
   }
 
