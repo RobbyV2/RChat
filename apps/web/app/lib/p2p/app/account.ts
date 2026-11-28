@@ -1,7 +1,7 @@
 import { ask, sendTo } from '../../asks'
 import { pictureGate } from '../picture_gate'
 import type { P2pPic } from '../pictures'
-import { pictureFacts } from './pictures'
+import { pictureFactsReader } from './pictures'
 import { persistently } from '../../own_loads'
 import { BADGE_NOT_SPREAD } from './badge'
 import { client } from '../../client/client'
@@ -397,6 +397,8 @@ export function createAccountPart(
     l.start()
   }
 
+  const readPictureFacts = pictureFactsReader()
+
   // What the P2P runtime of `username` starts with, besides the store and its parts: the account's
   // limits for each part, and this page's hooks.
   const startDeps = (username: string, lim: Readonly<Local> = state.identityLimits(username)) => {
@@ -413,7 +415,7 @@ export function createAccountPart(
         ...rt.dms,
         attachments: () => !p2pHost.textOnly(),
         pictures: pictureGate(
-          () => pictureFacts(useP2p.getState()),
+          () => readPictureFacts(useP2p.getState()),
           (h, scope) => parts.attachments.p2pFiles.madePicture(h, scope)
         ),
         label: homeLabel,

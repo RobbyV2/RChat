@@ -6,7 +6,7 @@ import {
   PICTURE_TOO_DETAILED,
   identityPicOf,
   keptPic,
-  pictureFacts,
+  pictureFactsReader,
 } from '../p2p/app/pictures'
 import type { P2pState } from '../p2p/app/store'
 import { PIC_LIMITS, parsePic, picWire, type P2pPic, type PicWire } from '../p2p/pictures'
@@ -128,7 +128,8 @@ describe('what the picture gate reads from the state', () => {
   } as unknown as P2pState
 
   test('our contacts are the mutual ones, and each joined room has what it shows of us', () => {
-    const facts = pictureFacts(state)
+    const read = pictureFactsReader()
+    const facts = read(state)
     expect(facts.contacts).toEqual([{ ik: 'bob', pic: pic(3) }])
     expect(facts.rooms).toEqual([
       {
@@ -141,7 +142,8 @@ describe('what the picture gate reads from the state', () => {
       { id: 'r3', mine: pic(9), identity: false, about: null, members: [] },
       { id: 'r4', mine: null, identity: false, about: null, members: [] },
     ])
-    expect(pictureFacts(state)).toBe(facts)
+    expect(read(state)).toBe(facts)
+    expect(pictureFactsReader()(state)).not.toBe(facts)
   })
 
   test('the picture of an identity is our own or the one its contact sent', () => {

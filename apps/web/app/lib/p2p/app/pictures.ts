@@ -11,19 +11,24 @@ export const identityPicOf = (
 ): P2pPic | null =>
   ik === s.ik ? s.pic : (parsePic(s.contacts.find(c => c.ik === ik)?.pic) ?? null)
 
-let last: {
-  servers: P2pState['servers']
-  contacts: P2pState['contacts']
-  facts: PictureFacts
-} | null = null
+// A reader of what the gate of picture files reads from one identity's state. The same contacts
+// and rooms give the same facts, so a burst of requests reads them once.
+export const pictureFactsReader = () => {
+  let last: {
+    servers: P2pState['servers']
+    contacts: P2pState['contacts']
+    facts: PictureFacts
+  } | null = null
+  return (s: Pick<P2pState, 'ik' | 'pic' | 'contacts' | 'servers'>): PictureFacts => {
+    if (last?.servers === s.servers && last.contacts === s.contacts && last.facts.own === s.pic)
+      return last.facts
+    const facts = factsOf(s)
+    last = { servers: s.servers, contacts: s.contacts, facts }
+    return facts
+  }
+}
 
-// What the gate of picture files reads from the state. The same contacts and rooms give the
-// same facts, so a burst of requests reads them once.
-export const pictureFacts = (
-  s: Pick<P2pState, 'ik' | 'pic' | 'contacts' | 'servers'>
-): PictureFacts => {
-  if (last?.servers === s.servers && last.contacts === s.contacts && last.facts.own === s.pic)
-    return last.facts
+const factsOf = (s: Pick<P2pState, 'ik' | 'pic' | 'contacts' | 'servers'>): PictureFacts => {
   const facts: PictureFacts = {
     me: s.ik,
     own: s.pic,
@@ -47,7 +52,6 @@ export const pictureFacts = (
         }
       }),
   }
-  last = { servers: s.servers, contacts: s.contacts, facts }
   return facts
 }
 
