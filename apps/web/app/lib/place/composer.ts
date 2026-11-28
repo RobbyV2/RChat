@@ -1,12 +1,15 @@
 import type { AccountSession } from '../client/session'
 import { limitsOf } from '../instance_limits'
-import type { P2pApp } from '../p2p/app/runtime'
 import { chatKey, threadKey } from '../p2p/app/store'
 import { LIMITS as P2P_LIMITS } from '../p2p/content'
 import { bodyTooLong } from '../p2p/dm'
+import { personCalled, type PersonName } from '../names'
+import type { UserRef } from '../types'
 import { viewKey } from '../view'
 import { defineFeature } from './feature'
 import { built, type Live } from './live'
+import { P2pDm, P2pRoom } from './place'
+import { shownOf } from './shown'
 
 // Which of a place's lists a composer writes to: the conversation on screen or its open thread.
 export type ComposerList = 'main' | 'thread'
@@ -17,7 +20,19 @@ export interface ComposeState {
   text: string
   // The most characters a message holds.
   max: number
-  replying: boolean
+  // The message being answered; null while none is.
+  replying: Replying | null
+}
+
+// The message a draft answers, as its bar above the composer says it.
+export interface Replying {
+  // Its author: an account as `server` shows it (null: no server's look), or a name the place
+  // gives.
+  to:
+    { kind: 'account'; user: UserRef; server: string | null } | { kind: 'named'; name: PersonName }
+  // Whether the answer pings the author; null where there is nothing to choose (your own
+  // message, or a place that has no such switch).
+  mention: boolean | null
 }
 
 // The text being written to one list of a place.
@@ -32,6 +47,7 @@ export interface Compose {
   // Starts editing your last message; false when there is none to edit.
   editLast: () => boolean
   cancelReply: () => void
+  toggleReplyMention: () => void
 }
 
 export interface Composer {
@@ -71,10 +87,22 @@ const hosted = (account: AccountSession): Composer =>
             key,
             key === null ? '' : (s.drafts[key] ?? ''),
             limitsOf(s.instance).message_chars,
-            key !== null && s.replying[key] !== undefined,
+            key === null ? undefined : s.replying[key],
+            s.view?.kind === 'channel' ? s.view.server : null,
+            s.me?.username,
           ] as const
         },
-        ([key, text, max, replying]): ComposeState => ({ key, text, max, replying })
+        ([key, text, max, reply, server, me]): ComposeState => ({
+          key,
+          text,
+          max,
+          replying: reply
+            ? {
+                to: { kind: 'account', user: reply.message.author, server },
+                mention: reply.message.author.username === me ? null : reply.mention,
+              }
+            : null,
+        })
       )
     const get = state(false)
     return {
@@ -94,12 +122,21 @@ const hosted = (account: AccountSession): Composer =>
         const { key } = get()
         if (key !== null) store.getState().cancelReply(key)
       },
+      toggleReplyMention: () => {
+        const { key } = get()
+        if (key !== null) store.getState().toggleReplyMention(key)
+      },
     }
   })
 
-const peer = (app: P2pApp, room: string): Composer =>
+const peer = (place: P2pRoom | P2pDm): Composer =>
   perList(list => {
+    const { app, room } = place
     const { useP2p, p2pDm } = app
+    // The rows of the list the composer writes to, where the answered message is looked up.
+    const shown = shownOf(
+      place.kind === 'p2pRoom' ? P2pRoom.open(app, room, list) : P2pDm.open(app, room, list)
+    )
     const keyOf = (initial: boolean) => {
       const s = initial ? useP2p.getInitialState() : useP2p.getState()
       if (list === 'thread') return s.thread?.room === room ? threadKey(s.thread) : null
@@ -113,10 +150,27 @@ const peer = (app: P2pApp, room: string): Composer =>
           return [
             key,
             key === null ? '' : (s.drafts[key] ?? ''),
-            key !== null && s.replying?.room === key,
+            key !== null && s.replying?.room === key ? s.replying.id : null,
+            initial && shown.initial ? shown.initial() : shown.get(),
           ] as const
         },
-        ([key, text, replying]): ComposeState => ({ key, text, max: P2P_LIMITS.body, replying })
+        ([key, text, id, rows]): ComposeState => {
+          const answered = id === null ? undefined : rows.message(id)
+          return {
+            key,
+            text,
+            max: P2P_LIMITS.body,
+            replying: answered
+              ? {
+                  to: {
+                    kind: 'named',
+                    name: personCalled(rows.name(answered.sender), answered.sender),
+                  },
+                  mention: null,
+                }
+              : null,
+          }
+        }
       )
     const get = state(false)
     // When each key last said it is typing; the place wants to hear it again only so often.
@@ -145,15 +199,16 @@ const peer = (app: P2pApp, room: string): Composer =>
         return key !== null && p2pDm.editLast(key)
       },
       cancelReply: () => p2pDm.cancelReply(),
+      toggleReplyMention: () => {},
     }
   })
 
 // The composers of a place: one for the conversation on screen, one for its open thread.
 export const composer = defineFeature<Composer>('composer', {
   hostedServer: place => hosted(place.account),
-  p2pRoom: place => peer(place.app, place.room),
+  p2pRoom: peer,
   hostedDm: place => hosted(place.account),
-  p2pDm: place => peer(place.app, place.room),
+  p2pDm: peer,
 })
 
 const own = new WeakMap<AccountSession, Composer>()

@@ -1,6 +1,4 @@
 'use client'
-import { Name } from '../name'
-import { personCalled } from '../../lib/names'
 import { PeerCodeButton } from './peer_code_button'
 import { useActorSuffix, usePeerActor } from '../view_actor'
 import { identityScopeKey } from '../../lib/p2p/app/host'
@@ -56,6 +54,7 @@ import { clipAllowed, clipSourceNames } from '../../lib/forward_viewing'
 import { fwdSource, p2pDestination, p2pForward } from '../../lib/forward'
 import { ForwardBar, useForwardClip, useVouchedFiles } from '../forwards'
 import { PinsWindow } from '../pins'
+import { ReplyBar } from '../replies'
 import { ListedRow } from '../listed_row'
 import { ThreadsWindow } from '../threads'
 import { TypingIndicator } from '../typing_indicator'
@@ -233,16 +232,6 @@ export function useP2pFlash(
   return flash
 }
 
-// A row shown in the open conversation or thread.
-const shownRow = (
-  s: { chat: P2pChat | null; thread: { head: P2pMessage | null; messages: P2pMessage[] } | null },
-  id: string | null
-) =>
-  id === null
-    ? undefined
-    : (s.chat?.messages.find(m => m.id === id) ??
-      (s.thread?.head?.id === id ? s.thread.head : s.thread?.messages.find(m => m.id === id)))
-
 function P2pComposerBody({
   draftKey: key,
   list = 'main',
@@ -251,7 +240,6 @@ function P2pComposerBody({
   scope,
   title,
   placeholder,
-  nameOf,
   disabled,
 }: {
   channelTextOnly?: boolean
@@ -263,7 +251,6 @@ function P2pComposerBody({
   scope: string
   title: string
   placeholder: string
-  nameOf: (ik: string) => string
   disabled: ReactNode
 }) {
   const identity = useP2pApp()!
@@ -272,9 +259,7 @@ function P2pComposerBody({
   const account = useAccount()
   const { store } = account
   const compose = useCompose(list)
-  const { text, max } = useLive(compose.state)
-  const replying = useP2p(s => (s.replying?.room === key ? s.replying.id : null))
-  const replyTo = useP2p(s => shownRow(s, replying))
+  const { text, max, replying } = useLive(compose.state)
   const forwardClip = useForwardClip()
   const suffix = useActorSuffix(usePeerActor())
   const streamer = useStore(s => s.streamer)
@@ -346,14 +331,8 @@ function P2pComposerBody({
     }
   }
 
-  const bar = replyTo ? (
-    <ComposerBar onClose={p2pDm.cancelReply} closeLabel="Cancel reply">
-      Replying to{' '}
-      <Name
-        of={personCalled(nameOf(replyTo.sender), replyTo.sender)}
-        look="font-semibold text-on-surface"
-      />
-    </ComposerBar>
+  const bar = replying ? (
+    <ReplyBar list={list} />
   ) : channelTextOnly && (forwardClip?.has_media || forwardClip?.has_poll) ? (
     <ComposerBar onClose={() => store.getState().clearForward()} closeLabel="Discard forward">
       This channel only accepts text.
@@ -712,7 +691,6 @@ function IdentityChatBody(props: ChatBodyProps) {
   const canDrop = canAct && !timedOut && !textOnly && movingAt === null
 
   const {
-    name,
     messages,
     rows,
     shared,
@@ -899,7 +877,6 @@ function IdentityChatBody(props: ChatBodyProps) {
               scope={scope}
               title={props.title}
               placeholder={props.placeholder}
-              nameOf={name}
               disabled={disabled}
             />
           </div>

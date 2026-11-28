@@ -159,7 +159,6 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
   const held = f.can ?? CAN_ALL
   const replies = t.messages ?? EMPTY
   const {
-    name,
     rows,
     num,
     idOf,
@@ -283,7 +282,6 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
                       scope={scope}
                       title="the thread"
                       placeholder="Message thread"
-                      nameOf={name}
                       disabled={disabled}
                     />
                   </>

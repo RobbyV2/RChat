@@ -12,13 +12,16 @@ import { snippetParts, type SnippetPart } from '../lib/replies'
 import { plainStamps } from '../lib/timestamps'
 import type { ReplyRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
-import { useShownOrNull, useViewServer } from './shown_user'
+import { useShownOrNull } from './shown_user'
 import { KeyAvatar } from './p2p/p2p_badge'
 import { IconButton } from './controls'
 import { Masked, useOwn } from './ui'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
 import { Row, Surface, Inset } from './layout'
+import type { ComposerList, Replying } from '../lib/place/composer'
+import { useLive } from '../lib/place/react'
+import { useCompose } from '../lib/place/use_composer'
 
 // A small marker for forwarded messages where only a line of them is shown (search, quotes).
 export function ForwardedTag() {
@@ -208,27 +211,35 @@ export function ComposerBar({
   )
 }
 
-export function ReplyBar({ draftKey, onClose }: { draftKey: string; onClose: () => void }) {
-  const reply = useStore(s => s.replying[draftKey])
-  const toggle = useStore(s => s.toggleReplyMention)
-  const me = useStore(s => s.me?.username)
-  const server = useViewServer()
-  const author = useShownOrNull(reply?.message.author, server)
-  if (!reply || !author) return null
-  const mention = reply.mention
+function Answered({ to }: { to: Replying['to'] }) {
+  const shown = useShownOrNull(
+    to.kind === 'account' ? to.user : null,
+    to.kind === 'account' ? to.server : null
+  )
+  const name = to.kind === 'named' ? to.name : shown ? personName(shown) : null
+  return name && <Name of={name} withUsername look="font-semibold text-on-surface" />
+}
+
+// Above a composer while its draft answers a message, whichever place it is in: who is answered,
+// whether the answer pings them, and the way out.
+export function ReplyBar({ list }: { list: ComposerList }) {
+  const compose = useCompose(list)
+  const { replying } = useLive(compose.state)
+  if (!replying) return null
+  const { mention } = replying
   return (
     <ComposerBar
-      onClose={onClose}
+      onClose={compose.cancelReply}
       closeLabel="Cancel reply"
       actions={
-        author.username !== me && (
+        mention !== null && (
           <Inset
             type="button"
             aria-pressed={mention}
             title={
               mention ? 'The author will be pinged. Click to turn off' : 'Click to ping the author'
             }
-            onClick={() => toggle(draftKey)}
+            onClick={compose.toggleReplyMention}
             as="button"
             pad="xs"
             inset="chip"
@@ -242,7 +253,7 @@ export function ReplyBar({ draftKey, onClose }: { draftKey: string; onClose: () 
         )
       }
     >
-      Replying to <Name of={personName(author)} withUsername look="font-semibold text-on-surface" />
+      Replying to <Answered to={replying.to} />
     </ComposerBar>
   )
 }

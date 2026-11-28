@@ -8,7 +8,8 @@ import { featureAt, isUnsupported } from '../place/feature'
 import { PlaceProvider } from '../place/react'
 import type { RChatState } from '../store_types'
 import type { View } from '../view'
-import { msg } from './fixtures'
+import { msg, user } from './fixtures'
+import { ReplyBar } from '../../components/replies'
 import { placeContract, type ContractWorld } from './helpers/place_contract'
 
 // Ann's side with the conversation on screen and a thread open beside it, a draft in each, and
@@ -25,7 +26,8 @@ const seat = (world: ContractWorld, calls: unknown[][], list: ComposerList = 'ma
       view,
       panel: { kind: 'thread', root: msg(5) },
       drafts: { [key]: 'see you at noon', t5: 'in the thread' },
-      replying: { t5: { message: msg(6) } },
+      me: { ...user('ann'), servers: [] },
+      replying: { t5: { message: msg(6, { author: user('bob') }), mention: true } },
       setDraft: (...a: unknown[]) => void calls.push(['draft', ...a]),
       noteTyping: (...a: unknown[]) => void calls.push(['typing', ...a]),
       editLast: (k: string) => {
@@ -33,6 +35,7 @@ const seat = (world: ContractWorld, calls: unknown[][], list: ComposerList = 'ma
         return true
       },
       cancelReply: (k: string) => void calls.push(['cancel', k]),
+      toggleReplyMention: (k: string) => void calls.push(['ping', k]),
     } as unknown as Partial<RChatState>
     world.ann.account.store.setState(state)
     Object.assign(world.ann.account.store.getInitialState(), world.ann.account.store.getState())
@@ -42,7 +45,17 @@ const seat = (world: ContractWorld, calls: unknown[][], list: ComposerList = 'ma
     const thread = `${main}#e5`
     const state = {
       chat: { room: world.room, ch },
-      thread: { room: world.room, ch, root: 'e5' },
+      thread: {
+        room: world.room,
+        ch,
+        root: 'e5',
+        head: null,
+        messages: [
+          { id: 'e6', sender: 'B', ts: 6_000, body: 'six', att: [], reactions: [], edited: null },
+        ],
+        more: false,
+        loading: false,
+      },
       drafts: { [main]: 'see you at noon', [thread]: 'in the thread' },
       replying: { room: thread, id: 'e6' },
     }
@@ -80,10 +93,34 @@ placeContract(composer, (kind, world) => {
     const main = seat(world(), [])
     const state = main.state.get()
     expect(main.state.get()).toBe(state)
-    expect([state.key, state.text, state.replying]).toEqual([mainKey(), 'see you at noon', false])
+    expect([state.key, state.text, state.replying]).toEqual([mainKey(), 'see you at noon', null])
     expect(state.max).toBeGreaterThan(0)
     const thread = seat(world(), [], 'thread').state.get()
-    expect([thread.key, thread.text, thread.replying]).toEqual([threadKey(), 'in the thread', true])
+    expect([thread.key, thread.text]).toEqual([threadKey(), 'in the thread'])
+  })
+
+  test('a draft that answers a message says whom, and whether they are pinged', () => {
+    const calls: unknown[][] = []
+    const thread = seat(world(), calls, 'thread')
+    const { replying } = thread.state.get()
+    expect(thread.state.get().replying).toBe(replying)
+    expect(replying?.to.kind).toBe(hosted ? 'account' : 'named')
+    expect(replying?.mention).toBe(hosted ? true : null)
+    thread.toggleReplyMention()
+    expect(calls).toEqual(hosted ? [['ping', threadKey()]] : [])
+    const html = renderToStaticMarkup(
+      <AccountProvider session={world().ann.account}>
+        <P2pProvider identity={world().ann.app}>
+          <PlaceProvider place={world().ann.place}>
+            <ReplyBar list="thread" />
+            <ReplyBar list="main" />
+          </PlaceProvider>
+        </P2pProvider>
+      </AccountProvider>
+    )
+    expect(html.match(/Replying to/g)?.length).toBe(1)
+    expect(html).toContain('aria-label="Cancel reply"')
+    expect(html.includes('aria-pressed="true"')).toBe(hosted)
   })
 
   test('the draft, the last edit and the reply change on the side of the place', () => {

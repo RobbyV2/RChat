@@ -446,10 +446,9 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const count = charCount(text)
   const tooLong = count > max
 
-  const closeBar = replying && draftKey ? () => cancelReply(draftKey) : null
   const bar =
-    closeBar && draftKey ? (
-      <ReplyBar draftKey={draftKey} onClose={closeBar} />
+    replying && draftKey ? (
+      <ReplyBar list={thread ? 'thread' : 'main'} />
     ) : forwarding && draftKey ? (
       <ForwardBar draftKey={draftKey} />
     ) : null
