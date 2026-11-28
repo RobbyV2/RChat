@@ -180,7 +180,7 @@
           "usage": "server keys import [OPTIONS] --in <INPUT>"
         },
         {
-          "about": "Store encrypted messages, their files, and the encrypted copies plain again: of every place, or of one server or DM. Keys can be removed once nothing encrypted is left",
+          "about": "Store encrypted messages, their files, and the encrypted copies plain again: of every place, or of one server or DM. Stored secrets keep needing the keys",
           "args": [
             {
               "help": "Only this server",
@@ -204,6 +204,30 @@
           "commands": [],
           "name": "unseal",
           "usage": "server keys unseal [OPTIONS]"
+        },
+        {
+          "about": "Move every data key under the key in use now: the key service, else the first key of ENCRYPTION_KEYS. Run it once every copy has that key; copies that announce themselves (Redis) do it by themselves",
+          "args": [],
+          "commands": [],
+          "name": "rewrap",
+          "usage": "server keys rewrap"
+        },
+        {
+          "about": "Rotate data keys: the next generation becomes active and what the old one sealed is sealed again; the old one is destroyed a day after. Every purpose, or one",
+          "args": [
+            {
+              "help": "content, media, secrets, search or bus",
+              "id": "purpose",
+              "long": "purpose",
+              "positional": false,
+              "required": false,
+              "short": null,
+              "value": "PURPOSE"
+            }
+          ],
+          "commands": [],
+          "name": "rotate",
+          "usage": "server keys rotate [OPTIONS]"
         }
       ],
       "name": "keys",
@@ -219,6 +243,102 @@
           "commands": [],
           "name": "compact",
           "usage": "server db compact"
+        },
+        {
+          "about": "Write an encrypted backup of the SQLite database to PATH, for age recipients (--recipient or BACKUP_RECIPIENTS). The root keys are left out unless --with-keys. Postgres: use pg_dump",
+          "args": [
+            {
+              "help": null,
+              "id": "path",
+              "long": null,
+              "positional": true,
+              "required": true,
+              "short": null,
+              "value": "PATH"
+            },
+            {
+              "help": "An age X25519 recipient (age1...); give it more than once for several",
+              "id": "recipients",
+              "long": "recipient",
+              "positional": false,
+              "required": false,
+              "short": null,
+              "value": "RECIPIENTS"
+            },
+            {
+              "help": "Put the root keys inside the encrypted backup too",
+              "id": "with_keys",
+              "long": "with-keys",
+              "positional": false,
+              "required": false,
+              "short": null,
+              "value": null
+            }
+          ],
+          "commands": [],
+          "name": "backup",
+          "usage": "server db backup [OPTIONS] <PATH>"
+        },
+        {
+          "about": "Check a backup: that it is one, and with --identity that it opens and every file matches its manifest",
+          "args": [
+            {
+              "help": null,
+              "id": "path",
+              "long": null,
+              "positional": true,
+              "required": true,
+              "short": null,
+              "value": "PATH"
+            },
+            {
+              "help": "An age identity file (AGE-SECRET-KEY-1...)",
+              "id": "identity",
+              "long": "identity",
+              "positional": false,
+              "required": false,
+              "short": null,
+              "value": "IDENTITY"
+            }
+          ],
+          "commands": [],
+          "name": "verify",
+          "usage": "server db verify [OPTIONS] <PATH>"
+        },
+        {
+          "about": "Restore a backup into the folder --to: the database, and the root keys when it holds them. It checks that every key the data needs is at hand",
+          "args": [
+            {
+              "help": null,
+              "id": "path",
+              "long": null,
+              "positional": true,
+              "required": true,
+              "short": null,
+              "value": "PATH"
+            },
+            {
+              "help": "An age identity file (AGE-SECRET-KEY-1...)",
+              "id": "identity",
+              "long": "identity",
+              "positional": false,
+              "required": true,
+              "short": null,
+              "value": "IDENTITY"
+            },
+            {
+              "help": "A folder to write into; files there are never written over",
+              "id": "to",
+              "long": "to",
+              "positional": false,
+              "required": true,
+              "short": null,
+              "value": "TO"
+            }
+          ],
+          "commands": [],
+          "name": "restore",
+          "usage": "server db restore --identity <IDENTITY> --to <TO> <PATH>"
         }
       ],
       "name": "db",

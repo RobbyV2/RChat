@@ -35600,6 +35600,11 @@
             "format": "int64",
             "description": "Unix seconds, once it ended."
           },
+          "from": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The message id before the first one of the place it covers, while it runs (0 once it\nended): how far it got is `(done - from) / (upto - from)`."
+          },
           "id": {
             "type": "integer",
             "format": "int64",
