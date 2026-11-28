@@ -170,6 +170,7 @@ const server = (over: Partial<ServerView> = {}): ServerView =>
     chans: {},
     voice: {},
     upgraded: false,
+    changeProfile: true,
     ...over,
   }) as ServerView
 
