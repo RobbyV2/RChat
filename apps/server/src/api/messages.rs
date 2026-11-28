@@ -2958,6 +2958,10 @@ pub(crate) async fn edit_message(
     };
     if content != old || alt != old_alt {
         let relink = embeds::extract_urls(&content) != embeds::extract_urls(&old);
+        let no_embeds = match message.channel() {
+            Some(channel) => !channel.member_rights(&state.db).await?.holds(held::EMBED),
+            None => false,
+        };
         let (mut tx, text_only, writer) = begin_message_write(
             &state.db,
             message.scope().channel_id,
@@ -2965,11 +2969,7 @@ pub(crate) async fn edit_message(
             false,
         )
         .await?;
-        let text_only = text_only
-            || match message.channel() {
-                Some(channel) => !channel.member_rights(&state.db).await?.holds(held::EMBED),
-                None => false,
-            };
+        let text_only = text_only || no_embeds;
         let (author, parts) = match crate::api::seal::stored_parts(&state.db, &mut tx, id).await? {
             Some((_, author, Opened { parts, unreadable })) if !unreadable => (author, parts),
             Some(_) => return Err(bad("Cannot edit this message")),

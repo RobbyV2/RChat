@@ -384,3 +384,23 @@ async fn slow_mode_leaves_out_only_holders_of_bypass() {
         drop(temp);
     }
 }
+
+#[tokio::test]
+async fn a_site_admin_edits_their_own_message_in_a_channel() {
+    for (state, _db) in each_db("bit_gates_admin_edit").await {
+        let c = Club::new(state.clone()).await;
+        let sent = c
+            .send("low", json!({ "content": "first" }))
+            .await
+            .expect("send");
+        let Json(edited) = edit_message(
+            State(state.clone()),
+            Path(sent.id),
+            Authed(mem_user("low", true)),
+            Json(serde_json::from_value(json!({ "content": "second" })).expect("body")),
+        )
+        .await
+        .expect("the edit of a member who is a site admin");
+        assert_eq!(edited.content, "second");
+    }
+}
