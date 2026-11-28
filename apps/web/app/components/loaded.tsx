@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import {
   claimLoadReader,
   fromPages,
@@ -131,6 +131,16 @@ export function useRefreshOn(
       document.removeEventListener('visibilitychange', shown)
     }
   }, [source, front, events])
+}
+
+// Asks `source` again when `mark` changes (a revision of what it shows), keeping what is on
+// screen meanwhile.
+export function useRefreshWhen(source: { refresh(): void }, mark: unknown) {
+  const seen = useRef({ source, mark })
+  useEffect(() => {
+    if (seen.current.source === source && !Object.is(seen.current.mark, mark)) source.refresh()
+    seen.current = { source, mark }
+  }, [source, mark])
 }
 
 // A list fetched a page at a time.

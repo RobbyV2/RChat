@@ -1590,7 +1590,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     acct.media.clear()
     acct.textPreviews.clear()
     acct.apiDoc.reset()
-    acct.adminConfig.setState({ config: null })
+    acct.adminConfig.setState({ config: null, trouble: null })
     beginNavigation()
     endViewing(get().guest)
     endSession()

@@ -17,10 +17,11 @@ import {
 import { databaseRows } from '../../lib/database_rows'
 import { adminRow } from '../../lib/admin_rows'
 import { useStore } from '../../lib/store'
-import type { ConfigControl } from '../../lib/types'
+import type { AdminConfig, ConfigControl } from '../../lib/types'
 import { PageGroup, PageRow } from '../settings_page'
 import { Chips } from '../ui'
-import { useApplyConfig, useConfigStore } from './config_state'
+import { useApplyConfig, useConfigLoad } from './config_state'
+import { Loaded } from '../loaded'
 import { Button, Pill } from '../controls'
 import { Grid, Row, Stack, Surface } from '../layout'
 
@@ -93,10 +94,20 @@ function Control({ control }: { control: ConfigControl }) {
 // Every control with its name in the server config, its value there and whether it is pinned,
 // and the limits, which only the config sets.
 export function ConfigSection() {
-  const config = useConfigStore(s => s.config)
+  return (
+    <Loaded
+      load={useConfigLoad()}
+      what="the server config"
+      empty="This instance does not show its server config."
+    >
+      {config => <ConfigBody config={config} />}
+    </Loaded>
+  )
+}
+
+function ConfigBody({ config }: { config: AdminConfig }) {
   const apply = useApplyConfig()
   const [filter, setFilter] = useState<ConfigFilter>('all')
-  if (!config) return <p className="text-sm text-on-surface-variant">Loading</p>
   const all = differing(config)
   const shown = filterControls(config.controls, filter)
   return (

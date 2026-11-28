@@ -28,7 +28,7 @@ import { SettingSwitch } from '../settings_fields'
 import { Button, IconButton } from '../controls'
 import { Grid, Row, Stack, Surface } from '../layout'
 import { Chips, FieldError, fieldCls } from '../ui'
-import { useConfigStore, useControl, usePinned } from './config_state'
+import { ConfigTrouble, useConfigStore, useControl, usePinned } from './config_state'
 import { SourceNote } from './source'
 
 type ChoiceRow = Extract<AdminRow, { kind: 'choice' }>
@@ -434,6 +434,7 @@ function RowControl({ row }: { row: AdminRow }) {
 export function FeaturesSection() {
   return (
     <div>
+      <ConfigTrouble />
       {ADMIN_GROUPS.map(group => {
         const rows = groupRows(group)
         if (rows.length === 0) return null

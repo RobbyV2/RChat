@@ -4,7 +4,8 @@ import { PasswordReveal } from '../../components/admin/accounts'
 import { useConfigStore } from '../../components/admin/config_state'
 import AdminDialogs from '../../components/admin/dialogs'
 import { OverviewSection } from '../../components/admin/overview'
-import { UserPage, UsersSection } from '../../components/admin/users'
+import { AccountBody, AccountRows, UsersSection } from '../../components/admin/users'
+import { pagesOf } from './helpers/loads'
 import { ctxFor, paletteCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { menuItems } from '../actions/menu'
@@ -50,8 +51,11 @@ test('the users section offers to create an account and to filter by temporary p
   expect(html).toContain('Create account')
   expect(html).toContain('aria-label="Show accounts"')
   for (const label of ['All', 'Temporary password', 'Expired']) expect(html).toContain(`>${label}<`)
-  expect(html.match(/data-long-press/g)).toHaveLength(2)
-  expect(html).toContain('Dana R.')
+  const rows = renderToStaticMarkup(
+    <AccountRows pages={pagesOf([user('root'), user('dana', { display_name: 'Dana R.' })])} />
+  )
+  expect(rows.match(/data-long-press/g)).toHaveLength(2)
+  expect(rows).toContain('Dana R.')
 })
 
 test('the overview counts the temporary passwords nobody changed yet', () => {
@@ -150,10 +154,10 @@ test('the confirms say what happens to the account, and only the site admin gets
 
 test('an account page offers the account tools, except a new password for your own', () => {
   signIn()
-  const dana = renderToStaticMarkup(<UserPage username="dana" />)
+  const dana = renderToStaticMarkup(<AccountBody user={user('dana')} mine={false} facts={null} />)
   for (const label of ['New temporary password', 'Sign out everywhere', 'Add to server'])
     expect(dana).toContain(label)
-  const own = renderToStaticMarkup(<UserPage username="root" />)
+  const own = renderToStaticMarkup(<AccountBody user={user('root')} mine facts={null} />)
   expect(own).not.toContain('New temporary password')
   expect(own).not.toContain('Sign out everywhere')
   expect(own).toContain('Add to server')

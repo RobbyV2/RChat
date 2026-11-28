@@ -1,7 +1,8 @@
 'use client'
 import { Covered } from './covered'
 import { ask, asked } from '../lib/asks'
-import { Refreshed, useAccountRequest } from './loaded'
+import { Loaded, Refreshed, useAccountRequest, useAccountSource } from './loaded'
+import type { Load } from '../lib/load'
 
 import { asAccount, pictured, type Person } from '../lib/people'
 import { Name, NameArea, NameInput } from './name'
@@ -53,21 +54,25 @@ const when = (until: number) =>
 
 // Where the editor reads and writes a server profile: a hosted server through its routes, or a
 // P2P server through the profile this device signs into it.
-export interface ProfileEditorSource {
+// What a place has stored for you there: its mode, whether members may set a name (the place's
+// mode and, on a hosted server, the site's display names switch), your profile and its lock.
+export interface StoredProfile {
+  mode: ProfilesMode
+  names: boolean
+  saved: ProfileDraft
+  lock: LockState
+}
+
+export interface ProfileEditorSource<P> {
   // Who you are there without a server profile.
   account: UserRef
   accountBio: string | null
   accountBanner: string | null
   // What the profile falls back to, in the words of the place ("account", "P2P profile").
   origin: string
-  mode: ProfilesMode
-  // Whether members may set a name there: the place's mode and, on a hosted server, the site's
-  // display names switch.
-  names: boolean
-  // The stored profile; null while it loads.
-  saved: ProfileDraft | null
-  failed?: boolean
-  lock: LockState
+  // What the place holds, as it loads, and how to read it.
+  stored: Load<P>
+  read: (stored: P) => StoredProfile
   // Draws someone's picture there.
   avatar: (user: Person, size: number) => ReactNode
   // Whether a name shows with the username after it.
@@ -76,10 +81,10 @@ export interface ProfileEditorSource {
   clear: () => Promise<string | null>
 }
 
-const sameStored = (a: ProfileDraft | null, b: ProfileDraft | null) =>
-  a === null || b === null ? a === b : sameDraft(a, b)
+// The editor's source once what the place holds is here.
+type Shown = Omit<ProfileEditorSource<unknown>, 'stored' | 'read'> & StoredProfile
 
-function Preview({ source, draft }: { source: ProfileEditorSource; draft: ProfileDraft }) {
+function Preview({ source, draft }: { source: Shown; draft: ProfileDraft }) {
   const user = previewUser(source.account, draft, source.mode, source.names)
   const bio = shownBio(user, { bio: source.accountBio, server_bio: draft.bio.trim() || null })
   const banner = shownBanner(user, {
@@ -145,19 +150,39 @@ function Preview({ source, draft }: { source: ProfileEditorSource; draft: Profil
 
 // The editor of your own profile in one server. Each part is optional; a part left alone shows
 // what your account (or P2P profile) has.
-export function ProfileEditor({
+export function ProfileEditor<P>({
   source,
   onClose,
 }: {
-  source: ProfileEditorSource
+  source: ProfileEditorSource<P>
   onClose: () => void
 }) {
+  const { stored, read, ...rest } = source
+  return (
+    <Dialog title="Server profile" onClose={onClose} full>
+      <Loaded load={stored} what="your server profile">
+        {value => {
+          const shown = { ...rest, ...read(value) }
+          return shown.mode === 'off' ? (
+            <p data-profile-off className="text-sm text-on-surface-variant">
+              Server profiles are off in this server.
+            </p>
+          ) : (
+            <Editor source={shown} onClose={onClose} />
+          )
+        }}
+      </Loaded>
+    </Dialog>
+  )
+}
+
+function Editor({ source, onClose }: { source: Shown; onClose: () => void }) {
   const { saved, account, origin } = source
-  const [draft, setDraft] = useState<ProfileDraft | null>(saved)
+  const [draft, setDraft] = useState(saved)
   const [seen, setSeen] = useState(saved)
-  if (!sameStored(seen, saved)) {
-    // The stored profile arrived or changed under the dialog (a reset, another device).
-    const untouched = draft === null || seen === null || sameDraft(draft, seen)
+  if (!sameDraft(seen, saved)) {
+    // The stored profile changed under the dialog (a reset, another device).
+    const untouched = sameDraft(draft, seen)
     setSeen(saved)
     if (untouched) setDraft(saved)
   }
@@ -167,26 +192,6 @@ export function ProfileEditor({
   const bioId = useId()
   const locked = source.lock.locked
   const line = lockLine(source.lock, when)
-  if (source.failed)
-    return (
-      <Dialog title="Server profile" onClose={onClose} full>
-        <p className="text-sm text-on-surface-variant">Couldn&apos;t load your server profile.</p>
-      </Dialog>
-    )
-  if (source.mode === 'off')
-    return (
-      <Dialog title="Server profile" onClose={onClose} full>
-        <p data-profile-off className="text-sm text-on-surface-variant">
-          Server profiles are off in this server.
-        </p>
-      </Dialog>
-    )
-  if (!saved || !draft)
-    return (
-      <Dialog title="Server profile" onClose={onClose} full>
-        <p className="text-sm text-on-surface-variant">Loading…</p>
-      </Dialog>
-    )
   // Under a mode without names the stored name is left as it is: it is neither shown nor sent.
   const base = draftFor(saved, source.names)
   const shown = draftFor(draft, source.names)
@@ -215,182 +220,180 @@ export function ProfileEditor({
     void finish(() => source.save(base, shown))
   }
   return (
-    <Dialog title="Server profile" onClose={onClose} full>
-      <Stack
-        as="form"
-        data-server-profile
-        onSubmit={e => {
-          e.preventDefault()
-          submit()
-        }}
-        gap="lg"
-      >
-        {line && (
-          <Surface
-            as="p"
-            data-profile-locked
-            role="status"
-            pad="md"
-            inset="bar"
-            tone="error"
-            radius="lg"
-          >
-            <Row as="span" gap="sm" align="start">
-              <Lock size={16} className="shrink-0" aria-hidden />
-              <span className="text-sm">{line}</span>
-            </Row>
-          </Surface>
-        )}
-        <Preview source={source} draft={shown} />
-        <Stack as="fieldset" disabled={locked || busy} gap="lg">
-          {source.names ? (
-            <Stack gap="sm">
-              <label htmlFor={nameId} className={labelCls}>
-                Server name
-              </label>
-              <Row gap="sm" align="stretch">
-                <NameInput
-                  id={nameId}
-                  value={draft.name}
-                  maxLength={PROFILE_FIELDS.name.max * 2}
-                  onChange={e => change({ name: e.target.value })}
-                  placeholder={account.display_name}
-                  autoComplete="off"
-                  className={`${boxCls} min-w-0 flex-1 border-outline focus:border-primary`}
-                />
-                {draft.name !== '' && (
-                  <Button onClick={() => change({ name: '' })}>Use {origin} name</Button>
-                )}
-              </Row>
-              <p className="text-xs text-on-surface-variant">
-                Only this server shows it. Leave it empty to use your {origin} name.
-              </p>
-            </Stack>
-          ) : (
-            <p data-profile-no-names className="text-sm text-on-surface-variant">
-              {source.mode === 'no_names'
-                ? "This server doesn't use server names."
-                : 'Names are off on this site.'}
-            </p>
-          )}
-          <Stack gap="sm">
-            {draft.avatar === null ? (
-              <Row gap="md" wrap>
-                <span className={labelCls}>Avatar</span>
-                {source.avatar(asAccount(account, 'editor'), 32)}
-                <span className="text-xs text-on-surface-variant">As on your {origin}</span>
-                <Button
-                  onClick={() =>
-                    change({
-                      avatar: {
-                        kind: account.avatar_kind,
-                        color: account.avatar_color ?? (kind === 'color' ? DEFAULT_COLOR : null),
-                      },
-                    })
-                  }
-                >
-                  Change for this server
-                </Button>
-              </Row>
-            ) : (
-              <>
-                <AvatarPicker
-                  username={account.username}
-                  kind={kind}
-                  color={color}
-                  onKind={next =>
-                    change({
-                      avatar: { kind: next, color: next === 'color' ? color : background },
-                    })
-                  }
-                  onColor={next => change({ avatar: { kind: 'color', color: next } })}
-                  background={background}
-                  onBackground={next => change({ avatar: { kind: 'identicon', color: next } })}
-                  avatar={(k, c) =>
-                    source.avatar(pictured(account.username, { kind: k, color: c }, 'editor'), 48)
-                  }
-                  disabled={locked || busy}
-                />
-                <Button onClick={() => change({ avatar: null })} place="self-start">
-                  Use {origin} avatar
-                </Button>
-              </>
-            )}
-          </Stack>
-          <BannerPicker
-            username={account.username}
-            displayName={picture.display_name}
-            kind={picture.avatar_kind}
-            avatarColor={picture.avatar_color}
-            banner={draft.banner}
-            onBanner={banner => change({ banner })}
-            fallback={source.accountBanner}
-            avatar={source.avatar(picture, 56)}
-            defaultNote={`As on your ${origin}`}
-            resetLabel={`Use ${origin} banner`}
-          />
-          <Stack gap="sm">
-            <label htmlFor={bioId} className={labelCls}>
-              Description
-            </label>
-            <NameArea
-              id={bioId}
-              rows={3}
-              value={draft.bio}
-              onChange={e => change({ bio: e.target.value })}
-              placeholder={source.accountBio ?? 'Tell this server a little about yourself'}
-              aria-invalid={left < 0}
-              aria-describedby={`${bioId}-count`}
-              className={`${boxCls} resize-none ${
-                left < 0 ? 'border-error' : 'border-outline focus:border-primary'
-              }`}
-            />
-            <Row gap="md" justify="between">
-              {draft.bio !== '' ? (
-                <Button onClick={() => change({ bio: '' })}>Use {origin} description</Button>
-              ) : (
-                <span />
-              )}
-              <span
-                id={`${bioId}-count`}
-                className={`text-xs tabular-nums ${left < 0 ? 'text-error' : 'text-on-surface-variant'}`}
-              >
-                <span className="sr-only" aria-live="polite">
-                  {charsLeft(left, 20)}
-                </span>
-                <span aria-hidden>{left}</span>
-              </span>
-            </Row>
-          </Stack>
-        </Stack>
-        <FieldError message={error ?? (changed ? invalid : null)} />
-        <Row gap="sm" justify="between" wrap>
-          <Button
-            variant="danger"
-            size="md"
-            disabled={locked || busy || emptyDraft(saved)}
-            onClick={() => void finish(source.clear)}
-          >
-            Reset all
-          </Button>
-          <Row as="span" gap="sm">
-            <Button size="md" onClick={onClose}>
-              {locked ? 'Close' : 'Cancel'}
-            </Button>
-            {!locked && (
-              <Button
-                type="submit"
-                variant="filled"
-                size="md"
-                disabled={busy || !changed || invalid !== null}
-              >
-                Save
-              </Button>
-            )}
+    <Stack
+      as="form"
+      data-server-profile
+      onSubmit={e => {
+        e.preventDefault()
+        submit()
+      }}
+      gap="lg"
+    >
+      {line && (
+        <Surface
+          as="p"
+          data-profile-locked
+          role="status"
+          pad="md"
+          inset="bar"
+          tone="error"
+          radius="lg"
+        >
+          <Row as="span" gap="sm" align="start">
+            <Lock size={16} className="shrink-0" aria-hidden />
+            <span className="text-sm">{line}</span>
           </Row>
-        </Row>
+        </Surface>
+      )}
+      <Preview source={source} draft={shown} />
+      <Stack as="fieldset" disabled={locked || busy} gap="lg">
+        {source.names ? (
+          <Stack gap="sm">
+            <label htmlFor={nameId} className={labelCls}>
+              Server name
+            </label>
+            <Row gap="sm" align="stretch">
+              <NameInput
+                id={nameId}
+                value={draft.name}
+                maxLength={PROFILE_FIELDS.name.max * 2}
+                onChange={e => change({ name: e.target.value })}
+                placeholder={account.display_name}
+                autoComplete="off"
+                className={`${boxCls} min-w-0 flex-1 border-outline focus:border-primary`}
+              />
+              {draft.name !== '' && (
+                <Button onClick={() => change({ name: '' })}>Use {origin} name</Button>
+              )}
+            </Row>
+            <p className="text-xs text-on-surface-variant">
+              Only this server shows it. Leave it empty to use your {origin} name.
+            </p>
+          </Stack>
+        ) : (
+          <p data-profile-no-names className="text-sm text-on-surface-variant">
+            {source.mode === 'no_names'
+              ? "This server doesn't use server names."
+              : 'Names are off on this site.'}
+          </p>
+        )}
+        <Stack gap="sm">
+          {draft.avatar === null ? (
+            <Row gap="md" wrap>
+              <span className={labelCls}>Avatar</span>
+              {source.avatar(asAccount(account, 'editor'), 32)}
+              <span className="text-xs text-on-surface-variant">As on your {origin}</span>
+              <Button
+                onClick={() =>
+                  change({
+                    avatar: {
+                      kind: account.avatar_kind,
+                      color: account.avatar_color ?? (kind === 'color' ? DEFAULT_COLOR : null),
+                    },
+                  })
+                }
+              >
+                Change for this server
+              </Button>
+            </Row>
+          ) : (
+            <>
+              <AvatarPicker
+                username={account.username}
+                kind={kind}
+                color={color}
+                onKind={next =>
+                  change({
+                    avatar: { kind: next, color: next === 'color' ? color : background },
+                  })
+                }
+                onColor={next => change({ avatar: { kind: 'color', color: next } })}
+                background={background}
+                onBackground={next => change({ avatar: { kind: 'identicon', color: next } })}
+                avatar={(k, c) =>
+                  source.avatar(pictured(account.username, { kind: k, color: c }, 'editor'), 48)
+                }
+                disabled={locked || busy}
+              />
+              <Button onClick={() => change({ avatar: null })} place="self-start">
+                Use {origin} avatar
+              </Button>
+            </>
+          )}
+        </Stack>
+        <BannerPicker
+          username={account.username}
+          displayName={picture.display_name}
+          kind={picture.avatar_kind}
+          avatarColor={picture.avatar_color}
+          banner={draft.banner}
+          onBanner={banner => change({ banner })}
+          fallback={source.accountBanner}
+          avatar={source.avatar(picture, 56)}
+          defaultNote={`As on your ${origin}`}
+          resetLabel={`Use ${origin} banner`}
+        />
+        <Stack gap="sm">
+          <label htmlFor={bioId} className={labelCls}>
+            Description
+          </label>
+          <NameArea
+            id={bioId}
+            rows={3}
+            value={draft.bio}
+            onChange={e => change({ bio: e.target.value })}
+            placeholder={source.accountBio ?? 'Tell this server a little about yourself'}
+            aria-invalid={left < 0}
+            aria-describedby={`${bioId}-count`}
+            className={`${boxCls} resize-none ${
+              left < 0 ? 'border-error' : 'border-outline focus:border-primary'
+            }`}
+          />
+          <Row gap="md" justify="between">
+            {draft.bio !== '' ? (
+              <Button onClick={() => change({ bio: '' })}>Use {origin} description</Button>
+            ) : (
+              <span />
+            )}
+            <span
+              id={`${bioId}-count`}
+              className={`text-xs tabular-nums ${left < 0 ? 'text-error' : 'text-on-surface-variant'}`}
+            >
+              <span className="sr-only" aria-live="polite">
+                {charsLeft(left, 20)}
+              </span>
+              <span aria-hidden>{left}</span>
+            </span>
+          </Row>
+        </Stack>
       </Stack>
-    </Dialog>
+      <FieldError message={error ?? (changed ? invalid : null)} />
+      <Row gap="sm" justify="between" wrap>
+        <Button
+          variant="danger"
+          size="md"
+          disabled={locked || busy || emptyDraft(saved)}
+          onClick={() => void finish(source.clear)}
+        >
+          Reset all
+        </Button>
+        <Row as="span" gap="sm">
+          <Button size="md" onClick={onClose}>
+            {locked ? 'Close' : 'Cancel'}
+          </Button>
+          {!locked && (
+            <Button
+              type="submit"
+              variant="filled"
+              size="md"
+              disabled={busy || !changed || invalid !== null}
+            >
+              Save
+            </Button>
+          )}
+        </Row>
+      </Row>
+    </Stack>
   )
 }
 
@@ -403,27 +406,21 @@ function HostedProfileDialog({ server }: { server: string }) {
   const me = useStore(s => s.me)
   const stored = useStore(s => s.servers[server]?.my_profile)
   const displayNames = useStore(s => s.settings.display_names !== false)
-  const load = useStore(s => s.loadMyProfile)
   const save = useStore(s => s.saveMyProfile)
   const clear = useStore(s => s.clearMyProfile)
-  // Read again when the dialog opens: a lock or a reset may be newer than what the page holds,
-  // and a server that isn't open here holds nothing.
-  const [loaded, setLoaded] = useState<ServerProfile | null>(null)
-  const [asked, setAsked] = useState(false)
+  // Read when the dialog opens: a lock or a reset may be newer than what the page holds, and a
+  // server that isn't open here holds nothing. What the page learns meanwhile replaces it.
+  const [load, source] = useAccountSource(() => ask.serverProfile(server), [server])
   useEffect(() => {
-    let live = true
-    void load(server).then(p => {
-      if (!live) return
-      setLoaded(p)
-      setAsked(true)
-    })
-    return () => {
-      live = false
-    }
-  }, [load, server])
-  const mine = stored ?? loaded
-  const now = useNow(typeof mine?.locked_until === 'number', 30_000)
+    if (stored) source.change(() => stored)
+  }, [source, stored])
+  const now = useNow(true, 30_000)
   if (!me) return null
+  const then = async (run: Promise<string | null>) => {
+    const err = await run
+    source.refresh()
+    return err
+  }
   return (
     <ProfileEditor
       onClose={close}
@@ -432,19 +429,17 @@ function HostedProfileDialog({ server }: { server: string }) {
         accountBio: me.bio,
         accountBanner: me.banner_color,
         origin: 'account',
-        mode: mine?.mode ?? 'all',
-        names: mine?.mode === 'all' && displayNames,
-        saved: mine ? draftOfProfile(mine) : null,
-        failed: asked && !mine,
-        lock: lockState(mine?.locked_until, Math.floor(now / 1000)),
+        stored: load,
+        read: (mine: ServerProfile) => ({
+          mode: mine.mode,
+          names: mine.mode === 'all' && displayNames,
+          saved: draftOfProfile(mine),
+          lock: lockState(mine.locked_until, Math.floor(now / 1000)),
+        }),
         avatar: accountAvatar,
         handles: true,
-        save: async (from, to) => {
-          const err = await save(server, patchOf(from, to))
-          if (err) setLoaded(await load(server))
-          return err
-        },
-        clear: () => clear(server),
+        save: (from, to) => then(save(server, patchOf(from, to))),
+        clear: () => then(clear(server)),
       }}
     />
   )

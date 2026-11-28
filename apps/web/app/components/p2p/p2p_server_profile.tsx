@@ -1,5 +1,10 @@
 'use client'
 
+import { useMemo } from 'react'
+import { fromStore } from '../../lib/load'
+import { time } from '../../lib/platform/time'
+import type { P2pState } from '../../lib/p2p/app/store'
+import { useLoad } from '../loaded'
 import { p2pName } from '../../lib/names'
 import type { Person } from '../../lib/people'
 import { useP2p, useP2pApp, withP2pIdentity } from '../../lib/client/p2p_react'
@@ -19,9 +24,18 @@ function ServerProfileDialogBody({ room }: { room: string }) {
   const v = useP2p(s => s.servers[room])
   const me = useP2p(s => s.me)
   const name = useP2p(s => s.name)
+  const stored = useLoad(
+    useMemo(
+      () =>
+        fromStore<P2pState, ServerView>(time(), identity.useP2p, (s, make) => {
+          const held = s.servers[room]
+          return held ? make.ready(held) : make.empty()
+        }),
+      [identity, room]
+    )
+  )
   if (!v || !me || v.me !== 'join') return null
   const names = v.profiles === 'all'
-  const saved = draftOfExtras(v.profile)
   return (
     <ProfileEditor
       onClose={p2p.closeDialog}
@@ -30,15 +44,21 @@ function ServerProfileDialogBody({ room }: { room: string }) {
         accountBio: null,
         accountBanner: null,
         origin: 'P2P profile',
-        mode: v.profiles,
-        names,
-        saved,
-        lock: v.profileLock,
+        stored,
+        read: (held: ServerView) => ({
+          mode: held.profiles,
+          names: held.profiles === 'all',
+          saved: draftOfExtras(held.profile),
+          lock: held.profileLock,
+        }),
         avatar: keyAvatar,
         handles: false,
         // A name set before the server stopped showing names stays stored for when it does.
         save: (_from, to) =>
-          p2pServer.setRoomProfile(room, extrasOf(names ? to : { ...to, name: saved.name })),
+          p2pServer.setRoomProfile(
+            room,
+            extrasOf(names ? to : { ...to, name: draftOfExtras(v.profile).name })
+          ),
         clear: () => p2pServer.setRoomProfile(room, {}),
       }}
     />

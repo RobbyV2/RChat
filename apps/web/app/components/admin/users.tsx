@@ -4,7 +4,7 @@ import { Name, NameInput } from '../name'
 import { handleName, personCalled, serverCalled, serverName } from '../../lib/names'
 import { asAccount } from '../../lib/people'
 import { useAccount } from '../../lib/client/react'
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { ACCOUNT_FILTERS, signInLine } from '../../lib/admin_accounts'
 import { orMissing } from '../../lib/api_errors'
 import { useStore } from '../../lib/store'
@@ -15,9 +15,17 @@ import { UserAvatar } from '../user_avatar'
 import { PageGroup } from '../settings_page'
 import { Button, ListRow } from '../controls'
 import { Grid, Row, Stack, Surface } from '../layout'
-import { Chips, Sentinel } from '../ui'
+import { Chips } from '../ui'
 import { useAccountChanges } from './account_state'
-import { Loaded, More, useAccountPages, useAccountSource, useRefreshOn } from '../loaded'
+import type { Pages } from '../../lib/load'
+import {
+  Loaded,
+  More,
+  useAccountPages,
+  useAccountSource,
+  useRefreshOn,
+  useRefreshWhen,
+} from '../loaded'
 import { time } from '../../lib/platform/time'
 
 function UserServers({ username }: { username: string }) {
@@ -79,7 +87,17 @@ function AccountFacts({ account }: { account: AdminAccount }) {
   )
 }
 
-function AccountBody({ user, mine, facts }: { user: UserRef; mine: boolean; facts: ReactNode }) {
+// An account's name and tools. `facts` is how it signs in; `mine` leaves out what an account
+// cannot do to itself.
+export function AccountBody({
+  user,
+  mine,
+  facts,
+}: {
+  user: UserRef
+  mine: boolean
+  facts: ReactNode
+}) {
   const openDialog = useStore(s => s.openDialog)
   return (
     <>
@@ -151,43 +169,43 @@ function AccountBody({ user, mine, facts }: { user: UserRef; mine: boolean; fact
 export function UserPage({ username }: { username: string }) {
   const openAdmin = useStore(s => s.openAdmin)
   const mine = useStore(s => s.me?.username === username)
-  const listed = useStore(s => s.adminUsers.list.find(u => u.username === username))
   const rev = useAccountChanges(s => s.rev)
   const [load, source] = useAccountSource(
     () => asked(ask.adminAccount(username), found => found as AdminAccount | null, orMissing(null)),
-    [username, rev]
+    [username]
   )
+  useRefreshWhen(source, rev)
   useRefreshOn(source, { front: true })
   return (
     <Stack gap="lg">
       <Button onClick={() => openAdmin('users')} place="hidden md:inline-flex self-start">
         Back to users
       </Button>
-      {listed ? (
-        <AccountBody
-          user={listed}
-          mine={mine}
-          facts={
-            <Loaded load={load} skeleton={null} what="how this account signs in">
-              {account => account && <AccountFacts account={account} />}
-            </Loaded>
-          }
-        />
-      ) : (
-        <Loaded load={load} what="this account">
-          {account =>
-            account ? (
-              <AccountBody
-                user={account.user}
-                mine={mine}
-                facts={<AccountFacts account={account} />}
-              />
-            ) : (
-              <p className="text-sm text-on-surface-variant">No such account.</p>
-            )
-          }
-        </Loaded>
-      )}
+      <Loaded load={load} what="this account">
+        {account =>
+          account ? (
+            <AccountBody
+              user={account.user}
+              mine={mine}
+              facts={<AccountFacts account={account} />}
+            />
+          ) : (
+            <p className="text-sm text-on-surface-variant">No such account.</p>
+          )
+        }
+      </Loaded>
+    </Stack>
+  )
+}
+
+// A page of accounts, each opening its page, and the way to the next one.
+export function AccountRows({ pages }: { pages: Pages<UserRef> }) {
+  return (
+    <Stack gap="2xs">
+      {pages.items.map(u => (
+        <AccountRow key={u.username} user={u} />
+      ))}
+      <More pages={pages} auto />
     </Stack>
   )
 }
@@ -227,62 +245,39 @@ function AccountRow({ user }: { user: UserRef }) {
 
 // The accounts whose password is temporary or expired, a page at a time. The whole list of
 // accounts is the store's.
-function FilteredAccounts({
-  q,
-  filter,
-  rev,
-}: {
-  q: string
-  filter: Exclude<AccountFilter, 'all'>
-  rev: number
-}) {
-  const [load] = useAccountPages(
+const NO_ACCOUNTS: Record<AccountFilter, string> = {
+  all: 'No account matches that name.',
+  temporary: 'No account has a temporary password.',
+  expired: 'No account has an expired temporary password.',
+}
+
+// The accounts of the instance under one filter, a page at a time. A change to an account asks
+// again and keeps the rows on screen meanwhile.
+function Accounts({ q, filter }: { q: string; filter: AccountFilter }) {
+  const rev = useAccountChanges(s => s.rev)
+  const [load, source] = useAccountPages(
     cursor => ask.adminUsers(cursor, q, filter),
     (u: UserRef) => u.username,
-    [q, filter, rev],
+    [q, filter],
     { delayMs: 300 }
   )
+  useRefreshWhen(source, rev)
   return (
-    <Loaded
-      load={load}
-      what="these accounts"
-      empty={
-        filter === 'expired'
-          ? 'No account has an expired temporary password.'
-          : 'No account has a temporary password.'
-      }
-    >
-      {pages => (
-        <Stack gap="2xs">
-          {pages.items.map(u => (
-            <AccountRow key={u.username} user={u} />
-          ))}
-          <More pages={pages} auto />
-        </Stack>
-      )}
+    <Loaded load={load} what="the accounts" empty={NO_ACCOUNTS[filter]}>
+      {pages => <AccountRows pages={pages} />}
     </Loaded>
   )
 }
 
 export function UsersSection() {
-  const acct = useAccount()
-
   const overview = useStore(s => s.adminOverview)
-  const adminUsers = useStore(s => s.adminUsers)
-  const loadAdminUsers = useStore(s => s.loadAdminUsers)
   const loadAdminOverview = useStore(s => s.loadAdminOverview)
   const openDialog = useStore(s => s.openDialog)
-  const rev = useAccountChanges(s => s.rev)
   const [q, setQ] = useState('')
   const [filter, setFilter] = useState<AccountFilter>('all')
   useEffect(() => {
     void loadAdminOverview()
   }, [loadAdminOverview])
-  useEffect(() => {
-    const t = acct.time.after(300, () => void loadAdminUsers(q, true))
-    return () => t?.()
-  }, [q, loadAdminUsers])
-  const more = useCallback(() => void loadAdminUsers(q), [q, loadAdminUsers])
   return (
     <Stack gap="md">
       <Row gap="sm" wrap>
@@ -310,16 +305,7 @@ export function UsersSection() {
         />
       </Row>
       <Chips label="Show accounts" value={filter} options={ACCOUNT_FILTERS} onChange={setFilter} />
-      {filter === 'all' ? (
-        <Stack gap="2xs">
-          {adminUsers.list.map(u => (
-            <AccountRow key={u.username} user={u} />
-          ))}
-          {adminUsers.hasMore && <Sentinel key={adminUsers.list.length} onVisible={more} />}
-        </Stack>
-      ) : (
-        <FilteredAccounts q={q} filter={filter} rev={rev} />
-      )}
+      <Accounts q={q} filter={filter} />
     </Stack>
   )
 }

@@ -1,4 +1,5 @@
 import { handleName, p2pName } from '../names'
+import { loadOf } from './helpers/loads'
 import { afterEach, expect, test } from 'bun:test'
 import type { ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -18,6 +19,7 @@ import {
   ProfilesModeField,
   accountAvatar,
   type ProfileEditorSource,
+  type StoredProfile,
   type ProfileResetSource,
 } from '../../components/server_profile_dialog'
 import { ShownAvatar, ShownName } from '../../components/shown_user'
@@ -171,23 +173,39 @@ test('a P2P member avatar keeps the key picture under the avatar set for the ser
   expect(render(<MemberAvatar members={undefined} ik="k2" size={32} />)).toBe(plain)
 })
 
-const source = (over: Partial<ProfileEditorSource> = {}): ProfileEditorSource => ({
-  account: user('alice', { display_name: 'Alice' }),
-  accountBio: 'From my account',
-  accountBanner: null,
-  origin: 'account',
-  mode: 'all',
-  names: true,
-  saved: { ...EMPTY_DRAFT, name: 'Captain', bio: 'Sails' },
-  lock: { locked: false },
-  avatar: accountAvatar,
-  handles: true,
-  save: async () => null,
-  clear: async () => null,
-  ...over,
-})
+type Flat = Omit<ProfileEditorSource<StoredProfile>, 'stored' | 'read'> &
+  StoredProfile & { state?: 'loading' | 'failed' }
 
-const editor = (over: Partial<ProfileEditorSource> = {}) =>
+const source = (over: Partial<Flat> = {}): ProfileEditorSource<StoredProfile> => {
+  const { mode, names, saved, lock, state, ...rest }: Flat = {
+    account: user('alice', { display_name: 'Alice' }),
+    accountBio: 'From my account',
+    accountBanner: null,
+    origin: 'account',
+    mode: 'all',
+    names: true,
+    saved: { ...EMPTY_DRAFT, name: 'Captain', bio: 'Sails' },
+    lock: { locked: false },
+    avatar: accountAvatar,
+    handles: true,
+    save: async () => null,
+    clear: async () => null,
+    ...over,
+  }
+  return {
+    ...rest,
+    stored: loadOf<StoredProfile>(make =>
+      state === 'loading'
+        ? make.loading()
+        : state === 'failed'
+          ? make.failed(new Error('down'))
+          : make.ready({ mode, names, saved, lock })
+    ),
+    read: held => held,
+  }
+}
+
+const editor = (over: Partial<Flat> = {}) =>
   render(<ProfileEditor source={source(over)} onClose={() => {}} />)
 
 test('the editor shows the stored profile, a preview and what falls back to the account', () => {
@@ -231,8 +249,8 @@ test('the editor follows the mode of the place and waits for the stored profile'
   expect(siteOff).toContain('Names are off on this site.')
   expect(siteOff).not.toContain('use server names')
   expect(editor({ mode: 'off' })).toContain('Server profiles are off in this server.')
-  expect(editor({ saved: null })).toContain('Loading')
-  expect(editor({ saved: null, failed: true })).toContain('load your server profile')
+  expect(editor({ state: 'loading' })).toContain('Loading your server profile')
+  expect(editor({ state: 'failed' })).toContain('Could not load your server profile.')
 })
 
 const resetSource = (over: Partial<ProfileResetSource> = {}): ProfileResetSource => ({

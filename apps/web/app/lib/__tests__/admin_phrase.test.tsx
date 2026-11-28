@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import AdminDialogs from '../../components/admin/dialogs'
-import { UserPage } from '../../components/admin/users'
+import { AccountBody } from '../../components/admin/users'
 import { ctxFor, paletteCtx } from '../actions/ctx'
 import { menuItems } from '../actions/menu'
 import { paletteCommands } from '../actions/palette'
@@ -70,12 +70,14 @@ const render = (part: Partial<typeof initial>) => {
 
 test('an account page offers to remove a backup phrase, except on their own', () => {
   signIn({})
-  const bob = renderToStaticMarkup(<UserPage username="bob" />)
+  const bob = renderToStaticMarkup(
+    <AccountBody user={user('bob', { display_name: 'Bobby' })} mine={false} facts={null} />
+  )
   expect(bob.match(/Remove backup phrase/g)?.length).toBe(1)
   expect(bob).toContain('Ban site-wide')
   expect(bob).toContain('Delete account')
   expect(bob).toContain('Bobby')
-  const own = renderToStaticMarkup(<UserPage username="root" />)
+  const own = renderToStaticMarkup(<AccountBody user={user('root')} mine facts={null} />)
   expect(own).not.toContain('Remove backup phrase')
   expect(own).not.toContain('Ban site-wide')
 })

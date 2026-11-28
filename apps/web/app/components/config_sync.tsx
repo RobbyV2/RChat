@@ -2,7 +2,7 @@
 import { ask, asked, sendTo } from '../lib/asks'
 import { instanceName, accountLabel } from '../lib/names'
 import { Name } from './name'
-import { Loaded, useAccountRequest } from './loaded'
+import { Loaded, useAccountRequest, useAccountSource } from './loaded'
 import { RowsSkeleton } from './skeletons'
 import { orMissing } from '../lib/api_errors'
 import { routeOwnerFor } from '../lib/client/account_paths'
@@ -10,15 +10,7 @@ import { accountPath } from '../lib/view'
 import { P2pProvider, useP2pApp, useP2p } from '../lib/client/p2p_react'
 import type { P2pApp } from '../lib/p2p/app/runtime'
 
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { useShallow } from 'zustand/react/shallow'
 import { QrCode as QrIcon, Share2, Trash2 } from 'lucide-react'
@@ -526,27 +518,14 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
   const account = useAccount()
   const { shareOrigin } = account
   const { label } = useInstanceLabel()
-  const [links, setLinks] = useState<ConfigShare[] | null>(null)
+  const [links, source] = useAccountSource(() => ask.configShares(), [], {
+    empty: (list: ConfigShare[]) => list.length === 0,
+  })
   const [expiry, setExpiry] = useState(EXPIRY_CHOICES[2].seconds)
   const [shown, setShown] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [now, setNow] = useState(() => time().now())
   const streamer = useStore(s => s.streamer)
-
-  const load = useCallback(async () => {
-    try {
-      const list = await sendTo(account, ask.configShares())
-      setLinks(list)
-      setNow(time().now())
-    } catch (e) {
-      setError(errorText(e))
-    }
-  }, [account])
-
-  useEffect(() => {
-    void load()
-  }, [load])
 
   const create = async () => {
     setBusy(true)
@@ -559,7 +538,7 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
       }
       const made = await sendTo(account, ask.createConfigShare(blob, expiry))
       setShown(made.id)
-      await load()
+      source.refresh()
     } catch (e) {
       setError(errorText(e))
     } finally {
@@ -575,7 +554,7 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
     } catch (e) {
       setError(errorText(e))
     }
-    await load()
+    source.refresh()
   }
 
   const shownUrl = shown ? configUrl(shown, shareOrigin) : null
@@ -646,42 +625,44 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
           </Row>
         </Surface>
       )}
-      {links !== null && links.length > 0 && (
-        <Stack gap="2xs">
-          <p className="text-sm text-on-surface-variant">Active links</p>
-          <Stack as="ul" gap="2xs">
-            {links.map((l, i) => (
-              <Surface as="li" key={l.id} pad="md" tone="low" radius="lg">
-                <Row gap="sm">
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-mono text-xs text-on-surface">
-                      {streamer ? `Link ${i + 1}` : l.id}
+      <Loaded load={links} skeleton={null} empty={null} what="your links">
+        {list => (
+          <Stack gap="2xs">
+            <p className="text-sm text-on-surface-variant">Active links</p>
+            <Stack as="ul" gap="2xs">
+              {list.map((l, i) => (
+                <Surface as="li" key={l.id} pad="md" tone="low" radius="lg">
+                  <Row gap="sm">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-mono text-xs text-on-surface">
+                        {streamer ? `Link ${i + 1}` : l.id}
+                      </span>
+                      <span className="block text-xs text-on-surface-variant">
+                        Active {untilText(l.expires_at * 1000, time().now())}
+                      </span>
                     </span>
-                    <span className="block text-xs text-on-surface-variant">
-                      Active {untilText(l.expires_at * 1000, now)}
-                    </span>
-                  </span>
-                  <IconButton
-                    icon={QrIcon}
-                    label={shown === l.id ? 'Hide QR code' : 'Show QR code'}
-                    size="sm"
-                    pressed={shown === l.id}
-                    onClick={() => setShown(shown === l.id ? null : l.id)}
-                  />
-                  <CopyButton text={configUrl(l.id, shareOrigin)} label="Copy link" />
-                  <IconButton
-                    icon={Trash2}
-                    label="Revoke link"
-                    size="sm"
-                    tone="danger"
-                    onClick={() => void revoke(l.id)}
-                  />
-                </Row>
-              </Surface>
-            ))}
+                    <IconButton
+                      icon={QrIcon}
+                      label={shown === l.id ? 'Hide QR code' : 'Show QR code'}
+                      size="sm"
+                      pressed={shown === l.id}
+                      onClick={() => setShown(shown === l.id ? null : l.id)}
+                    />
+                    <CopyButton text={configUrl(l.id, shareOrigin)} label="Copy link" />
+                    <IconButton
+                      icon={Trash2}
+                      label="Revoke link"
+                      size="sm"
+                      tone="danger"
+                      onClick={() => void revoke(l.id)}
+                    />
+                  </Row>
+                </Surface>
+              ))}
+            </Stack>
           </Stack>
-        </Stack>
-      )}
+        )}
+      </Loaded>
     </Stack>
   )
 }

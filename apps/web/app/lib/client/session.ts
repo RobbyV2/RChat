@@ -37,7 +37,12 @@ export class AccountSession {
   readonly counts = createAccountCounts(this)
   readonly identities = new P2pIdentities(this)
   readonly channelEdit = createChannelEdit()
-  readonly adminConfig = createStore<{ config: AdminConfig | null }>(() => ({ config: null }))
+  // The server's config view for the admin page, and why it is not here when it could not be
+  // loaded: the instance has none (`absent`), or the request was refused (`error`).
+  readonly adminConfig = createStore<{
+    config: AdminConfig | null
+    trouble?: { absent: true } | { error: unknown } | null
+  }>(() => ({ config: null }))
   readonly renderKey = client.nextSessionKey()
   readonly textPreviews = createTextPreviews()
   readonly tabLock = new AccountTabLock(() => client.shown() === this)
