@@ -8,7 +8,7 @@ import { UserX } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { blockedLabel, blockedRuns, type BlockedRun } from '../lib/blocks'
 import { dayLines } from '../lib/date_dividers'
-import type { Message, UserRef } from '../lib/types'
+import type { Message } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { DateDivider } from './date_divider'
 import { Button, LinkButton } from './controls'
@@ -176,29 +176,6 @@ export function BlockedList({
       {items}
       {tail?.(last >= 0 ? messages[last].created_at : dayAbove)}
     </>
-  )
-}
-
-// Replaces the composer in a DM with someone you blocked.
-export function BlockedComposer({ user }: { user: UserRef }) {
-  const unblockUser = useStore(s => s.unblockUser)
-  return (
-    <Surface
-      row
-      pad="lg"
-      inset="bar"
-      gap="md"
-      tone="plain"
-      radius="none"
-      border="top"
-      safe
-      text="sm"
-      ink="muted"
-    >
-      <UserX size={16} aria-hidden className="shrink-0" />
-      <span className="min-w-0 flex-1">You blocked this user.</span>
-      <Button onClick={() => void unblockUser(user.username, user.display_name)}>Unblock</Button>
-    </Surface>
   )
 }
 

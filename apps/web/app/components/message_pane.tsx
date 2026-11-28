@@ -67,7 +67,7 @@ import { ThreadsButton, ThreadsWindow } from './threads'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { hostedDmSeal } from '../lib/sealing'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
-import { BlockedComposer, BlockedList } from './blocking'
+import { BlockedList } from './blocking'
 import { Row, Stack, Surface, Inset } from './layout'
 import { BulkJobBar, SelectButton, Selectable, SelectionBar, useSelectionKeys } from './selection'
 import { ChatWorkNotices } from './own_load'
@@ -672,13 +672,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           </MessageList>
           <div className="relative shrink-0">
             <TypingLine bg="bg-surface" />
-            {selecting && !wide ? (
-              <SelectionBar scope={scope} sheet />
-            ) : dm && otherBlocked ? (
-              <BlockedComposer user={dm.other} />
-            ) : (
-              <Composer />
-            )}
+            {selecting && !wide ? <SelectionBar scope={scope} sheet /> : <Composer />}
           </div>
         </>
       )}

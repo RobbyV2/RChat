@@ -530,6 +530,20 @@ placeContract(composer, (kind, world) => {
       const main = gated(() => {})
       const { ann, server } = world()
       if (kind === 'hostedDm') {
+        const bob = user('bob')
+        const asked: unknown[][] = []
+        ann.account.store.setState({
+          dms: [{ id: world().dmId, other: bob }],
+          blocked: { bob: true },
+          unblockUser: async (...a: unknown[]) => void asked.push(a),
+        } as never)
+        expect(main.gate.get().first).toMatchObject({ kind: 'blocked', unblock: true })
+        expect(drawn(main)).toContain('data-blocked')
+        expect(drawn(main)).toContain('Unblock')
+        main.unblock()
+        expect(asked).toEqual([[bob.username, bob.display_name]])
+        ann.account.store.setState({ blocked: {} } as never)
+        expect(main.gate.get().first).toBeNull()
         ann.account.store.setState({ guest: true } as never)
         expect(main.gate.get().first?.kind).toBe('guest')
         expect(drawn(main)).toContain('data-guest-notice')

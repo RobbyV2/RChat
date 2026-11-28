@@ -1,3 +1,4 @@
+import type { RChatState } from '../store_types'
 import type { AccountSession } from '../client/session'
 import { limitsOf } from '../instance_limits'
 import { chatKey, chatScope, threadKey, threadScope } from '../p2p/app/store'
@@ -219,7 +220,9 @@ export type Gate =
   | { kind: 'out'; line: string; waiting: boolean; next: string | null; forget: boolean }
   | { kind: 'full'; line: string }
   | { kind: 'noContact' }
-  | { kind: 'blocked'; name: P2pName }
+  // You blocked the other side of the conversation; `unblock`: whether the block can be lifted
+  // from here.
+  | { kind: 'blocked'; name: P2pName | PersonName; unblock: boolean }
   | { kind: 'notMutual'; name: P2pName }
 
 export interface GateState {
@@ -240,6 +243,8 @@ export interface Compose {
   // Opens the copy that took a room's place, and removes a room you are out of from this device.
   openNext: () => void
   forget: () => void
+  // Lifts the block that shuts the conversation, where it can be lifted from here.
+  unblock: () => void
   // Joins the server whose `join` gate stands, with its password when it asks for one.
   join: (password?: string) => Promise<void>
   // Sends `content` as the guest whose `guestWrite` gate stands.
@@ -410,6 +415,18 @@ const hosted = (account: AccountSession): Composer =>
       )
     }
     const get = state(false)
+    // The DM the list is in: the one on screen, or the one its thread hangs in.
+    const dmOf = (s: RChatState) => {
+      const id =
+        list === 'thread'
+          ? s.panel?.kind === 'thread'
+            ? s.panel.root.dm_id
+            : null
+          : s.view?.kind === 'dm'
+            ? s.view.dmId
+            : null
+      return id === null ? undefined : s.dms.find(d => d.id === id)
+    }
     const gate = (initial: boolean) =>
       built(
         () => {
@@ -425,7 +442,9 @@ const hosted = (account: AccountSession): Composer =>
                 : null
           const mine = server === null ? undefined : s.me?.servers.find(x => x.name === server)
           const can = server === null ? null : channelCan(s, server, channel)
+          const other = dmOf(s)?.other
           return [
+            other !== undefined && s.blocked[other.username] ? other : null,
             server,
             server === null ? null : (s.servers[server]?.display_name ?? server),
             s.guest,
@@ -442,6 +461,7 @@ const hosted = (account: AccountSession): Composer =>
           ] as const
         },
         ([
+          shut,
           server,
           name,
           guest,
@@ -453,6 +473,15 @@ const hosted = (account: AccountSession): Composer =>
           threads,
           unstarted,
         ]): GateState => {
+          if (shut !== null)
+            return {
+              ...OPEN,
+              first: {
+                kind: 'blocked',
+                name: personCalled(shut.display_name, shut.username),
+                unblock: true,
+              },
+            }
           if (server !== null && name !== null && !guest && !member)
             return { ...OPEN, first: { kind: 'join', server, name } }
           if (guest) {
@@ -652,6 +681,11 @@ const hosted = (account: AccountSession): Composer =>
       },
       openNext: () => {},
       forget: () => {},
+      unblock: () => {
+        const s = store.getState()
+        const other = dmOf(s)?.other
+        if (other) void s.unblockUser(other.username, other.display_name)
+      },
       join: async password => {
         const { first } = getGate()
         if (first?.kind === 'join') await store.getState().joinServer(first.server, password)
@@ -919,7 +953,7 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
               : !contact
                 ? { kind: 'noContact' }
                 : contact.state === 'blocked'
-                  ? { kind: 'blocked', name: p2pName(displayName(contact)) }
+                  ? { kind: 'blocked', name: p2pName(displayName(contact)), unblock: false }
                   : contact.state !== 'mutual'
                     ? { kind: 'notMutual', name: p2pName(displayName(contact)) }
                     : null
@@ -1144,6 +1178,7 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
       },
       state: { get, initial: state(true), subscribe: changed => useP2p.subscribe(changed) },
       gate: { get: getGate, initial: gate(true), subscribe: changed => useP2p.subscribe(changed) },
+      unblock: () => {},
       openNext: () => {
         const { first } = getGate()
         if (first?.kind === 'out' && first.next !== null) app.p2pServer.open(first.next)

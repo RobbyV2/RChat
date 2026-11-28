@@ -197,11 +197,12 @@ function Bar({ gate, compose, list }: GateProps & { gate: Gate }) {
       return <GateNote>This contact was removed.</GateNote>
     case 'blocked':
       return (
-        <GateNote>
+        <GateNote data-blocked>
           <span>
-            You blocked <Name of={gate.name} look="font-medium" />. Remove the block to message them
-            again.
+            You blocked <Name of={gate.name} look="font-medium" />.
+            {gate.unblock ? '' : ' Remove the block to message them again.'}
           </span>
+          {gate.unblock && <LinkButton onClick={compose.unblock}>Unblock</LinkButton>}
         </GateNote>
       )
     case 'notMutual':

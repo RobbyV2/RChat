@@ -32,7 +32,7 @@ import {
 } from './viewport_height'
 import { PanelHeader, useEscape } from './ui'
 import { LightboxList } from './media_lightbox'
-import { BlockedComposer, BlockedList } from './blocking'
+import { BlockedList } from './blocking'
 import { MessageListSkeleton } from './skeletons'
 import { BulkJobBar, Selectable, SelectionBar } from './selection'
 import { ChatWorkNotices } from './own_load'
@@ -279,11 +279,6 @@ export default function ThreadPanel() {
   )
   const people = useMemo(() => (root ? [root, ...replies] : replies), [root, replies])
   useLoadedPeople(people)
-  const dmOther = useStore(s => {
-    const id = s.panel?.kind === 'thread' ? s.panel.root.dm_id : null
-    const dm = id !== null ? s.dms.find(d => d.id === id) : undefined
-    return dm && s.blocked[dm.other.username] ? dm.other : null
-  })
   const wide = useMedia('(min-width: 768px)')
   const selecting = useStore(s => picks !== null && s.selection?.scope === picks)
   const at = useThreadScroll(thread, state, {
@@ -334,11 +329,7 @@ export default function ThreadPanel() {
         bars={picks !== null && <PickBars scope={picks} wide={wide} />}
         root={root && row(root, ALONE, true)}
         composer={
-          picks !== null && selecting && !wide ? (
-            <SelectionBar scope={picks} sheet />
-          ) : picks !== null && dmOther ? (
-            <BlockedComposer user={dmOther} />
-          ) : undefined
+          picks !== null && selecting && !wide ? <SelectionBar scope={picks} sheet /> : undefined
         }
       >
         <BlockedList
