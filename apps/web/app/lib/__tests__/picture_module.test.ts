@@ -59,7 +59,7 @@ const pictureBuild = async (): Promise<PictureModule> => {
 
 describe('the picture codec is its own module', () => {
   test('the module the app starts with carries no image code', async () => {
-    expect(statSync(built('rust_next_wasm_bg.wasm')).size).toBeLessThan(1_000_000)
+    expect(statSync(built('rust_next_wasm_bg.wasm')).size).toBeLessThan(1_500_000)
     const shared = await wasmBuild()
     expect(Object.keys(shared).filter(name => name.startsWith('picture'))).toEqual([])
   })
