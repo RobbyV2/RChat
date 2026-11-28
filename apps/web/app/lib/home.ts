@@ -1,4 +1,5 @@
 import type { View } from './view'
+import { defineSetting } from './settings'
 
 // Home's local state per account: the places visited last ("Jump back in") and the tips and
 // notices the user dismissed. Stored as `{v: 1, recents, tips}`; anything unreadable gives the
@@ -109,6 +110,13 @@ export const parseHome = (raw: string | null): HomePrefs => {
 }
 
 export const homeValue = (prefs: HomePrefs) => JSON.stringify(prefs)
+
+export const homeSetting = defineSetting<HomePrefs, [string]>({
+  scope: 'account',
+  key: homeKey,
+  decode: parseHome,
+  encode: homeValue,
+})
 
 // Puts a visit first. Names stay from earlier visits when this one has none yet.
 export const pushRecent = (

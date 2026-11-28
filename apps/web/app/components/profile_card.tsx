@@ -89,6 +89,7 @@ import { TimeoutBadge, useMemberTimeout } from './timeout_dialog'
 import { WebhookProfile } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
 import { time } from '../lib/platform/time'
+import { sharing } from '../lib/platform'
 
 export function Badge({ tone, children }: { tone: 'primary' | 'tertiary'; children: string }) {
   const cls =
@@ -558,7 +559,11 @@ function CardBody({
   }
 
   const copyId = () => {
-    void navigator.clipboard.writeText(username).then(flashCopied)
+    void sharing()
+      .copyText(username)
+      .then(ok => {
+        if (ok) flashCopied()
+      })
   }
 
   const send = () => {

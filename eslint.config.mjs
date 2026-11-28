@@ -119,6 +119,33 @@ const networkProperties = [
   },
 ]
 const clockGlobals = TIMERS.map(name => ({ name, message: CLOCK_MESSAGE }))
+// Web Storage throws in some browsers: only the settings module reaches it, and a feature keeps a
+// value through a setting it defines there (app/lib/settings.ts).
+const STORAGE_MESSAGE =
+  'Web Storage is reached through a setting: defineSetting in app/lib/settings.ts.'
+const STORES = ['localStorage', 'sessionStorage']
+const storageGlobals = STORES.map(name => ({ name, message: STORAGE_MESSAGE }))
+const storageProperties = ['window', 'globalThis', 'self'].flatMap(object =>
+  STORES.map(property => ({ object, property, message: STORAGE_MESSAGE }))
+)
+const STORAGE_FILES = ['apps/web/app/lib/settings.ts']
+// The clipboard, sharing, notifications and badges differ per shell: a feature asks the platform
+// (app/lib/platform), and only its web adapters call the browser.
+const PLATFORM_MESSAGE = 'Ask the platform for this (app/lib/platform), not the browser.'
+const platformGlobals = [{ name: 'Notification', message: PLATFORM_MESSAGE }]
+const platformProperties = [
+  ...['clipboard', 'share', 'canShare', 'setAppBadge', 'clearAppBadge'].map(property => ({
+    object: 'navigator',
+    property,
+    message: PLATFORM_MESSAGE,
+  })),
+  ...['window', 'globalThis', 'self'].map(object => ({
+    object,
+    property: 'Notification',
+    message: PLATFORM_MESSAGE,
+  })),
+]
+const PLATFORM_FILES = ['apps/web/app/lib/platform/web*.ts']
 const clockProperties = [
   ...['window', 'globalThis', 'self'].flatMap(object =>
     TIMERS.map(property => ({ object, property, message: CLOCK_MESSAGE }))
@@ -221,10 +248,22 @@ export default tseslint.config(
   },
   {
     files: ['apps/web/app/**/*.{ts,tsx}', 'docs/src/**/*.{ts,tsx}'],
-    ignores: [...NETWORK_FILES, ...CLOCK_FILES, ...TEST_FILES],
+    ignores: [...NETWORK_FILES, ...CLOCK_FILES, ...STORAGE_FILES, ...PLATFORM_FILES, ...TEST_FILES],
     rules: {
-      'no-restricted-globals': ['error', ...networkGlobals, ...clockGlobals],
-      'no-restricted-properties': ['error', ...networkProperties, ...clockProperties],
+      'no-restricted-globals': [
+        'error',
+        ...networkGlobals,
+        ...clockGlobals,
+        ...storageGlobals,
+        ...platformGlobals,
+      ],
+      'no-restricted-properties': [
+        'error',
+        ...networkProperties,
+        ...clockProperties,
+        ...storageProperties,
+        ...platformProperties,
+      ],
       ...clockSyntax,
     },
   },
@@ -232,16 +271,53 @@ export default tseslint.config(
     files: NETWORK_FILES,
     ignores: TEST_FILES,
     rules: {
-      'no-restricted-globals': ['error', ...clockGlobals],
-      'no-restricted-properties': ['error', ...clockProperties],
+      'no-restricted-globals': ['error', ...clockGlobals, ...storageGlobals, ...platformGlobals],
+      'no-restricted-properties': [
+        'error',
+        ...clockProperties,
+        ...storageProperties,
+        ...platformProperties,
+      ],
       ...clockSyntax,
     },
   },
   {
     files: CLOCK_FILES,
     rules: {
-      'no-restricted-globals': ['error', ...networkGlobals],
-      'no-restricted-properties': ['error', ...networkProperties],
+      'no-restricted-globals': ['error', ...networkGlobals, ...storageGlobals, ...platformGlobals],
+      'no-restricted-properties': [
+        'error',
+        ...networkProperties,
+        ...storageProperties,
+        ...platformProperties,
+      ],
+    },
+  },
+  {
+    files: STORAGE_FILES,
+    rules: {
+      'no-restricted-globals': ['error', ...networkGlobals, ...clockGlobals, ...platformGlobals],
+      'no-restricted-properties': [
+        'error',
+        ...networkProperties,
+        ...clockProperties,
+        ...platformProperties,
+      ],
+      ...clockSyntax,
+    },
+  },
+  {
+    files: PLATFORM_FILES,
+    ignores: TEST_FILES,
+    rules: {
+      'no-restricted-globals': ['error', ...networkGlobals, ...clockGlobals, ...storageGlobals],
+      'no-restricted-properties': [
+        'error',
+        ...networkProperties,
+        ...clockProperties,
+        ...storageProperties,
+      ],
+      ...clockSyntax,
     },
   },
   {

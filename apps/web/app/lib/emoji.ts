@@ -1,6 +1,7 @@
 import { fromRequest, type LoadSource } from './load'
 import type { Live } from './place/live'
 import { time } from './platform/time'
+import { defineSetting } from './settings'
 export type CategoryId =
   | 'recent'
   | 'people'
@@ -317,6 +318,13 @@ export function parseEmojiPrefs(raw: string | null): EmojiPrefs {
     used: Object.fromEntries(entries) as Record<string, EmojiUse>,
   }
 }
+
+export const emojiSetting = defineSetting<EmojiPrefs, [string]>({
+  scope: 'account',
+  key: emojiKey,
+  decode: parseEmojiPrefs,
+  encode: prefs => JSON.stringify(prefs),
+})
 
 export const frecency = (u: EmojiUse, now: number) =>
   u.n * Math.pow(0.5, Math.max(0, now - u.at) / HALF_LIFE_MS)

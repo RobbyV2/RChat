@@ -3,7 +3,6 @@
 
 import type { StoreApi } from 'zustand'
 import { client } from '../client/client'
-import { type InstanceConnection, readLocal } from '../instances'
 import type { Key, Page } from '../lists'
 import type { Paged, RChatState, SearchState } from '../store_types'
 import type { ServerSummary, WsEvent } from '../types'
@@ -103,17 +102,6 @@ export const errorText = (e: unknown) => (e instanceof Error ? e.message : Strin
 export const serverKey = (x: ServerSummary) => x.name
 
 export const emptySearch = (): SearchState => ({ results: [], hasMore: false, loading: false })
-
-// Reads a per-account value; storage that throws (no window, privacy mode) gives the fallback.
-export const readScoped =
-  (conn: InstanceConnection) =>
-  <T>(key: string, parse: (raw: string | null) => T, fallback: T): T => {
-    try {
-      return parse(readLocal(conn.scoped(key)))
-    } catch {
-      return fallback
-    }
-  }
 
 // Loads a paged list; a page that arrives after the list was reset or searched again, or after
 // its session ended, is dropped. A page joins the list as it is when the page arrives, so rows

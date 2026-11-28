@@ -5,6 +5,7 @@
 
 import type { GroupKind } from './types'
 import { time } from './platform/time'
+import { defineSetting } from './settings'
 
 export type Level = 'all' | 'mentions' | 'nothing'
 export type MuteUntil = number | 'forever'
@@ -145,6 +146,13 @@ export const parseNotify = (raw: string | null, now = time().now()): NotifyPrefs
 }
 
 export const notifyValue = (p: NotifyPrefs) => JSON.stringify(p)
+
+export const notifySetting = defineSetting<NotifyPrefs, [string | null]>({
+  scope: 'account',
+  key: notifyKey,
+  decode: parseNotify,
+  encode: notifyValue,
+})
 
 type Table = 'servers' | 'channels' | 'dms' | 'p2p'
 

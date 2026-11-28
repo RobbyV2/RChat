@@ -3,6 +3,7 @@
 // taken off links before a message is sent.
 
 import { parse } from 'tldts'
+import { defineSetting } from './settings'
 
 declare const siteMark: unique symbol
 
@@ -74,6 +75,13 @@ export const parseLinkPrefs = (raw: string | null): LinkPrefs => {
 
 export const linkPrefsValue = ({ warn, strip, trusted }: LinkPrefs) =>
   JSON.stringify({ v: 1, warn, strip, trusted })
+
+export const linkPrefsSetting = defineSetting<LinkPrefs, [string | null]>({
+  scope: 'account',
+  key: linkPrefsKey,
+  decode: parseLinkPrefs,
+  encode: linkPrefsValue,
+})
 
 export const trustSite = (prefs: LinkPrefs, site: Site): LinkPrefs =>
   prefs.trusted.includes(site)

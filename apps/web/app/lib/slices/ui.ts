@@ -9,29 +9,19 @@ import type { AccountSession } from '../client/session'
 
 import { ApiError } from '../api'
 import { staffAsked, staffViewChannel } from '../staff_view'
-import {
-  type CallRoute,
-  DEFAULT_ROUTE,
-  callRouteKey,
-  callRouteValue,
-  parseCallRoute,
-} from '../call_choice'
-import { EMPTY_PREFS, type EmojiPrefs, emojiKey, noteUse, parseEmojiPrefs, setTone } from '../emoji'
-import { type ForwardClip, forwardKey, forwardValue, parseForward } from '../forward'
-import { readLocal, writeLocal } from '../instances'
+import { type CallRoute, callRouteSetting } from '../call_choice'
+import { type EmojiPrefs, noteUse, setTone, emojiSetting } from '../emoji'
+import { type ForwardClip, forwardValue, forwardSetting } from '../forward'
 import {
   type Layout,
   addToFolder as addIn,
   autoPinSelf,
-  emptyLayout,
-  layoutKey,
   mergeServers as mergeIn,
   moveFolder as moveFolderIn,
   moveIntoFolder as moveIntoIn,
   moveServer as moveServerIn,
   newFolderId,
   noteSelfPin,
-  parseLayout,
   pinDm as pinIn,
   placeDm as placeIn,
   renameFolder as renameFolderIn,
@@ -39,6 +29,7 @@ import {
   toggleFolder as toggleIn,
   ungroupFolder as ungroupIn,
   unpinDm as unpinIn,
+  layoutSetting,
 } from '../nav_layout'
 import { dmListPrefs, dmQuery, queryKey } from '../dm_list'
 import {
@@ -51,14 +42,10 @@ import {
   pauseNotices,
 } from '../notices'
 import {
-  EMPTY_NOTIFY,
   type NotifyPrefs,
   extendMute,
   keepScopes,
   nextExpiry,
-  notifyKey,
-  notifyValue,
-  parseNotify,
   pruneNotify,
   resetAll as resetAllNotify,
   resetScope,
@@ -66,40 +53,23 @@ import {
   setLevel,
   setMute,
   setSuppress,
+  notifySetting,
 } from '../notify'
 import { notifications } from '../platform'
 import {
   maskFileName,
   maskOutsideCode,
   maskProfanity,
-  PROFANITY_DEFAULT,
-  parseProfanity,
-  profanityKey,
-  profanityValue,
   setMasking,
+  profanitySetting,
 } from '../profanity'
 import { dmView, serverNames } from '../selectors'
-import { type ShowSpoilers, parseSpoilers, spoilersKey, spoilersValue } from '../spoilers'
+import { type ShowSpoilers, spoilersSetting } from '../spoilers'
 import type { RChatState } from '../store_types'
 import { type TimeoutWire, fromWire } from '../timeouts'
-import { parseTyping, typingKey, typingValue } from '../typing'
-import {
-  ANIM_DEFAULT,
-  animKey,
-  animValue,
-  parseAnim,
-  sameAnim,
-  type AnimPrefs,
-} from '../motion/setting'
-import {
-  Banned,
-  Ended,
-  type GetState,
-  type SetState,
-  emptySearch,
-  errorText,
-  readScoped as scopedReader,
-} from './ctx'
+import { typingSetting } from '../typing'
+import { sameAnim, type AnimPrefs, animSetting } from '../motion/setting'
+import { Banned, Ended, type GetState, type SetState, emptySearch, errorText } from './ctx'
 import { isSelfDm } from './messages'
 import type { StoreApi } from 'zustand'
 import type { Cancel } from '../clock'
@@ -202,7 +172,6 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
   const { acct } = deps
   const home = acct.conn
   const { sessionMark } = acct.lifetime
-  const readScoped = scopedReader(acct.conn)
   const { forgetTyping } = deps
 
   // When the last 429 was seen; a boot that hit one and opened nothing is retried.
@@ -235,27 +204,22 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     }
   }
 
-  const readLayout = (username: string | null) =>
-    readScoped(layoutKey(username), parseLayout, emptyLayout)
+  const readLayout = (username: string | null) => layoutSetting.read(acct.conn, username)
 
-  const readEmoji = (username: string) =>
-    readScoped(emojiKey(username), parseEmojiPrefs, EMPTY_PREFS)
+  const readEmoji = (username: string) => emojiSetting.read(acct.conn, username)
 
-  const readCallRoute = (username: string) =>
-    readScoped(callRouteKey(username), parseCallRoute, DEFAULT_ROUTE)
+  const readCallRoute = (username: string) => callRouteSetting.read(acct.conn, username)
 
   const saveCallRoute = (route: CallRoute) => {
     const username = get().me?.username
     if (!username || route === get().callRoute) return
     set({ callRoute: route })
-    writeLocal(home.scoped(callRouteKey(username)), callRouteValue(route))
+    callRouteSetting.write(home, route, username)
   }
 
   const readForward = (username: string) => {
-    const key = home.scoped(forwardKey(username))
-    const raw = readLocal(key)
-    const clip = parseForward(raw)
-    if (raw && !clip) writeLocal(key, null)
+    const clip = forwardSetting.read(home, username)
+    if (!clip) forwardSetting.clear(home, username)
     return clip
   }
 
@@ -264,12 +228,11 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     return me ? me.username : guest ? null : undefined
   }
 
-  const readNotify = (username: string | null) =>
-    readScoped(notifyKey(username), parseNotify, EMPTY_NOTIFY)
+  const readNotify = (username: string | null) => notifySetting.read(acct.conn, username)
 
-  const readTyping = (owner: string | null) => readScoped(typingKey(owner), parseTyping, true)
+  const readTyping = (owner: string | null) => typingSetting.read(acct.conn, owner)
 
-  const readAnim = (owner: string | null) => readScoped(animKey(owner), parseAnim, ANIM_DEFAULT)
+  const readAnim = (owner: string | null) => animSetting.read(acct.conn, owner)
 
   const useAnim = (prefs: AnimPrefs) => {
     if (!sameAnim(prefs, get().anim)) set({ anim: prefs })
@@ -279,21 +242,19 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     const owner = notifyOwner()
     if (owner === undefined) return
     useAnim(prefs)
-    writeLocal(home.scoped(animKey(owner)), animValue(prefs))
+    animSetting.write(home, prefs, owner)
   }
 
-  const readSpoilers = (owner: string | null) =>
-    readScoped(spoilersKey(owner), parseSpoilers, 'click' as ShowSpoilers)
+  const readSpoilers = (owner: string | null) => spoilersSetting.read(acct.conn, owner)
 
   const saveShowSpoilers = (show: ShowSpoilers) => {
     const owner = notifyOwner()
     if (owner === undefined) return
     if (show !== get().showSpoilers) set({ showSpoilers: show })
-    writeLocal(home.scoped(spoilersKey(owner)), spoilersValue(show))
+    spoilersSetting.write(home, show, owner)
   }
 
-  const readProfanity = (owner: string | null) =>
-    readScoped(profanityKey(owner), parseProfanity, PROFANITY_DEFAULT)
+  const readProfanity = (owner: string | null) => profanitySetting.read(acct.conn, owner)
 
   const useProfanity = (on: boolean) => {
     const s = get()
@@ -309,14 +270,14 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     const owner = notifyOwner()
     if (owner === undefined) return
     useProfanity(on)
-    writeLocal(home.scoped(profanityKey(owner)), profanityValue(on))
+    profanitySetting.write(home, on, owner)
   }
 
   const saveTypingOn = (on: boolean) => {
     const owner = notifyOwner()
     if (owner === undefined) return
     if (on !== get().typingOn) set({ typingOn: on })
-    writeLocal(home.scoped(typingKey(owner)), typingValue(on))
+    typingSetting.write(home, on, owner)
     if (!on) forgetTyping(true)
   }
 
@@ -345,7 +306,7 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     if (pruned === get().notifyPrefs) return
     useNotify(pruned)
     const owner = notifyOwner()
-    if (owner !== undefined) writeLocal(home.scoped(notifyKey(owner)), notifyValue(pruned))
+    if (owner !== undefined) notifySetting.write(home, pruned, owner)
   }
 
   const forgetServerRules = (name: string) => {
@@ -365,7 +326,7 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     const username = get().me?.username
     if (!username) return
     set({ forwardClip: clip, forwardShowSource: null })
-    writeLocal(home.scoped(forwardKey(username)), forwardValue(clip))
+    forwardSetting.write(home, clip, username)
   }
 
   let toastSeq = 0
@@ -383,7 +344,7 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     const username = get().me?.username
     if (!username || next === get().emoji) return
     set({ emoji: next })
-    writeLocal(home.scoped(emojiKey(username)), JSON.stringify(next))
+    emojiSetting.write(home, next, username)
   }
 
   const dmAsk = (layout: Layout) => queryKey(dmQuery(dmListPrefs(layout)))
@@ -393,7 +354,7 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     if (next === was) return
     set({ layout: next })
     const { me, guest } = get()
-    if (me || guest) writeLocal(home.scoped(layoutKey(me?.username ?? null)), JSON.stringify(next))
+    if (me || guest) layoutSetting.write(home, next, me?.username ?? null)
     if (me && dmAsk(next) !== dmAsk(was)) void get().loadMoreDms()
   }
 

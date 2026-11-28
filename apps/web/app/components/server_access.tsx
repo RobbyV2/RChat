@@ -64,6 +64,7 @@ import { Button, IconButton } from './controls'
 import { Grid, Row, Stack, Surface, Inset } from './layout'
 import { Chips, Dialog, FieldError, fieldCls } from './ui'
 import { time } from '../lib/platform/time'
+import { sharing } from '../lib/platform'
 import { useCopied } from '../lib/use_copied'
 
 const UNTITLED = 'Untitled password'
@@ -126,7 +127,12 @@ function CopyButton({
         size="sm"
         disabled={off}
         onClick={() => {
-          if (text) void navigator.clipboard.writeText(text).then(flashCopied)
+          if (text)
+            void sharing()
+              .copyText(text)
+              .then(ok => {
+                if (ok) flashCopied()
+              })
         }}
         place="disabled:pointer-events-none"
       />

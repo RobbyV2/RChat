@@ -1,6 +1,7 @@
 import type { CallLog } from './types'
 import { callTone } from './voice_layout'
 import { time } from './platform/time'
+import { defineSetting } from './settings'
 
 // How a DM call connects: through the server (WebRTC via the instance) or direct (PeerJS).
 export type CallRoute = 'server' | 'p2p'
@@ -23,6 +24,13 @@ export const parseCallRoute = (raw: string | null): CallRoute => {
 }
 
 export const callRouteValue = (route: CallRoute) => JSON.stringify({ v: 1, route })
+
+export const callRouteSetting = defineSetting<CallRoute, [string]>({
+  scope: 'account',
+  key: callRouteKey,
+  decode: parseCallRoute,
+  encode: callRouteValue,
+})
 
 export interface P2pCallInputs {
   guest: boolean

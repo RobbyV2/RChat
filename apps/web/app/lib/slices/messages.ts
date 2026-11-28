@@ -27,7 +27,6 @@ import { locateOnce, locatedNow } from '../forward_locate'
 import { type ForwardClip, canForward, clipOf, forwardPending } from '../forward'
 import { dropGroupMessage } from '../group_pings'
 import { limitsOf, tooLargeText } from '../instance_limits'
-import { readLocal, writeLocal } from '../instances'
 import {
   DEFAULT_DM_QUERY,
   NO_DM_EDGE,
@@ -62,13 +61,11 @@ import {
   editedQuote,
   fetchedQuote,
   fillQuote,
-  parseReplyMention,
   quoteDeleted,
   quoteEdited,
   quoteOf,
   repliesToMe,
-  replyMentionKey,
-  replyMentionValue,
+  replyMentionSetting,
   sendReply,
 } from '../replies'
 import { charCount } from '../rules'
@@ -1706,8 +1703,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     startReply: (key, m) => {
       const username = get().me?.username
       if (!username && !get().guest) return
-      const mention =
-        !!username && parseReplyMention(readLocal(home.scoped(replyMentionKey(username))))
+      const mention = !!username && replyMentionSetting.read(home, username)
       set(s => ({
         replying: { ...s.replying, [key]: { message: m, mention } },
         composerFocus: { key, n: (s.composerFocus?.n ?? 0) + 1 },
@@ -2039,7 +2035,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       if (!cur || !username) return
       const mention = !cur.mention
       set(s => ({ replying: { ...s.replying, [key]: { ...cur, mention } } }))
-      writeLocal(home.scoped(replyMentionKey(username)), replyMentionValue(mention))
+      replyMentionSetting.write(home, mention, username)
     },
 
     setAtBottom: (key, v) =>

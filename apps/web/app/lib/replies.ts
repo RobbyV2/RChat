@@ -1,5 +1,6 @@
 import { replaceSpoilers, typedMarks } from './spoilers'
 import type { Message, ReplyRef } from './types'
+import { defineSetting } from './settings'
 
 export interface Replying {
   message: Message
@@ -21,6 +22,13 @@ export function parseReplyMention(raw: string | null): boolean {
 }
 
 export const replyMentionValue = (mention: boolean) => JSON.stringify({ v: 1, mention })
+
+export const replyMentionSetting = defineSetting<boolean, [string]>({
+  scope: 'account',
+  key: replyMentionKey,
+  decode: parseReplyMention,
+  encode: replyMentionValue,
+})
 
 const SNIPPET_MAX = 200
 const FENCE = /^(```|~~~)/

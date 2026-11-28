@@ -12,9 +12,18 @@ import { Secret, TO_REQUEST } from './secret'
 
 import { DEFAULT_INSTANCE_NAME } from './instance_label'
 import { limitsOf } from './instance_limits'
-import { cause, logWarn } from './log'
 import { time } from './platform/time'
 import { sleep } from './clock'
+import { deviceStorage, readFrom, writeTo, type StorageLike } from './settings'
+
+export {
+  canReadSharedStorage,
+  localKeys,
+  readLocal,
+  sessionStore,
+  writeLocal,
+  type StorageLike,
+} from './settings'
 
 export { DEFAULT_INSTANCE_NAME }
 
@@ -33,12 +42,6 @@ export interface Endpoints {
   origin: string
   api: string
   peer: (info?: InstanceInfo | null) => PeerTarget
-}
-
-export interface StorageLike {
-  getItem(key: string): string | null
-  setItem(key: string, value: string): void
-  removeItem(key: string): void
 }
 
 type Fetcher = (input: string, init?: RequestInit) => Promise<Response>
@@ -412,81 +415,11 @@ export class InstanceConnection {
   }
 }
 
-const storage = (): StorageLike | null => {
+export function readKnown(
+  store: StorageLike | null = deviceStorage()
+): Record<string, InstanceInfo> {
   try {
-    return window.localStorage
-  } catch {
-    return null
-  }
-}
-
-const local = (): Storage | null => (typeof localStorage === 'undefined' ? null : localStorage)
-const session = (): StorageLike | null => window.sessionStorage
-
-// A value in the storage `store` gives; storage that throws (blocked, full or failing) reads as
-// nothing saved.
-const read = (store: () => StorageLike | null, key: string) => {
-  try {
-    return store()?.getItem(key) ?? null
-  } catch {
-    return null
-  }
-}
-
-// Writes or removes a value in the storage `store` gives. False when getting the storage or
-// writing to it throws; `warn` says so in the console.
-function write(store: () => StorageLike | null, key: string, value: string | null, warn = true) {
-  try {
-    const to = store()
-    if (value === null) to?.removeItem(key)
-    else to?.setItem(key, value)
-    return true
-  } catch (e) {
-    if (warn) logWarn('localStorage write failed', cause(e))
-    return false
-  }
-}
-
-export function canReadSharedStorage() {
-  try {
-    const store = local()
-    if (!store) return false
-    store.getItem('rchat_book')
-    return true
-  } catch {
-    return false
-  }
-}
-
-export const readLocal = (key: string) => read(local, key)
-
-export const localKeys = (prefix: string): string[] => {
-  try {
-    const storage = local()
-    const keys: string[] = []
-    if (storage)
-      for (let i = 0; i < storage.length; i++) {
-        const key = storage.key(i)
-        if (key?.startsWith(prefix)) keys.push(key)
-      }
-    return keys
-  } catch {
-    return []
-  }
-}
-
-export const writeLocal = (key: string, value: string | null) => write(local, key, value)
-
-// This tab's sessionStorage, through the same guard.
-export const sessionStore: StorageLike = {
-  getItem: key => read(session, key),
-  setItem: (key, value) => void write(session, key, value, false),
-  removeItem: key => void write(session, key, null, false),
-}
-
-export function readKnown(store: StorageLike | null = storage()): Record<string, InstanceInfo> {
-  try {
-    const raw = JSON.parse(read(() => store, KNOWN_KEY) ?? '{}') as Record<string, unknown>
+    const raw = JSON.parse(readFrom(() => store, KNOWN_KEY) ?? '{}') as Record<string, unknown>
     return Object.fromEntries(
       Object.entries(raw).filter(
         (e): e is [string, InstanceInfo] => validInfo(e[1], e[0]) && sameSite(e[0], e[1])
@@ -500,16 +433,16 @@ export function readKnown(store: StorageLike | null = storage()): Record<string,
 export function rememberInstance(
   origin: string,
   info: InstanceInfo,
-  store: StorageLike | null = storage()
+  store: StorageLike | null = deviceStorage()
 ) {
   const known = readKnown(store)
   delete known[origin]
   const entries = [[origin, info] as const, ...Object.entries(known)].slice(0, KNOWN_MAX)
-  write(() => store, KNOWN_KEY, JSON.stringify(Object.fromEntries(entries)))
+  writeTo(() => store, KNOWN_KEY, JSON.stringify(Object.fromEntries(entries)))
 }
 
-export function savedHome(defaultOrigin: string, store: StorageLike | null = storage()) {
-  const saved = read(() => store, HOME_KEY)
+export function savedHome(defaultOrigin: string, store: StorageLike | null = deviceStorage()) {
+  const saved = readFrom(() => store, HOME_KEY)
   const origin = saved ? normalizeOrigin(saved) : null
   return origin ?? defaultOrigin
 }
@@ -527,8 +460,8 @@ export function createHomeConnection() {
 
 // The selected page instance survives reloads of the desktop client.
 export function rememberHome(connection: InstanceConnection, info: InstanceInfo) {
-  const store = storage()
-  write(() => store, HOME_KEY, connection.isDefault ? null : connection.origin)
+  const store = deviceStorage()
+  writeTo(() => store, HOME_KEY, connection.isDefault ? null : connection.origin)
   rememberInstance(connection.origin, info, store)
 }
 

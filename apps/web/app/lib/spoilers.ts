@@ -1,3 +1,4 @@
+import { defineSetting } from './settings'
 // `||spoilers||` in message markdown. One reader for everything: the message view, every
 // preview (replies, forwards, link cards, search, toasts) and, ported to Rust with the same
 // fixture (`__tests__/fixtures/spoilers.json`), the server's link preview fetcher
@@ -216,3 +217,10 @@ export const parseSpoilers = (raw: string | null): ShowSpoilers => {
 }
 
 export const spoilersValue = (show: ShowSpoilers) => JSON.stringify({ v: 1, show })
+
+export const spoilersSetting = defineSetting<ShowSpoilers, [string | null]>({
+  scope: 'account',
+  key: spoilersKey,
+  decode: parseSpoilers,
+  encode: spoilersValue,
+})

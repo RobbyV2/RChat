@@ -1,4 +1,5 @@
 import { parseDmList, type DmListPrefs } from './dm_list'
+import { defineSetting } from './settings'
 
 export interface Folder {
   id: string
@@ -186,6 +187,13 @@ export const parseLayout = (raw: string | null): Layout => {
     ...(list ? { dmList: list } : {}),
   }
 }
+
+export const layoutSetting = defineSetting<Layout, [string | null]>({
+  scope: 'account',
+  key: layoutKey,
+  decode: parseLayout,
+  encode: layout => JSON.stringify(layout),
+})
 
 export const setCollapsed = (
   layout: Layout,

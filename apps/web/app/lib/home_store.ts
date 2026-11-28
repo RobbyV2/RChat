@@ -4,21 +4,19 @@ import type { AccountSession } from './client/session'
 import { accountBoundStore, useAccount } from './client/react'
 
 import { create } from 'zustand'
-import { readLocal, writeLocal } from './instances'
+import { readLocal } from './instances'
 import {
   EMPTY_HOME,
   dismissTip,
   dropRecent,
-  homeKey,
-  homeValue,
   legacyIntroKeys,
-  parseHome,
   pushP2pRecent,
   pushRecent,
   unreadChannels,
   unreadRows,
   type HomePrefs,
   type UnreadRow,
+  homeSetting,
 } from './home'
 import { dmPings } from './pings'
 import type { P2pState } from './p2p/app'
@@ -53,7 +51,7 @@ export function createHomeStore(acct: AccountSession) {
 
   const read = (owner: string): HomePrefs => {
     try {
-      const parsed = parseHome(readLocal(home.scoped(homeKey(owner))))
+      const parsed = homeSetting.read(home, owner)
       const prefs = parsed === EMPTY_HOME ? emptyHome() : parsed
       return legacyIntroKeys(owner)
         .filter(([, key]) => readLocal(home.scoped(key)) === '1')
@@ -67,7 +65,7 @@ export function createHomeStore(acct: AccountSession) {
     const { owner, prefs: before } = useHome.getState()
     if (!owner || prefs === before) return
     useHome.setState({ prefs })
-    writeLocal(home.scoped(homeKey(owner)), homeValue(prefs))
+    homeSetting.write(home, prefs, owner)
   }
 
   const loadHome = (owner: string | null) =>

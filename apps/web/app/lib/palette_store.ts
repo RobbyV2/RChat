@@ -4,16 +4,13 @@ import { paletteRow } from './actions/palette'
 import { actionById, guardAction } from './actions/registry'
 import { askable } from './actions/steps'
 import type { Target } from './actions/types'
-import { readLocal, writeLocal } from './instances'
 import {
   EMPTY_PALETTE,
   noteUse,
-  palettePrefsKey,
-  paletteValue,
-  parsePalette,
   type IndexMode,
   type PaletteItem,
   type PalettePrefs,
+  palettePrefsSetting,
 } from './palette'
 import type { PollTarget } from './polls_store'
 import { client } from './client/client'
@@ -80,7 +77,7 @@ export function createPalettePrefs(acct: AccountSession) {
   })
   const read = (owner: string | null): PalettePrefs => {
     try {
-      const prefs = parsePalette(readLocal(home.scoped(palettePrefsKey(owner))))
+      const prefs = palettePrefsSetting.read(home, owner)
       return prefs === EMPTY_PALETTE ? emptyPrefs() : prefs
     } catch {
       return emptyPrefs()
@@ -90,7 +87,7 @@ export function createPalettePrefs(acct: AccountSession) {
   const save = (prefs: PalettePrefs) => {
     const { owner } = usePaletteUi.getState()
     usePaletteUi.setState({ prefs })
-    writeLocal(home.scoped(palettePrefsKey(owner)), paletteValue(prefs))
+    palettePrefsSetting.write(home, prefs, owner)
   }
 
   const loadPalettePrefs = (owner: string | null) =>

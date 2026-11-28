@@ -1,4 +1,5 @@
 import { client } from './client/client'
+import { defineSetting } from './settings'
 // Typing indicators. Scopes are message keys: `c{channel}`, `t{thread root}`, `d{dm}`.
 // The setting is per account in this browser (`rchat_typing:{username|guest}`); off means
 // yours are never sent and others' are never shown.
@@ -20,6 +21,13 @@ export const parseTyping = (raw: string | null): boolean => {
 }
 
 export const typingValue = (on: boolean) => JSON.stringify({ v: 1, on })
+
+export const typingSetting = defineSetting<boolean, [string | null]>({
+  scope: 'account',
+  key: typingKey,
+  decode: parseTyping,
+  encode: typingValue,
+})
 
 export type TypingMsg = { type: 'typing' | 'typing_stop'; scope: string }
 

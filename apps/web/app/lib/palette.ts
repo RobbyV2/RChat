@@ -2,6 +2,7 @@ import type { AccountSession } from './client/session'
 import { create } from 'zustand'
 import type { LucideIcon } from 'lucide-react'
 import { fuzzy } from './fuzzy'
+import { defineSetting } from './settings'
 
 // The command palette registers its opener here; Home and the mobile headers offer it once it did.
 interface PaletteState {
@@ -230,6 +231,13 @@ export const parsePalette = (raw: string | null): PalettePrefs => {
 }
 
 export const paletteValue = (prefs: PalettePrefs) => JSON.stringify(prefs)
+
+export const palettePrefsSetting = defineSetting<PalettePrefs, [string | null]>({
+  scope: 'account',
+  key: palettePrefsKey,
+  decode: parsePalette,
+  encode: paletteValue,
+})
 
 export const noteUse = (prefs: PalettePrefs, id: string, now: number): PalettePrefs => {
   const before = Object.hasOwn(prefs.used, id) ? prefs.used[id] : undefined

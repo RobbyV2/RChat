@@ -54,8 +54,8 @@ import { accountPrompt, createP2pGate, siteSettings } from '../features'
 import { forwardKey } from '../forward'
 import { type FriendsDeps, friendsInitial, type friendsSlice } from '../friends_store'
 import { NO_GROUP_PINGS } from '../group_pings'
-import { iceKey, iceValue, parseIce } from '../ice'
-import { linkPrefsKey, linkPrefsValue, parseLinkPrefs, trustSite } from '../link_safety'
+import { iceSetting } from '../ice'
+import { trustSite, linkPrefsSetting } from '../link_safety'
 import { limitsOf } from '../instance_limits'
 import {
   fitsHome,
@@ -409,7 +409,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     }
   }
   const armIce = (username: string | null, signedIn: boolean) => {
-    const { on, relay } = parseIce(readLocal(home.scoped(iceKey(username))))
+    const { on, relay } = iceSetting.read(home, username)
     ice.setHelpers(on)
     ice.setRelay(relay)
     if (relayAnswer) settleRelayPrompt('deny')
@@ -417,7 +417,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     set({
       iceHelpers: on,
       iceRelay: relay,
-      linkPrefs: parseLinkPrefs(readLocal(home.scoped(linkPrefsKey(username)))),
+      linkPrefs: linkPrefsSetting.read(home, username),
     })
     void ice.setSignedIn(signedIn)
     p2pGate.account(signedIn ? username : null)
@@ -1752,13 +1752,13 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     setIceHelpers: on => {
       const relay = get().iceRelay
-      writeLocal(home.scoped(iceKey(get().me?.username ?? null)), iceValue({ on, relay }))
+      iceSetting.write(home, { on, relay }, get().me?.username ?? null)
       ice.setHelpers(on)
       set({ iceHelpers: on })
     },
 
     setLinkPrefs: prefs => {
-      writeLocal(home.scoped(linkPrefsKey(get().me?.username ?? null)), linkPrefsValue(prefs))
+      linkPrefsSetting.write(home, prefs, get().me?.username ?? null)
       set({ linkPrefs: prefs })
     },
 
@@ -1766,7 +1766,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     setIceRelay: relay => {
       const on = get().iceHelpers
-      writeLocal(home.scoped(iceKey(get().me?.username ?? null)), iceValue({ on, relay }))
+      iceSetting.write(home, { on, relay }, get().me?.username ?? null)
       ice.setRelay(relay)
       set({ iceRelay: relay })
     },

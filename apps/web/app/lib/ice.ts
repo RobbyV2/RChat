@@ -3,6 +3,7 @@ import type { Cancel } from './clock'
 import { sessionStore, type InstanceConnection } from './instances'
 import type { IceServers, InstanceIce } from './types'
 import { time } from './platform/time'
+import { defineSetting } from './settings'
 
 // The only source of ICE servers. Without it, PeerJS uses its own public STUN and TURN servers,
 // so every Peer and RTCPeerConnection gets its config from its owner. The instance supplies the
@@ -226,6 +227,13 @@ export const parseIce = (raw: string | null): IcePrefs => {
 export const parseHelpers = (raw: string | null): boolean => parseIce(raw).on
 
 export const iceValue = ({ on, relay }: IcePrefs) => JSON.stringify({ v: 1, on, relay })
+
+export const iceSetting = defineSetting<IcePrefs, [string | null]>({
+  scope: 'account',
+  key: iceKey,
+  decode: parseIce,
+  encode: iceValue,
+})
 
 export const helpersValue = (on: boolean) => iceValue({ on, relay: false })
 

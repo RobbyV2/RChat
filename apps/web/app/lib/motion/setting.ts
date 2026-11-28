@@ -5,6 +5,7 @@
 import type { MotionChoice } from '../fx/gate'
 import { BUILTIN_LABELS, BUILTIN_NAMES, isBuiltin, type BuiltinName } from './names'
 import { SLOT_IDS, isLook, type SlotId } from './slots'
+import { defineSetting } from '../settings'
 
 export const STYLES = ['subtle', 'lively', 'custom'] as const
 export type AnimStyle = (typeof STYLES)[number]
@@ -77,6 +78,13 @@ const sorted = (c: CustomChoices) =>
 
 export const animValue = ({ on, motion, style, custom }: AnimPrefs) =>
   JSON.stringify({ v: 1, on, motion, style, custom: sorted(custom) })
+
+export const animSetting = defineSetting<AnimPrefs, [string | null]>({
+  scope: 'account',
+  key: animKey,
+  decode: parseAnim,
+  encode: animValue,
+})
 
 export const sameAnim = (a: AnimPrefs, b: AnimPrefs) => animValue(a) === animValue(b)
 

@@ -1117,10 +1117,12 @@ function InviteLinkField({ server, hasPassword }: { server: string; hasPassword:
             size="md"
             onClick={() => {
               setError(null)
-              navigator.clipboard.writeText(link).then(
-                () => setCopied(link),
-                (err: unknown) => setError(errorText(err))
-              )
+              void sharing()
+                .copyText(link)
+                .then(ok => {
+                  if (ok) setCopied(link)
+                  else setError("Couldn't copy the link.")
+                })
             }}
           >
             {copied === link ? 'Copied' : 'Copy'}

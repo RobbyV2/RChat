@@ -6,6 +6,7 @@
 import { getBasePath } from './basePath'
 import { unavailable } from './capabilities'
 import { capabilities } from './platform'
+import { defineSetting } from './settings'
 
 export const profanityKey = (username: string | null) => `rchat_profanity:${username ?? 'guest'}`
 
@@ -23,6 +24,13 @@ export const parseProfanity = (raw: string | null): boolean => {
 }
 
 export const profanityValue = (on: boolean) => JSON.stringify({ v: 1, on })
+
+export const profanitySetting = defineSetting<boolean, [string | null]>({
+  scope: 'account',
+  key: profanityKey,
+  decode: parseProfanity,
+  encode: profanityValue,
+})
 
 export type Matcher = (text: string) => string
 

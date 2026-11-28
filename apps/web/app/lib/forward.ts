@@ -3,6 +3,7 @@ import { LIMITS, isEventId, type Fwd, type FwdSrc } from './p2p/content'
 import { readableNow } from './public_reading'
 import type { RChatState } from './store_types'
 import type { Message, SiteSettings, UserRef } from './types'
+import { defineSetting } from './settings'
 
 // The forward clipboard: one copied message per account, kept until it is sent or dismissed.
 export type ForwardSource =
@@ -140,6 +141,13 @@ export function parseForward(raw: string | null): ForwardClip | null {
 
 export const forwardValue = (clip: ForwardClip | null) =>
   clip ? JSON.stringify({ v: 1, clip }) : null
+
+export const forwardSetting = defineSetting<ForwardClip | null, [string]>({
+  scope: 'account',
+  key: forwardKey,
+  decode: parseForward,
+  encode: forwardValue,
+})
 
 // Whether a forward of clip `id` is already queued, sending or failed in this scope's outbox
 // (one at a time; a failed one is retried or deleted from its row).
