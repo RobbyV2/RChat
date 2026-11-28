@@ -16,6 +16,7 @@ import { hasMasked, type PaletteItem } from '../palette'
 import { useStore } from '../store'
 import { longPress } from '../../components/context_menu'
 import { msg } from './fixtures'
+import { menuOf } from './helpers/menu'
 
 // Stand-ins for a row element and the masked words inside it; `palette`: the words are in the
 // palette.
@@ -114,11 +115,11 @@ describe('Show masked text is a registry action', () => {
   test('menus built by hand get it through the registry item helper', () => {
     const { fired, row } = words(1)
     const reply = { label: 'Reply', action: () => {} }
-    rightClick(row, (x, y) => useStore.getState().openContextMenu(x, y, [reply]))
+    rightClick(row, (x, y) => useStore.setState({ contextMenu: menuOf(x, y, [reply]) }))
     expect(labels()).toEqual(['Reply', SHOW])
     click(SHOW)
     expect(fired).toEqual(['rchat-reveal'])
-    withActionElement(row, () => useStore.getState().openContextMenu(1, 2, [reply]))
+    withActionElement(row, () => useStore.setState({ contextMenu: menuOf(1, 2, [reply]) }))
     expect(labels()).toEqual(['Reply'])
   })
 

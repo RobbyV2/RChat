@@ -269,10 +269,9 @@ test('guests get no member menu; Ban site-wide only for the site admin', () => {
   state({ guest: true })
   expect(labels(at('bob'))).toEqual([])
   expect(labels(at('zed', 'interacted', null))).toEqual([])
-  let opened = 0
-  useStore.setState({ openContextMenu: () => void opened++ })
+  useStore.setState({ contextMenu: null })
   openActionMenu(1, 2, at('bob'))
-  expect(opened).toBe(0)
+  expect(useStore.getState().contextMenu).toBeNull()
   state()
   expect(labels(at('bob'))).not.toContain('Ban site-wide')
   state({ siteAdmin: true })

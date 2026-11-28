@@ -109,6 +109,16 @@ export const itemFor = (id: string, ctx: ActionCtx): ContextMenuItem | null => {
 
 const idsOf = (built: Built[]) => JSON.stringify(built.map(r => r.id))
 
+// Puts a menu on screen for `acct`. The one place that makes an open menu: its rows are the
+// registry's.
+const show = (
+  acct: ActionCtx['acct'],
+  x: number,
+  y: number,
+  items: ContextMenuItem[],
+  opts: ContextMenuOptions
+) => acct.store.setState({ contextMenu: { ...opts, x, y, items } as ContextMenuState })
+
 let live: { ctx: ActionCtx; menu: ContextMenuState | null; ids: string } | null = null
 
 let unwatch: (() => void) | null = null
@@ -146,7 +156,7 @@ export const openActionMenu = (
   const built = menuRows(ctx)
   if (!built.length) return
   const items = built.map(r => r.item)
-  st.openContextMenu(x, y, items, opts)
+  show(acct, x, y, items, opts)
   clearLive()
   const menu = acct.store.getState().contextMenu
   if (!menu) return
@@ -188,7 +198,7 @@ export const openChoiceMenu = (
   const st = acct.store.getState()
   const ctx = ctxFor(st, target, 'menu', acct, identity)
   const items = itemFor(id, ctx)?.submenu
-  if (items?.length) st.openContextMenu(x, y, items, opts)
+  if (items?.length) show(acct, x, y, items, opts)
 }
 
 // What a button for the action `id` on `target` does when pressed at a point: runs the action, or

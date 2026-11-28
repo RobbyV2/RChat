@@ -33,3 +33,18 @@ test('only a check gives a value its proven type', async () => {
     "import type { Wire } from './event_v1'\nexport const x = (w: unknown) => w as unknown as Wire\n"
   expect(await found('apps/web/app/lib/p2p/x.ts', plain)).toBe(0)
 }, 180_000)
+
+test('only the action registry makes an open menu', async () => {
+  const cast =
+    "import type { ContextMenuState } from '../lib/store_types'\nexport const x = (m: object) => m as ContextMenuState\n"
+  const twice =
+    "import type { ContextMenuState } from '../lib/store_types'\nexport const x = (m: object) => m as unknown as ContextMenuState\n"
+  for (const code of [cast, twice]) {
+    expect(await found('apps/web/app/components/x.tsx', code)).toBe(1)
+    expect(await found('apps/web/app/components/p2p/x.tsx', code)).toBe(1)
+    expect(await found('apps/web/app/lib/slices/ui.ts', code)).toBe(1)
+    expect(await found('apps/web/app/lib/actions/member.ts', code)).toBe(1)
+    expect(await found('apps/web/app/lib/p2p/x.ts', code)).toBe(1)
+    expect(await found('apps/web/app/lib/actions/menu.ts', code)).toBe(0)
+  }
+}, 180_000)

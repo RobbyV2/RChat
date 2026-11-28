@@ -474,7 +474,6 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     | 'setInboxOpen'
     | 'dismissNotice'
     | 'pauseNotices'
-    | 'openContextMenu'
     | 'closeContextMenu'
     | 'openReactPicker'
     | 'closeReactPicker'
@@ -547,7 +546,6 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
       scheduleNotices()
     },
 
-    openContextMenu: (x, y, items, opts = {}) => set({ contextMenu: { ...opts, x, y, items } }),
     closeContextMenu: () => set({ contextMenu: null }),
 
     openReactPicker: (message, anchor) => set({ reactPicker: { message, anchor } }),

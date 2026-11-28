@@ -973,12 +973,9 @@ test('the timestamp menu copies the token as written, under the full date', () =
   state({ guest: true })
   const stamp: Target = { kind: 'timestamp', ts: T0 * 1000, token: '<t:1700000000:R>' }
   expect(items(stamp).map(i => [i.label, i.icon])).toEqual([['Copy Timestamp', Clock]])
-  let opened: unknown = null
-  useStore.setState({
-    openContextMenu: (_x, _y, rows, opts) => void (opened = [rows.length, opts]),
-  })
   openActionMenu(1, 1, stamp, { header: 'full date' })
-  expect(opened).toEqual([1, { header: 'full date' }])
+  const opened = useStore.getState().contextMenu
+  expect([opened?.items.length, opened?.header]).toEqual([1, 'full date'])
 })
 
 test('a link in a message has its own menu: open and copy, never in the palette', () => {

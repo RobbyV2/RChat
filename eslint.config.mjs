@@ -181,12 +181,19 @@ const provenSyntax = [
       'TSAsExpression > TSTypeReference[typeName.name=/^(CheckedWire|CheckedWire2|Admitted|Judged|Proven)$/]',
     message: PROVEN_MESSAGE,
   },
+  // An open menu is made by the action registry's menu module alone (app/lib/actions/menu.ts).
+  {
+    selector: "TSAsExpression > TSTypeReference[typeName.name='ContextMenuState']",
+    message:
+      'Menus open through the action registry: openActionMenu or openChoiceMenu (app/lib/actions/menu.ts).',
+  },
 ]
 const PROVERS = [
   'apps/web/app/lib/p2p/event_v1.ts',
   'apps/web/app/lib/p2p/event_v2.ts',
   'apps/web/app/lib/p2p/acl_room.ts',
   'apps/web/app/lib/p2p/server/receive.ts',
+  'apps/web/app/lib/actions/menu.ts',
 ]
 const clockSyntax = {
   'no-restricted-syntax': ['error', DATE_SYNTAX, ...motionSyntax, ...provenSyntax],

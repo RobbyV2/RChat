@@ -246,12 +246,8 @@ placeContract(rowActs, (kind, world) => {
 
   test('the menu of a row is headed by quick reactions where the reader may react', () => {
     const { theirs } = seat(world(), 'main')
-    const opened: unknown[] = []
-    world().ann.account.store.setState({
-      openContextMenu: (_x: number, _y: number, items: unknown[], opts?: { header?: unknown }) =>
-        void opened.push([items.length > 0, opts?.header]),
-    } as unknown as Partial<RChatState>)
     acts('main').menu(theirs, 1, 2, 'quick')
-    expect(opened).toEqual([[true, 'quick']])
+    const opened = world().ann.account.store.getState().contextMenu
+    expect([(opened?.items.length ?? 0) > 0, opened?.header]).toEqual([true, 'quick'])
   })
 })

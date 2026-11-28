@@ -23,6 +23,7 @@ import { resetSessionCaches, useStore, type ConfirmRequest } from '../store'
 import type { RChatState } from '../store_types'
 import { me, member, msg, paged, serverDetail, user } from './fixtures'
 import { importsOf, packagesOf } from './import_graph'
+import { menuOf } from './helpers/menu'
 
 // Other files leave the app's actions registered; these tests take a registry of their own.
 let restoreActions = () => {}
@@ -34,9 +35,7 @@ afterAll(() => {
   resetSessionCaches()
 })
 
-const real = (({ askConfirm, openContextMenu }) => ({ askConfirm, openContextMenu }))(
-  useStore.getState()
-)
+const real = (({ askConfirm }) => ({ askConfirm }))(useStore.getState())
 const offs: (() => void)[] = []
 const def = (a: Action) => offs.push(defineAction(a))
 const on = { available: () => true, run: () => {} }
@@ -368,13 +367,12 @@ test('a menu row with a text step opens the palette at that step, on its target'
 })
 
 test('openActionMenu opens nothing when no row is available', () => {
-  let opened = 0
-  useStore.setState({ openContextMenu: () => void opened++ })
+  useStore.setState({ contextMenu: null })
   openActionMenu(10, 10, { kind: 'none' })
-  expect(opened).toBe(0)
+  expect(useStore.getState().contextMenu).toBeNull()
   def({ id: 't_copy', title: 'Copy', scope: 'message', targets: ['message'], ...on })
   openActionMenu(10, 10, m5)
-  expect(opened).toBe(1)
+  expect(useStore.getState().contextMenu?.items.map(i => i.label)).toEqual(['Copy'])
 })
 
 test('runAction re-checks on fresh state: a target that is gone runs nothing and says so', async () => {
@@ -703,7 +701,7 @@ test('an open action menu keeps its state when a registry change leaves its rows
   expect([second === first, second?.items.map(i => i.label)]).toEqual([false, ['Copy', 'Late']])
   def({ id: 't_glob2', title: 'Other', scope: 'global', ...on })
   expect(useStore.getState().contextMenu).toBe(second)
-  useStore.getState().openContextMenu(2, 2, [{ label: 'Legacy' }])
+  useStore.setState({ contextMenu: menuOf(2, 2, [{ label: 'Legacy' }]) })
   const legacy = useStore.getState().contextMenu
   def({ id: 't_later', title: 'Later', ...msgAction })
   expect(useStore.getState().contextMenu).toBe(legacy)

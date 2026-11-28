@@ -13,6 +13,7 @@ import type { ServerView } from '../p2p/server/types'
 import { NO_ABOUT } from '../server_about'
 import { resetSessionCaches, useStore } from '../store'
 import { me } from './fixtures'
+import { menuOf } from './helpers/menu'
 
 // Server rendering reads the stores' initial state, so the test state goes there.
 const initial = useStore.getInitialState()
@@ -126,14 +127,10 @@ describe('rail folder markup', () => {
 describe('menu swatches', () => {
   test('a row with a swatch shows a dot of that color before its label', () => {
     setState({
-      contextMenu: {
-        x: 10,
-        y: 10,
-        items: [
-          { label: 'Blue', swatch: '#3b82d9', radio: true, checked: true, action: () => {} },
-          { label: 'Default', radio: true, checked: false, action: () => {} },
-        ],
-      },
+      contextMenu: menuOf(10, 10, [
+        { label: 'Blue', swatch: '#3b82d9', radio: true, checked: true, action: () => {} },
+        { label: 'Default', radio: true, checked: false, action: () => {} },
+      ]),
     })
     const html = renderToStaticMarkup(<ContextMenu />)
     const [blue = '', plain = ''] = html.match(/<button[^>]*data-menu-item.*?<\/button>/g) ?? []

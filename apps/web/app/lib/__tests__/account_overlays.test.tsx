@@ -5,6 +5,7 @@ import { client } from '../client/client'
 import { NOTICES_MAX } from '../notices'
 import { msg, user } from './fixtures'
 import { testAccount } from './test_account'
+import { menuOf } from './helpers/menu'
 
 const account = testAccount
 
@@ -14,7 +15,7 @@ test('each kind of overlay claims its owner, and disposed stores stop claiming',
   const alice = a.store.getState()
   const bob = b.store.getState()
   const open = [
-    () => alice.openContextMenu(1, 2, []),
+    () => a.store.setState({ contextMenu: menuOf(1, 2, []) }),
     () => alice.openProfile(user('c'), null, 1, 2),
     () => alice.openReactPicker(msg(1), null),
     () => alice.askConfirm({ title: 'Proceed?', confirm: 'OK', body: '', action() {} }),

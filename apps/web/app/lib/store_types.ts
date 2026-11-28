@@ -117,10 +117,15 @@ export interface ContextMenuOptions {
   owner?: string
 }
 
+declare const opened: unique symbol
+
+// An open menu. Only the action registry's menu module makes one (lib/actions/menu.ts), from
+// the rows the registry gives for a target; the store can only keep it or close it.
 export interface ContextMenuState extends ContextMenuOptions {
   x: number
   y: number
   items: ContextMenuItem[]
+  readonly [opened]: true
 }
 
 export interface ReactPicker {
@@ -897,12 +902,6 @@ export interface RChatState {
   updateSettings: (patch: SiteSettingsPatch) => Promise<void>
   setViewing: (server: string | null) => void
   applyWsEvent: (ev: WsEvent) => void
-  openContextMenu: (
-    x: number,
-    y: number,
-    items: ContextMenuItem[],
-    opts?: ContextMenuOptions
-  ) => void
   closeContextMenu: () => void
   toggleReaction: (m: Message, emoji: string, note?: boolean) => void
   loadReactors: (messageId: number, emoji: string) => Promise<UserRef[]>

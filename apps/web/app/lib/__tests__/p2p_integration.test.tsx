@@ -31,7 +31,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { type ReactElement } from 'react'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime'
-import type { ContextMenuItem } from '../store'
+import type {} from '../store'
 import { resetMasking, setMasking } from '../profanity'
 import { DEFAULT_VIEW, type InboxView } from '../inbox'
 const { addInboxAdapter, removeInboxAdapter } = peerOwner.inbox
@@ -1224,12 +1224,6 @@ describe('forwarding', () => {
     await setMasking(true, () => Promise.resolve(stub))
     Object.assign(initial, { profanityReady: true, me: me('bob') })
     accountStore.setState({ profanityReady: true, me: me('bob') })
-    let items: ContextMenuItem[] = []
-    const capture = (_x: number, _y: number, it: ContextMenuItem[]) => {
-      items = it
-    }
-    Object.assign(initial, { openContextMenu: capture })
-    accountStore.setState({ openContextMenu: capture })
     const sent: Fwd[] = []
     const saved = { ensureRoom: p2pDm.ensureRoom, forward: p2pDm.forward }
     p2pDm.ensureRoom = async () => 'carol-room'
@@ -1250,6 +1244,7 @@ describe('forwarding', () => {
       // The row shows the petname, masked.
       expect(row.m.author.display_name).toBe('Mom')
       list.acts.menu(row.m, 0, 0, null)
+      const items = accountStore.getState().contextMenu?.items ?? []
       const fwdItem = items.find(x => x.label === 'Forward')!
       await fwdItem.submenu!.find(x => x.label === 'Carol')!.action!()
       await flush()
