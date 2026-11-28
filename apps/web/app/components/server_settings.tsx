@@ -3,6 +3,7 @@ import { ask, asked, sendTo } from '../lib/asks'
 import { Loaded, useAccountSource } from './loaded'
 
 import { BanList } from './ban_list'
+import { DepartureSection } from './departure_section'
 import { personName, notAName } from '../lib/names'
 import { Name, NameInput } from './name'
 import { ViewActorTag } from './view_actor'
@@ -1390,8 +1391,6 @@ function Settings({ server, section }: { server: string; section: ServerSettings
   const loadMembers = useStore(s => s.loadMembers)
   const closeDialog = useStore(s => s.closeDialog)
   const renameServer = useStore(s => s.renameServer)
-  const deleteServer = useStore(s => s.deleteServer)
-  const askConfirm = useStore(s => s.askConfirm)
   const grantAdmin = useStore(s => s.grantAdmin)
   const openDialog = useStore(s => s.openDialog)
   const [name, setName] = useState(detail?.display_name ?? '')
@@ -1701,33 +1700,7 @@ function Settings({ server, section }: { server: string; section: ServerSettings
         </Row>
       </>
     ),
-    delete: () => (
-      <>
-        <Row gap="md" wrap>
-          <p className="min-w-48 flex-1 text-xs text-on-surface-variant">
-            Deletes the server with all of its channels and messages for everyone. This cannot be
-            undone.
-          </p>
-          <Button
-            onClick={() =>
-              askConfirm({
-                title: 'Delete Server',
-                body: 'Delete this server for everyone? All of its channels and messages are deleted. This cannot be undone.',
-                confirm: 'Delete',
-                action: () => {
-                  closeDialog()
-                  void deleteServer(server)
-                },
-              })
-            }
-            variant="danger"
-            size="md"
-          >
-            Delete server
-          </Button>
-        </Row>
-      </>
-    ),
+    delete: () => <DepartureSection place={HostedServer.open(acct, server)} />,
   }
   return (
     <PlaceProvider place={HostedServer.open(acct, server)}>

@@ -10,7 +10,7 @@ import { useAccount } from '../../lib/client/react'
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Clock, Crown, Hash, Lock, Trash2, Volume2 } from 'lucide-react'
-import { useMask, useStore } from '../../lib/store'
+import { useMask } from '../../lib/store'
 import { type ServerTab } from '../../lib/p2p/app'
 import {
   EQUAL_ROLES_TEXT,
@@ -70,6 +70,7 @@ import { usePermissionRules } from '../use_permission_rules'
 import { time } from '../../lib/platform/time'
 import { Button, IconButton } from '../controls'
 import { BanList } from '../ban_list'
+import { DepartureSection } from '../departure_section'
 import { P2pChannelMemberList, P2pMemberListSettings } from './p2p_member_list'
 
 // Settings of a P2P server. Every change is a signed state event that members check against
@@ -772,67 +773,6 @@ function ModerationLog({ v }: { v: ServerView }) {
   )
 }
 
-function Leave({ v }: { v: ServerView }) {
-  const identity = useP2pApp()!
-  const { p2pServer, p2p } = identity
-
-  const ask = useStore(s => s.askConfirm)
-  const me = useP2p(s => s.me)
-  const owner = v.owner === me
-  const inside = v.me === 'join' || v.me === 'invite'
-  return (
-    <Stack gap="md" align="start">
-      {inside ? (
-        <>
-          <Note>
-            {owner
-              ? 'You own this server. If you leave, nobody can rename it, change channels or ban people any more.'
-              : 'Someone who can invite has to let you in again.'}
-          </Note>
-          <Button
-            onClick={() =>
-              ask({
-                title: 'Leave Server',
-                body: `Leave ${v.name}?`,
-                confirm: 'Leave',
-                action: () => void p2pServer.leave(v.id),
-              })
-            }
-            variant="filled-danger"
-            size="md"
-          >
-            Leave server
-          </Button>
-        </>
-      ) : (
-        <>
-          <Note>
-            You aren&apos;t a member any more. What you have of it stays on this device until you
-            remove it.
-          </Note>
-          <Button
-            onClick={() =>
-              ask({
-                title: 'Remove Server',
-                body: `Remove ${v.name} and everything of it from this device?`,
-                confirm: 'Remove',
-                action: () => {
-                  p2p.closeDialog()
-                  void p2pServer.forget(v.id)
-                },
-              })
-            }
-            variant="filled-danger"
-            size="md"
-          >
-            Remove from this device
-          </Button>
-        </>
-      )}
-    </Stack>
-  )
-}
-
 function TabBody({ v, room, tab }: { v: ServerView; room: string; tab: string }) {
   const identity = useP2pApp()!
   return (
@@ -846,7 +786,7 @@ function TabBody({ v, room, tab }: { v: ServerView; room: string; tab: string })
       {tab === 'members' && <Members v={v} />}
       {tab === 'bans' && <BanList place={P2pRoom.open(identity, room)} />}
       {tab === 'modlog' && <ModerationLog v={v} />}
-      {tab === 'leave' && <Leave v={v} />}
+      {tab === 'leave' && <DepartureSection place={P2pRoom.open(identity, room)} />}
     </Surface>
   )
 }
