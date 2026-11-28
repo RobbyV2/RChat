@@ -73,7 +73,7 @@ impl From<sqlx::Error> for Refused {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(super) enum ClientMsg {
     Auth {
@@ -147,6 +147,7 @@ pub(super) enum ClientMsg {
         to: String,
         channel_id: Option<i64>,
         dm_id: Option<i64>,
+        #[schema(value_type = Object)]
         payload: serde_json::Value,
     },
     Typing {

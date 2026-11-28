@@ -25,7 +25,7 @@ use crate::state::AppState;
 pub(super) type Hosting = (String, Vec<String>, BTreeMap<String, Vec<String>>);
 
 // Relay hosts declared once for several hosted files.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub(super) struct RelaySet {
     pub(super) hosts: Vec<String>,
     pub(super) ids: Vec<String>,

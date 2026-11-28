@@ -56,14 +56,14 @@ pub fn to_bus_json<T: Serialize>(value: &T) -> serde_json::Result<String> {
 /// What a `message_updated` carries: the whole message (DMs, call logs), or for an edit in a
 /// server channel only which message changed, so viewers without read history of it learn
 /// nothing; clients holding it re-read it through the gated REST list.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(untagged)]
 pub enum Updated {
     Stub(EditStub),
     Full { message: Box<Message> },
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct EditStub {
     pub id: i64,
     pub thread_root_id: Option<i64>,
@@ -101,14 +101,14 @@ impl Updated {
 }
 
 /// What a user in a voice room says about their own mic and sound.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SeatAudio {
     pub username: String,
     pub muted: bool,
     pub deafened: bool,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RefusedRequest {
     Call { attempt_id: u64 },
@@ -116,7 +116,7 @@ pub enum RefusedRequest {
     Other,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WsEvent {
     Message {
@@ -134,6 +134,7 @@ pub enum WsEvent {
         #[serde(flatten)]
         update: Updated,
         #[serde(default, skip_serializing_if = "routing_only")]
+        #[schema(ignore)]
         dm_users: Vec<String>,
     },
     MessageDeleted {
@@ -146,6 +147,7 @@ pub enum WsEvent {
         /// A `join` or `leave` message, which outsiders of a server that keeps its members to
         /// itself never see. An absent flag leaves the message kind unknown.
         #[serde(default, skip_serializing_if = "absent_or_client")]
+        #[schema(ignore)]
         notice: Option<bool>,
     },
     /// Messages of one channel, thread (`thread_root_id`) or DM deleted together by a bulk
@@ -159,9 +161,11 @@ pub enum WsEvent {
         thread_root_id: Option<i64>,
         ids: Vec<i64>,
         #[serde(default, skip_serializing_if = "routing_only")]
+        #[schema(ignore)]
         created: Vec<i64>,
         /// All membership notice ids in the batch. An absent list leaves their kinds unknown.
         #[serde(default, skip_serializing_if = "absent_or_client")]
+        #[schema(ignore)]
         notices: Option<Vec<i64>>,
     },
     MediaRemoved {
@@ -253,6 +257,7 @@ pub enum WsEvent {
         server: String,
         channel_id: i64,
         #[serde(default, skip_serializing_if = "routing_only")]
+        #[schema(ignore)]
         rules: Option<ViewRules>,
     },
     ServerCreated {
@@ -284,6 +289,7 @@ pub enum WsEvent {
     MembersPurged {
         server: String,
         #[serde(default, skip_serializing_if = "routing_only")]
+        #[schema(ignore)]
         usernames: Vec<String>,
     },
     AdminChanged {
@@ -331,22 +337,28 @@ pub enum WsEvent {
     },
     LayoutChanged {
         server: String,
+        #[schema(value_type = ChannelLayout)]
         layout: Arc<ChannelLayout>,
         #[serde(default, skip_serializing_if = "routing_only")]
+        #[schema(ignore)]
         created: Option<i64>,
         #[serde(default, skip_serializing_if = "routing_only")]
+        #[schema(ignore)]
         deleted: Option<ViewRules>,
         /// The layout before a move or a category change: a connection that doesn't manage
         /// channels and sees no difference gets nothing.
         #[serde(default, skip_serializing_if = "routing_only")]
+        #[schema(ignore)]
         before: Option<ChannelLayout>,
         /// The layout produced by this edit when `layout` carries a more recent snapshot.
         #[serde(default, skip_serializing_if = "absent_or_client")]
+        #[schema(ignore)]
         after: Option<Arc<ChannelLayout>>,
     },
     UserUpdated {
         user: UserRef,
         #[serde(default, skip_serializing_if = "routing_only")]
+        #[schema(ignore)]
         scope: UserScope,
     },
     UserRegistered {
@@ -363,6 +375,7 @@ pub enum WsEvent {
         appear_offline: bool,
         // `users.presence_seq` of this value: the newest one wins.
         #[serde(default, skip_serializing_if = "routing_only")]
+        #[schema(ignore)]
         seq: i64,
     },
     PresenceSnapshot {
@@ -440,6 +453,7 @@ pub enum WsEvent {
         profile: Option<crate::api::profiles::MemberLook>,
         bio: bool,
         #[serde(default, skip_serializing_if = "routing_only")]
+        #[schema(ignore)]
         view_only: bool,
     },
     /// The reports of `server` changed, or without one the reports to the instance: ask for the
@@ -451,8 +465,10 @@ pub enum WsEvent {
     ReportsChanged {
         server: Option<String>,
         #[serde(default, skip_serializing_if = "routing_only")]
+        #[schema(ignore)]
         about: Option<String>,
         #[serde(default, skip_serializing_if = "routing_only")]
+        #[schema(ignore)]
         channel: Option<(i64, bool)>,
     },
     CallState {
@@ -484,8 +500,10 @@ pub enum WsEvent {
         ids: Vec<String>,
         online: bool,
         #[serde(default, skip_serializing_if = "routing_only")]
+        #[schema(ignore)]
         scope_servers: Vec<String>,
         #[serde(default, skip_serializing_if = "routing_only")]
+        #[schema(ignore)]
         scope_users: Vec<String>,
     },
     RtcSignal {
@@ -493,6 +511,7 @@ pub enum WsEvent {
         from: String,
         channel_id: Option<i64>,
         dm_id: Option<i64>,
+        #[schema(value_type = Object)]
         payload: serde_json::Value,
     },
     VoiceEnded {
@@ -679,13 +698,13 @@ pub enum WsEvent {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CallPeer {
     pub user: String,
     pub peer_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CallRelays {
     pub user: String,
     pub hosts: Vec<String>,

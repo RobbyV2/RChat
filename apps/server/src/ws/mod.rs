@@ -14,6 +14,7 @@ use crate::state::AppState;
 mod access;
 pub mod calls;
 mod conn;
+mod doc;
 mod event;
 mod filter;
 mod guests;
@@ -27,6 +28,7 @@ mod widget_socket;
 pub(crate) use access::LogGate;
 pub(crate) use calls::{end_dm_call, end_switched_off};
 pub use conn::{__path_handler, handler};
+pub use doc::EventDoc;
 pub use event::{
     CallPeer, CallRelays, EditStub, SeatAudio, Updated, UserScope, WsEvent, to_bus_json,
 };
@@ -51,7 +53,7 @@ impl Layer {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum CallPhase {
     Ringing,
@@ -59,7 +61,7 @@ pub enum CallPhase {
     Ended,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum CallKind {
     Rtc,
