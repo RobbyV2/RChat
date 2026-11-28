@@ -31303,6 +31303,33 @@
           "message"
         ]
       },
+      "FilePlaceholder": {
+        "type": "object",
+        "description": "The size and the ThumbHash of an image, for the placeholder shown while it loads.",
+        "required": [
+          "width",
+          "height",
+          "thumbhash"
+        ],
+        "properties": {
+          "height": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Pixels down.",
+            "minimum": 0
+          },
+          "thumbhash": {
+            "type": "string",
+            "description": "The ThumbHash, base64url without padding, at most 64 characters."
+          },
+          "width": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Pixels across.",
+            "minimum": 0
+          }
+        }
+      },
       "Form": {
         "type": "object",
         "description": "One report category: a form.",
@@ -33241,6 +33268,17 @@
               "null"
             ],
             "description": "MIME type, known for `p2p` media; `null` for `server` media. Declared by the sender and\nnot verified: clients decide how to show a file from its bytes."
+          },
+          "placeholder": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FilePlaceholder",
+                "description": "What shows while an image loads: its size and ThumbHash. Left out for other files,\nfiles of older uploads and P2P files (whose message carries its own)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "removed": {
             "type": "boolean",

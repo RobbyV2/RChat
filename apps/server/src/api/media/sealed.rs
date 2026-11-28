@@ -105,6 +105,9 @@ pub(crate) enum Sealing {
 fn plain_facts(row: &sqlx::any::AnyRow) -> sqlx::Result<Facts> {
     Ok(Facts {
         name: row.try_get("filename")?,
+        thumbhash: row.try_get("thumbhash")?,
+        width: row.try_get("width")?,
+        height: row.try_get("height")?,
     })
 }
 
@@ -115,7 +118,7 @@ pub(crate) async fn seal_rows(
     id: &str,
     key: &MediaKey,
 ) -> Result<Sealing, ApiError> {
-    let row = sqlx::query("SELECT filename, size, data, (SELECT COUNT(*) FROM media_chunks c WHERE c.media_id = media.id) AS stored FROM media WHERE id = $1 AND seal_key IS NULL")
+    let row = sqlx::query("SELECT filename, size, data, (SELECT COUNT(*) FROM media_chunks c WHERE c.media_id = media.id) AS stored, thumbhash, width, height FROM media WHERE id = $1 AND seal_key IS NULL")
         .bind(id)
         .fetch_optional(&mut *conn)
         .await?;
@@ -176,7 +179,7 @@ async fn mark(
     key: &MediaKey,
     facts: &Facts,
 ) -> Result<u64, ApiError> {
-    Ok(sqlx::query("UPDATE media SET seal_key = $1, name_sealed = $2, filename = '', data = NULL WHERE id = $3 AND seal_key IS NULL")
+    Ok(sqlx::query("UPDATE media SET seal_key = $1, name_sealed = $2, filename = '', data = NULL, thumbhash = NULL, width = NULL, height = NULL WHERE id = $3 AND seal_key IS NULL")
         .bind(i64::from(key.id()))
         .bind(key.seal_facts(id, facts))
         .bind(id)
@@ -198,7 +201,7 @@ pub(crate) async fn seal_object(state: &AppState, id: &str) -> Result<bool, ApiE
     };
     let _permit = SEALING.acquire().await.map_err(ApiError::internal)?;
     let db = &state.db;
-    let row = sqlx::query("SELECT filename, size, seal_key, plain_object FROM media WHERE id = $1 AND data IS NULL AND NOT EXISTS (SELECT 1 FROM media_chunks c WHERE c.media_id = media.id)")
+    let row = sqlx::query("SELECT filename, size, seal_key, plain_object, thumbhash, width, height FROM media WHERE id = $1 AND data IS NULL AND NOT EXISTS (SELECT 1 FROM media_chunks c WHERE c.media_id = media.id)")
         .bind(id)
         .fetch_optional(db)
         .await?;
@@ -288,7 +291,7 @@ pub(crate) async fn facts_on(
     record: Option<&[u8]>,
 ) -> Result<Facts, ApiError> {
     let Some(key_id) = seal_key else {
-        return Ok(Facts { name: plain });
+        return Ok(Facts::named(plain));
     };
     let key = MediaKey::named_on(&crate::db::ring(db), conn, key_id as u32)
         .await
@@ -576,10 +579,13 @@ pub(crate) async fn unseal_now(state: &AppState, id: &str) -> Result<bool, ApiEr
         true => db.begin_with("BEGIN IMMEDIATE").await?,
         false => db.begin().await?,
     };
-    let marked = sqlx::query("UPDATE media SET filename = $1, seal_key = NULL, name_sealed = NULL, plain_object = NULL WHERE id = $2 AND seal_key = $3")
+    let marked = sqlx::query("UPDATE media SET filename = $1, seal_key = NULL, name_sealed = NULL, plain_object = NULL, thumbhash = $4, width = $5, height = $6 WHERE id = $2 AND seal_key = $3")
         .bind(&facts.name)
         .bind(id)
         .bind(key_id)
+        .bind(&facts.thumbhash)
+        .bind(facts.width)
+        .bind(facts.height)
         .execute(&mut *tx)
         .await?
         .rows_affected();

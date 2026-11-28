@@ -749,6 +749,12 @@ export interface Field {
 
 export type FieldKind = 'short_text' | 'long_text' | 'single_choice' | 'multiple_choice' | 'checkbox' | 'user' | 'server' | 'message'
 
+export interface FilePlaceholder {
+  height: number
+  thumbhash: string
+  width: number
+}
+
 export interface Form {
   base: Base
   enabled?: boolean
@@ -1151,6 +1157,7 @@ export interface MediaRef {
   id: string
   kind: MediaKind
   mime: string | null
+  placeholder: FilePlaceholder | null
   removed: boolean
   removed_by_author: boolean
   sha256: string | null
@@ -3206,6 +3213,7 @@ export interface Decoded {
   Feed: Feed
   Field: Field
   FieldKind: FieldKind
+  FilePlaceholder: FilePlaceholder
   Form: Form
   Format: Format
   ForwardRef: ForwardRef
@@ -3603,6 +3611,7 @@ export const decode: { readonly [K in keyof Decoded]: Schema<Decoded[K]> } = {
   Feed: ref((): Schema<Feed> => obj({ announcements: arr(ref(() => decode.Announcement)), next_change: orNull(int()), server_time: int() }) as Schema<Feed>),
   Field: ref((): Schema<Field> => obj({ help: opt(nullable(str())), id: str(), kind: ref(() => decode.FieldKind), label: str(), max: opt(nullable(int())), min: opt(nullable(int())), options: opt(arr(ref(() => decode.Choice))), placeholder: opt(nullable(str())), reason: opt(bool), required: opt(bool), template: opt(nullable(str())) }) as Schema<Field>),
   FieldKind: ref((): Schema<FieldKind> => choice('short_text', 'long_text', 'single_choice', 'multiple_choice', 'checkbox', 'user', 'server', 'message') as Schema<FieldKind>),
+  FilePlaceholder: ref((): Schema<FilePlaceholder> => obj({ height: int(), thumbhash: str(), width: int() }) as Schema<FilePlaceholder>),
   Form: ref((): Schema<Form> => obj({ base: ref(() => decode.Base), enabled: opt(bool), fields: opt(arr(ref(() => decode.Field))), id: str(), label: str(), line: opt(str()) }) as Schema<Form>),
   Format: ref((): Schema<Format> => choice('csv', 'json') as Schema<Format>),
   ForwardRef: ref((): Schema<ForwardRef> => obj({ author: orNull(ref(() => decode.UserRef)), created_at: int(), dropped: orNull(str()), origin: orNull(str()), origin_channel: orNull(str()), origin_channel_id: orNull(int()), origin_dm: opt(bool), origin_sensitive: opt(bool), origin_server: orNull(str()), origin_server_channel: orNull(str()), source_id: int() }) as Schema<ForwardRef>),
@@ -3666,7 +3675,7 @@ export const decode: { readonly [K in keyof Decoded]: Schema<Decoded[K]> } = {
   MePatch: ref((): Schema<MePatch> => obj({ appear_offline: opt(nullable(bool)), avatar_color: opt(nullable(str())), avatar_kind: opt(nullable(ref(() => decode.AvatarKind))), banner_color: opt(nullable(str())), bio: opt(nullable(str())), display_name: opt(nullable(str())) }) as Schema<MePatch>),
   MeUpdated: ref((): Schema<MeUpdated> => merged(ref(() => decode.UserRef), obj({ appear_offline: bool, banner_color: orNull(str()), bio: orNull(str()) })) as Schema<MeUpdated>),
   MediaKind: ref((): Schema<MediaKind> => choice('server', 'p2p') as Schema<MediaKind>),
-  MediaRef: ref((): Schema<MediaRef> => obj({ alt: orNull(str()), expires_at: orNull(int()), filename: str(), hoster: orNull(str()), id: str(), kind: ref(() => decode.MediaKind), mime: orNull(str()), removed: bool, removed_by_author: bool, sha256: orNull(str()), size: orNull(int()), spoiler: bool }) as Schema<MediaRef>),
+  MediaRef: ref((): Schema<MediaRef> => obj({ alt: orNull(str()), expires_at: orNull(int()), filename: str(), hoster: orNull(str()), id: str(), kind: ref(() => decode.MediaKind), mime: orNull(str()), placeholder: orNull(ref(() => decode.FilePlaceholder)), removed: bool, removed_by_author: bool, sha256: orNull(str()), size: orNull(int()), spoiler: bool }) as Schema<MediaRef>),
   Member: ref((): Schema<Member> => merged(ref(() => decode.UserRef), obj({ is_admin: bool, is_creator: bool, joined_via: orNull(ref(() => decode.JoinedVia)), online: bool, perms: mask, profile: orNull(ref(() => decode.MemberLook)), role_ids: arr(int()), timeout: orNull(ref(() => decode.MemberTimeout)) })) as Schema<Member>),
   MemberFacts: ref((): Schema<MemberFacts> => obj({ is_admin: bool, is_creator: bool, joined_at: int(), online: bool, perms: mask, profile: orNull(ref(() => decode.MemberLook)), profile_locked_until: orNull(int()), role_ids: arr(int()), roles: arr(ref(() => decode.Role)), timeout: orNull(ref(() => decode.MemberTimeout)) }) as Schema<MemberFacts>),
   MemberHit: ref((): Schema<MemberHit> => merged(ref(() => decode.Member), obj({ created_at: orNull(int()), joined_at: int() })) as Schema<MemberHit>),

@@ -1389,9 +1389,7 @@ mod media {
                 "{id} {seq}/{total}"
             );
         }
-        let facts = Facts {
-            name: "notes.txt".to_string(),
-        };
+        let facts = Facts::named("notes.txt".to_string());
         let kept = key.seal_facts("f1", &facts);
         assert!(!String::from_utf8_lossy(&kept).contains("notes"));
         assert_eq!(key.open_facts("f1", &kept), Some(facts));

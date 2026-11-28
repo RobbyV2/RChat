@@ -162,6 +162,7 @@ describe('a picture made on this device', () => {
   const crop = { x: 1, y: 2, size: 64 }
 
   const moduleOf = (animation: number, calls: string[] = []) => ({
+    picture_placeholder: () => '',
     picture_files: (bytes: Uint8Array, x: number, y: number, size: number) => {
       calls.push(`files ${bytes.length} ${x} ${y} ${size}`)
       return { mime: 'image/png', file: (at: number) => new Uint8Array(at + 1), free: () => {} }

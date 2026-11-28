@@ -1,3 +1,4 @@
+import { placeholderOf } from '../picture_files'
 import { b64u } from './canonical'
 import { hashBlob, type Hashed } from './hashing'
 import { thumbBytes } from './blobs'
@@ -54,6 +55,8 @@ export const hashFile = (file: Blob, progress?: (n: number) => void): Promise<Ha
 
 export interface Preview {
   thumb?: string
+  // The image's ThumbHash (base64url), shown while it loads.
+  th?: string
   w?: number
   h_px?: number
   dur?: number
@@ -156,7 +159,8 @@ export const previewOf = async (file: File, lim: Local['files']): Promise<Previe
         lim.timeoutMs
       )
       const thumb = await jpegOf(bmp, bmp.width, bmp.height, lim).catch(() => undefined)
-      const out = { thumb, w: dim(size.w), h_px: dim(size.h) }
+      const th = await placeholderOf(file)
+      const out = { thumb, w: dim(size.w), h_px: dim(size.h), ...(th ? { th } : {}) }
       bmp.close()
       return out
     }

@@ -1000,6 +1000,7 @@ pub(crate) async fn store_media(
         uploader,
         uploaded_at,
         sealed: None,
+        placeholder: None,
     };
     store_within(db, &file, Charge::own(uploader), 0).await
 }
@@ -1014,6 +1015,23 @@ struct NewMedia<'a> {
     uploaded_at: i64,
     /// The key the file is stored under, from its first byte.
     sealed: Option<&'a MediaKey>,
+    /// What shows while it loads, for an image.
+    placeholder: Option<&'a rchat_avatar::Placeholder>,
+}
+
+/// Images made into placeholders at once in this process.
+static PLACEHOLDERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
+/// The placeholder of an uploaded image (PNG, JPEG, GIF or WebP, recognized from its bytes),
+/// decoded off the request threads; none for other files or one that does not decode.
+async fn placeholder_of(data: &[u8]) -> Option<rchat_avatar::Placeholder> {
+    crate::api::preview_images::sniff(data)?;
+    let _permit = PLACEHOLDERS.acquire().await.ok()?;
+    let bytes = data.to_vec();
+    tokio::task::spawn_blocking(move || rchat_avatar::placeholder(&bytes).ok())
+        .await
+        .ok()
+        .flatten()
 }
 
 /// Stores `file` unless it takes `charge` past `budget` bytes of counted files (0 for no limit):
@@ -1067,9 +1085,21 @@ async fn store_within(
         tx.rollback().await?;
         return Err(over_budget(budget, charge));
     }
+    if let (None, Some(shown)) = (file.sealed, file.placeholder) {
+        sqlx::query("UPDATE media SET thumbhash = $1, width = $2, height = $3 WHERE id = $4")
+            .bind(&shown.hash)
+            .bind(i64::from(shown.width))
+            .bind(i64::from(shown.height))
+            .bind(file.id)
+            .execute(&mut *tx)
+            .await?;
+    }
     if let Some(key) = file.sealed {
         let facts = Facts {
             name: file.filename.to_string(),
+            thumbhash: file.placeholder.map(|p| p.hash.clone()),
+            width: file.placeholder.map(|p| i64::from(p.width)),
+            height: file.placeholder.map(|p| i64::from(p.height)),
         };
         sqlx::query("UPDATE media SET seal_key = $1, name_sealed = $2 WHERE id = $3")
             .bind(i64::from(key.id()))
@@ -1236,6 +1266,7 @@ pub(crate) async fn save_within(
     check_budget(&state.db, charge, data.len() as u64, budget).await?;
     let id = fresh_id(&state.db).await?;
     let uploaded_at = state.clock.unix();
+    let placeholder = placeholder_of(data).await;
     let in_db = match (&state.s3, sealed) {
         (Some(bucket), Some(key)) => {
             bucket
@@ -1266,6 +1297,7 @@ pub(crate) async fn save_within(
         uploader,
         uploaded_at,
         sealed,
+        placeholder: placeholder.as_ref(),
     };
     if let Err(e) = store_within(&state.db, &file, charge, budget).await {
         s3_delete(state.s3.as_deref(), &id).await;

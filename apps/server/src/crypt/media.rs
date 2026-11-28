@@ -60,6 +60,34 @@ pub struct Facts {
     /// The file's name.
     #[serde(rename = "f")]
     pub name: String,
+    /// An image's ThumbHash and its size, shown while it loads.
+    #[serde(rename = "t", default, skip_serializing_if = "Option::is_none")]
+    pub thumbhash: Option<String>,
+    #[serde(rename = "w", default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<i64>,
+    #[serde(rename = "h", default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<i64>,
+}
+
+impl Facts {
+    /// The facts of a file named `name` with nothing else known.
+    pub fn named(name: String) -> Facts {
+        Facts {
+            name,
+            ..Facts::default()
+        }
+    }
+
+    /// The placeholder, when all three parts are there.
+    pub fn placeholder(self) -> Option<(String, i64, i64)> {
+        let Facts {
+            name: _,
+            thumbhash,
+            width,
+            height,
+        } = self;
+        Some((thumbhash?, width?, height?))
+    }
 }
 
 #[derive(Serialize, Deserialize)]

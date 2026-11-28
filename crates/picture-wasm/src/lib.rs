@@ -55,6 +55,15 @@ pub fn picture_files(bytes: &[u8], x: u32, y: u32, size: u32) -> Result<PictureF
     made(bytes, Crop { x, y, size }).map_err(JsError::new)
 }
 
+/// The placeholder of the image in `bytes` (its ThumbHash, base64url), as an instance makes it for
+/// an upload; empty for a file that is no image it reads.
+#[wasm_bindgen]
+pub fn picture_placeholder(bytes: &[u8]) -> String {
+    rchat_avatar::placeholder(bytes)
+        .map(|made| made.hash)
+        .unwrap_or_default()
+}
+
 /// The 128 pixel animation the square `x`, `y`, `size` of the image in `bytes` shows, as an
 /// animated GIF within the bounds given (frames, milliseconds, decoded megapixels over all
 /// frames, bytes of the file); empty for a still image. Fails like `picture_files`, and with

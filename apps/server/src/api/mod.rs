@@ -919,6 +919,21 @@ pub struct MediaRef {
     /// Absent without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alt: Option<String>,
+    /// What shows while an image loads: its size and ThumbHash. Left out for other files,
+    /// files of older uploads and P2P files (whose message carries its own).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<FilePlaceholder>,
+}
+
+/// The size and the ThumbHash of an image, for the placeholder shown while it loads.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct FilePlaceholder {
+    /// Pixels across.
+    pub width: u32,
+    /// Pixels down.
+    pub height: u32,
+    /// The ThumbHash, base64url without padding, at most 64 characters.
+    pub thumbhash: String,
 }
 
 impl MediaRef {
@@ -942,6 +957,7 @@ impl MediaRef {
             removed_by_author: false,
             spoiler,
             alt: None,
+            placeholder: None,
         }
     }
 }

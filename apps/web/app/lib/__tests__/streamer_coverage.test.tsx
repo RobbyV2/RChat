@@ -114,6 +114,7 @@ describe('streamer mode', () => {
       sha256: null,
       removed: false,
       removed_by_author: false,
+      placeholder: null,
       spoiler: false,
       alt: null,
     }

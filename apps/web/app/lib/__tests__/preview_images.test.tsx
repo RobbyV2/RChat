@@ -115,6 +115,7 @@ describe('link preview images', () => {
     mime: null,
     removed: false,
     removed_by_author: false,
+    placeholder: null,
     spoiler: false,
     alt: null,
     sha256: null,

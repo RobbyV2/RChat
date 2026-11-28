@@ -1,4 +1,5 @@
 'use client'
+import { placeholderUrl } from '../../lib/thumbhash'
 import { IconButton, MediaButton } from '../controls'
 import { Name } from '../name'
 import { instanceName, notAName } from '../../lib/names'
@@ -109,8 +110,11 @@ function Tile({
   const done = v?.state === 'done'
   const url = useFileUrl(att.h, done && !!v.type && kindOf(v.type) !== null)
   const { label } = useInstanceLabel()
-  const thumb = useThumb(done ? undefined : att.thumb)
-  const placeholder = useThumb(done ? att.thumb : undefined)
+  const jpeg = useThumb(done ? undefined : att.thumb)
+  const kept = useThumb(done ? att.thumb : undefined)
+  const hashed = placeholderUrl(att.th)
+  const thumb = jpeg ?? (done ? null : hashed)
+  const placeholder = kept ?? (done ? hashed : null)
   useEffect(() => {
     if (!textOnly) p2pFiles.watch(att)
   }, [att, textOnly])

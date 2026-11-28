@@ -166,6 +166,7 @@ describe('inline editing', () => {
       mime: null,
       removed: false,
       removed_by_author: false,
+      placeholder: null,
       spoiler: false,
       alt: 'A cat',
       sha256: null,
@@ -325,6 +326,7 @@ const media = (over: Partial<MessageMedia> = {}): MessageMedia => ({
   mime: 'image/png',
   removed: false,
   removed_by_author: false,
+  placeholder: null,
   spoiler: false,
   ...over,
 })

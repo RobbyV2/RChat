@@ -169,6 +169,69 @@ fn file(image: &RgbaImage, mime: Mime) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// The longest side a placeholder is made from.
+const PLACEHOLDER_SIDE: u32 = 100;
+/// The longest a placeholder's text is (base64url of a ThumbHash).
+pub const PLACEHOLDER_MAX: usize = 64;
+
+/// What shows while an image loads: its size in pixels and its ThumbHash (base64url without
+/// padding), a blurred picture of its colors in about 30 bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Placeholder {
+    pub width: u32,
+    pub height: u32,
+    pub hash: String,
+}
+
+const B64URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+fn b64url(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, b)| n | u32::from(*b) << (16 - 8 * i));
+        for i in 0..=chunk.len() {
+            out.push(char::from(B64URL[(n >> (18 - 6 * i)) as usize & 63]));
+        }
+    }
+    out
+}
+
+/// Whether `text` has the form of a placeholder: base64url, at most `PLACEHOLDER_MAX`.
+pub fn placeholder_ok(text: &str) -> bool {
+    !text.is_empty()
+        && text.len() <= PLACEHOLDER_MAX
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// The placeholder of the image in `bytes` (PNG, JPEG, GIF's first frame or WebP), decoded
+/// within the bounds of a picture.
+pub fn placeholder(bytes: &[u8]) -> Result<Placeholder, Refused> {
+    let image = decoded(bytes)?;
+    let (width, height) = image.dimensions();
+    let scale = f64::from(PLACEHOLDER_SIDE) / f64::from(width.max(height).max(1));
+    let small = match scale < 1.0 {
+        true => imageops::resize(
+            &image,
+            ((f64::from(width) * scale).round() as u32).max(1),
+            ((f64::from(height) * scale).round() as u32).max(1),
+            imageops::FilterType::Triangle,
+        ),
+        false => image,
+    };
+    let (w, h) = small.dimensions();
+    let hash = thumbhash::rgba_to_thumb_hash(w as usize, h as usize, small.as_raw());
+    Ok(Placeholder {
+        width,
+        height,
+        hash: b64url(&hash),
+    })
+}
+
 /// The picture `crop` of the image in `bytes` shows (the centered largest square without one):
 /// PNG when it has transparency, JPEG otherwise. An animation gives its first frame.
 pub fn encode(bytes: &[u8], crop: Option<Crop>) -> Result<Encoded, Refused> {

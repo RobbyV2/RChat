@@ -184,6 +184,69 @@ fn places_parse_strictly() {
     }
 }
 
+/// The placeholder columns of file `id`.
+async fn plain_placeholder(db: &Db, id: &str) -> Option<(String, i64, i64)> {
+    let (hash, w, h): (Option<String>, Option<i64>, Option<i64>) =
+        sqlx::query_as("SELECT thumbhash, width, height FROM media WHERE id = $1")
+            .bind(id)
+            .fetch_one(db)
+            .await
+            .expect("row");
+    Some((hash?, w?, h?))
+}
+
+#[tokio::test]
+async fn an_image_keeps_its_placeholder_plain_or_sealed() {
+    for (state, temp) in each_db_keyed("media_placeholders").await {
+        let db = &state.db;
+        let cid = setup(db).await;
+        let image = rchat_avatar::samples::png(&rchat_avatar::samples::halves(120, 80));
+        let plain = upload(&state, None, "cat.png", &image).await;
+        let (hash, w, h) = plain_placeholder(db, &plain).await.expect("a placeholder");
+        assert_eq!((w, h), (120, 80));
+        assert!(rchat_avatar::placeholder_ok(&hash));
+        let text = upload(&state, None, "notes.txt", b"just words").await;
+        assert_eq!(
+            plain_placeholder(db, &text).await,
+            None,
+            "only images have one"
+        );
+
+        let sent = post(&state, cid, &plain).await;
+        let shown = sent.media.as_ref().and_then(|m| m.placeholder.clone());
+        assert_eq!(
+            shown
+                .as_ref()
+                .map(|p| (p.width, p.height, p.thumbhash.as_str())),
+            Some((120, 80, hash.as_str())),
+            "the message carries it"
+        );
+
+        switch(&state, true).await;
+        let sealed = upload(&state, Some(Place::Channel(cid)), "cat.png", &image).await;
+        assert_eq!(
+            plain_placeholder(db, &sealed).await,
+            None,
+            "a sealed file keeps it in its sealed facts only"
+        );
+        let posted = post(&state, cid, &sealed).await;
+        assert_eq!(
+            posted.media.as_ref().and_then(|m| m.placeholder.clone()),
+            shown,
+            "opened from the facts"
+        );
+        let later = upload(&state, None, "cat.png", &image).await;
+        assert!(plain_placeholder(db, &later).await.is_some());
+        post(&state, cid, &later).await;
+        assert_eq!(
+            plain_placeholder(db, &later).await,
+            None,
+            "sealed on posting: the plain columns are blanked"
+        );
+        temp.done(state).await;
+    }
+}
+
 #[tokio::test]
 async fn files_follow_their_place_in_the_database() {
     for (state, temp) in each_db_keyed("media_sealed_db").await {

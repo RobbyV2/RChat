@@ -441,6 +441,7 @@ fn row_message(
                     0 => alt,
                     _ => None,
                 },
+                placeholder: None,
             })
         }
         None => None,
@@ -947,7 +948,75 @@ pub(crate) async fn load_broadcast(db: &Db, id: i64) -> Result<Option<Message>, 
 
 /// Attaches stored link previews. A preview of a link the text now hides in a spoiler (stored by
 /// an older build) is left out.
+/// Fills the placeholders of the server files `msgs` carry: from the file's row, or its sealed
+/// facts when the file is stored encrypted. A file with none, or whose facts do not open, keeps
+/// none.
+pub(crate) async fn attach_placeholders(db: &Db, msgs: &mut [Message]) -> Result<(), ApiError> {
+    let ids: Vec<String> = msgs
+        .iter()
+        .filter_map(|m| m.media.as_ref())
+        .filter(|m| m.kind == MediaKind::Server && !m.removed)
+        .map(|m| m.id.clone())
+        .collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let ph: Vec<String> = (1..=ids.len()).map(|n| format!("${n}")).collect();
+    let sql = format!(
+        "SELECT id, thumbhash, width, height, seal_key, name_sealed FROM media WHERE id IN ({}) AND (thumbhash IS NOT NULL OR seal_key IS NOT NULL)",
+        ph.join(", ")
+    );
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+    for id in &ids {
+        query = query.bind(id);
+    }
+    let mut found: HashMap<String, crate::api::FilePlaceholder> = HashMap::new();
+    for r in query.fetch_all(db).await? {
+        let id: String = r.try_get(0)?;
+        let plain = match (
+            r.try_get::<Option<String>, _>(1)?,
+            r.try_get::<Option<i64>, _>(2)?,
+            r.try_get::<Option<i64>, _>(3)?,
+        ) {
+            (Some(thumbhash), Some(w), Some(h)) => Some((thumbhash, w, h)),
+            (_, _, _) => None,
+        };
+        let shown = match (plain, r.try_get::<Option<i64>, _>(4)?) {
+            (Some(plain), _) => Some(plain),
+            (None, Some(key)) => {
+                let record: Option<Vec<u8>> = r.try_get(5)?;
+                let key = crate::crypt::media::MediaKey::named(db, key as u32)
+                    .await
+                    .map_err(ApiError::internal)?;
+                key.zip(record)
+                    .and_then(|(key, record)| key.open_facts(&id, &record))
+                    .and_then(|facts| facts.placeholder())
+            }
+            (None, None) => None,
+        };
+        if let Some((thumbhash, w, h)) = shown
+            && rchat_avatar::placeholder_ok(&thumbhash)
+        {
+            found.insert(
+                id,
+                crate::api::FilePlaceholder {
+                    width: u32::try_from(w).unwrap_or(0),
+                    height: u32::try_from(h).unwrap_or(0),
+                    thumbhash,
+                },
+            );
+        }
+    }
+    for m in msgs.iter_mut() {
+        if let Some(media) = m.media.as_mut() {
+            media.placeholder = found.get(&media.id).cloned();
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn attach_embeds(db: &Db, msgs: &mut [Message]) -> Result<(), ApiError> {
+    attach_placeholders(db, msgs).await?;
     if msgs.is_empty() || !Settings::cached(db).await.asset_previews {
         return Ok(());
     }
@@ -1284,6 +1353,7 @@ async fn p2p_media(
         removed_by_author: false,
         spoiler,
         alt: None,
+        placeholder: None,
     })
 }
 
@@ -1609,6 +1679,7 @@ pub(crate) async fn insert_message(
         rich_embeds: cards.list().to_vec(),
     }];
     attach_quotes(db, &mut msgs, None).await?;
+    attach_placeholders(db, &mut msgs).await?;
     crate::api::polls::attach(db, &mut msgs).await?;
     let [message] = msgs;
     Ok(message)
@@ -1826,6 +1897,7 @@ async fn forwarded(
                 removed_by_author: false,
                 spoiler: row.try_get::<i64, _>(5)? != 0,
                 alt,
+                placeholder: None,
             };
             (stored.then_some(media), None)
         }

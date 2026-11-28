@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync, statSync } from 'node:fs'
 import { deflateSync } from 'node:zlib'
 import { AVATAR_IMAGES } from '../avatar_images'
-import { PICTURE_MODULE, pictureFiles, type PictureModule } from '../picture_files'
+import { PICTURE_MODULE, pictureFiles, placeholderOf, type PictureModule } from '../picture_files'
+import { aspectRatio, hashBytes, placeholderUrl } from '../thumbhash'
 import { built, wasmBuild } from './helpers/perms'
 
 const crc = (bytes: Uint8Array) => {
@@ -84,5 +85,22 @@ describe('the picture codec is its own module', () => {
       pictureBuild
     )
     expect(made).toEqual({ error: "Couldn't read that image" })
+  })
+})
+
+describe('image placeholders', () => {
+  test('the picture module makes the ThumbHash the client draws', async () => {
+    const square = await placeholderOf(new Blob([png(96)]), pictureBuild)
+    expect(square === undefined).toBe(false)
+    const bytes = hashBytes(square)
+    expect(bytes).not.toBeNull()
+    expect(Math.abs(aspectRatio(bytes as Uint8Array) - 1) < 0.2).toBe(true)
+    expect(placeholderUrl(square)?.startsWith('data:image/png;base64,')).toBe(true)
+    expect(await placeholderOf(new Blob(['text']), pictureBuild)).toBeUndefined()
+  })
+
+  test('a malformed placeholder draws nothing', () => {
+    for (const bad of ['', 'a+b', 'x'.repeat(65), 7, null, 'AB'])
+      expect(placeholderUrl(bad)).toBeNull()
   })
 })

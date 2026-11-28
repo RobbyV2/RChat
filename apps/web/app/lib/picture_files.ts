@@ -12,6 +12,7 @@ interface Made {
 
 export interface PictureModule {
   picture_files(bytes: Uint8Array, x: number, y: number, size: number): Made
+  picture_placeholder(bytes: Uint8Array): string
   picture_animation(
     bytes: Uint8Array,
     x: number,
@@ -83,5 +84,19 @@ export async function pictureFiles(
   } catch (e) {
     const word = e instanceof Error ? e.message : ''
     return { error: PICTURE_REFUSALS[word] ?? PICTURE_REFUSALS.not_image }
+  }
+}
+
+// The placeholder (ThumbHash) of the image `file`, made by the picture module as an instance
+// makes it for an upload; undefined where the module can't load or the file is no image.
+export async function placeholderOf(
+  file: Blob,
+  load: () => Promise<PictureModule> = loadPictureModule
+): Promise<string | undefined> {
+  try {
+    const made = (await load()).picture_placeholder(new Uint8Array(await file.arrayBuffer()))
+    return made === '' ? undefined : made
+  } catch {
+    return undefined
   }
 }

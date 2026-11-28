@@ -205,6 +205,9 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("avatar_images", "seal_key {INT}"),
     ("embeds", "color TEXT"),
     ("embeds", "media_kind TEXT"),
+    ("media", "thumbhash TEXT"),
+    ("media", "width {INT}"),
+    ("media", "height {INT}"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -358,7 +361,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 74: sealed pictures (`avatar_images.seal_key`).
 /// 75: the accent colors of link previews (`embeds.color`).
 /// 76: links that lead straight to a picture (`embeds.media_kind`).
-pub const SCHEMA_VERSION: i64 = 76;
+/// 77: image placeholders of uploads (`media.thumbhash`, `width`, `height`).
+pub const SCHEMA_VERSION: i64 = 77;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;
@@ -392,6 +396,9 @@ pub(super) const EMBED_COLOR_VERSION: i64 = 75;
 /// The schema version that adds picture links.
 #[cfg(test)]
 pub(super) const PICTURE_LINKS_VERSION: i64 = 76;
+/// The schema version that adds image placeholders.
+#[cfg(test)]
+pub(super) const PLACEHOLDERS_VERSION: i64 = 77;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 25] {

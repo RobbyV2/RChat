@@ -90,6 +90,7 @@ import { MessageLinkCard, WidgetLinkCards, WidgetMessageLinkCard } from './messa
 import { RichEmbeds } from './webhooks'
 import { cardsOf } from '../lib/rich_embeds'
 import { pictureLinkOnly } from '../lib/embed_links'
+import { placeholderUrl } from '../lib/thumbhash'
 import { previewAccent } from '../lib/embed_colors'
 import { ProfileButton } from './profile_card'
 import { EditedMark } from './message_editor'
@@ -976,6 +977,19 @@ export function MediaAttachment({
         {fmtExpiry(expires_at)}
       </Row>
     ) : null
+  const waiting =
+    image && !hidden && media.placeholder ? placeholderUrl(media.placeholder.thumbhash) : null
+  if (image && src === undefined && waiting && media.placeholder)
+    return (
+      <img
+        src={waiting}
+        alt=""
+        data-placeholder
+        width={media.placeholder.width}
+        height={media.placeholder.height}
+        className="msg-part h-auto max-h-80 w-auto max-w-full rounded-xl object-cover blur-md"
+      />
+    )
   if (image && src === undefined)
     return (
       <div

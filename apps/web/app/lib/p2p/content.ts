@@ -43,6 +43,8 @@ export interface Attachment {
   dur?: number
   // A JPEG preview of at most 6 KiB (b64u), checked again before it is shown.
   thumb?: string
+  // The image's ThumbHash (base64url, at most 64 characters), read only when shown.
+  th?: string
   // A description of the image, read only when shown (`altText`).
   alt?: string
 }

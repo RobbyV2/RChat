@@ -308,6 +308,7 @@ export function createAttachmentsPart(
         if (pv.h_px) a.h_px = pv.h_px
         if (pv.dur !== undefined) a.dur = pv.dur
         if (pv.thumb) a.thumb = pv.thumb
+        if (pv.th) a.th = pv.th
         const alt = altToSend(p.alt)
         if (alt) a.alt = alt
         att.push(a)

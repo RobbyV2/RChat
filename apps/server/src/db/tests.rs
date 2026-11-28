@@ -9655,6 +9655,49 @@ async fn sealed_pictures_are_added_to_an_old_database() {
 }
 
 #[tokio::test]
+async fn image_placeholders_are_added_to_an_old_database() {
+    on_each_database("placeholders_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        for sql in [
+            "INSERT INTO media(id, filename, mime, size, uploader, uploaded_at) VALUES('m1', 'cat.png', 'image/png', 3, 'alice', 9)",
+            "ALTER TABLE media DROP COLUMN thumbhash",
+            "ALTER TABLE media DROP COLUMN width",
+            "ALTER TABLE media DROP COLUMN height",
+        ] {
+            sqlx::query(sql).execute(&db).await.expect(sql);
+        }
+        sqlx::query("UPDATE settings SET value = $1 WHERE key = 'schema_version'")
+            .bind((super::migrate::PLACEHOLDERS_VERSION - 1).to_string())
+            .execute(&db)
+            .await
+            .expect("version");
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM media WHERE id = 'm1' AND filename = 'cat.png' AND mime = 'image/png' AND size = 3 AND uploader = 'alice' AND uploaded_at = 9").await,
+                1,
+                "{round}: the old file keeps its values"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM media WHERE thumbhash IS NULL AND width IS NULL AND height IS NULL").await,
+                i64::from(round == 0),
+                "{round}: an old file has no placeholder"
+            );
+            if round == 0 {
+                sqlx::query("UPDATE media SET thumbhash = 'abc', width = 4, height = 3")
+                    .execute(&db)
+                    .await
+                    .expect("placeholder");
+            }
+            close(&db).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn picture_links_are_added_to_an_old_database() {
     on_each_database("picture_links_upgrade", |url| async move {
         let db = open_started(Some(&url)).await.expect("open");
