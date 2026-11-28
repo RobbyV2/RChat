@@ -49,6 +49,7 @@ import {
   type IconButtonShape,
   type IconButtonSize,
   type IconButtonTone,
+  type LinkSize,
   type LinkTone,
   type MediaShape,
   type Place,
@@ -286,6 +287,7 @@ export function ListRow<const S extends string = never>({
 export function LinkButton<const S extends string = never>({
   tone = 'primary',
   underlined = false,
+  size,
   type = 'button',
   title,
   label,
@@ -297,6 +299,7 @@ export function LinkButton<const S extends string = never>({
   Placed<S> & {
     tone?: LinkTone
     underlined?: boolean
+    size?: LinkSize
     title?: string
     label?: string
     ref?: Ref<HTMLButtonElement>
@@ -309,7 +312,7 @@ export function LinkButton<const S extends string = never>({
       ref={ref}
       title={title}
       aria-label={label}
-      className={placed('inline-flex', linkLook(tone, underlined), place)}
+      className={placed('inline-flex', linkLook(tone, underlined, size), place)}
     >
       {children}
     </button>

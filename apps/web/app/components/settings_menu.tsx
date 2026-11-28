@@ -377,7 +377,7 @@ function NavAccount({
             />
           )}
           {me && (
-            <LinkButton onClick={onProfile}>
+            <LinkButton onClick={onProfile} size="xs">
               <Pencil size={12} />
               Edit your profile
             </LinkButton>

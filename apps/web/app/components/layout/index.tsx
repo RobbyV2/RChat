@@ -116,13 +116,14 @@ function render<S extends string, L extends string>(
 }
 
 // Children one under the other, `gap` apart; `divided` draws a line between them; `rowFrom`
-// puts them side by side, centered, from that width on.
+// puts them side by side, centered, from that width on, `rowGap` apart (`gap` unless given).
 export function Stack<const S extends string = never, const L extends string = never>({
   gap,
   align,
   justify,
   divided,
   rowFrom,
+  rowGap,
   ...box
 }: Box<S, L> & {
   gap: Space
@@ -130,8 +131,9 @@ export function Stack<const S extends string = never, const L extends string = n
   justify?: Justify
   divided?: boolean
   rowFrom?: Breakpoint
+  rowGap?: Space
 }) {
-  return render('flex', stackLook(gap, align, justify, divided, rowFrom), box)
+  return render('flex', stackLook(gap, align, justify, divided, rowFrom, rowGap), box)
 }
 
 // Children side by side on one line (center, or text baseline), `gap` apart; `wrap` continues a

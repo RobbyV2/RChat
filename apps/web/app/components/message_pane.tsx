@@ -649,7 +649,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           />
         </IconButton>
         {view?.kind === 'channel' && (
-          <Stack gap="none" rowFrom="md" place="min-w-0 flex-1">
+          <Stack gap="none" rowFrom="md" rowGap="md" place="min-w-0 flex-1">
             <Row
               as="span"
               gap="xs"
@@ -686,16 +686,10 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
               )}
             </Row>
             {channel && !isVoice && (
-              <Inset
-                as="span"
-                row
-                pad="md"
-                inset="sides"
-                look="md:border-l md:border-outline-variant"
-                place="min-w-0 md:flex-1"
-              >
+              <Row as="span" gap="md" align="stretch" place="min-w-0 md:flex-1">
+                <span aria-hidden className="hidden w-px shrink-0 bg-outline-variant md:block" />
                 <ChannelTopic channel={channel} />
-              </Inset>
+              </Row>
             )}
           </Stack>
         )}

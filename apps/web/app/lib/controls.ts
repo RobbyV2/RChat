@@ -347,8 +347,12 @@ const LINK_TONE: Record<LinkTone, string> = {
   inherit: 'font-medium',
 }
 
-export const linkLook = (tone: LinkTone = 'primary', underlined = false) =>
-  `max-w-full min-w-0 items-center gap-1 rounded-sm text-left ${LINK_TONE[tone]} underline-offset-2 ${underlined ? 'underline' : 'hover-idle:underline'} ${FOCUS} disabled:opacity-40 pointer-coarse:-my-3.5 pointer-coarse:min-w-11 pointer-coarse:py-3.5`
+export type LinkSize = 'xs' | 'sm'
+const LINK_SIZE: Record<LinkSize, string> = { xs: ' text-xs', sm: ' text-sm' }
+
+// A link takes the type size of the text around it unless `size` names one.
+export const linkLook = (tone: LinkTone = 'primary', underlined = false, size?: LinkSize) =>
+  `max-w-full min-w-0 items-center gap-1 rounded-sm text-left ${LINK_TONE[tone]}${size ? LINK_SIZE[size] : ''} underline-offset-2 ${underlined ? 'underline' : 'hover-idle:underline'} ${FOCUS} disabled:opacity-40 pointer-coarse:-my-3.5 pointer-coarse:min-w-11 pointer-coarse:py-3.5`
 
 // One choice of a few, as a chip: the chosen one is filled.
 export const chipLook = (on: boolean, variant: ChipVariant = 'pill') =>

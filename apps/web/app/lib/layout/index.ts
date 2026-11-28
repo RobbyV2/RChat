@@ -18,6 +18,19 @@ const GAP: Record<Space, string> = {
   '3xl': 'gap-(--space-3xl)',
 }
 
+const COLUMN_GAP: Record<Space, string> = {
+  none: 'gap-x-0',
+  '3xs': 'gap-x-(--space-3xs)',
+  '2xs': 'gap-x-(--space-2xs)',
+  xs: 'gap-x-(--space-xs)',
+  sm: 'gap-x-(--space-sm)',
+  md: 'gap-x-(--space-md)',
+  lg: 'gap-x-(--space-lg)',
+  xl: 'gap-x-(--space-xl)',
+  '2xl': 'gap-x-(--space-2xl)',
+  '3xl': 'gap-x-(--space-3xl)',
+}
+
 const ROW_GAP: Record<Space, string> = {
   none: 'gap-y-0',
   '3xs': 'gap-y-(--space-3xs)',
@@ -193,15 +206,17 @@ export const typeLook = (text?: BoxText, ink?: BoxInk) =>
 // box (`hidden md:flex`).
 
 // A column: children one under the other, `gap` apart; `divided` draws a line between them;
-// `rowFrom` lays them side by side, centered, from that width on.
+// `rowFrom` lays them side by side, centered, from that width on, `rowGap` apart (`gap` unless
+// given).
 export const stackLook = (
   gap: Space,
   align: StackAlign = 'stretch',
   justify: Justify = 'start',
   divided = false,
-  rowFrom?: Breakpoint
+  rowFrom?: Breakpoint,
+  rowGap?: Space
 ) =>
-  `min-w-0 flex-col ${GAP[gap]} ${ITEMS[align]} ${JUSTIFY[justify]}${
+  `min-w-0 flex-col ${rowGap ? `${ROW_GAP[gap]} ${COLUMN_GAP[rowGap]}` : GAP[gap]} ${ITEMS[align]} ${JUSTIFY[justify]}${
     divided ? ' divide-y divide-outline-variant' : ''
   }${rowFrom ? ` ${ROW_FROM[rowFrom]}` : ''}`
 
