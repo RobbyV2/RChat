@@ -141,7 +141,7 @@ describe('loading and caching', () => {
     expect(maskProfanity('fuck')).toBe('****')
   })
 
-  test('a load still running when masking starts over installs nothing', async () => {
+  test('a load running when masking starts over installs nothing', async () => {
     let finish: (m: Matcher) => void = () => {}
     const slow = setMasking(true, () => new Promise<Matcher>(done => void (finish = done)))
     resetMasking()
