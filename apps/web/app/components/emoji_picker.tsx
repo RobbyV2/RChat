@@ -2,6 +2,7 @@
 import { useStoreApi } from '../lib/client/react'
 import {
   memo,
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -9,11 +10,8 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
   type ReactNode,
-  type TouchEvent as ReactTouchEvent,
 } from 'react'
-import { createPortal } from 'react-dom'
 import {
   Car,
   Clock,
@@ -49,10 +47,9 @@ import {
   type GridKey,
   type GridPos,
 } from '../lib/emoji'
-import { placePopover, type Align, type Side } from '../lib/autocomplete'
-import { useMedia } from './context_menu'
+import { type Align, type Side } from '../lib/autocomplete'
 import { IconButton, EmojiCell } from './controls'
-import { Sheet, Popover } from './ui'
+import { Anchored, useEscapeInside } from './ui'
 import { Stack, Surface, Inset, Grid } from './layout'
 import { time } from '../lib/platform/time'
 import { useLive } from '../lib/place/react'
@@ -96,7 +93,6 @@ const CELL = 40
 const SHEET_CELL = 46
 const FREQUENT_ROWS = 2
 const HEADER = 30
-const DRAG_CLOSE = 96
 
 // The emoji data once it is here, for code that reads it outside what it draws (a key handler,
 // a tooltip); null until then. While `wanted` it asks for the data.
@@ -131,8 +127,6 @@ interface Group {
 
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
-const stop = (e: { stopPropagation: () => void }) => e.stopPropagation()
-
 export function EmojiPicker({
   anchor,
   onPick,
@@ -141,11 +135,6 @@ export function EmojiPicker({
   align = 'end',
   label = 'Emoji picker',
 }: EmojiPickerProps) {
-  const sheet = useMedia(SHEET_QUERY)
-  const rootRef = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
-  const [dragY, setDragY] = useState<number | null>(null)
-  const dragFrom = useRef(0)
   const closeRef = useRef(onClose)
   const pickRef = useRef(onPick)
   useEffect(() => {
@@ -153,123 +142,26 @@ export function EmojiPicker({
     pickRef.current = onPick
   })
 
-  useLayoutEffect(() => {
-    if (sheet) {
-      const active = document.activeElement
-      if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) active.blur()
-      return
-    }
-    const place = () => {
-      const el = rootRef.current
-      if (!el) return
-      const vw = window.innerWidth
-      const vh = window.innerHeight
-      const r = anchor?.getBoundingClientRect() ?? {
-        top: vh / 2,
-        bottom: vh / 2,
-        left: vw / 2 + el.offsetWidth / 2,
-        right: vw / 2 + el.offsetWidth / 2,
-      }
-      const next = placePopover(
-        r,
-        { width: el.offsetWidth, height: el.offsetHeight },
-        { width: vw, height: vh },
-        side,
-        align
-      )
-      setPos(cur => (cur && cur.top === next.top && cur.left === next.left ? cur : next))
-    }
-    const onScroll = (e: Event) => {
-      if (!(e.target instanceof Node && rootRef.current?.contains(e.target))) place()
-    }
-    place()
-    window.addEventListener('resize', place)
-    window.addEventListener('scroll', onScroll, true)
-    return () => {
-      window.removeEventListener('resize', place)
-      window.removeEventListener('scroll', onScroll, true)
-    }
-  }, [sheet, anchor, side, align])
-
-  useEffect(() => {
-    const onDown = (e: PointerEvent) => {
-      const t = e.target
-      if (!(t instanceof Node)) return
-      if (rootRef.current?.contains(t) || anchor?.contains(t)) return
-      if (!sheet) closeRef.current()
-    }
-    document.addEventListener('pointerdown', onDown, true)
-    return () => document.removeEventListener('pointerdown', onDown, true)
-  }, [anchor, sheet])
-
   const [relay] = useState(() => ({
     pick: (e: string, o: PickOptions) => pickRef.current(e, o),
     close: () => closeRef.current(),
   }))
 
-  const body = <PickerBody sheet={sheet} label={label} onPick={relay.pick} onClose={relay.close} />
-
-  const guard = {
-    onMouseDown: stop,
-    onPointerDown: stop,
-    onTouchStart: stop,
-    onTouchMove: stop,
-    onTouchEnd: stop,
-    onContextMenu: (e: ReactMouseEvent) => {
-      e.stopPropagation()
-      if (sheet) e.preventDefault()
-    },
-    onKeyDown: stop,
-  }
-
-  if (sheet) {
-    const handle = {
-      onTouchStart: (e: ReactTouchEvent) => {
-        dragFrom.current = e.touches[0].clientY
-        setDragY(0)
-      },
-      onTouchMove: (e: ReactTouchEvent) => {
-        if (dragY !== null) setDragY(Math.max(0, e.touches[0].clientY - dragFrom.current))
-      },
-      onTouchEnd: () => {
-        if ((dragY ?? 0) > DRAG_CLOSE) onClose()
-        setDragY(null)
-      },
-      onTouchCancel: () => setDragY(null),
-    }
-    return createPortal(
-      <Sheet
-        height="half"
-        overlay={{ ...guard, onClick: stop, 'data-popover': '' }}
-        gripProps={handle}
-        onClose={onClose}
-        ref={rootRef}
-        aria-label={label}
-        style={
-          dragY
-            ? { transform: `translateY(${dragY}px)`, transition: 'none' }
-            : { transition: 'transform 160ms ease-out' }
-        }
-      >
-        {body}
-      </Sheet>,
-      document.body
-    )
-  }
-
-  return createPortal(
-    <Popover
-      {...guard}
-      onClick={stop}
-      at={pos}
+  return (
+    <Anchored
+      anchor={{ el: anchor, side, align }}
       size="picker"
-      layer="top"
-      ref={rootRef}
-      aria-label={label}
+      raised
+      height="half"
+      dragToClose
+      isolated
+      label={label}
+      onClose={onClose}
     >
-      {body}
-    </Popover>,
-    document.body
+      {sheet => (
+        <PickerBody sheet={sheet} label={label} onPick={relay.pick} onClose={relay.close} />
+      )}
+    </Anchored>
   )
 }
 
@@ -303,20 +195,8 @@ function LoadingGrid({ sheet }: { sheet: boolean }) {
 }
 
 const PickerBody = memo(function PickerBody(props: BodyProps) {
-  const { sheet, onClose } = props
+  const { sheet } = props
   const load = useLoad(emojiSource())
-  const here = load.status === 'ready'
-  useEffect(() => {
-    if (here) return
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.isComposing) return
-      e.preventDefault()
-      e.stopPropagation()
-      onClose()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [here, onClose])
   return (
     <Loaded
       load={load}
@@ -359,17 +239,13 @@ function PickerGrid({ sheet, label, onPick, onClose, data }: BodyProps & { data:
     if (!sheet) searchRef.current?.focus({ preventScroll: true })
   }, [sheet])
 
-  useEffect(() => {
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.isComposing) return
-      e.preventDefault()
-      e.stopPropagation()
-      if (toneRef.current) setToneOpen(false)
-      else onClose()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [onClose])
+  useEscapeInside(
+    useCallback(() => {
+      if (!toneRef.current) return false
+      setToneOpen(false)
+      return true
+    }, [])
+  )
 
   useLayoutEffect(() => {
     const el = scrollRef.current

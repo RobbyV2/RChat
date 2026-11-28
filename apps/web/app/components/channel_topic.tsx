@@ -2,7 +2,6 @@
 import { Button, LinkButton } from './controls'
 import { useStoreApi } from '../lib/client/react'
 import { useEffect, useId, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { Hash, Volume2 } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { charCount } from '../lib/rules'
@@ -15,19 +14,8 @@ import {
   topicParts,
 } from '../lib/topic'
 import type { Channel } from '../lib/types'
-import { useMedia } from './context_menu'
-import { SHEET_QUERY } from './emoji_picker'
 import { MessageLink } from './markdown_message'
-import {
-  CloseButton,
-  fieldCls,
-  FieldError,
-  Masked,
-  Sheet,
-  useOwnServer,
-  Popover,
-  usePlaceUnder,
-} from './ui'
+import { Anchored, CloseButton, fieldCls, FieldError, Masked, useOwnServer } from './ui'
 import { Row, Surface, Stack, Inset } from './layout'
 
 const topicFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
@@ -106,56 +94,12 @@ function TopicWindow({
   onClose: () => void
 }) {
   const store = useStoreApi()
-  const sheet = useMedia(SHEET_QUERY)
   const ownServer = useOwnServer(useStore(s => (s.view?.kind === 'channel' ? s.view.server : null)))
-  const rootRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
-  const at = usePlaceUnder(anchor, 'text', !sheet)
   const closeRef = useRef(onClose)
   useEffect(() => {
     closeRef.current = onClose
   })
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented) return
-      const s = store.getState()
-      if (s.confirm || s.contextMenu || s.profile) return
-      const modal = document.querySelector('[aria-modal="true"]')
-      if (modal && !rootRef.current?.contains(modal)) return
-      e.preventDefault()
-      closeRef.current()
-    }
-    const onDown = (e: PointerEvent) => {
-      const t = e.target
-      if (!(t instanceof Element)) return
-      if (rootRef.current?.contains(t) || anchor.current?.contains(t)) return
-      if (t.closest('[aria-modal="true"]') && !rootRef.current?.contains(t)) return
-      closeRef.current()
-    }
-    window.addEventListener('keydown', onKey)
-    document.addEventListener('pointerdown', onDown, true)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      document.removeEventListener('pointerdown', onDown, true)
-    }
-  }, [store, anchor])
-
-  // Focus moves into the window once it is shown and back to the topic when it closes, unless
-  // the user moved it elsewhere (a link, the composer).
-  const shown = sheet || at !== null
-  useEffect(() => {
-    if (shown) rootRef.current?.focus({ preventScroll: true })
-  }, [shown])
-
-  useEffect(() => {
-    const root = rootRef.current
-    const back = anchor.current
-    return () => {
-      const now = document.activeElement
-      if (!now || now === document.body || root?.contains(now)) back?.focus({ preventScroll: true })
-    }
-  }, [anchor])
 
   useEffect(() => {
     const id = channel.id
@@ -166,51 +110,36 @@ function TopicWindow({
   }, [store, channel.id])
 
   const Icon = channel.kind === 'voice' ? Volume2 : Hash
-  const body = (
-    <>
-      <Inset row pad="lg" inset="bar" gap="sm" place="shrink-0">
-        <Icon size={18} className="shrink-0 text-on-surface-variant" />
-        <h2 id={titleId} className="min-w-0 flex-1 truncate text-base font-medium text-on-surface">
-          <Masked text={channel.name} own={ownServer} />
-        </h2>
-        {!sheet && <CloseButton onClick={onClose} />}
-      </Inset>
-      <Surface
-        tone="plain"
-        radius="none"
-        border="top"
-        inset="bar"
-        pad="lg"
-        place="min-h-0 flex-1 overflow-y-auto overscroll-contain"
-        onClickCapture={e => {
-          if (e.target instanceof Element && e.target.closest('a')) onClose()
-        }}
-      >
-        <TopicText topic={topic} />
-      </Surface>
-    </>
-  )
-
-  if (sheet)
-    return createPortal(
-      <Sheet
-        layer="page"
-        overlay={{ 'data-popover': '' }}
-        onClose={onClose}
-        ref={rootRef}
-        aria-labelledby={titleId}
-        tabIndex={-1}
-      >
-        {body}
-      </Sheet>,
-      document.body
-    )
-
-  return createPortal(
-    <Popover at={at} size="text" ref={rootRef} aria-labelledby={titleId} tabIndex={-1}>
-      {body}
-    </Popover>,
-    document.body
+  return (
+    <Anchored anchor={{ el: anchor }} size="text" labelledBy={titleId} onClose={onClose}>
+      {sheet => (
+        <>
+          <Inset row pad="lg" inset="bar" gap="sm" place="shrink-0">
+            <Icon size={18} className="shrink-0 text-on-surface-variant" />
+            <h2
+              id={titleId}
+              className="min-w-0 flex-1 truncate text-base font-medium text-on-surface"
+            >
+              <Masked text={channel.name} own={ownServer} />
+            </h2>
+            {!sheet && <CloseButton onClick={onClose} />}
+          </Inset>
+          <Surface
+            tone="plain"
+            radius="none"
+            border="top"
+            inset="bar"
+            pad="lg"
+            place="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+            onClickCapture={e => {
+              if (e.target instanceof Element && e.target.closest('a')) onClose()
+            }}
+          >
+            <TopicText topic={topic} />
+          </Surface>
+        </>
+      )}
+    </Anchored>
   )
 }
 

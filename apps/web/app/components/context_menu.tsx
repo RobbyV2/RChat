@@ -1,15 +1,8 @@
 'use client'
 
+import { COARSE_QUERY, useMedia } from '../lib/use_media'
 import type { Cancel } from '../lib/clock'
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type {
   ReactNode,
   DragEvent as ReactDragEvent,
@@ -269,23 +262,7 @@ export function longPress(open: (x: number, y: number) => void, drag?: DragSpec)
   }
 }
 
-export const COARSE_QUERY = '(pointer: coarse)'
-
-export function useMedia(query: string) {
-  const subscribe = useCallback(
-    (cb: () => void) => {
-      const mq = window.matchMedia(query)
-      mq.addEventListener('change', cb)
-      return () => mq.removeEventListener('change', cb)
-    },
-    [query]
-  )
-  return useSyncExternalStore(
-    subscribe,
-    () => window.matchMedia(query).matches,
-    () => false
-  )
-}
+export { COARSE_QUERY, useMedia }
 
 const useCoarse = () => useMedia(COARSE_QUERY)
 

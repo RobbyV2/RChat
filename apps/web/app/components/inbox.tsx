@@ -615,10 +615,7 @@ export function InboxHost() {
   return (
     <Sheet
       sheet={sheet}
-      float={{
-        at: 'top-13 right-3 h-popover w-104',
-        backdrop: 'none',
-      }}
+      float={{ place: 'header-end', backdrop: 'none' }}
       height="tall"
       surface="low"
       aria-label="Inbox"

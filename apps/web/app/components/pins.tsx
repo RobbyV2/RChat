@@ -10,16 +10,7 @@ import { useFeature, useLive, usePlace } from '../lib/place/react'
 import { useRows } from '../lib/place/use_rows'
 import { useRowFlags } from './row_flags'
 import { inDm } from '../lib/place/place'
-import {
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  type MouseEvent,
-  type ReactNode,
-} from 'react'
-import { createPortal } from 'react-dom'
+import { useId, useMemo, useRef, type MouseEvent, type ReactNode } from 'react'
 import { ChartColumn, FileText, Pin, X, type LucideIcon } from 'lucide-react'
 import { PreviewSpoiler, RevealChannelPreview } from './preview_reveal'
 import { useMediaSrc } from '../lib/media_src'
@@ -27,12 +18,11 @@ import { PINS_TITLE } from '../lib/pins'
 import { useMask, useStore } from '../lib/store'
 import { useForwardAccess } from '../lib/forward_access'
 import type { Message, MessageMedia } from '../lib/types'
-import { longPress, useMedia } from './context_menu'
-import { SHEET_QUERY } from './emoji_picker'
+import { longPress } from './context_menu'
 import { IMAGE_EXT, MarkdownMessage } from './markdown_message'
 import { profileTrigger } from './profile_card'
 import { Button, IconButton, LinkButton } from './controls'
-import { CloseButton, Masked, Sheet, useOwn, Popover } from './ui'
+import { Anchored, CloseButton, Masked, PaneCorner, useOwn } from './ui'
 import { ShownAvatar, ShownName } from './shown_user'
 import { Name } from './name'
 import { useAuthor } from '../lib/place/use_looks'
@@ -350,79 +340,32 @@ export function HeaderPopover({
   onClose: () => void
   children: ReactNode
 }) {
-  const store = useStoreApi()
-  const sheet = useMedia(SHEET_QUERY)
-  const rootRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
-  const closeRef = useRef(onClose)
-  useEffect(() => {
-    closeRef.current = onClose
-  })
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented) return
-      const s = store.getState()
-      if (s.confirm || s.contextMenu || s.profile) return
-      const modal = document.querySelector('[aria-modal="true"]')
-      if (modal && !rootRef.current?.contains(modal)) return
-      e.preventDefault()
-      closeRef.current()
-    }
-    const onDown = (e: PointerEvent) => {
-      const t = e.target
-      if (!(t instanceof Element)) return
-      const s = store.getState()
-      if (s.confirm || s.contextMenu || s.profile) return
-      if (rootRef.current?.contains(t) || t.closest(`${button}, [aria-modal="true"]`)) return
-      closeRef.current()
-    }
-    window.addEventListener('keydown', onKey)
-    document.addEventListener('pointerdown', onDown, true)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      document.removeEventListener('pointerdown', onDown, true)
-    }
-  }, [store, button])
-
-  useLayoutEffect(() => {
-    if (!sheet) return
-    const active = document.activeElement
-    if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) active.blur()
-  }, [sheet])
-
-  const body = (
-    <>
-      <Inset row pad="lg" inset="bar" gap="sm" place="shrink-0">
-        <Icon size={18} className="text-on-surface-variant" />
-        <h2 id={titleId} className="flex-1 text-base font-medium text-on-surface">
-          {title}
-        </h2>
-        {(!sheet || sheetClose) && <CloseButton onClick={onClose} />}
-      </Inset>
-      {children}
-    </>
-  )
-
-  if (sheet)
-    return createPortal(
-      <Sheet
-        layer="page"
-        height="list"
-        overlay={{ 'data-popover': '' }}
-        onClose={onClose}
-        ref={rootRef}
-        aria-labelledby={titleId}
-      >
-        {body}
-      </Sheet>,
-      document.body
-    )
-
+  const corner = useRef<HTMLSpanElement>(null)
   return (
-    <Popover at="pane" ref={rootRef} aria-labelledby={titleId}>
-      {body}
-    </Popover>
+    <>
+      <PaneCorner ref={corner} />
+      <Anchored
+        anchor={{ el: corner, align: 'end' }}
+        toggle={button}
+        height="list"
+        labelledBy={titleId}
+        onClose={onClose}
+      >
+        {sheet => (
+          <>
+            <Inset row pad="lg" inset="bar" gap="sm" place="shrink-0">
+              <Icon size={18} className="text-on-surface-variant" />
+              <h2 id={titleId} className="flex-1 text-base font-medium text-on-surface">
+                {title}
+              </h2>
+              {(!sheet || sheetClose) && <CloseButton onClick={onClose} />}
+            </Inset>
+            {children}
+          </>
+        )}
+      </Anchored>
+    </>
   )
 }
 

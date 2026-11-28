@@ -10,7 +10,7 @@ import { useAccount, useStoreApi } from '../lib/client/react'
 import { askKick, openBan, openTimeout } from '../lib/place/moderation'
 import { HostedServer } from '../lib/place/place'
 
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type {
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
@@ -52,21 +52,18 @@ import {
 } from '../lib/store'
 import {
   HIDDEN_PROFILE,
-  SHEET_QUERY,
   cachedProfile,
   canEditRoles,
   forgetProfile,
   freeRoles,
   heldRoles,
   joinedServer,
-  placeCard,
   profileActions,
   profileKey,
   rememberProfile,
   roleEditable,
   serverJoinLine,
   type ActionInput,
-  type Point,
   type ProfileAction,
 } from '../lib/profile'
 import { lockState } from '../lib/profile_reset'
@@ -81,11 +78,10 @@ import { useLook } from './shown_user'
 import { UserAvatar } from './user_avatar'
 import { Button, IconButton, ListRow, LinkButton } from './controls'
 import { Row, Stack, Surface, Inset, Lift } from './layout'
-import { Masked, Sheet, useOwnServer, fieldCls, Popover } from './ui'
+import { Anchored, Masked, useOwnServer, fieldCls } from './ui'
 import { useCopied } from '../lib/use_copied'
 import { dmPlaceholder } from '../lib/display_name'
 import { ProfileFriendButton } from './friends'
-import { COARSE_QUERY, useMedia } from './context_menu'
 import { TimeoutBadge, useMemberTimeout } from './timeout_dialog'
 import { WebhookProfile } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
@@ -340,95 +336,15 @@ function CardBody({
   const rank = useStore(useShallow(s => (server ? myRank(s, server) : undefined)))
   const ranked = useStore(s => (server ? s.servers[server]?.roles_order_confirmed === true : false))
   const timeout = useMemberTimeout(server, username)
-  const coarse = useMedia(COARSE_QUERY)
-  const small = useMedia(SHEET_QUERY)
-  const sheet = coarse || small
   const titleId = useId()
-  const ref = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState<Point | null>(null)
   const [text, setText] = useState('')
   const [adding, setAdding] = useState(false)
   const [copied, flashCopied] = useCopied()
   const opened = useRef({ view, dialog })
-  const inside = useRef(false)
 
   useEffect(() => {
     if (view !== opened.current.view || dialog !== opened.current.dialog) close()
   }, [view, dialog, close])
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close()
-    }
-    const outside = (e: Event) => {
-      const t = e.target
-      if (t instanceof Node && (ref.current?.contains(t) || anchors.get(store)?.contains(t))) return
-      close()
-    }
-    window.addEventListener('keydown', onKey)
-    if (!sheet) {
-      document.addEventListener('pointerdown', outside, true)
-      document.addEventListener('wheel', outside, { capture: true, passive: true })
-      window.addEventListener('resize', close)
-    }
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      document.removeEventListener('pointerdown', outside, true)
-      document.removeEventListener('wheel', outside, true)
-      window.removeEventListener('resize', close)
-    }
-  }, [store, close, sheet])
-
-  useLayoutEffect(() => {
-    if (!sheet) return
-    const active = document.activeElement
-    if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) active.blur()
-  }, [sheet])
-
-  const shown = sheet || pos !== null
-  const focused = useRef(false)
-  useEffect(() => {
-    if (!shown || focused.current) return
-    focused.current = true
-    ref.current?.focus({ preventScroll: true })
-  }, [shown])
-
-  useEffect(() => {
-    const from = anchors.get(store)
-    return () => {
-      const lost = document.activeElement === null || document.activeElement === document.body
-      if (inside.current && lost && from instanceof HTMLElement && from.isConnected)
-        from.focus({ preventScroll: true })
-    }
-  }, [store])
-
-  const focusProps = {
-    tabIndex: -1,
-    onFocus: () => {
-      inside.current = true
-    },
-    onBlur: (e: React.FocusEvent<HTMLDivElement>) => {
-      if (!e.currentTarget.contains(e.relatedTarget)) inside.current = false
-    },
-  }
-
-  useLayoutEffect(() => {
-    if (sheet) return
-    const el = ref.current
-    if (!el) return
-    const place = () =>
-      setPos(
-        placeCard(
-          { x, y },
-          { width: el.offsetWidth, height: el.offsetHeight },
-          { width: window.innerWidth, height: window.innerHeight }
-        )
-      )
-    place()
-    const ro = new ResizeObserver(place)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [sheet, x, y])
 
   const self = me?.username === username
   const user: UserRef = self && me ? me : (live ?? target.user)
@@ -578,344 +494,331 @@ function CardBody({
     void store.getState().messageUser(username, text)
   }
 
-  const body = hook ? (
-    <WebhookProfile user={target.user} sheet={sheet} titleId={titleId} />
-  ) : (
-    <>
-      <div
-        aria-hidden
-        style={{ background: banner }}
-        className={`relative shrink-0 ${sheet ? 'h-24' : 'h-16'}`}
-      >
-        {sheet && (
-          <div className="absolute top-2 left-1/2 h-1 w-8 -translate-x-1/2 rounded-full bg-surface-container-highest/80 ring-1 ring-outline-variant" />
-        )}
-      </div>
-      <Inset pad="lg" inset="sides">
-        <Stack gap="md">
-          <Stack gap="sm">
-            <Lift by="3xl">
-              <Row gap="sm" align="end" justify="between">
-                <Surface as="span" pad="xs" tone="high" radius="full" place="relative shrink-0">
-                  <UserAvatar person={placed} size={80} animate />
-                  {member && (
-                    <span
-                      title={member.online ? 'Online' : 'Offline'}
-                      className={`absolute right-1.5 bottom-1.5 h-5 w-5 rounded-full border-4 border-surface-container-high ${
-                        member.online ? 'bg-status-green' : 'bg-outline'
-                      }`}
-                    />
-                  )}
-                </Surface>
-                {member && (member.is_creator || member.is_admin) && (
-                  <Surface as="span" tone="plain" radius="none" pad="2xs">
-                    <Row as="span" gap="2xs" justify="end">
-                      {member.is_creator && <Badge tone="tertiary">Creator</Badge>}
-                      {member.is_admin && <Badge tone="primary">Admin</Badge>}
-                    </Row>
+  const body = (sheet: boolean) =>
+    hook ? (
+      <WebhookProfile user={target.user} sheet={sheet} titleId={titleId} />
+    ) : (
+      <>
+        <div
+          aria-hidden
+          style={{ background: banner }}
+          className={`relative shrink-0 ${sheet ? 'h-24' : 'h-16'}`}
+        >
+          {sheet && (
+            <div className="absolute top-2 left-1/2 h-1 w-8 -translate-x-1/2 rounded-full bg-surface-container-highest/80 ring-1 ring-outline-variant" />
+          )}
+        </div>
+        <Inset pad="lg" inset="sides">
+          <Stack gap="md">
+            <Stack gap="sm">
+              <Lift by="3xl">
+                <Row gap="sm" align="end" justify="between">
+                  <Surface as="span" pad="xs" tone="high" radius="full" place="relative shrink-0">
+                    <UserAvatar person={placed} size={80} animate />
+                    {member && (
+                      <span
+                        title={member.online ? 'Online' : 'Offline'}
+                        className={`absolute right-1.5 bottom-1.5 h-5 w-5 rounded-full border-4 border-surface-container-high ${
+                          member.online ? 'bg-status-green' : 'bg-outline'
+                        }`}
+                      />
+                    )}
                   </Surface>
-                )}
-              </Row>
-            </Lift>
-            <Stack gap="2xs">
-              <Stack gap="none">
-                <Name
-                  as="p"
-                  id={titleId}
-                  of={personCalled(placed.display_name, null, self)}
-                  look="line-clamp-2 text-xl leading-7 font-semibold break-words text-on-surface"
-                />
-                {named && (
+                  {member && (member.is_creator || member.is_admin) && (
+                    <Surface as="span" tone="plain" radius="none" pad="2xs">
+                      <Row as="span" gap="2xs" justify="end">
+                        {member.is_creator && <Badge tone="tertiary">Creator</Badge>}
+                        {member.is_admin && <Badge tone="primary">Admin</Badge>}
+                      </Row>
+                    </Surface>
+                  )}
+                </Row>
+              </Lift>
+              <Stack gap="2xs">
+                <Stack gap="none">
                   <Name
                     as="p"
-                    data-account-name
-                    of={personCalled(user.display_name, null, self)}
-                    look="truncate text-sm text-on-surface"
+                    id={titleId}
+                    of={personCalled(placed.display_name, null, self)}
+                    look="line-clamp-2 text-xl leading-7 font-semibold break-words text-on-surface"
                   />
-                )}
-                <ProfileHandle
-                  user={user}
-                  remote={remote ?? (actor ? new URL(actor.row.origin).host : null)}
-                />
-              </Stack>
-              {(actor || remote) && (
-                <Row gap="2xs">
-                  <ActorLabel actor={actor} seen />
-                  {remote && <InstanceChip host={remote} />}
-                </Row>
-              )}
-              {bio && !hidden && (
-                <Covered
-                  what="about"
-                  as="p"
-                  look="text-sm break-words whitespace-pre-wrap text-on-surface"
-                >
-                  <Masked text={bio} own={self} />
-                </Covered>
-              )}
-              {((self && me && !guest) || (self && server && editsProfile)) && (
-                <Row gap="md">
-                  {self && me && !guest && (
-                    <span className="text-xs">
-                      <LinkButton
-                        onClick={() => {
-                          close()
-                          store.getState().openDialog({ kind: 'settings', focus: 'bio' })
-                        }}
-                      >
-                        {bio ? 'Edit description' : 'Add a description'}
-                      </LinkButton>
-                    </span>
+                  {named && (
+                    <Name
+                      as="p"
+                      data-account-name
+                      of={personCalled(user.display_name, null, self)}
+                      look="truncate text-sm text-on-surface"
+                    />
                   )}
-                  {self && server && editsProfile && (
-                    <span className="text-xs">
-                      <LinkButton
-                        onClick={() => {
-                          close()
-                          store.getState().openDialog({ kind: 'server_profile', server })
-                        }}
-                      >
-                        Edit server profile
-                      </LinkButton>
-                    </span>
-                  )}
-                </Row>
-              )}
-            </Stack>
-          </Stack>
-          <Stack gap="sm">
-            {notice}
-            {hidden && member === null ? (
-              <Surface tone="low" radius="lg" pad="md">
-                <p className="text-sm text-on-surface-variant">{HIDDEN_PROFILE}</p>
-              </Surface>
-            ) : (
-              <Surface tone="low" radius="lg" pad="md" gap="md">
-                {hidden && <p className="text-sm text-on-surface-variant">{HIDDEN_PROFILE}</p>}
-                {(!hidden || timeout || join) && (
-                  <Stack as="dl" gap="3xs">
-                    {!hidden && (
-                      <Row gap="md" align="baseline" justify="between">
-                        <dt className="text-sm text-on-surface-variant">Member since</dt>
-                        <dd className="shrink-0 text-sm text-on-surface">
-                          {profile ? fmtDate(profile.created_at) : '…'}
-                        </dd>
-                      </Row>
-                    )}
-                    {timeout && (
-                      <Row gap="md" justify="between">
-                        <dt className="min-w-0 truncate text-sm text-on-surface-variant">
-                          Timed out{timeout.reason ? `: ${timeout.reason}` : ''}
-                        </dt>
-                        <dd className="shrink-0 text-sm">
-                          <TimeoutBadge t={timeout} />
-                        </dd>
-                      </Row>
-                    )}
-                    {join && (
-                      <Row gap="md" align="baseline" justify="between">
-                        <dt className="flex min-w-0 text-sm text-on-surface-variant">
-                          <span className="shrink-0">Joined&nbsp;</span>
-                          <Covered
-                            what="place"
-                            look="min-w-0 truncate"
-                            title={
-                              say.hiding
-                                ? undefined
-                                : labelWith`Joined ${say(serverCalled(join.name, ownServer))}`
-                            }
-                          >
-                            <Masked text={serverName ?? join.name} own={ownServer} />
-                          </Covered>
-                        </dt>
-                        <dd className="shrink-0 text-sm text-on-surface">
-                          {join.joinedAt === null ? '…' : fmtDate(join.joinedAt)}
-                        </dd>
-                      </Row>
-                    )}
-                  </Stack>
-                )}
-                {showRoles && (
-                  <Stack gap="xs">
-                    <p className={labelCls}>{roles.length === 1 ? 'Role' : 'Roles'}</p>
-                    <Row gap="xs" wrap>
-                      {roles.map(r => (
-                        <Surface
-                          key={r.id}
-                          as="span"
-                          row
-                          pad="sm"
-                          inset="chip"
-                          gap="xs"
-                          tone="highest"
-                          radius="full"
-                          text="xs"
-                          look="font-medium"
-                          place="inline-flex max-w-full min-w-0"
-                        >
-                          <span
-                            aria-hidden
-                            style={{ background: r.color }}
-                            className="h-2.5 w-2.5 shrink-0 rounded-full"
-                          />
-                          <span className="truncate">
-                            <Masked text={r.name} own={ownServer} />
-                          </span>
-                          {editRoles && roleEditable(input, r, true) && (
-                            <IconButton
-                              icon={X}
-                              label={`Remove ${r.name}`}
-                              tone="danger"
-                              size="xs"
-                              onClick={() => roleChange(r, false)}
-                            />
-                          )}
-                        </Surface>
-                      ))}
-                      {addable.length > 0 && (
-                        <IconButton
-                          icon={Plus}
-                          label="Add role"
-                          aria-expanded={adding}
-                          onClick={() => setAdding(a => !a)}
-                          size="sm"
-                          aria-haspopup="menu"
-                        />
-                      )}
-                    </Row>
-                    {adding && addable.length > 0 && (
-                      <div className="max-h-44 overflow-y-auto rounded-lg">
-                        <Surface tone="high" radius="md" pad="2xs">
-                          {addable.map(r => (
-                            <ListRow
-                              key={r.id}
-                              onClick={() => roleChange(r, true)}
-                              leading={
-                                <span
-                                  aria-hidden
-                                  style={{ background: r.color }}
-                                  className="h-2.5 w-2.5 shrink-0 rounded-full"
-                                />
-                              }
-                              label={<Masked text={r.name} own={ownServer} />}
-                            />
-                          ))}
-                        </Surface>
-                      </div>
-                    )}
-                  </Stack>
-                )}
-              </Surface>
-            )}
-            <Stack gap="none">
-              {actions.map(a => {
-                const { icon } = ACTIONS[a]
-                const label = a === 'timeout' && timeout ? 'Change timeout' : ACTIONS[a].label
-                return (
-                  <ListRow
-                    key={a}
-                    onClick={() => run(a)}
-                    tone={cardDanger(a, !!timeout) ? 'danger' : 'plain'}
-                    icon={icon}
-                    label={label}
+                  <ProfileHandle
+                    user={user}
+                    remote={remote ?? (actor ? new URL(actor.row.origin).host : null)}
                   />
-                )
-              })}
-              <ListRow
-                onClick={copyId}
-                icon={copied ? Check : Copy}
-                label={copied ? 'Copied' : 'Copy User ID'}
-              />
-              {me && !guest && !self && !remote && !isBlocked && (
-                <ProfileFriendButton user={user} onDone={close} />
-              )}
-              {me && !guest && !self && !remote && (
-                <ListRow
-                  onClick={() => {
-                    const s = store.getState()
-                    if (isBlocked) void s.unblockUser(username, user.display_name)
-                    else {
-                      close()
-                      s.askBlock(user)
-                    }
-                  }}
-                  tone={isBlocked ? 'plain' : 'danger'}
-                  icon={isBlocked ? UserCheck : UserX}
-                  label={isBlocked ? 'Unblock' : 'Block'}
-                />
-              )}
-            </Stack>
-            {me && !guest && (
-              <div>
-                {self ? (
-                  <Button
-                    variant="tonal"
-                    size="md"
-                    icon={Pencil}
-                    onClick={() => {
-                      close()
-                      store.getState().openDialog({ kind: 'settings' })
-                    }}
-                    place="w-full"
+                </Stack>
+                {(actor || remote) && (
+                  <Row gap="2xs">
+                    <ActorLabel actor={actor} seen />
+                    {remote && <InstanceChip host={remote} />}
+                  </Row>
+                )}
+                {bio && !hidden && (
+                  <Covered
+                    what="about"
+                    as="p"
+                    look="text-sm break-words whitespace-pre-wrap text-on-surface"
                   >
-                    Edit profile
-                  </Button>
-                ) : isBlocked ? (
-                  <Surface tone="low" radius="lg" pad="md">
-                    <p className="text-sm text-on-surface-variant">You blocked this user.</p>
-                  </Surface>
-                ) : (
-                  <input
-                    value={text}
-                    maxLength={messageMax}
-                    onChange={e => setText(e.target.value)}
-                    onKeyDown={e => {
-                      if (sendKey(e)) {
-                        e.preventDefault()
-                        send()
+                    <Masked text={bio} own={self} />
+                  </Covered>
+                )}
+                {((self && me && !guest) || (self && server && editsProfile)) && (
+                  <Row gap="md">
+                    {self && me && !guest && (
+                      <span className="text-xs">
+                        <LinkButton
+                          onClick={() => {
+                            close()
+                            store.getState().openDialog({ kind: 'settings', focus: 'bio' })
+                          }}
+                        >
+                          {bio ? 'Edit description' : 'Add a description'}
+                        </LinkButton>
+                      </span>
+                    )}
+                    {self && server && editsProfile && (
+                      <span className="text-xs">
+                        <LinkButton
+                          onClick={() => {
+                            close()
+                            store.getState().openDialog({ kind: 'server_profile', server })
+                          }}
+                        >
+                          Edit server profile
+                        </LinkButton>
+                      </span>
+                    )}
+                  </Row>
+                )}
+              </Stack>
+            </Stack>
+            <Stack gap="sm">
+              {notice}
+              {hidden && member === null ? (
+                <Surface tone="low" radius="lg" pad="md">
+                  <p className="text-sm text-on-surface-variant">{HIDDEN_PROFILE}</p>
+                </Surface>
+              ) : (
+                <Surface tone="low" radius="lg" pad="md" gap="md">
+                  {hidden && <p className="text-sm text-on-surface-variant">{HIDDEN_PROFILE}</p>}
+                  {(!hidden || timeout || join) && (
+                    <Stack as="dl" gap="3xs">
+                      {!hidden && (
+                        <Row gap="md" align="baseline" justify="between">
+                          <dt className="text-sm text-on-surface-variant">Member since</dt>
+                          <dd className="shrink-0 text-sm text-on-surface">
+                            {profile ? fmtDate(profile.created_at) : '…'}
+                          </dd>
+                        </Row>
+                      )}
+                      {timeout && (
+                        <Row gap="md" justify="between">
+                          <dt className="min-w-0 truncate text-sm text-on-surface-variant">
+                            Timed out{timeout.reason ? `: ${timeout.reason}` : ''}
+                          </dt>
+                          <dd className="shrink-0 text-sm">
+                            <TimeoutBadge t={timeout} />
+                          </dd>
+                        </Row>
+                      )}
+                      {join && (
+                        <Row gap="md" align="baseline" justify="between">
+                          <dt className="flex min-w-0 text-sm text-on-surface-variant">
+                            <span className="shrink-0">Joined&nbsp;</span>
+                            <Covered
+                              what="place"
+                              look="min-w-0 truncate"
+                              title={
+                                say.hiding
+                                  ? undefined
+                                  : labelWith`Joined ${say(serverCalled(join.name, ownServer))}`
+                              }
+                            >
+                              <Masked text={serverName ?? join.name} own={ownServer} />
+                            </Covered>
+                          </dt>
+                          <dd className="shrink-0 text-sm text-on-surface">
+                            {join.joinedAt === null ? '…' : fmtDate(join.joinedAt)}
+                          </dd>
+                        </Row>
+                      )}
+                    </Stack>
+                  )}
+                  {showRoles && (
+                    <Stack gap="xs">
+                      <p className={labelCls}>{roles.length === 1 ? 'Role' : 'Roles'}</p>
+                      <Row gap="xs" wrap>
+                        {roles.map(r => (
+                          <Surface
+                            key={r.id}
+                            as="span"
+                            row
+                            pad="sm"
+                            inset="chip"
+                            gap="xs"
+                            tone="highest"
+                            radius="full"
+                            text="xs"
+                            look="font-medium"
+                            place="inline-flex max-w-full min-w-0"
+                          >
+                            <span
+                              aria-hidden
+                              style={{ background: r.color }}
+                              className="h-2.5 w-2.5 shrink-0 rounded-full"
+                            />
+                            <span className="truncate">
+                              <Masked text={r.name} own={ownServer} />
+                            </span>
+                            {editRoles && roleEditable(input, r, true) && (
+                              <IconButton
+                                icon={X}
+                                label={`Remove ${r.name}`}
+                                tone="danger"
+                                size="xs"
+                                onClick={() => roleChange(r, false)}
+                              />
+                            )}
+                          </Surface>
+                        ))}
+                        {addable.length > 0 && (
+                          <IconButton
+                            icon={Plus}
+                            label="Add role"
+                            aria-expanded={adding}
+                            onClick={() => setAdding(a => !a)}
+                            size="sm"
+                            aria-haspopup="menu"
+                          />
+                        )}
+                      </Row>
+                      {adding && addable.length > 0 && (
+                        <div className="max-h-44 overflow-y-auto rounded-lg">
+                          <Surface tone="high" radius="md" pad="2xs">
+                            {addable.map(r => (
+                              <ListRow
+                                key={r.id}
+                                onClick={() => roleChange(r, true)}
+                                leading={
+                                  <span
+                                    aria-hidden
+                                    style={{ background: r.color }}
+                                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                                  />
+                                }
+                                label={<Masked text={r.name} own={ownServer} />}
+                              />
+                            ))}
+                          </Surface>
+                        </div>
+                      )}
+                    </Stack>
+                  )}
+                </Surface>
+              )}
+              <Stack gap="none">
+                {actions.map(a => {
+                  const { icon } = ACTIONS[a]
+                  const label = a === 'timeout' && timeout ? 'Change timeout' : ACTIONS[a].label
+                  return (
+                    <ListRow
+                      key={a}
+                      onClick={() => run(a)}
+                      tone={cardDanger(a, !!timeout) ? 'danger' : 'plain'}
+                      icon={icon}
+                      label={label}
+                    />
+                  )
+                })}
+                <ListRow
+                  onClick={copyId}
+                  icon={copied ? Check : Copy}
+                  label={copied ? 'Copied' : 'Copy User ID'}
+                />
+                {me && !guest && !self && !remote && !isBlocked && (
+                  <ProfileFriendButton user={user} onDone={close} />
+                )}
+                {me && !guest && !self && !remote && (
+                  <ListRow
+                    onClick={() => {
+                      const s = store.getState()
+                      if (isBlocked) void s.unblockUser(username, user.display_name)
+                      else {
+                        close()
+                        s.askBlock(user)
                       }
                     }}
-                    aria-label="Send a direct message"
-                    placeholder={dmPlaceholder(user, streamer) + suffix}
-                    className={`w-full ${fieldCls} bg-surface-container-low text-on-surface`}
+                    tone={isBlocked ? 'plain' : 'danger'}
+                    icon={isBlocked ? UserCheck : UserX}
+                    label={isBlocked ? 'Unblock' : 'Block'}
                   />
                 )}
-              </div>
-            )}
+              </Stack>
+              {me && !guest && (
+                <div>
+                  {self ? (
+                    <Button
+                      variant="tonal"
+                      size="md"
+                      icon={Pencil}
+                      onClick={() => {
+                        close()
+                        store.getState().openDialog({ kind: 'settings' })
+                      }}
+                      place="w-full"
+                    >
+                      Edit profile
+                    </Button>
+                  ) : isBlocked ? (
+                    <Surface tone="low" radius="lg" pad="md">
+                      <p className="text-sm text-on-surface-variant">You blocked this user.</p>
+                    </Surface>
+                  ) : (
+                    <input
+                      value={text}
+                      maxLength={messageMax}
+                      onChange={e => setText(e.target.value)}
+                      onKeyDown={e => {
+                        if (sendKey(e)) {
+                          e.preventDefault()
+                          send()
+                        }
+                      }}
+                      aria-label="Send a direct message"
+                      placeholder={dmPlaceholder(user, streamer) + suffix}
+                      className={`w-full ${fieldCls} bg-surface-container-low text-on-surface`}
+                    />
+                  )}
+                </div>
+              )}
+            </Stack>
           </Stack>
-        </Stack>
-      </Inset>
-    </>
-  )
-
-  if (sheet) {
-    return (
-      <Sheet
-        grip={false}
-        scroll
-        overlay={{ onContextMenu: e => e.preventDefault() }}
-        onClose={close}
-        ref={ref}
-        aria-labelledby={titleId}
-        {...focusProps}
-        onClick={e => e.stopPropagation()}
-      >
-        {body}
-      </Sheet>
+        </Inset>
+      </>
     )
-  }
 
+  const from = anchors.get(store)
   return (
-    <Popover
-      at={pos ? { left: pos.x, top: pos.y } : null}
+    <Anchored
+      anchor={{ point: { x, y }, from: from instanceof HTMLElement ? from : null }}
       size="card"
-      layer="top"
+      sheetOn="touch"
+      raised
+      grip={false}
       scroll
-      ref={ref}
-      aria-labelledby={titleId}
-      {...focusProps}
+      isolated
+      labelledBy={titleId}
+      onClose={close}
     >
       {body}
-    </Popover>
+    </Anchored>
   )
 }

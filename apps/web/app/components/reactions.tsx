@@ -318,10 +318,7 @@ function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClo
   return createPortal(
     <Sheet
       sheet={coarse}
-      float={{
-        at: 'inset-0 m-auto h-fit max-h-float-sheet w-dialog-wide',
-        backdrop: 'dim',
-      }}
+      float={{ place: 'center-wide' }}
       selectable={!coarse}
       overlay={shield}
       onClose={onClose}

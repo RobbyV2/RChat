@@ -711,12 +711,7 @@ function Palette() {
   return (
     <Sheet
       sheet={sheet}
-      float={{
-        at: `top-palette left-1/2 w-palette -translate-x-1/2 ${
-          view.kind === 'api' ? 'h-palette' : 'max-h-palette'
-        }`,
-        backdrop: 'dim',
-      }}
+      float={{ place: view.kind === 'api' ? 'palette-full' : 'palette' }}
       layer="palette"
       motion="palette"
       height="tall"

@@ -56,19 +56,19 @@ test('a sheet is a labelled modal panel over a dim backdrop, on its layer', () =
   expect(palette).toContain('z-palette')
 })
 
-test('a floating panel is placed by `at` and keeps the floating look', () => {
+test('a floating panel sits at its named place and keeps the floating look', () => {
   const html = renderToStaticMarkup(
     <Sheet
       sheet={false}
       aria-label="Inbox"
-      float={{ at: 'top-2 right-3 w-104', backdrop: 'dim' }}
+      float={{ place: 'header-end', backdrop: 'dim' }}
       onClose={() => {}}
     >
       <span>body</span>
     </Sheet>
   )
   const panel = panelOf(html)
-  expect(panel).toContain('absolute top-2 right-3 w-104 rounded-2xl')
+  expect(panel).toContain('absolute top-13 right-3 h-popover w-104 rounded-2xl')
   expect(panel).not.toContain('rounded-t-3xl')
   expect(html).not.toContain('pt-3 pb-2')
 })
@@ -113,7 +113,7 @@ test('a floating panel with no backdrop is not modal and leaves the app pressabl
     <Sheet
       sheet={false}
       aria-label="Inbox"
-      float={{ at: 'top-2 right-3', backdrop: 'none' }}
+      float={{ place: 'header-end', backdrop: 'none' }}
       onClose={() => {}}
     >
       body
