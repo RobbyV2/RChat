@@ -54,7 +54,6 @@ export function ComposerField({
   placeholder,
   slowLeft,
   blocked = false,
-  mayEditLast = true,
   bar,
   tools,
   inputRef: givenRef,
@@ -71,7 +70,6 @@ export function ComposerField({
   slowLeft: number
   // Sending is held back for a reason the caller shows.
   blocked?: boolean
-  mayEditLast?: boolean
   // What sits on top of the field (the reply or forward being written).
   bar: ReactNode
   tools?: ReactNode
@@ -197,7 +195,6 @@ export function ComposerField({
               !e.metaKey &&
               !e.ctrlKey &&
               !composing(e) &&
-              mayEditLast &&
               compose.editLast()
             ) {
               e.preventDefault()

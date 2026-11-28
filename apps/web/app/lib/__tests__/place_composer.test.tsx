@@ -13,6 +13,7 @@ import { NO_THREADS_TEXT } from '../channel_perms'
 import { ChannelPermBit } from '../types'
 import { ReplyBar } from '../../components/replies'
 import { ComposerGate } from '../../components/composer_gate'
+import { Composer } from '../../components/composer'
 import { AttachButton, ComposerFiles } from '../../components/composer_files'
 import { placeContract, type ContractWorld } from './helpers/place_contract'
 
@@ -399,6 +400,82 @@ placeContract(composer, (kind, world) => {
       </AccountProvider>
     )
   }
+
+  test('the field says what it writes to, and one composer draws either side', () => {
+    const thread = seat(world(), [], 'thread')
+    const main = gated(() => {})
+    const { to, peer, listKey, poll } = main.state.get()
+    expect(main.state.get().to).toBe(to)
+    expect(peer).toBe(!hosted)
+    expect(listKey).not.toBeNull()
+    expect(to.hidden).toBe(
+      hosted ? (kind === 'hostedDm' ? 'Send a direct message' : null) : 'Send a P2P message'
+    )
+    if (kind === 'hostedServer' || kind === 'p2pRoom') expect(to.what?.kind).toBe('channel')
+    if (kind === 'p2pDm') expect(to.what).toEqual({ kind: 'person', handle: 'Bob' })
+    expect(thread.state.get().to.what).toEqual({ kind: 'thread' })
+    if (!hosted) expect(poll).toBeNull()
+    if (kind === 'hostedServer') expect(poll).toEqual({ kind: 'channel', id: 1 })
+    const { account, app } = world().ann
+    Object.assign(account.store.getInitialState(), account.store.getState())
+    if (app) Object.assign(app.useP2p.getInitialState(), app.useP2p.getState())
+    const html = renderToStaticMarkup(
+      <AccountProvider session={account}>
+        <P2pProvider identity={app}>
+          <PlaceProvider place={world().ann.place}>
+            <Composer />
+          </PlaceProvider>
+        </P2pProvider>
+      </AccountProvider>
+    )
+    expect(html).toContain(`data-composer="${hosted ? 'hosted' : 'p2p'}"`)
+    expect(html).toContain('see you at noon')
+    expect(html).toContain('aria-label="Send"')
+    expect(html.includes('aria-label="Create poll"')).toBe(main.state.get().poll !== null)
+    if (kind === 'p2pDm') expect(html).toContain('placeholder="Message Bob')
+  })
+
+  test('a draft is scheduled where the place keeps its scheduled messages', async () => {
+    const calls: unknown[][] = []
+    const main = seat(world(), calls)
+    const { ann } = world()
+    const key = mainKey()
+    if (hosted)
+      ann.account.store.setState({
+        scheduleDraft: async (k: string, at: number) => {
+          calls.push(['later', k, at])
+          return null
+        },
+      } as never)
+    else if (ann.app)
+      Object.assign(ann.app.p2pScheduled, {
+        add: async (k: string, d: { at: number; draft: string }) => {
+          calls.push(['later', k, d.at, d.draft])
+          return null
+        },
+        here: () => true,
+      })
+    const later = main.later.get()
+    expect(main.later.get()).toBe(later)
+    expect(later.side).toBe(hosted ? 'hosted' : 'device')
+    expect(later.ops?.side).toBe(later.side)
+    expect(later.notice).toBe(hosted ? `scheduled:${key}` : null)
+    expect(await main.scheduleAt(9_000)).toBeNull()
+    expect(calls).toEqual([
+      hosted ? ['later', key, 9_000] : ['later', key, 9_000, 'see you at noon'],
+    ])
+    let picked = 0
+    const draft = main.laterDraft({ pick: () => void picked++, busy: false })
+    expect(draft).toMatchObject({
+      side: later.side,
+      place: key,
+      text: 'see you at noon',
+      reply: null,
+    })
+    draft?.pick()
+    expect(picked).toBe(1)
+    expect(main.laterDraft({ pick: () => {}, busy: true })?.blocked).not.toBeNull()
+  })
 
   test('a member who may write has an open composer', () => {
     const main = gated(() => {})

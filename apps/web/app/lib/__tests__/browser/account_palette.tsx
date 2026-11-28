@@ -3,7 +3,7 @@ import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared
 import { SessionServices } from '../../../[[...slug]]/app_shell'
 import { ContextMenu } from '../../../components/context_menu'
 import { HomePage } from '../../../components/home'
-import { MessageComposer } from '../../../components/message_composer'
+import { Composer } from '../../../components/composer'
 import { PaletteButton, PaletteHost } from '../../../components/palette'
 import { PaletteSettingsSection } from '../../../components/palette_settings'
 import { registerAppActions } from '../../actions'
@@ -192,7 +192,7 @@ createRoot(document.body.appendChild(document.createElement('main'))).render(
             <>
               <PaletteSettingsSection />
               <HomePage onMenu={() => {}} />
-              <MessageComposer />
+              <Composer />
               <ContextMenu />
             </>
           )}

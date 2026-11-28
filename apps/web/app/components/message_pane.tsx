@@ -53,7 +53,7 @@ import { DateDivider } from './date_divider'
 import { MarkdownMessage } from './markdown_message'
 import { ShownName } from './shown_user'
 import { TypingIndicator } from './typing_indicator'
-import { MessageComposer } from './message_composer'
+import { Composer } from './composer'
 import StatusClock from './status_clock'
 import { InboxButton } from './inbox'
 import { longPress, useMedia } from './context_menu'
@@ -901,7 +901,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
             ) : dm && otherBlocked ? (
               <BlockedComposer user={dm.other} />
             ) : (
-              <MessageComposer />
+              <Composer />
             )}
           </div>
         </>

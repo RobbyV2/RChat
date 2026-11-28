@@ -32,8 +32,18 @@ import { altError } from '../alt_text'
 import { previewFor } from '../apps/preview'
 import { hasInviteCode, INVITE_POST_TEXT } from '../p2p/flows'
 import type { RelayChoice } from '../relays'
-import { charCount } from '../rules'
+import { charCount, messageFilterOn } from '../rules'
 import { parseSed } from '../sed'
+import { ownsP2pServer } from '../p2p/server/types'
+import type { OwnLoad } from '../own_loads'
+import type { PollTarget } from '../polls_store'
+import {
+  laterBlocked,
+  type ComposerDraft,
+  type ScheduledItem,
+  type ScheduledOps,
+  type ScheduledSide,
+} from '../scheduled'
 import type { UploadMode } from '../attachments'
 
 // Which of a place's lists a composer writes to: the conversation on screen or its open thread.
@@ -51,6 +61,66 @@ export interface ComposeState {
   focus: number
   // When slow mode lets the next message through (ms); 0 without a wait.
   slowUntil: number
+  // Where a poll made here is posted; null where none can be.
+  poll: PollTarget | null
+  to: WriteTo
+  // What the completions of the field draw their people and messages by.
+  listKey: string | null
+  // The instance's word filter checks what is written here.
+  filtered: boolean
+  // Written as a P2P identity, to its peers.
+  peer: boolean
+}
+
+// What a field says it writes to.
+export interface WriteTo {
+  // The thread, a channel by its name, or a person by their handle; null while not known.
+  what:
+    | { kind: 'thread' }
+    | { kind: 'channel'; name: string }
+    | { kind: 'person'; handle: string }
+    | null
+  // Your own place: its names are yours to read unmasked.
+  own: boolean
+  // What stands there while names are hidden; null where the name stays.
+  hidden: string | null
+}
+
+const sameTo = (a: WriteTo, b: WriteTo) =>
+  a.own === b.own &&
+  a.hidden === b.hidden &&
+  a.what?.kind === b.what?.kind &&
+  (a.what?.kind === 'channel' && b.what?.kind === 'channel' ? a.what.name === b.what.name : true) &&
+  (a.what?.kind === 'person' && b.what?.kind === 'person' ? a.what.handle === b.what.handle : true)
+
+// `read`, keeping the last value while it says the same.
+const keptTo = (read: () => WriteTo) => {
+  let held: WriteTo | null = null
+  return () => {
+    const next = read()
+    if (held === null || !sameTo(held, next)) held = next
+    return held
+  }
+}
+
+// The messages scheduled for later, as the chip above a composer and Send later read them.
+export interface LaterState {
+  side: ScheduledSide
+  items: ScheduledItem[]
+  // What a row of the list can do; null where nothing can be scheduled.
+  ops: ScheduledOps | null
+  // Whether this list's scheduled messages are fetched from where they are kept.
+  fetched: boolean
+  // What a failed fetch is filed under; null where nothing is fetched.
+  notice: OwnLoad | null
+}
+
+// What the screen around a composer gives Send later.
+export interface LaterUi {
+  // Opens the date and time picker.
+  pick: () => void
+  // Something is being added to the draft that Send later cannot take.
+  busy: boolean
 }
 
 // The message a draft answers, as its bar above the composer says it.
@@ -150,6 +220,12 @@ export interface Compose {
   // sent and `askKeep` is called: `sendKept` then sends it.
   send: (askKeep: () => void) => void
   sendKept: (seconds: number | null, relay: RelayChoice) => void
+  later: Live<LaterState>
+  fetchLater: () => void
+  // Schedules the draft as written for `at`; null, or why it was refused.
+  scheduleAt: (at: number) => Promise<string | null>
+  // The draft as Send later reads it when one of its rows runs.
+  laterDraft: (ui: LaterUi) => ComposerDraft | null
   getText: () => string
   setText: (text: string) => void
   // Whether the text is too big to send although its character count fits.
@@ -173,6 +249,8 @@ export interface Compose {
   thumbOf: (id: string) => Promise<string | null>
   // Where a forward sent from this list goes; null with nothing to write to.
   forwardTo: Live<ForwardTo | null>
+  // Says that a forward went out to what the screen calls `title`.
+  forwarded: (title: string) => void
   // Sends the message on the forward clipboard here. `showSource`: whether the copy names where
   // it is from (null: the place decides). True once the copy went out.
   forward: (showSource: boolean | null) => Promise<boolean>
@@ -215,8 +293,31 @@ const hosted = (account: AccountSession): Composer =>
         : s.view?.kind === 'channel'
           ? s.view.channelId
           : null
-    const state = (initial: boolean) =>
-      built(
+    const toOf = (initial: boolean) =>
+      keptTo((): WriteTo => {
+        const s = initial ? store.getInitialState() : store.getState()
+        const v = s.view
+        if (list === 'thread') return { what: { kind: 'thread' }, own: false, hidden: null }
+        if (v?.kind === 'channel') {
+          const creator =
+            s.me?.servers.find(x => x.name === v.server)?.creator ?? s.servers[v.server]?.creator
+          const name = s.servers[v.server]?.channels.find(c => c.id === v.channelId)?.name ?? ''
+          return {
+            what: { kind: 'channel', name },
+            own: !!s.me && creator === s.me.username,
+            hidden: null,
+          }
+        }
+        const dm = v?.kind === 'dm' ? s.dms.find(d => d.id === v.dmId) : undefined
+        return {
+          what: dm ? { kind: 'person', handle: `@${dm.other.username}` } : null,
+          own: dm?.is_self === true,
+          hidden: 'Send a direct message',
+        }
+      })
+    const state = (initial: boolean) => {
+      const to = toOf(initial)
+      return built(
         () => {
           const s = initial ? store.getInitialState() : store.getState()
           const key = keyOf(initial)
@@ -229,9 +330,42 @@ const hosted = (account: AccountSession): Composer =>
             s.me?.username,
             key !== null && s.composerFocus?.key === key ? s.composerFocus.n : 0,
             channelOf(s) === null ? 0 : (s.slowUntil[channelOf(s) as number] ?? 0),
+            textOnlyDestination(s, key) ||
+            !(s.view?.kind !== 'channel' || channelCan(s, s.view.server, channelOf(s)).polls)
+              ? null
+              : list === 'thread'
+                ? s.panel?.kind === 'thread'
+                  ? s.panel.root.id
+                  : null
+                : s.view?.kind === 'channel'
+                  ? s.view.channelId
+                  : s.view?.kind === 'dm'
+                    ? s.view.dmId
+                    : null,
+            list === 'thread' ? 'thread' : s.view?.kind === 'dm' ? 'dm' : 'channel',
+            to(),
+            list === 'main' && s.view?.kind === 'channel' && messageFilterOn(s.settings),
           ] as const
         },
-        ([key, text, max, reply, server, me, focus, slowUntil]): ComposeState => ({
+        ([
+          key,
+          text,
+          max,
+          reply,
+          server,
+          me,
+          focus,
+          slowUntil,
+          poll,
+          pollKind,
+          to,
+          filtered,
+        ]): ComposeState => ({
+          poll: poll === null ? null : { kind: pollKind, id: poll },
+          to,
+          listKey: key,
+          filtered,
+          peer: false,
           key,
           text,
           max,
@@ -245,6 +379,7 @@ const hosted = (account: AccountSession): Composer =>
             : null,
         })
       )
+    }
     const get = state(false)
     const gate = (initial: boolean) =>
       built(
@@ -370,6 +505,55 @@ const hosted = (account: AccountSession): Composer =>
       else s.sendMessage(sent, keep, relay)
       store.getState().setDraft(key, '')
     }
+    const later = (initial: boolean) =>
+      built(
+        () => {
+          const s = initial ? store.getInitialState() : store.getState()
+          const key = keyOf(initial)
+          return [
+            s.scheduled.items,
+            limitsOf(s.instance).message_chars,
+            s.settings.scheduled_messages ||
+              !!(s.scheduled.counts?.waiting || s.scheduled.counts?.failed),
+            key,
+          ] as const
+        },
+        ([items, max, fetched, key]): LaterState => ({
+          side: 'hosted',
+          items: Object.values(items),
+          ops: {
+            side: 'hosted',
+            max,
+            edit: (k, body) => store.getState().editScheduled(k, body),
+            removeReply: k => store.getState().removeScheduledReply(k),
+            reschedule: (k, at) => store.getState().rescheduleScheduled(k, at),
+            sendNow: k => store.getState().sendScheduledNow(k),
+            remove: k => store.getState().deleteScheduled(k),
+          },
+          fetched,
+          notice: key === null ? null : (`scheduled:${key}` as const),
+        })
+      )
+    const scheduleAt = async (at: number): Promise<string | null> => {
+      const st = store.getState()
+      const { key, text } = get()
+      if (key === null) return null
+      const links = (t: string) => outgoing(store.getState().linkPrefs, t)
+      const go = () =>
+        void st.scheduleDraft(key, at, links).then(e => {
+          if (e) store.getState().showToast(e)
+        })
+      if (hasInviteCode(text)) {
+        st.askConfirm({
+          title: 'Post Invite Code',
+          body: INVITE_POST_TEXT,
+          confirm: 'Schedule',
+          action: account.lifetime.inSession(go),
+        })
+        return null
+      }
+      return st.scheduleDraft(key, at, links)
+    }
     const forwardTo = (initial: boolean) =>
       built(
         () => {
@@ -410,6 +594,7 @@ const hosted = (account: AccountSession): Composer =>
         initial: forwardTo(true),
         subscribe: changed => store.subscribe(changed),
       },
+      forwarded: () => {},
       forward: async showSource => {
         const { key } = get()
         if (key !== null) store.getState().sendForward(key, showSource ?? undefined)
@@ -493,6 +678,40 @@ const hosted = (account: AccountSession): Composer =>
         go()
       },
       sendKept: (seconds, relay) => post(seconds, relay),
+      later: {
+        get: later(false),
+        initial: later(true),
+        subscribe: changed => store.subscribe(changed),
+      },
+      fetchLater: () => {
+        const { key } = get()
+        if (key !== null) void store.getState().loadScheduled(key)
+      },
+      scheduleAt,
+      laterDraft: ui => {
+        const st = store.getState()
+        const { key, text, max } = get()
+        if (key === null) return null
+        const reply = st.replying[key]
+        return {
+          side: 'hosted',
+          place: key,
+          text,
+          reply: reply ? { id: String(reply.message.id), mention: reply.mention } : null,
+          blocked: laterBlocked({
+            text,
+            rich: !!st.pending[key] || st.forwardClip !== null || ui.busy,
+            tooLong: charCount(text) > max,
+            on: st.settings.scheduled_messages,
+            cap: limitsOf(st.instance).scheduled_per_account,
+            waiting: st.scheduled.counts?.waiting ?? 0,
+          }),
+          schedule: async at => {
+            await scheduleAt(at)
+          },
+          pick: ui.pick,
+        }
+      },
       getText: () => get().text,
       setText: text => {
         const { key } = get()
@@ -502,7 +721,10 @@ const hosted = (account: AccountSession): Composer =>
       typing: (key, active) => store.getState().noteTyping(key, active),
       editLast: () => {
         const { key } = get()
-        return key !== null && store.getState().editLast(key)
+        const s = store.getState()
+        const server = s.view?.kind === 'channel' ? s.view.server : null
+        if (server !== null && !channelCan(s, server, channelOf(s)).send) return false
+        return key !== null && s.editLast(key)
       },
       cancelReply: () => {
         const { key } = get()
@@ -528,8 +750,40 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
       if (list === 'thread') return s.thread?.room === room ? threadKey(s.thread) : null
       return s.chat?.room === room ? chatKey(s.chat) : null
     }
-    const state = (initial: boolean) =>
-      built(
+    const toOf = (initial: boolean) =>
+      keptTo((): WriteTo => {
+        const s = initial ? useP2p.getInitialState() : useP2p.getState()
+        const hidden = 'Send a P2P message'
+        if (list === 'thread') return { what: { kind: 'thread' }, own: false, hidden }
+        if (place.kind === 'p2pRoom') {
+          const v = s.servers[room]
+          const ch = s.chat?.room === room ? s.chat.ch : null
+          const name = v?.channels.find(c => c.id === ch)?.name ?? ''
+          return {
+            what: { kind: 'channel', name },
+            own: ownsP2pServer(v, s.me),
+            hidden,
+          }
+        }
+        const peerIk = s.chat?.room === room ? s.chat.peer : s.rooms[room]?.peer
+        const contact = s.contacts.find(c => c.ik === peerIk)
+        return {
+          what: { kind: 'person', handle: contact ? displayName(contact) : 'Contact' },
+          own: false,
+          hidden,
+        }
+      })
+    const scopeOf = (initial: boolean) => {
+      const s = initial ? useP2p.getInitialState() : useP2p.getState()
+      if (list === 'thread')
+        return s.thread?.room === room ? identityScopeKey(app.localId, threadScope(s.thread)) : null
+      return s.chat?.room === room
+        ? identityScopeKey(app.localId, chatScope(room, s.chat.ch ?? null))
+        : null
+    }
+    const state = (initial: boolean) => {
+      const to = toOf(initial)
+      return built(
         () => {
           const s = initial ? useP2p.getInitialState() : useP2p.getState()
           const key = keyOf(initial)
@@ -541,15 +795,22 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
             key !== null && s.composerFocus?.key === key ? s.composerFocus.n : 0,
             // A thread's replies count in its channel's slow mode.
             key === null ? 0 : (s.slowUntil[key.split('#')[0]] ?? 0),
+            to(),
+            scopeOf(initial),
           ] as const
         },
-        ([key, text, id, rows, focus, slowUntil]): ComposeState => {
+        ([key, text, id, rows, focus, slowUntil, to, listKey]): ComposeState => {
           const answered = id === null ? undefined : rows.message(id)
           return {
             key,
             text,
             focus,
             slowUntil,
+            poll: null,
+            to,
+            listKey,
+            filtered: false,
+            peer: true,
             max: P2P_LIMITS.body,
             replying: answered
               ? {
@@ -563,6 +824,7 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
           }
         }
       )
+    }
     const get = state(false)
     const gate = (initial: boolean) =>
       built(
@@ -721,6 +983,34 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
             ? null
             : { key: scope, destination: p2pDestination(key), textOnly }
       )
+    const deviceOps: ScheduledOps = {
+      side: 'device',
+      max: P2P_LIMITS.body,
+      edit: (k, body) => app.p2pScheduled.edit(k, body),
+      removeReply: k => app.p2pScheduled.removeReply(k),
+      reschedule: (k, at) => app.p2pScheduled.reschedule(k, at),
+      sendNow: k => app.p2pScheduled.sendNow(k),
+      remove: k => app.p2pScheduled.remove(k),
+    }
+    const later = (initial: boolean) =>
+      built(
+        () => [(initial ? useP2p.getInitialState() : useP2p.getState()).scheduled] as const,
+        ([items]): LaterState => ({
+          side: 'device',
+          items,
+          ops: deviceOps,
+          fetched: false,
+          notice: null,
+        })
+      )
+    const scheduleAt = async (at: number) => {
+      const st = useP2p.getState()
+      const { key, text } = get()
+      if (key === null) return null
+      const reply = st.replying?.room === key ? st.replying.id : undefined
+      const body = outgoing(place.account.store.getState().linkPrefs, text)
+      return app.p2pScheduled.add(key, { body, reply, at, draft: text })
+    }
     // When each key last said it is typing; the place wants to hear it again only so often.
     const said = new Map<string, number>()
     return {
@@ -760,6 +1050,7 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
         initial: forwardTo(true),
         subscribe: changed => useP2p.subscribe(changed),
       },
+      forwarded: title => app.p2pHost.toast('Forwarded to', title),
       forward: async showSource => {
         const { key } = get()
         const { store } = place.account
@@ -798,6 +1089,41 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
         if (said.delete(key)) p2pDm.typing(key, false)
       },
       sendKept: () => {},
+      later: {
+        get: later(false),
+        initial: later(true),
+        subscribe: changed => useP2p.subscribe(changed),
+      },
+      fetchLater: () => {},
+      scheduleAt,
+      laterDraft: ui => {
+        const st = useP2p.getState()
+        const { key, text, max } = get()
+        if (key === null) return null
+        const reply = st.replying?.room === key ? st.replying.id : null
+        return {
+          side: 'device',
+          place: key,
+          text,
+          reply: reply ? { id: reply, mention: true } : null,
+          blocked: laterBlocked({
+            text,
+            rich:
+              (st.attaching[key]?.length ?? 0) > 0 ||
+              place.account.store.getState().forwardClip !== null ||
+              ui.busy,
+            tooLong: charCount(text) > max || bodyTooLong(text),
+            on: app.p2pScheduled.here(),
+            cap: 0,
+            waiting: 0,
+          }),
+          schedule: async at => {
+            const e = await scheduleAt(at)
+            if (e) app.p2pHost.toast(e)
+          },
+          pick: ui.pick,
+        }
+      },
       getText: () => get().text,
       setText: text => {
         const { key } = get()

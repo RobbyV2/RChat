@@ -18,7 +18,7 @@ import type { Message } from '../lib/types'
 import type { Outgoing } from '../lib/store_types'
 import { findById } from '../lib/window'
 import { newSince } from '../lib/lists'
-import { MessageComposer } from './message_composer'
+import { Composer } from './composer'
 import { TypingIndicator } from './typing_indicator'
 import {
   OutboxRows,
@@ -445,7 +445,7 @@ export default function ThreadPanel() {
             ) : dmOther ? (
               <BlockedComposer user={dmOther} />
             ) : (
-              <MessageComposer thread />
+              <Composer list="thread" />
             )}
           </>
         }

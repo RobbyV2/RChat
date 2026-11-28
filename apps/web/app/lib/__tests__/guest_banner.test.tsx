@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { MessageComposer } from '../../components/message_composer'
+import { Composer } from '../../components/composer'
 import { useStore } from '../store'
 
 // A server render reads the store's initial state.
@@ -13,7 +13,7 @@ afterEach(() => {
 
 // The classes of the guest notice and of the place it docks in.
 const docked = (html: string) => {
-  const m = /<div class="([^"]*)"><div data-guest-notice="[^"]*" class="([^"]*)">/.exec(html)
+  const m = /<div[^>]* class="([^"]*)"><div data-guest-notice="[^"]*" class="([^"]*)">/.exec(html)
   return { dock: m?.[1].split(' ') ?? [], notice: m?.[2].split(' ') ?? [] }
 }
 
@@ -23,7 +23,7 @@ describe('the guest banner', () => {
       guest: true,
       view: { kind: 'channel', server: 'lounge', channelId: 1 },
     })
-    const { dock, notice } = docked(renderToStaticMarkup(<MessageComposer />))
+    const { dock, notice } = docked(renderToStaticMarkup(<Composer />))
     expect(notice).not.toHaveLength(0)
     expect(dock).toContain('mb-[max(var(--space-md),env(safe-area-inset-bottom))]')
     expect(dock).toContain('keyboard:mb-(--space-md)')

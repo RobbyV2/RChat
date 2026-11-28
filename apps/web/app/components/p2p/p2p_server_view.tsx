@@ -673,7 +673,6 @@ function P2pChannelPaneBody({
   const channel = voiceCh ?? v?.channels.find(c => c.id === chat?.ch)
   const room = v?.id ?? ''
   const own = useP2p(s => ownsP2pServer(v, s.me))
-  const mask = useMask(own)
   const nameOf = useCallback((ik: string) => memberName(room, ik), [room])
   const timedOut = usePeerTimeoutEnds(v?.timedOutUntil)
   const held = useChannelCan(useP2pRoom(v?.id ?? null), chat?.ch ?? null)
@@ -875,8 +874,6 @@ function P2pChannelPaneBody({
         above={<ServerNotices v={v} />}
         intro={<ServerIntro />}
         timedOut={timedOut !== null}
-        title={`#${mask(channel.name)}`}
-        placeholder={`Message #${mask(channel.name)}`}
         pendingTip="Waiting for a member to come online"
         peerFull={false}
         gap={v.gap}

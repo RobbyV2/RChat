@@ -238,8 +238,6 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
       above={above}
       intro={<IntroBanner name={peerName} />}
       canAct={canAct}
-      title={peerName}
-      placeholder={`Message ${peerName}`}
       pendingTip={`Waiting for ${peerName} to come online`}
       peerFull={room?.peerFull === true}
       gap={room?.gap === true}

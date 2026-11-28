@@ -218,11 +218,11 @@ const openDm = async (p: Page, name: string) => {
       .click({ button: 'right' })
     await p.getByRole('menuitem', { name: 'Message' }).first().click()
   }
-  await p.locator('textarea[data-p2p-composer]').waitFor({ timeout: 15_000 })
+  await p.locator('textarea[data-composer="p2p"]').waitFor({ timeout: 15_000 })
 }
 
 const send = async (p: Page, text: string) => {
-  await typeIn(p.locator('textarea[data-p2p-composer]'), text)
+  await typeIn(p.locator('textarea[data-composer="p2p"]'), text)
   await p.keyboard.press('Enter')
 }
 

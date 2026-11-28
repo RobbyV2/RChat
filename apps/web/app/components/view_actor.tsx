@@ -5,6 +5,8 @@ import { client } from '../lib/client/client'
 import { useAccount } from '../lib/client/react'
 import { useP2p, useP2pApp } from '../lib/client/p2p_react'
 import { resolveViewActor } from '../lib/client/view_actor'
+import { isHosted } from '../lib/place/place'
+import { usePlace } from '../lib/place/react'
 import { useMask, useStore } from '../lib/store'
 import { AccountTag } from './account_tag'
 import { Row } from './layout'
@@ -26,6 +28,14 @@ export function usePeerActor() {
   const ik = useP2p(s => s.ik)
   const actor = useViewActor(identity ? { local: identity.localId, name, ik } : null)
   return identity && actor
+}
+
+// Who writes in the place around: the identity in a P2P place, else the account.
+export function usePlaceActor() {
+  const place = usePlace()
+  const peer = usePeerActor()
+  const own = useViewActor()
+  return place && !isHosted(place) ? peer : own
 }
 
 export function useActorSuffix(actor: ViewActor) {

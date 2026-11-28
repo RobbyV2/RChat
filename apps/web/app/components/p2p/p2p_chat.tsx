@@ -1,7 +1,5 @@
 'use client'
 import { Button, IconButton } from '../controls'
-import { PeerCodeButton } from './peer_code_button'
-import { useActorSuffix, usePeerActor } from '../view_actor'
 import { identityScopeKey } from '../../lib/p2p/app/host'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
@@ -23,9 +21,8 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react'
-import { CircleAlert, Clock, History, X } from 'lucide-react'
+import { CircleAlert, History, X } from 'lucide-react'
 import { useStore } from '../../lib/store'
-import { outgoing } from '../../lib/link_safety'
 import { actionPress, openActionMenu } from '../../lib/actions/menu'
 import type { Target } from '../../lib/actions/types'
 import { peerChat } from '../../lib/actions/p2p_chat'
@@ -34,8 +31,6 @@ import { useHome } from '../../lib/home_store'
 import { chatKey, chatScope, type P2pChat } from '../../lib/p2p/app'
 import { messageActs, STORAGE_FULL_TEXT, PEER_FULL_TEXT, type P2pMessage } from '../../lib/p2p/dm'
 import { LIMITS as P2P_LIMITS } from '../../lib/p2p/content'
-import { clock } from '../../lib/slowmode'
-import { useCountdown } from '../../lib/countdown'
 import { newSince } from '../../lib/lists'
 import type { Message } from '../../lib/types'
 import { isHosted, P2pDm, P2pRoom, type ListKind } from '../../lib/place/place'
@@ -43,17 +38,14 @@ import { reactPickOf, shownOf } from '../../lib/place/shown'
 import { PlaceProvider, useLive, usePlace } from '../../lib/place/react'
 import { messagesAt } from '../../lib/place/use_messages'
 import { MessageList } from '../message_list'
-import { ComposerField, fits } from '../composer_field'
-import { useCompose } from '../../lib/place/use_composer'
-import type { ComposerList } from '../../lib/place/composer'
+import { Composer } from '../composer'
 import { chat as chatFeature } from '../../lib/place/chat'
 import { featureAt, isUnsupported } from '../../lib/place/feature'
 import { type EditBinding } from '../message_editor'
 import { QuickReactions, rowAt } from '../reactions'
-import { ForwardBar, useForwardClip, useVouchedFiles } from '../forwards'
+import { useVouchedFiles } from '../forwards'
 import { PinsWindow } from '../pins'
-import { ReplyBar } from '../replies'
-import { ComposerGate, useGate } from '../composer_gate'
+import { useGate } from '../composer_gate'
 import { GateNote } from '../gate_note'
 import { composeAt } from '../../lib/place/use_composer'
 import { ListedRow } from '../listed_row'
@@ -66,12 +58,9 @@ import type { P2pApp } from '../../lib/p2p/app/runtime'
 import { groupPlaces, p2pCue } from '../../lib/message_groups'
 import { dayStarts } from '../../lib/date_dividers'
 import { DateDivider } from '../date_divider'
-import { ScheduledChip, SendLaterDialog, useDeviceItems, useDeviceOps } from '../scheduled'
-import { laterBlocked, type ComposerDraft } from '../../lib/scheduled'
 import { P2pBadge } from './p2p_badge'
 import { AttachmentList } from './p2p_files'
-import { AttachButton, ComposerFiles, pastedFiles } from '../composer_files'
-import { Row, Stack, Surface, Dock } from '../layout'
+import { Row, Stack, Surface } from '../layout'
 import { playsOn } from '../../lib/motion/play'
 
 // The message list and composer of a P2P conversation, shared by direct messages and P2P server
@@ -208,127 +197,6 @@ export function useP2pFlash(
     if (focus && focusNum !== null) p2pDm.clearFocus()
   }, [focus, focusNum])
   return flash
-}
-
-function P2pComposerBody({
-  draftKey: key,
-  list = 'main',
-  scope,
-  title,
-  placeholder,
-}: {
-  // Where the draft, files, reply and sends go (a conversation, channel or thread).
-  draftKey: string
-  list?: ComposerList
-  scope: string
-  title: string
-  placeholder: string
-}) {
-  const identity = useP2pApp()!
-
-  const account = useAccount()
-  const { store } = account
-  const compose = useCompose(list)
-  const { text, max, replying, slowUntil } = useLive(compose.state)
-  const { shut } = useGate(compose)
-  const forwardClip = useForwardClip()
-  const suffix = useActorSuffix(usePeerActor())
-  const streamer = useStore(s => s.streamer)
-  const { stuck } = useLive(compose.files)
-  const slowLeft = useCountdown(slowUntil)
-  const linkPrefs = useStore(s => s.linkPrefs)
-  const { getText } = compose
-  const [laterOpen, setLaterOpen] = useState(false)
-  const scheduledItems = useDeviceItems()
-  const scheduledOps = useDeviceOps()
-
-  if (shut) return <ComposerGate compose={compose} list={list} />
-
-  // Schedules the draft as written for `at`.
-  const scheduleAt = (at: number) => {
-    const st = identity.useP2p.getState()
-    const reply = st.replying?.room === key ? st.replying.id : undefined
-    const draft = getText()
-    return identity.p2pScheduled.add(key, { body: outgoing(linkPrefs, draft), reply, at, draft })
-  }
-
-  // The draft as Send later reads it when a menu row runs.
-  const laterDraft = (): ComposerDraft | null => {
-    const st = identity.useP2p.getState()
-    const body = st.drafts[key] ?? ''
-    const reply = st.replying?.room === key ? st.replying.id : null
-    return {
-      side: 'device',
-      place: key,
-      text: body,
-      reply: reply ? { id: reply, mention: true } : null,
-      blocked: laterBlocked({
-        text: body,
-        rich: (st.attaching[key]?.length ?? 0) > 0 || store.getState().forwardClip !== null,
-        tooLong: !fits(compose, body, max),
-        on: identity.p2pScheduled.here(),
-        cap: 0,
-        waiting: 0,
-      }),
-      schedule: async at => {
-        const e = await scheduleAt(at)
-        if (e) identity.p2pHost.toast(e)
-      },
-      pick: () => setLaterOpen(true),
-    }
-  }
-
-  const bar = replying ? (
-    <ReplyBar list={list} />
-  ) : forwardClip ? (
-    <ForwardBar list={list} sent={() => identity.p2pHost.toast('Forwarded to', title)} />
-  ) : null
-
-  return (
-    <Dock gap="sm">
-      <Stack gap="sm" align="start">
-        <PeerCodeButton text={text} peer />
-        {laterOpen && (
-          <SendLaterDialog
-            side="device"
-            onClose={() => setLaterOpen(false)}
-            onPick={async at => {
-              const e = await scheduleAt(at)
-              if (!e) setLaterOpen(false)
-              return e
-            }}
-          />
-        )}
-        <ComposerFiles compose={compose} />
-        <Stack gap="2xs" place="w-full">
-          {slowLeft > 0 && (
-            <Row as="p" role="status" data-p2p-slow-left gap="2xs" justify="end">
-              <Clock size={12} className="shrink-0 text-on-surface-variant" />
-              <span className="text-xs text-on-surface-variant tabular-nums">
-                Slow mode: {clock(slowLeft)}
-              </span>
-            </Row>
-          )}
-          <ScheduledChip place={key} items={scheduledItems} ops={scheduledOps} />
-          <Stack gap="none">
-            <ComposerField
-              compose={compose}
-              listKey={scope}
-              placeholder={streamer ? 'Send a P2P message' : placeholder + suffix}
-              slowLeft={slowLeft}
-              blocked={stuck}
-              bar={bar}
-              inputProps={{ 'data-p2p-composer': '' }}
-              later={laterDraft}
-              onSend={() => compose.send(() => {})}
-              onPaste={e => compose.paste(pastedFiles(e))}
-              tools={<AttachButton compose={compose} />}
-            />
-          </Stack>
-        </Stack>
-      </Stack>
-    </Dock>
-  )
 }
 
 // The rows of a conversation, channel or thread for the shared message components: numbered
@@ -530,9 +398,6 @@ export interface ChatBodyProps {
   canAct: boolean
   // A timeout of ours: messages can be deleted and files downloaded, nothing more.
   timedOut?: boolean
-  // "Forwarded to {title}", and the composer placeholder.
-  title: string
-  placeholder: string
   pendingTip: string
   peerFull: boolean
   gap: boolean
@@ -761,12 +626,7 @@ function IdentityChatBody(props: ChatBodyProps) {
                 {storageFull ? STORAGE_FULL_TEXT : PEER_FULL_TEXT}
               </GateNote>
             )}
-            <P2pComposer
-              draftKey={key}
-              scope={scope}
-              title={props.title}
-              placeholder={props.placeholder}
-            />
+            <Composer />
           </div>
           <PinsWindow canUnpin={canAct && !timedOut && mayPin} />
           <ThreadsWindow />
@@ -792,5 +652,4 @@ function IdentityChatBody(props: ChatBodyProps) {
 }
 
 export const P2pIntro = withP2pIdentity(P2pIntroBody)
-export const P2pComposer = withP2pIdentity(P2pComposerBody)
 export const P2pChatBody = withP2pIdentity(IdentityChatBody)
