@@ -1,7 +1,14 @@
 'use client'
 import { OwnLoadNotice } from './own_load'
 import { Name } from './name'
-import { instanceAddress, instanceName, personCalled, handleName, serverName } from '../lib/names'
+import {
+  instanceAddress,
+  instanceName,
+  personCalled,
+  handleName,
+  serverName,
+  unnamed,
+} from '../lib/names'
 import { asAccount, pictured } from '../lib/people'
 import { DeviceKeySection } from './p2p/device_key'
 import { useP2p } from '../lib/client/p2p_react'
@@ -1326,7 +1333,7 @@ function Menu() {
   return (
     <SettingsPage
       title="Settings"
-      closeTitle="Close settings"
+      closeTitle={unnamed('Close settings')}
       layer="dialog"
       top
       sections={sections}

@@ -2,7 +2,7 @@
 
 import { Covered } from './covered'
 import { ScheduledButton } from './scheduled'
-import { personName, serverCalled, serverName } from '../lib/names'
+import { personName, serverCalled, serverName, labelWith } from '../lib/names'
 import { Name, useNameLabels } from './name'
 import { ViewActorTag } from './view_actor'
 import {
@@ -532,7 +532,7 @@ export function InboxButton() {
   const count = useInboxCount()
   const open = useStore(s => s.inboxOpen)
   const setOpen = useStore(s => s.setInboxOpen)
-  const label = count ? `Inbox, ${pingLabel(count)}` : 'Inbox'
+  const label = count ? labelWith`Inbox, ${pingLabel(count)}` : 'Inbox'
   return (
     <IconButton
       icon={Bell}

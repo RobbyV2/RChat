@@ -1,7 +1,7 @@
 'use client'
 import { IconButton, MediaButton } from '../controls'
 import { Name } from '../name'
-import { instanceName } from '../../lib/names'
+import { instanceName, notAName } from '../../lib/names'
 import { altText } from '../../lib/alt_text'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -193,7 +193,13 @@ export function TileView({
       <span className="shrink-0 text-xs text-on-surface-variant tabular-nums">
         {fmtSize(att.size)}
       </span>
-      <IconButton icon={Download} label="Save" tooltip={`Save ${name}`} size="sm" onClick={save} />
+      <IconButton
+        icon={Download}
+        label="Save"
+        tooltip={notAName(`Save ${name}`)}
+        size="sm"
+        onClick={save}
+      />
     </Row>
   )
 

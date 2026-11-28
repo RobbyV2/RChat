@@ -3,7 +3,7 @@ import { ask, asked, sendTo } from '../lib/asks'
 import { Loaded, useAccountSource } from './loaded'
 
 import { BanList } from './ban_list'
-import { personName } from '../lib/names'
+import { personName, notAName } from '../lib/names'
 import { Name, NameInput } from './name'
 import { ViewActorTag } from './view_actor'
 import { ServerStorage } from './server_storage'
@@ -282,8 +282,8 @@ function RoleRow({
           <span title={noDelete ?? `Delete ${role.name}`} className="shrink-0">
             <IconButton
               icon={Trash2}
-              label={`Delete ${role.name}`}
-              tooltip={noDelete ?? `Delete ${role.name}`}
+              label={notAName(`Delete ${role.name}`)}
+              tooltip={notAName(noDelete ?? `Delete ${role.name}`)}
               tone="danger"
               size="sm"
               onClick={() => void deleteRole(server, role.id).then(inSession(after))}
@@ -484,11 +484,11 @@ export function RolesEditor({
                 name={r.name}
                 swatch={r.color || undefined}
                 up={{
-                  text: `Show ${r.name} higher`,
+                  text: notAName(`Show ${r.name} higher`),
                   run: roleRun(acct, 'role_show_up', target(r)),
                 }}
                 down={{
-                  text: `Show ${r.name} lower`,
+                  text: notAName(`Show ${r.name} lower`),
                   run: roleRun(acct, 'role_show_down', target(r)),
                 }}
                 menu={longPress((x, y) => {

@@ -50,6 +50,7 @@ import { MessageTime } from './timestamp'
 import { Row, Stack, Surface } from './layout'
 import { time } from '../lib/platform/time'
 import { pollOptionLook } from '../lib/controls'
+import { notAName } from '../lib/names'
 
 const nowSec = () => Math.floor(time().now() / 1000)
 
@@ -217,7 +218,7 @@ function RankOrder({
             </span>
             <IconButton
               icon={ChevronUp}
-              label={`Move ${o.text} up`}
+              label={notAName(`Move ${o.text} up`)}
               tooltip="Move up"
               size="sm"
               disabled={i === 0}
@@ -225,7 +226,7 @@ function RankOrder({
             />
             <IconButton
               icon={ChevronDown}
-              label={`Move ${o.text} down`}
+              label={notAName(`Move ${o.text} down`)}
               tooltip="Move down"
               size="sm"
               disabled={i === order.length - 1}

@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import { unnamed } from '../names'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Settings, Users } from 'lucide-react'
 import { PageRow, SettingsPage, type PageSection } from '../../components/settings_page'
@@ -283,7 +284,7 @@ test('the actor shows beside the section name', () => {
 })
 
 test('the section header and close button sit above the content, which scrolls alone', () => {
-  const html = groupedPage('one', { closeTitle: 'Close grouped' })
+  const html = groupedPage('one', { closeTitle: unnamed('Close grouped') })
   const header = /<div class="([^"]*)"><h1/.exec(html)?.[1] ?? ''
   expect(header.split(' ')).toContain('shrink-0')
   expect(header.split(' ')).toContain('border-b')

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { notAName } from '../names'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Forward, MessageSquareText, Pencil, Reply, Trash2 } from 'lucide-react'
 import { toolbarFit } from '../toolbar_fit'
@@ -21,7 +22,7 @@ describe('how much of the toolbar a row shows beside a name line', () => {
 
 const action = (key: string, label: string, icon: ToolbarAction['icon']): ToolbarAction => ({
   key,
-  label,
+  label: notAName(label),
   icon,
   onClick: () => {},
 })

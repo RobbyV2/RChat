@@ -70,6 +70,7 @@ import {
   type TriTone,
   type WindowButtonKind,
 } from '../lib/controls'
+import type { Said } from '../lib/label'
 import { FUNCTIONAL } from '../lib/motion/functional'
 import { look, plays } from '../lib/motion/play'
 
@@ -101,7 +102,11 @@ function Busy({ busy, children }: { busy: boolean; children: ReactNode }) {
 // label keeps the width. `title` is for a longer description than the label, and `label` names it
 // when its words are not always shown. `align="start"` starts a wide one's label at its edge;
 // `raised` lifts one that floats over the page.
-export function Button<const S extends string = never>({
+export function Button<
+  const S extends string = never,
+  const L extends string = never,
+  const T extends string = never,
+>({
   variant = 'text',
   size = 'sm',
   icon: Icon,
@@ -124,8 +129,8 @@ export function Button<const S extends string = never>({
     busy?: boolean
     align?: 'center' | 'start'
     raised?: boolean
-    title?: string
-    label?: string
+    title?: Said<T>
+    label?: Said<L>
     ref?: Ref<HTMLButtonElement>
     children: ReactNode
   }) {
@@ -251,7 +256,11 @@ export function IconLink<const S extends string = never>({
 // must not show (a name streamer mode hides) or should not repeat. `pressed` makes it a toggle; `children` (a badge, a dot) sits over
 // the icon. `glyph` shows an emoji (or any small mark) in place of the icon. `grip` makes it a
 // handle to drag by.
-export function IconButton<const S extends string = never>({
+export function IconButton<
+  const S extends string = never,
+  const L extends string = never,
+  const T extends string = never,
+>({
   icon: Icon,
   glyph,
   label,
@@ -270,8 +279,8 @@ export function IconButton<const S extends string = never>({
 }: NativeButton &
   Placed<S> &
   ({ icon: LucideIcon; glyph?: undefined } | { icon?: undefined; glyph: ReactNode }) & {
-    label: string
-    tooltip?: string
+    label: Said<L>
+    tooltip?: Said<T>
     tone?: IconButtonTone
     size?: IconButtonSize
     shape?: IconButtonShape
@@ -320,7 +329,11 @@ export function IconButton<const S extends string = never>({
 // `current` marks the open one (`page`: the page shown beside the list). `wrap` lets a long label
 // wrap instead of cutting it short. `name`
 // is what a screen reader calls it when its label alone does not say.
-export function ListRow<const S extends string = never>({
+export function ListRow<
+  const S extends string = never,
+  const L extends string = never,
+  const T extends string = never,
+>({
   icon: Icon,
   leading,
   label,
@@ -344,7 +357,7 @@ export function ListRow<const S extends string = never>({
     leading?: ReactNode
     label: ReactNode
     pressed?: boolean
-    name?: string
+    name?: Said<L>
     description?: ReactNode
     trailing?: ReactNode
     chevron?: boolean | 'narrow'
@@ -352,7 +365,7 @@ export function ListRow<const S extends string = never>({
     variant?: RowVariant
     current?: boolean | 'page'
     wrap?: boolean
-    title?: string
+    title?: Said<T>
     ref?: Ref<HTMLButtonElement>
   }) {
   return (
@@ -388,7 +401,11 @@ export function ListRow<const S extends string = never>({
 
 // A button inside a line of text ("No friends yet. Add friend"): it reads as a link and keeps the
 // line's height and type. `underlined` shows the line under it always, not only under the mouse.
-export function LinkButton<const S extends string = never>({
+export function LinkButton<
+  const S extends string = never,
+  const L extends string = never,
+  const T extends string = never,
+>({
   tone = 'primary',
   underlined = false,
   size,
@@ -404,8 +421,8 @@ export function LinkButton<const S extends string = never>({
     tone?: LinkTone
     underlined?: boolean
     size?: LinkSize
-    title?: string
-    label?: string
+    title?: Said<T>
+    label?: Said<L>
     ref?: Ref<HTMLButtonElement>
     children: ReactNode
   }) {
@@ -426,7 +443,11 @@ export function LinkButton<const S extends string = never>({
 // One of a few choices as a chip. A toggle says whether it is on; in a radio group (`radio`) it
 // says whether it is the chosen one; `as` makes it a switch or a tab of a tab list. `plain`
 // children are laid out as given (an emoji and a count) and not cut short.
-export function Chip<const S extends string = never>({
+export function Chip<
+  const S extends string = never,
+  const L extends string = never,
+  const T extends string = never,
+>({
   on,
   radio = false,
   as = radio ? 'radio' : 'toggle',
@@ -448,8 +469,8 @@ export function Chip<const S extends string = never>({
     variant?: ChipVariant
     icon?: LucideIcon
     plain?: boolean
-    title?: string
-    label?: string
+    title?: Said<T>
+    label?: Said<L>
     ref?: Ref<HTMLButtonElement>
     children: ReactNode
   }) {
@@ -578,15 +599,19 @@ export function Pill<const S extends string = never>({
   )
 }
 
-type Labelled = {
+type Labelled<L extends string, T extends string> = {
   // Its name for screen readers and its tooltip; `tooltip` replaces the tooltip (see IconButton).
-  label: string
-  tooltip?: string
+  label: Said<L>
+  tooltip?: Said<T>
 }
 
 // A tile of the rail: a server, a folder, Home, an action. What it holds (a glyph, an avatar, an
 // icon, its badges) are its children. `tint` carries the colors of a folder's own color.
-export function Tile<const S extends string = never>({
+export function Tile<
+  const S extends string = never,
+  const L extends string = never,
+  const T extends string = never,
+>({
   tone = 'idle',
   tint,
   label,
@@ -599,7 +624,7 @@ export function Tile<const S extends string = never>({
   ...rest
 }: NativeButton &
   Placed<S> &
-  Labelled & {
+  Labelled<L, T> & {
     tone?: TileTone
     tint?: CSSProperties
     pressed?: boolean
@@ -625,14 +650,14 @@ export function Tile<const S extends string = never>({
 
 // The small toggle over a group of rail tiles that folds the group: a chip with a letter, or an
 // avatar (`chip={false}`).
-export function RailToggle({
+export function RailToggle<const T extends string = never>({
   open,
   chip = true,
   tooltip,
   type = 'button',
   children,
   ...rest
-}: NativeButton & { open: boolean; chip?: boolean; tooltip: string; children: ReactNode }) {
+}: NativeButton & { open: boolean; chip?: boolean; tooltip: Said<T>; children: ReactNode }) {
   return (
     <button
       type={type}
@@ -649,7 +674,11 @@ export function RailToggle({
 // A row of the channel sidebar: a channel, a conversation, a section. `current` marks the open
 // one (`pressed` for a row that toggles a panel), `dim` fades a muted one, and a `heading` folds
 // the rows under it (`open`; `caps` sets it in spaced capitals).
-export function SideRow<const S extends string = never>({
+export function SideRow<
+  const S extends string = never,
+  const L extends string = never,
+  const T extends string = never,
+>({
   tone = 'plain',
   current = false,
   pressed,
@@ -671,8 +700,8 @@ export function SideRow<const S extends string = never>({
     open?: boolean
     dim?: boolean
     caps?: boolean
-    title?: string
-    label?: string
+    title?: Said<T>
+    label?: Said<L>
     ref?: Ref<HTMLButtonElement>
     children: ReactNode
   }) {
@@ -699,7 +728,11 @@ export function SideRow<const S extends string = never>({
 }
 
 // A round control of a call. `pressed` makes it a toggle.
-export function CallButton<const S extends string = never>({
+export function CallButton<
+  const S extends string = never,
+  const L extends string = never,
+  const T extends string = never,
+>({
   icon: Icon,
   tone = 'idle',
   size = 'lg',
@@ -711,7 +744,7 @@ export function CallButton<const S extends string = never>({
   ...rest
 }: NativeButton &
   Placed<S> &
-  Labelled & { icon: LucideIcon; tone?: CallTone; size?: CallSize; pressed?: boolean }) {
+  Labelled<L, T> & { icon: LucideIcon; tone?: CallTone; size?: CallSize; pressed?: boolean }) {
   return (
     <button
       type={type}
@@ -728,7 +761,11 @@ export function CallButton<const S extends string = never>({
 
 // A card one can press. `column` stacks what it holds, centered; `pressed` and `current` show it
 // chosen; `open` says it unfolds what follows it.
-export function CardButton<const S extends string = never>({
+export function CardButton<
+  const S extends string = never,
+  const L extends string = never,
+  const T extends string = never,
+>({
   tone = 'plain',
   pad = 'md',
   column = false,
@@ -750,8 +787,8 @@ export function CardButton<const S extends string = never>({
     pressed?: boolean
     current?: boolean
     open?: boolean
-    title?: string
-    label?: string
+    title?: Said<T>
+    label?: Said<L>
     ref?: Ref<HTMLButtonElement>
     children: ReactNode
   }) {
@@ -775,7 +812,11 @@ export function CardButton<const S extends string = never>({
 
 // A picture one can press: an image that opens, a covered image, an avatar. The picture is its
 // child; `zoom` shows the pointer of something that opens larger.
-export function MediaButton<const S extends string = never>({
+export function MediaButton<
+  const S extends string = never,
+  const L extends string = never,
+  const T extends string = never,
+>({
   shape = 'card',
   zoom = false,
   title,
@@ -789,8 +830,8 @@ export function MediaButton<const S extends string = never>({
   Placed<S> & {
     shape?: MediaShape
     zoom?: boolean
-    title?: string
-    label?: string
+    title?: Said<T>
+    label?: Said<L>
     ref?: Ref<HTMLButtonElement>
     children: ReactNode
   }) {
@@ -848,7 +889,7 @@ export function Pressable<const S extends string = never>({
 
 // A button with nothing to show that covers its positioned parent, so pressing the parent
 // anywhere presses it. `labelledBy` names it by another element when it has no label of its own.
-export function Hotspot({
+export function Hotspot<const L extends string = never, const T extends string = never>({
   label,
   labelledBy,
   tooltip,
@@ -857,8 +898,8 @@ export function Hotspot({
   type = 'button',
   ...rest
 }: NativeButton &
-  ({ label: string; labelledBy?: undefined } | { label?: undefined; labelledBy: string }) & {
-    tooltip?: string
+  ({ label: Said<L>; labelledBy?: undefined } | { label?: undefined; labelledBy: string }) & {
+    tooltip?: Said<T>
     tint?: boolean
     pressed?: boolean
   }) {
@@ -877,7 +918,7 @@ export function Hotspot({
 
 // A color to pick: a circle of that color with a check when it is the chosen one. `ink` is the
 // check's color on it.
-export function Swatch({
+export function Swatch<const L extends string = never, const T extends string = never>({
   color,
   ink,
   on,
@@ -885,7 +926,7 @@ export function Swatch({
   tooltip,
   type = 'button',
   ...rest
-}: NativeButton & Labelled & { color: string; ink: string; on: boolean }) {
+}: NativeButton & Labelled<L, T> & { color: string; ink: string; on: boolean }) {
   return (
     <button
       type={type}
@@ -903,7 +944,11 @@ export function Swatch({
 
 // A switch as a row: its label (and a hint under it) with the switch at the end. `hintId` is the
 // id the hint gets, for a caller that describes something else by it too.
-export function SwitchRow({
+export function SwitchRow<
+  const L extends string = never,
+  const T extends string = never,
+  const H extends string = never,
+>({
   checked,
   label,
   hint,
@@ -913,10 +958,10 @@ export function SwitchRow({
   ...rest
 }: NativeButton & {
   checked: boolean
-  label: string
-  hint?: string
+  label: Said<L>
+  hint?: Said<H>
   hintId?: string
-  title?: string
+  title?: Said<T>
 }) {
   return (
     <button
@@ -947,12 +992,12 @@ export function SwitchRow({
 }
 
 // The box that selects a row: ticked or not.
-export function Tick({
+export function Tick<const L extends string = never>({
   checked,
   label,
   type = 'button',
   ...rest
-}: NativeButton & { checked: boolean; label: string }) {
+}: NativeButton & { checked: boolean; label: Said<L> }) {
   return (
     <button
       type={type}
@@ -971,13 +1016,13 @@ export function Tick({
 }
 
 // A button of the window's title bar; its glyph is its child.
-export function WindowButton({
+export function WindowButton<const L extends string = never>({
   kind,
   label,
   type = 'button',
   children,
   ...rest
-}: NativeButton & { kind: WindowButtonKind; label: string; children: ReactNode }) {
+}: NativeButton & { kind: WindowButtonKind; label: Said<L>; children: ReactNode }) {
   return (
     <button
       type={type}
@@ -993,13 +1038,13 @@ export function WindowButton({
 
 // An emoji of the picker's grid (an option of its list box). `touch` is the larger one of the
 // sheet.
-export function EmojiCell({
+export function EmojiCell<const L extends string = never>({
   label,
   touch = false,
   type = 'button',
   children,
   ...rest
-}: NativeButton & { label: string; touch?: boolean; children: ReactNode }) {
+}: NativeButton & { label: Said<L>; touch?: boolean; children: ReactNode }) {
   return (
     <button
       type={type}
@@ -1018,7 +1063,7 @@ export function EmojiCell({
 }
 
 // A button an app puts under its message. `wide` is the closed face of its select menu.
-export function AppButton({
+export function AppButton<const T extends string = never>({
   style = 'plain',
   wide = false,
   pressed,
@@ -1031,7 +1076,7 @@ export function AppButton({
   style?: AppButtonStyle
   wide?: boolean
   pressed?: boolean
-  title?: string
+  title?: Said<T>
   ref?: Ref<HTMLButtonElement>
   children: ReactNode
 }) {
@@ -1050,7 +1095,7 @@ export function AppButton({
 }
 
 // One of the three states of a permission, in a frame with the other two.
-export function TriButton({
+export function TriButton<const L extends string = never, const T extends string = never>({
   icon: Icon,
   tone,
   on,
@@ -1058,7 +1103,7 @@ export function TriButton({
   tooltip,
   type = 'button',
   ...rest
-}: NativeButton & Labelled & { icon: LucideIcon; tone: TriTone; on: boolean }) {
+}: NativeButton & Labelled<L, T> & { icon: LucideIcon; tone: TriTone; on: boolean }) {
   return (
     <button
       type={type}

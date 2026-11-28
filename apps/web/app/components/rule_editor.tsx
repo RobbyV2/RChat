@@ -28,6 +28,7 @@ import { hasBit, type Ow } from '../lib/perms'
 import { stableKey } from '../lib/stable_key'
 import { Row, Stack, Surface } from './layout'
 import { fieldCls, smallFieldCls } from './ui'
+import { notAName, labelWith, type Label } from '../lib/names'
 
 // The rules of a channel or category, for hosted servers and P2P rooms alike: the subjects with a
 // rule (@everyone, roles, members), each permission of the selected one as Allow, Inherit or
@@ -56,7 +57,7 @@ function TriControl({
         const Icon = TRI_ICON[tri]
         const on = tri === value
         const block = on ? null : blockOf(tri)
-        const name = `${TRI_TEXT[tri]} ${item.label}`
+        const name = notAName(`${TRI_TEXT[tri]} ${item.label}`)
         return (
           <TriButton
             key={tri}
@@ -64,7 +65,7 @@ function TriControl({
             tone={tri === 'allow' ? 'allow' : tri === 'deny' ? 'deny' : 'neutral'}
             on={on}
             label={name}
-            tooltip={block ?? name}
+            tooltip={block === null ? name : notAName(block)}
             disabled={!!block}
             onClick={() => !on && onPick(tri)}
           />
@@ -91,7 +92,7 @@ export function RuleEditor({
 }: {
   src: RuleSource
   // A subject's name as text (labels), and as shown in the list.
-  label: (subject: string) => string
+  label: (subject: string) => Label
   render: (subject: string) => ReactNode
   // Roles (and @everyone) that may get a rule, highest first.
   addable: SubjectChoice[]
@@ -196,7 +197,7 @@ export function RuleEditor({
                 </CardButton>
                 <IconButton
                   icon={X}
-                  label={`Remove ${name}`}
+                  label={labelWith`Remove ${name}`}
                   tone="danger"
                   size="sm"
                   type="button"
@@ -270,7 +271,7 @@ export function RuleEditor({
                   <Chip
                     key={text}
                     disabled={!!block}
-                    title={block ?? text}
+                    title={notAName(block ?? text)}
                     onClick={() =>
                       row && !on && put(current, { allow: row.allow, deny: row.deny }, merge)
                     }

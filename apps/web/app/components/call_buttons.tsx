@@ -13,6 +13,7 @@ import type { DmSummary } from '../lib/types'
 import { Row, Inset } from './layout'
 import { longPress } from './context_menu'
 import { time } from '../lib/platform/time'
+import { type Said } from '../lib/names'
 
 export function DirectBadge({ label = 'Direct' }: { label?: string }) {
   return (
@@ -82,7 +83,7 @@ export function CallType({
 // One call button with a chevron beside it that offers how it connects (`onMenu`, with the place
 // to show it). A right-click or a long press on the button offers the same; a touch screen shows
 // no chevron.
-export function CallSplit({
+export function CallSplit<const L extends string>({
   video,
   title,
   p2p,
@@ -92,7 +93,7 @@ export function CallSplit({
   onMenu,
 }: {
   video: boolean
-  title: string
+  title: Said<L>
   p2p: boolean
   off: boolean
   open: boolean
@@ -174,7 +175,7 @@ function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
   return (
     <CallSplit
       video={video}
-      title={route === 'p2p' ? `${kind}, direct (P2P)` : kind}
+      title={route === 'p2p' ? (video ? 'Video call, direct (P2P)' : 'Call, direct (P2P)') : kind}
       p2p={route === 'p2p'}
       off={busy}
       open={open}

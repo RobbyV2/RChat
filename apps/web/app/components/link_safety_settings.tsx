@@ -7,6 +7,7 @@ import { SettingNotes, SettingSwitch } from './settings_fields'
 import { IconButton } from './controls'
 import { Row, Stack, Surface } from './layout'
 import { sectionCls } from './ui'
+import { notAName } from '../lib/names'
 
 // Settings > Privacy: the external link warning, tracking parameters, and trusted domains.
 export function LinkSafetySection() {
@@ -47,7 +48,7 @@ export function LinkSafetySection() {
                   </span>
                   <IconButton
                     icon={X}
-                    label={`Remove ${host}`}
+                    label={notAName(`Remove ${host}`)}
                     onClick={() => setLinkPrefs(forgetSite(prefs, host))}
                   />
                 </Row>

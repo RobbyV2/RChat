@@ -16,6 +16,7 @@ import {
 import { Button } from './controls'
 import { Row, Stack } from './layout'
 import { Dialog, FieldError } from './ui'
+import { notAName } from '../lib/names'
 
 // Where a profile editor keeps an uploaded picture: an account or a server profile on an
 // instance, or a P2P identity on this device.
@@ -221,7 +222,7 @@ export function PictureField({
         <Button
           icon={ImageUp}
           disabled={disabled || busy || source.off !== null}
-          title={source.off ?? undefined}
+          title={source.off === null ? undefined : notAName(source.off)}
           onClick={() => input.current?.click()}
         >
           {source.has ? 'Change picture' : 'Upload picture'}

@@ -6,6 +6,7 @@ import type { ViewingTarget } from '../lib/viewing'
 import { Masked } from './ui'
 import { Inset } from './layout'
 import { Hotspot, LinkButton } from './controls'
+import { notAName } from '../lib/names'
 
 // The row opens its destination. Buttons in its preview have their own focus and click targets.
 export function PreviewRow({
@@ -27,7 +28,11 @@ export function PreviewRow({
         if (!e.defaultPrevented) onOpen()
       }}
     >
-      <Hotspot tabIndex={tabIndex} labelledBy={label} tooltip={title} />
+      <Hotspot
+        tabIndex={tabIndex}
+        labelledBy={label}
+        tooltip={title === undefined ? undefined : notAName(title)}
+      />
       <div
         id={label}
         className={'preview-row-content relative pointer-events-none ' + contentClassName}

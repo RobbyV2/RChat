@@ -3,11 +3,11 @@
 import { Covered } from './covered'
 import { ask, sendTo } from '../lib/asks'
 import { Button } from './controls'
-import { Name } from './name'
-import { personCalled } from '../lib/names'
+import { Name, useNameLabels } from './name'
+import { personCalled, unnamed } from '../lib/names'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useAccount } from '../lib/client/react'
-import { errorText, memberState, myPerms, myRank, orderWith, useMask, useStore } from '../lib/store'
+import { errorText, memberState, myPerms, myRank, orderWith, useStore } from '../lib/store'
 import type { Page } from '../lib/lists'
 import { useShallow } from 'zustand/react/shallow'
 import { channelMask } from '../lib/selectors'
@@ -136,9 +136,8 @@ export function HostedRules({
   const setChannelRestrict = useStore(st => st.setChannelRestrict)
   const syncChannelPerms = useStore(st => st.syncChannelPerms)
   const ensureMembers = useStore(st => st.ensureMembers)
-  const streamer = useStore(st => st.streamer)
   const shownOf = useShownMembers(server)
-  const mask = useMask()
+  const say = useNameLabels()
   const id = idOf(target)
   const members = useMemo(
     () => (rows ?? []).filter(r => r.subject.startsWith('u:')).map(r => r.subject.slice(2)),
@@ -226,14 +225,10 @@ export function HostedRules({
   }
   const label = (subject: string) =>
     subject === EVERYONE_SUBJECT
-      ? '@everyone'
+      ? unnamed('@everyone')
       : subject.startsWith('r:')
-        ? (roleOf(subject)?.name ?? 'Deleted role')
-        : streamer
-          ? 'this member'
-          : subject === `u:${me?.username}`
-            ? nameOf(subject)
-            : mask(nameOf(subject))
+        ? say.covered(roleOf(subject)?.name ?? 'Deleted role', 'this role', true)
+        : say(personCalled(nameOf(subject), subject.slice(2)), 'this member')
   const render = (subject: string): ReactNode => {
     const role = roleOf(subject)
     return (

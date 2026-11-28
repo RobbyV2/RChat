@@ -1,5 +1,6 @@
 import type { RChatState } from './store_types'
 import { channelTarget, type createViewing } from './viewing'
+import { unnamed, type Label } from './names'
 
 // The rail's voice badge: how many people are in the voice channels a server lists for this
 // viewer, leaving out rooms closed by a viewing choice on this device. A hosted server counts
@@ -120,4 +121,4 @@ export const voiceBadgeTitle = (count: number, streamer: boolean) =>
   streamer ? 'Voice active' : `${count} in voice`
 
 // What a tile's label says about voice.
-export const voiceLabel = (count: number) => (count > 0 ? ', voice active' : '')
+export const voiceLabel = (count: number): Label => unnamed(count > 0 ? ', voice active' : '')

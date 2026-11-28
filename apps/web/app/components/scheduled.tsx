@@ -7,7 +7,7 @@ import { OwnLoadNotice } from './own_load'
 // for P2P messages that were due while the app was closed.
 
 import { Name } from './name'
-import { personCalled, serverCalled } from '../lib/names'
+import { personCalled, serverCalled, notAName, labelWith, unnamed, type Said } from '../lib/names'
 import {
   useCallback,
   useEffect,
@@ -106,14 +106,14 @@ export const useSendLater = (read: () => ComposerDraft | null) => {
 
 // The composers' Send button: a click sends, right-click, long-press and the menu key open Send
 // later. While it can't send (`disabled`) it stays reachable, so Send later still opens.
-export function SendButton({
+export function SendButton<const L extends string>({
   title,
   disabled,
   onSend,
   draft,
   buttonRef,
 }: {
-  title: string
+  title: Said<L>
   disabled: boolean
   onSend: () => void
   draft: () => ComposerDraft | null
@@ -130,7 +130,7 @@ export function SendButton({
       ref={buttonRef}
       icon={SendHorizontal}
       label="Send"
-      tooltip={fine ? `${title} (right-click to send later)` : title}
+      tooltip={fine ? labelWith`${unnamed(title)} (right-click to send later)` : title}
       tone="filled"
       tight
       aria-haspopup="menu"
@@ -198,7 +198,7 @@ export function ScheduledChip({
   const text = chipText(counts)
   const here = useMemo(() => items.filter(i => i.place === place), [items, place])
   if (!text && !open) return null
-  const label = chipTitle(counts)
+  const label = notAName(chipTitle(counts))
   return (
     <>
       {text && (
@@ -566,7 +566,7 @@ export function ScheduledButton() {
   const failed = useStore(s => s.scheduled.counts?.failed ?? 0)
   const missed = useP2p(s => s.scheduledMissed.length)
   const unsent = failed + missed
-  const label = unsent ? `Scheduled messages, ${unsent} not sent` : 'Scheduled messages'
+  const label = unsent ? labelWith`Scheduled messages, ${unsent} not sent` : 'Scheduled messages'
   return (
     <IconButton
       icon={CalendarClock}

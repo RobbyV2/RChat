@@ -1,7 +1,7 @@
 'use client'
 
 import { Name } from './name'
-import { handleName, personCalled, personName } from '../lib/names'
+import { handleName, personCalled, personName, notAName } from '../lib/names'
 import { nameWithUsername } from '../lib/display_name'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -68,7 +68,9 @@ function useReactors(messageId: number, emoji: string, count: number, enabled: b
 }
 
 const reactionAria = (r: Reaction) =>
-  `${r.emoji}, ${r.count} ${r.count === 1 ? 'reaction' : 'reactions'}${r.me ? ', including you' : ''}`
+  notAName(
+    `${r.emoji}, ${r.count} ${r.count === 1 ? 'reaction' : 'reactions'}${r.me ? ', including you' : ''}`
+  )
 
 function ReactionTooltip({
   anchor,
@@ -417,7 +419,7 @@ export function QuickReactions({ m, anchor }: { m: Message; anchor: HTMLElement 
               toggle(m, e)
             }}
             glyph={e}
-            label={`React with ${e}`}
+            label={notAName(`React with ${e}`)}
             tooltip={blocked ? FULL_TITLE : `React with ${e}`}
             tone="tonal"
             size="xl"

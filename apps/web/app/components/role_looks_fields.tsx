@@ -4,6 +4,8 @@ import { SmilePlus, X } from 'lucide-react'
 import { IconButton } from './controls'
 import { EmojiPicker } from './emoji_picker'
 import { Row } from './layout'
+import { useNameLabels } from './name'
+import { notAName, labelWith } from '../lib/names'
 
 export interface RoleLooksPatch {
   icon?: string | null
@@ -30,7 +32,13 @@ export function RoleLooksFields({
 }) {
   const [picking, setPicking] = useState(false)
   const ref = useRef<HTMLButtonElement>(null)
-  const iconTitle = locked ?? (icon ? `Change the icon of ${name}` : `Add an icon to ${name}`)
+  const say = useNameLabels()
+  const called = say.covered(name, 'this role', true)
+  const iconTitle = locked
+    ? notAName(locked)
+    : icon
+      ? labelWith`Change the icon of ${called}`
+      : labelWith`Add an icon to ${called}`
   const check = (checked: boolean, text: string, hint: string, flip: () => void) => (
     <label title={locked ?? hint} className={`flex text-sm ${locked ? 'opacity-60' : ''}`}>
       <Row as="span" gap="xs">
@@ -61,7 +69,7 @@ export function RoleLooksFields({
         {icon && !locked && (
           <IconButton
             icon={X}
-            label={`Remove the icon of ${name}`}
+            label={labelWith`Remove the icon of ${called}`}
             shape="square"
             onClick={() => onChange({ icon: null })}
           />

@@ -413,7 +413,7 @@ export function AddFriendBox({
             {entries.map((x, i) => (
               <option key={x.account.renderKey} value={x.account.renderKey}>
                 {label.line(
-                  `Account ${i + 1}`,
+                  labelWith`Account ${i + 1}`,
                   () =>
                     labelWith`${label(accountLabel(x.row.display))} · ${label(instanceName(x.name))}`
                 )}

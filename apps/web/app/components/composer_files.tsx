@@ -23,6 +23,7 @@ import { AltField } from './alt_text'
 import { Chip, IconButton } from './controls'
 import { Inset, Row, Stack, Surface } from './layout'
 import { useUploadHint } from './upload_expiry'
+import { notAName } from '../lib/names'
 
 const modeTitle = (mode: UploadMode, switchable: boolean, hint: string) => {
   const what =
@@ -77,7 +78,7 @@ function FileCard({ compose, f, peer }: { compose: Compose; f: DraftFile; peer: 
         <Row gap="2xs">
           {mode && (
             <Chip
-              title={modeTitle(mode.now, mode.switchable, hint)}
+              title={notAName(modeTitle(mode.now, mode.switchable, hint))}
               onClick={() => compose.toggleMode(f.id)}
               disabled={!mode.switchable}
               on={mode.now === 'p2p'}

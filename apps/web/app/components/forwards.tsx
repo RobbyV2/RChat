@@ -4,7 +4,7 @@ import { useLive } from '../lib/place/react'
 import { useCompose } from '../lib/place/use_composer'
 import { Covered } from './covered'
 import { asAccount, pictured } from '../lib/people'
-import { labelWith, personName, serverCalled } from '../lib/names'
+import { labelWith, personName, serverCalled, notAName, unnamed } from '../lib/names'
 import { Name, useNameLabels } from './name'
 import type { ForwardSource } from '../lib/forward'
 import type { AccountSession } from '../lib/client/session'
@@ -70,7 +70,7 @@ const DELETED_USER = 'Deleted user'
 
 export const forwardAction = (onClick: () => void): ToolbarAction => ({
   key: 'forward',
-  label: 'Forward',
+  label: unnamed('Forward'),
   icon: Forward,
   onClick,
 })
@@ -328,7 +328,7 @@ export function ForwardSourcePill({
   openOriginal?: () => void
 }) {
   const label = useNameLabels()
-  const original = `Open the original message, sent ${when}`
+  const original = notAName(`Open the original message, sent ${when}`)
   if (pill.kind === 'none') return null
   const head = <span className="shrink-0">Forwarded from</span>
   const stop = (run?: () => void) => (e: { stopPropagation(): void }) => {

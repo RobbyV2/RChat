@@ -31,6 +31,7 @@ import { IconButton, ListRow } from './controls'
 import { Row, Stack, Surface, Inset } from './layout'
 import { Dialog } from './ui'
 import { time } from '../lib/platform/time'
+import { notAName, type Label, unnamed } from '../lib/names'
 
 export interface PageSection {
   id: string
@@ -201,7 +202,7 @@ export function SettingsPage({
   header,
   actor,
   lead,
-  closeTitle = 'Close',
+  closeTitle = unnamed('Close'),
   layer = 'page',
   top = false,
   search = true,
@@ -228,7 +229,7 @@ export function SettingsPage({
   actor?: ReactNode
   // Shown above every section's content.
   lead?: ReactNode
-  closeTitle?: string
+  closeTitle?: Label
   layer?: EscapeLayer
   top?: boolean
   search?: boolean
@@ -496,9 +497,9 @@ export function SettingsPage({
                             place="flex-1"
                           />
                         )
-                        const fold = open
-                          ? `Hide the parts of ${label}`
-                          : `Show the parts of ${label}`
+                        const fold = notAName(
+                          open ? `Hide the parts of ${label}` : `Show the parts of ${label}`
+                        )
                         return (
                           <Fragment key={id}>
                             {parts.length > 1 ? (

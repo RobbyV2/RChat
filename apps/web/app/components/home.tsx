@@ -12,6 +12,8 @@ import {
   serverCalled,
   serverName,
   type NameValue,
+  type Label,
+  unnamed,
 } from '../lib/names'
 import { asAccount, identityPerson } from '../lib/people'
 import { openPeerLink } from '../lib/client/peer_links'
@@ -522,7 +524,7 @@ function RecentItem({
   card,
 }: {
   id: string
-  title: string
+  title: Label
   glyph: ReactNode
   // The name, drawn: a person's or a channel's.
   label: ReactNode
@@ -840,7 +842,7 @@ function UnreadRow({
   pings: number
   open: () => void
   mark: () => void
-  markLabel: string
+  markLabel: Label
   card: () => CardMenu
 }) {
   const acct = useAccount()
@@ -925,7 +927,7 @@ function ServerUnreadRow({
       pings={pings}
       open={() => void openServer(name)}
       mark={() => void markServerRead(name)}
-      markLabel={`Mark ${shown} as read`}
+      markLabel={labelWith`Mark ${shown} as read`}
       card={() => ({
         read: serversMarkTargets(account.store.getState(), [name]),
         markRead: () => void markServerRead(name),
@@ -951,7 +953,7 @@ function DmUnreadRow({ pings }: { pings: number }) {
       pings={pings}
       open={openLastDm}
       mark={() => void markDmsRead()}
-      markLabel="Mark direct messages as read"
+      markLabel={unnamed('Mark direct messages as read')}
       card={() => ({
         read: dmsMarkTargets(account.store.getState()),
         markRead: () => void markDmsRead(),
@@ -1003,7 +1005,7 @@ function P2pServerUnreadRow({ v, pings, channels }: P2pUnreadRow) {
       pings={pings}
       open={() => p2pServer?.open(v.id)}
       mark={() => p2pServer?.markAllRead(v.id)}
-      markLabel={`Mark ${shown} as read`}
+      markLabel={labelWith`Mark ${shown} as read`}
       card={() => ({ read: [v.id], markRead: () => p2pServer?.markAllRead(v.id) })}
     />
   )
@@ -1028,7 +1030,7 @@ function P2pDmUnreadRow({ pings }: { pings: number }) {
       pings={pings}
       open={() => p2p?.openHome()}
       mark={() => p2pDm?.markAllRead()}
-      markLabel="Mark P2P direct messages as read"
+      markLabel={unnamed('Mark P2P direct messages as read')}
       card={() => ({ read: ['p2p_dms'], markRead: () => p2pDm?.markAllRead() })}
     />
   )
@@ -1762,7 +1764,7 @@ export function HomePage({ onMenu }: { onMenu: () => void }) {
         <IconButton
           icon={Menu}
           label="Menu"
-          tooltip={menuPings ? `Menu, ${pingLabel(menuPings)}` : undefined}
+          tooltip={menuPings ? labelWith`Menu, ${pingLabel(menuPings)}` : undefined}
           onClick={onMenu}
           place="md:hidden"
         >

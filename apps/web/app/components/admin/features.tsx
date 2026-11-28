@@ -30,6 +30,7 @@ import { Grid, Row, Stack, Surface } from '../layout'
 import { Chips, FieldError, fieldCls } from '../ui'
 import { ConfigTrouble, useConfigStore, useControl, usePinned } from './config_state'
 import { SourceNote } from './source'
+import { notAName } from '../../lib/names'
 
 type ChoiceRow = Extract<AdminRow, { kind: 'choice' }>
 type NumberRow = Extract<AdminRow, { kind: 'number' }>
@@ -235,8 +236,8 @@ function SwitchControl({ row }: { row: SwitchRow }) {
   return (
     <>
       <SettingSwitch
-        label={row.label}
-        hint={row.line}
+        label={notAName(row.label)}
+        hint={notAName(row.line)}
         value={on}
         disabled={
           pinned || (row.key === 'profanity_strict_file_names' && strictFileNamesLocked(settings))

@@ -17,7 +17,7 @@ import { MarkdownMessage } from './markdown_message'
 import { Name } from './name'
 import type { Face } from '../lib/place/looks'
 import { useAuthor, useNameColor } from '../lib/place/use_looks'
-import { personCalled } from '../lib/names'
+import { personCalled, notAName, unnamed } from '../lib/names'
 import { MessageEditor, editAction } from './message_editor'
 import type { EditBinding } from '../lib/place/row_acts'
 import { RowFiles } from './row_files'
@@ -152,7 +152,7 @@ export const mentionRowCls =
 
 export const replyAction = (onClick: () => void): ToolbarAction => ({
   key: 'reply',
-  label: 'Reply',
+  label: unnamed('Reply'),
   icon: Reply,
   onClick,
 })
@@ -281,14 +281,18 @@ export const MessageRow = memo(function MessageRow(props: RowProps) {
   if (props.thread !== null && !isNotice(m))
     actions.push({
       key: 'thread',
-      label: props.thread,
+      label: notAName(props.thread),
       icon: MessageSquareText,
       onClick: () => on.thread(m),
     })
   if (canDelete)
     actions.push({
       key: 'delete',
-      label: `Delete ${inThread ? 'reply' : 'message'} (hold Shift to skip confirmation)`,
+      label: unnamed(
+        inThread
+          ? 'Delete reply (hold Shift to skip confirmation)'
+          : 'Delete message (hold Shift to skip confirmation)'
+      ),
       icon: Trash2,
       danger: true,
       onClick: e => on.remove(m, e.shiftKey),

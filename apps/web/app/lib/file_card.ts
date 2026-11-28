@@ -6,6 +6,7 @@ import { FileCode, Image as ImageIcon, Play, type LucideIcon } from 'lucide-reac
 import type { Target } from './actions/types'
 import { fileLang } from './code'
 import { expiryText } from './rules'
+import { notAName } from './names'
 
 export type FileKind =
   | 'archive'
@@ -131,8 +132,8 @@ export const pct = (p: { got: number; total: number } | undefined) =>
 
 // A download button's label and hover title for the shown name; `hint` follows in the title only.
 export const primaryText = (verb: 'Download' | 'Save', shown: string, hint?: string) => {
-  const label = `${verb} ${shown}`
-  return { label, title: hint ? `${label} ${hint}` : label }
+  const label = notAName(`${verb} ${shown}`)
+  return { label, title: hint ? notAName(`${label} ${hint}`) : label }
 }
 
 // A card's button beside its main one, also in its menu. `hint`: words after the label in the

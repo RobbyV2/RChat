@@ -2,7 +2,7 @@
 import { Button } from '../controls'
 import { CallSplit } from '../call_buttons'
 import { Name, useNameLabel } from '../name'
-import { labelWith, type NameValue } from '../../lib/names'
+import { labelWith, type NameValue, notAName } from '../../lib/names'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -24,7 +24,6 @@ function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: st
   const account = useAccount()
   const [shown, setShown] = useState<object | null>(null)
   const open = useStore(s => shown !== null && s.contextMenu === shown)
-  const kind = video ? 'Video call' : 'Call'
   const menu = (x: number, y: number) => {
     openActionMenu(
       x,
@@ -47,7 +46,9 @@ function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: st
   return (
     <CallSplit
       video={video}
-      title={why ?? `${kind}, direct (P2P)`}
+      title={
+        why === null ? (video ? 'Video call, direct (P2P)' : 'Call, direct (P2P)') : notAName(why)
+      }
       p2p
       off={why !== null}
       open={open}

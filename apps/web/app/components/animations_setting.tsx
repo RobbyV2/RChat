@@ -21,6 +21,7 @@ import { Grid, Inset, Row, Stack, Surface } from './layout'
 import { PageRow } from './settings_page'
 import { SettingNotes, SettingSwitch } from './settings_fields'
 import { Sheet, smallFieldCls } from './ui'
+import { notAName } from '../lib/names'
 
 const PHONE = '(max-width: 767px)'
 
@@ -88,7 +89,7 @@ function SlotRow({ slot, anim, onChange }: SlotProps) {
         ref={row}
         data-slot-choice={slot.id}
         aria-haspopup="dialog"
-        title={slot.where}
+        title={notAName(slot.where)}
         label={slot.label}
         trailing={<span className="shrink-0 text-sm text-on-surface-variant">{label}</span>}
         chevron
@@ -114,7 +115,11 @@ function SlotChoice({ slot, anim, onChange }: SlotProps) {
   const id = useId()
   return (
     <Row gap="sm" justify="between" data-slot-choice={slot.id}>
-      <label htmlFor={id} title={slot.where} className="min-w-0 truncate text-sm text-on-surface">
+      <label
+        htmlFor={id}
+        title={notAName(slot.where)}
+        className="min-w-0 truncate text-sm text-on-surface"
+      >
         {slot.label}
       </label>
       <select

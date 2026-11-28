@@ -17,6 +17,7 @@ import { time } from '../lib/platform/time'
 import { messageToolbarLook } from '../lib/controls'
 import { IconButton } from './controls'
 import { look } from '../lib/motion/play'
+import { type Label, notAName } from '../lib/names'
 
 // It straddles the row's top edge, so a pointer moving up from the row reaches it before leaving.
 const messageToolbarCls = messageToolbarLook
@@ -76,7 +77,7 @@ function useClampedToolbar(ref: RefObject<HTMLDivElement | null>, shown: boolean
 
 export interface ToolbarAction {
   key: string
-  label: string
+  label: Label
   icon: LucideIcon
   onClick: (e: ReactMouseEvent<HTMLButtonElement>) => void
   danger?: boolean
@@ -125,7 +126,7 @@ export function MessageToolbar({
                     if (!blocked) toggle(m, e)
                   }}
                   glyph={e}
-                  label={`React with ${e}`}
+                  label={notAName(`React with ${e}`)}
                   tooltip={blocked ? FULL_TITLE : `React with ${e}`}
                   shape="square"
                   pressed={reacted(m, e)}

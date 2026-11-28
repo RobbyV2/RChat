@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react'
 import type { longPress } from './context_menu'
 import { Row, Surface } from './layout'
 import { Button, IconButton, Tab } from './controls'
+import { type Label } from '../lib/names'
 
 // Pieces the Roles pages of hosted servers and P2P rooms share: the Role order and Display order
 // tabs, Alt+Up and Alt+Down on a focused role row, and a row of the display order.
@@ -52,11 +53,11 @@ export function ShownRow({
 }: {
   name: ReactNode
   swatch: string | undefined
-  up: { text: string; run: Run }
-  down: { text: string; run: Run }
+  up: { text: Label; run: Run }
+  down: { text: Label; run: Run }
   menu: ReturnType<typeof longPress>
 }) {
-  const btn = ({ text, run }: { text: string; run: Run }, Icon: typeof ChevronUp) => (
+  const btn = ({ text, run }: { text: Label; run: Run }, Icon: typeof ChevronUp) => (
     <IconButton onClick={() => run?.()} disabled={!run} icon={Icon} label={text} size="sm" />
   )
   return (

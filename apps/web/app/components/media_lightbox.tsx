@@ -83,6 +83,7 @@ import { Masked, useEscape } from './ui'
 import { Row, Surface, Inset } from './layout'
 import { useCopied } from '../lib/use_copied'
 import { IconButton, MediaButton } from './controls'
+import { notAName, type Said, unnamed } from '../lib/names'
 
 // An image as the viewer shows it. `src` is the address its message shows it from, held while it
 // is on screen; `w` and `h` the size its sender gave, until the image tells its own; `placeholder`
@@ -282,7 +283,7 @@ export function ViewableImage({
       className="msg-part w-fit max-w-full"
     >
       <span className="relative block w-fit max-w-full">
-        <MediaButton ref={buttonRef} onClick={view} zoom label={`Open ${shown}`}>
+        <MediaButton ref={buttonRef} onClick={view} zoom label={notAName(`Open ${shown}`)}>
           <img
             ref={imgRef}
             src={item.src}
@@ -370,7 +371,7 @@ const trapTab = (e: ReactKeyboardEvent, root: HTMLElement | null) => {
 
 // An icon button of the bar. One that is off stays focusable, so pressing it to its limit (Zoom
 // in up to 400%) keeps focus, and keys, in the viewer.
-function BarButton({
+function BarButton<const L extends string, const T extends string = never>({
   icon: Icon,
   label,
   title,
@@ -379,8 +380,8 @@ function BarButton({
   narrowHidden = false,
 }: {
   icon: LucideIcon
-  label: string
-  title?: string
+  label: Said<L>
+  title?: Said<T>
   onClick: (e: ReactMouseEvent<HTMLButtonElement>) => void
   disabled?: boolean
   narrowHidden?: boolean
@@ -394,7 +395,7 @@ function BarButton({
       }}
       icon={Icon}
       label={label}
-      tooltip={title ?? label}
+      tooltip={title === undefined ? unnamed(label) : unnamed(title)}
       size="lg"
     />
   )
@@ -766,8 +767,8 @@ export function LightboxView({
       ) : (
         <BarButton
           icon={Download}
-          label={verb}
-          title={`${verb} ${shown}`}
+          label={notAName(verb)}
+          title={notAName(`${verb} ${shown}`)}
           disabled={download === null}
           onClick={() => download?.()}
         />

@@ -10,6 +10,10 @@ import {
   p2pName,
   serverCalled,
   serverName,
+  unnamed,
+  notAName,
+  labelList,
+  type Label,
 } from '../lib/names'
 import { useAddingAllowed } from './add_instance'
 import { Globe } from 'lucide-react'
@@ -33,7 +37,6 @@ import {
   Shield,
 } from 'lucide-react'
 import {
-  folderLabel,
   previewServer,
   type RailServer,
   railServers,
@@ -202,7 +205,7 @@ function ServerTile({
       )}
       data-drop-onto={folder === null ? 'Create folder' : undefined}
       tone={active ? 'active' : 'idle'}
-      label={`${mine ? `${shown} (Creator)` : shown}${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}${voiceLabel(voice)}`}
+      label={labelWith`${shown}${unnamed(mine ? ' (Creator)' : '')}${unnamed(muted ? ', muted' : '')}${pings ? labelWith`, ${pingLabel(pings)}` : unnamed('')}${voiceLabel(voice)}`}
     >
       <span
         className={`flex h-full w-full items-center justify-center rounded-inherit ${muted && !active ? 'opacity-50' : ''}`}
@@ -243,7 +246,7 @@ function PreviewTile() {
   const openServer = useStore(s => s.openServer)
   const shown = useNameLabel(serverCalled(display, useOwnServer(name)), 'a server')
   if (!name) return null
-  const label = `Previewing ${shown}`
+  const label = labelWith`Previewing ${shown}`
   return (
     <Tile
       data-preview-tile={name}
@@ -308,11 +311,17 @@ export function FolderEntry({
   )
   const voice = useHostedVoice(folder.open ? [] : servers.map(x => x.name))
   const key = folderKey(folder.id)
-  const label = useStore(s => (s.streamer ? folder.name || 'Folder' : folderLabel(s, folder)))
+  const say = useNameLabels()
+  const label = folder.name
+    ? notAName(folder.name)
+    : say.line('Folder', () => {
+        const some = labelList(servers.slice(0, 4).map(x => say(serverName(x))))
+        return servers.length > 4 ? labelWith`${some} and ${servers.length - 4} more` : some
+      })
   const theme = useStore(s => s.theme)
   const style = folderStyle(folder.color, theme) as CSSProperties | undefined
   const header = {
-    label: `${label}${voiceLabel(voice)}`,
+    label: labelWith`${label}${voiceLabel(voice)}`,
     'aria-expanded': folder.open,
     'data-drop-onto': 'Add to folder',
     onClick: () => toggleFolder(folder.id),
@@ -383,7 +392,7 @@ function DmTile({ active, pings, unread }: { active: boolean; pings: number; unr
       {...longPress((x, y) => openActionMenu(x, y, { kind: 'home' }, {}, account))}
       tone={active ? 'active' : 'idle'}
       label="Direct messages"
-      tooltip={pings ? `Direct messages, ${pingLabel(pings)}` : 'Direct messages'}
+      tooltip={pings ? labelWith`Direct messages, ${pingLabel(pings)}` : 'Direct messages'}
     >
       <MessageCircle size={22} />
       {pings > 0 ? <RailPingBadge count={pings} /> : unread && <UnreadDot />}
@@ -480,7 +489,6 @@ export function ServerRail() {
   const [source] = useState(createSwitcherSource)
   const rows = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
   const model = railBlocks(rows.groups, canAdd ? undefined : ownInstance()?.origin)
-  const streamer = useStore(s => s.streamer)
   const say = useNameLabels()
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
   const toggle = (key: string) =>
@@ -513,7 +521,7 @@ export function ServerRail() {
     activity.snapshot,
     activity.snapshot
   )
-  const peerTiles: { key: string; label: string; live?: PeerBlock; row?: SwitcherRow }[] = []
+  const peerTiles: { key: string; label: Label; live?: PeerBlock; row?: SwitcherRow }[] = []
   const peers: PeerBlock[] = []
   for (const group of model.blocks) {
     for (const parent of group.accounts) {
@@ -654,7 +662,7 @@ export function ServerRail() {
                             data-peer-home
                             onClick={() => void switchActor(row, client.shown())}
                             label={label}
-                            tooltip={label + ' (paused)'}
+                            tooltip={labelWith`${label} (paused)`}
                             pressed={false}
                           >
                             <ActorAvatar row={row} size={28} />
@@ -836,8 +844,12 @@ export function ServerRail() {
             tone="danger"
             label={
               me
-                ? model.accountCount > 1 && !streamer
-                  ? 'Log out of ' + me.username + ' on ' + loginAccount.conn.name
+                ? model.accountCount > 1
+                  ? say.line(
+                      'Log out',
+                      () =>
+                        labelWith`Log out of ${say(accountLabel(me.username))} on ${say(instanceName(loginAccount.conn.name))}`
+                    )
                   : 'Log out'
                 : 'Exit guest mode'
             }

@@ -6,6 +6,7 @@ import { onColor } from '../lib/server_colors'
 import { Button, Swatch } from './controls'
 import { Row, Stack } from './layout'
 import { smallFieldCls } from './ui'
+import { notAName } from '../lib/names'
 
 interface ColorPreset {
   color: string
@@ -49,8 +50,8 @@ export function ColorField({
                 color={p.color}
                 ink={onColor(p.color)}
                 on={on}
-                label={`${label}: ${p.label}`}
-                tooltip={p.label}
+                label={notAName(`${label}: ${p.label}`)}
+                tooltip={notAName(p.label)}
                 onClick={() => onChange(p.color)}
               />
             )

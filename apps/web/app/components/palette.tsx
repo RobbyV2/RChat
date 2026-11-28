@@ -1,7 +1,7 @@
 'use client'
 import { Covered } from './covered'
 import { Name, useNameLabels } from './name'
-import { accountLabel } from '../lib/names'
+import { accountLabel, notAName } from '../lib/names'
 import { client } from '../lib/client/client'
 import { AccountProvider, useAccount } from '../lib/client/react'
 
@@ -125,7 +125,7 @@ export function PaletteButton({ rail = false }: { rail?: boolean }) {
   const acct = useAccount()
   const open = usePalette(s => s.open)
   if (!open) return null
-  const label = `Command palette (${paletteShortcut(isMac())})`
+  const label = notAName(`Command palette (${paletteShortcut(isMac())})`)
   return (
     <IconButton
       icon={Command}
@@ -512,7 +512,7 @@ function ListView() {
               <Chip
                 key={p.prefix}
                 on={on}
-                title={`${p.label} (${p.prefix})`}
+                title={notAName(`${p.label} (${p.prefix})`)}
                 onClick={() => setMode(on ? '' : p.prefix)}
                 place="shrink-0"
               >

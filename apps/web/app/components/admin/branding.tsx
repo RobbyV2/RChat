@@ -35,6 +35,7 @@ import { Button, IconButton, Pill } from '../controls'
 import { Row, Stack, Surface } from '../layout'
 import { Chips, FieldError, fieldCls } from '../ui'
 import { useApplyConfig, useControl } from './config_state'
+import { type Said } from '../../lib/names'
 
 type TextRow = Extract<BrandRow, { kind: 'text' }>
 
@@ -169,7 +170,13 @@ function TextControl({ row }: { row: TextRow }) {
   )
 }
 
-function RemoveButton({ label, onClick }: { label: string; onClick: () => void }) {
+function RemoveButton<const L extends string>({
+  label,
+  onClick,
+}: {
+  label: Said<L>
+  onClick: () => void
+}) {
   return <IconButton icon={X} label={label} size="lg" data-icon-only onClick={onClick} />
 }
 

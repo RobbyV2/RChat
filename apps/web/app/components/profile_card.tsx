@@ -675,7 +675,7 @@ function CardBody({
                             {editRoles && roleEditable(input, r, true) && (
                               <IconButton
                                 icon={X}
-                                label={`Remove ${r.name}`}
+                                label={labelWith`Remove ${say.covered(r.name, 'this role', ownServer)}`}
                                 tone="danger"
                                 size="xs"
                                 onClick={() => roleChange(r, false)}

@@ -3,8 +3,8 @@
 import { Covered } from './covered'
 import { ask, sendTo } from '../lib/asks'
 import { asAccount, pictured } from '../lib/people'
-import { instanceName, personCalled, personName } from '../lib/names'
-import { Name } from './name'
+import { instanceName, personCalled, personName, labelWith } from '../lib/names'
+import { Name, useNameLabels } from './name'
 import { useAccount } from '../lib/client/react'
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
@@ -250,6 +250,7 @@ function HookEditor({
 }
 
 function Incoming({ server }: { server: string }) {
+  const say = useNameLabels()
   const account = useAccount()
   const { shareOrigin } = account
   const all = useStore(s => s.servers[server]?.channels)
@@ -440,19 +441,19 @@ function Incoming({ server }: { server: string }) {
                     </div>
                     <IconButton
                       icon={Pencil}
-                      label={`Edit ${h.name}`}
+                      label={labelWith`Edit ${say(personCalled(h.name, h.creator?.username))}`}
                       tooltip="Edit"
                       onClick={() => setEditing(editing === h.id ? null : h.id)}
                     />
                     <IconButton
                       icon={KeyRound}
-                      label={`New URL for ${h.name}`}
+                      label={labelWith`New URL for ${say(personCalled(h.name, h.creator?.username))}`}
                       tooltip="New URL"
                       onClick={() => resetUrl(h)}
                     />
                     <IconButton
                       icon={Trash2}
-                      label={`Delete ${h.name}`}
+                      label={labelWith`Delete ${say(personCalled(h.name, h.creator?.username))}`}
                       tooltip="Delete"
                       tone="danger"
                       onClick={() => remove(h)}
@@ -704,6 +705,7 @@ function DeliveryLog({ server, hook }: { server: string; hook: number }) {
 }
 
 function Outgoing({ server }: { server: string }) {
+  const say = useNameLabels()
   const account = useAccount()
   const {
     lifetime: { inSession },
@@ -929,7 +931,11 @@ function Outgoing({ server }: { server: string }) {
                     </div>
                     <IconButton
                       icon={Power}
-                      label={h.enabled ? `Turn off ${h.name}` : `Turn on ${h.name}`}
+                      label={
+                        h.enabled
+                          ? labelWith`Turn off ${say(personCalled(h.name, h.creator?.username))}`
+                          : labelWith`Turn on ${say(personCalled(h.name, h.creator?.username))}`
+                      }
                       tooltip={h.enabled ? 'Turn off' : 'Turn on'}
                       pressed={h.enabled}
                       disabled={busy || (!h.enabled && !data.available)}
@@ -937,26 +943,26 @@ function Outgoing({ server }: { server: string }) {
                     />
                     <IconButton
                       icon={Send}
-                      label={`Send a test event to ${h.name}`}
+                      label={labelWith`Send a test event to ${say(personCalled(h.name, h.creator?.username))}`}
                       tooltip="Send test event"
                       disabled={busy || !h.enabled || !data.available}
                       onClick={() => test(h)}
                     />
                     <IconButton
                       icon={Pencil}
-                      label={`Edit ${h.name}`}
+                      label={labelWith`Edit ${say(personCalled(h.name, h.creator?.username))}`}
                       tooltip="Edit"
                       onClick={() => setEditing(editing === h.id ? null : h.id)}
                     />
                     <IconButton
                       icon={KeyRound}
-                      label={`New secret for ${h.name}`}
+                      label={labelWith`New secret for ${say(personCalled(h.name, h.creator?.username))}`}
                       tooltip="New secret"
                       onClick={() => newSecret(h)}
                     />
                     <IconButton
                       icon={Trash2}
-                      label={`Delete ${h.name}`}
+                      label={labelWith`Delete ${say(personCalled(h.name, h.creator?.username))}`}
                       tooltip="Delete"
                       tone="danger"
                       onClick={() => remove(h)}

@@ -1,9 +1,9 @@
 'use client'
 import { Covered } from './covered'
-import { handleName, p2pName, roomName, serverName } from '../lib/names'
+import { handleName, p2pName, roomName, serverName, labelWith } from '../lib/names'
 import { asAccount, shownUser } from '../lib/people'
 import { personName } from '../lib/names'
-import { Name } from './name'
+import { Name, useNameLabels } from './name'
 import { P2pProvider, useP2pApp, useP2p } from '../lib/client/p2p_react'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -46,7 +46,7 @@ import { pastFit, voiceNotice, type VoiceUser } from '../lib/p2p/voice'
 import { displayName } from '../lib/p2p/contacts'
 import { AccountLabel } from './instance_badge'
 import { KeyAvatar, P2pBadge } from './p2p/p2p_badge'
-import { useMask, userRefFor, useStore, voiceMutedIn } from '../lib/store'
+import { userRefFor, useStore, voiceMutedIn } from '../lib/store'
 import { voiceHushedIn } from '../lib/selectors'
 import { shownIn } from '../lib/server_profile'
 import { accountPrompt } from '../lib/features'
@@ -79,7 +79,6 @@ import { CallDuration, CallType, DirectBadge } from './call_buttons'
 import { COARSE_QUERY, longPress, useMedia } from './context_menu'
 import { Dialog, Masked, useEscape, useOwn } from './ui'
 import { Row, Stack, Surface, Inset } from './layout'
-import { tileName } from '../lib/display_name'
 import { ownsP2pServer } from '../lib/p2p/server/types'
 import { ChannelTopic } from './channel_topic'
 import { useMyTimeoutEnds, useNow, usePeerTimeoutEnds } from './timeout_dialog'
@@ -404,9 +403,15 @@ export function Tile({
   const box = height ?? (compact ? 72 : 240)
   const avatar = compact ? 32 : Math.round(Math.max(40, Math.min(96, box * 0.3)))
   const mine = useOwn(user.username)
-  const mask = useMask(tile.own ?? mine)
-  const name = tileName(user, tile.local === true, mask)
-  const label = screen ? `${name}'s screen` : name
+  const say = useNameLabels()
+  const name = say(
+    tile.local
+      ? p2pName(user.display_name, tile.own)
+      : personName(shownUser(user, null), tile.own ?? mine),
+    'this person',
+    true
+  )
+  const label = screen ? labelWith`${name}'s screen` : name
   const menu = useGuestMenu(tile.local || screen || pending ? null : server, user.username)
   const menuOpen = useGuestMenuOpen(user.username)
   return (
@@ -477,7 +482,7 @@ export function Tile({
         data-tile={tile.key}
         onClick={onToggle}
         tint
-        label={`${focused ? 'Back to grid from' : 'Focus'} ${label}`}
+        label={focused ? labelWith`Back to grid from ${label}` : labelWith`Focus ${label}`}
         tooltip={focused ? 'Back to grid' : 'Focus'}
         pressed={focused}
       />
@@ -536,7 +541,7 @@ export function Tile({
           }}
           place="absolute top-1.5 right-1.5"
           icon={MoreVertical}
-          label={`More for ${name}`}
+          label={labelWith`More for ${name}`}
           tooltip="More"
           tone="overlay"
           size={compact ? 'xs' : 'sm'}
@@ -581,7 +586,8 @@ function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
         : muted
           ? 'Unmute'
           : 'Mute'
-  const off = (timed: string, on: string) => (!can.video ? NO_VIDEO : timedOut ? timed : on)
+  const off = <const T extends string, const O extends string>(timed: T, on: O) =>
+    !can.video ? NO_VIDEO : timedOut ? timed : on
   const camTitle = off(TIMED_OUT_CAMERA, camera ? 'Turn off camera' : 'Turn on camera')
   const shareTitle = off(TIMED_OUT_SHARE, sharing ? 'Stop sharing' : 'Share screen')
   const toggleMute = useStore(s => s.toggleMute)

@@ -6,6 +6,7 @@ import { groupItems, matchItems, type PermItem } from '../lib/perm_source'
 import { hasBit } from '../lib/perms'
 import { Stack } from './layout'
 import { fieldCls } from './ui'
+import { notAName } from '../lib/names'
 
 // A role's or @everyone's permissions in groups, with a search: one switch each. `blockOf(next)`
 // says why the permissions may not become `next` (one switch turned), or null.
@@ -49,9 +50,9 @@ export function PermGroups({
               <SwitchRow
                 key={item.name}
                 checked={on}
-                label={item.label}
-                hint={item.hint}
-                title={block ?? item.hint ?? item.label}
+                label={notAName(item.label)}
+                hint={item.hint === undefined ? undefined : notAName(item.hint)}
+                title={notAName(block ?? item.hint ?? item.label)}
                 disabled={!!block}
                 data-perm={item.name}
                 onClick={() => onChange(next)}

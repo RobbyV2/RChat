@@ -9,19 +9,20 @@ import type { Space } from '../lib/layout'
 import { Button, SwitchRow } from './controls'
 import { Row, Surface } from './layout'
 import { colorSwatchCls, fieldCls, smallFieldCls } from './ui'
+import { type Said } from '../lib/names'
 
 // Settings controls shared across the app: an on or off row, permission checks, a role's color,
 // name and creation, slow mode, and a channel's restrictions. Callers pass their own actions.
 
-export function SettingSwitch({
+export function SettingSwitch<const L extends string, const H extends string = never>({
   label,
   hint,
   value,
   onChange,
   disabled = false,
 }: {
-  label: string
-  hint?: string
+  label: Said<L>
+  hint?: Said<H>
   value: boolean
   onChange: (value: boolean) => void
   disabled?: boolean

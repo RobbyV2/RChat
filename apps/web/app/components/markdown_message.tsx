@@ -3,7 +3,7 @@
 import { IconButton, IconLink, CardButton, Hotspot, MediaButton } from './controls'
 import { ask, mediaUrlOf, sendTo } from '../lib/asks'
 import { Name, useNameLabel, useNameLabels } from './name'
-import { handleName, labelWith, personCalled, unnamed } from '../lib/names'
+import { handleName, labelWith, personCalled, unnamed, type Said, notAName } from '../lib/names'
 import { PeerCodeButton } from './p2p/peer_code_button'
 import {
   createContext,
@@ -527,7 +527,13 @@ const fmtExpiry = (ts: number | null) =>
   ts === null ? 'Indefinite' : expiryText(ts - Math.floor(time().now() / 1000))
 
 // The cover of a hidden spoiler attachment.
-export function SpoilerCover({ title, onReveal }: { title?: string; onReveal: () => void }) {
+export function SpoilerCover<const L extends string = never>({
+  title,
+  onReveal,
+}: {
+  title?: Said<L>
+  onReveal: () => void
+}) {
   return (
     <div className="msg-part">
       <CardButton
@@ -1098,7 +1104,7 @@ export function MediaAttachment({
                   <IconButton
                     icon={Download}
                     label="Download"
-                    tooltip={`Download ${filename}`}
+                    tooltip={notAName(`Download ${filename}`)}
                     size="sm"
                     onClick={save}
                   />

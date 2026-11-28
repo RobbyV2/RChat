@@ -22,6 +22,7 @@ import { SettingNotes, SettingSwitch } from './settings_fields'
 import { Button, IconButton } from './controls'
 import { Inset, Row, Stack, Surface } from './layout'
 import { CloseButton, FieldError, TopDialog, fieldCls, sectionCls } from './ui'
+import { notAName } from '../lib/names'
 
 const relayLabel = (url: string) => displayHost(hostOf(url) ?? url)
 
@@ -183,7 +184,7 @@ export function RelaySection() {
                   )}
                   <IconButton
                     icon={X}
-                    label={`Remove relay ${relayLabel(r.url)}`}
+                    label={notAName(`Remove relay ${relayLabel(r.url)}`)}
                     tooltip="Remove relay"
                     size="sm"
                     onClick={() => remove(r.url)}
@@ -231,7 +232,7 @@ export function RelaySection() {
                     </span>
                     <IconButton
                       icon={X}
-                      label={`Remove ${displayHost(host)} from allowed`}
+                      label={notAName(`Remove ${displayHost(host)} from allowed`)}
                       tooltip="Remove from allowed"
                       size="sm"
                       onClick={() => forget(host)}

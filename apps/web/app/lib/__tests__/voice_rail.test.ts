@@ -276,8 +276,8 @@ describe('the badge text', () => {
   })
 
   test('adds voice to a tile label only while someone is in voice', () => {
-    expect(voiceLabel(2)).toBe(', voice active')
-    expect(voiceLabel(0)).toBe('')
+    expect<string>(voiceLabel(2)).toBe(', voice active')
+    expect<string>(voiceLabel(0)).toBe('')
   })
 
   test('sums the servers of a folder', () => {

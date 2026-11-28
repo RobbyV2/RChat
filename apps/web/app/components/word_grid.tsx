@@ -6,6 +6,7 @@ import type { PassKind } from '../lib/password'
 import { Grid, Row, Stack } from './layout'
 import { Loaded, useAccountRequest } from './loaded'
 import { Button, Chip, CardButton } from './controls'
+import { notAName } from '../lib/names'
 
 interface Props {
   words: string[]
@@ -47,7 +48,7 @@ export function WordGrid({ words, selected, onChange }: Props) {
         {selected.map((word, i) => (
           <Button
             key={word}
-            title={`Remove ${word}`}
+            title={notAName(`Remove ${word}`)}
             onClick={() => onChange(selected.filter(w => w !== word))}
             variant="tonal"
           >

@@ -14,6 +14,7 @@ import { errorText, useStore } from '../../lib/store'
 import { SettingSwitch } from '../settings_fields'
 import { Stack } from '../layout'
 import { Chips, FieldError } from '../ui'
+import { notAName } from '../../lib/names'
 
 const manages = (v: ServerView) => v.me === 'join' && (v.perms & P.ManageServer) !== 0
 
@@ -56,7 +57,7 @@ function MemberListSettingsBody({ v }: { v: ServerView }) {
     <Stack gap="2xs">
       <SettingSwitch
         label={HIDE_MEMBERS_LABEL}
-        hint={siteOn ? hideMembersLine(hide) : SITE_OFF_LINE}
+        hint={notAName(siteOn ? hideMembersLine(hide) : SITE_OFF_LINE)}
         value={siteOn && !hide}
         onChange={allow => write({ hide: !allow })}
         disabled={busy || !edit}
@@ -76,7 +77,7 @@ function MemberListSettingsBody({ v }: { v: ServerView }) {
               {v.roles.map(r => (
                 <SettingSwitch
                   key={r.id}
-                  label={r.name}
+                  label={notAName(r.name)}
                   value={picked.includes(r.id)}
                   onChange={() => toggle(r.id)}
                   disabled={busy || !edit}

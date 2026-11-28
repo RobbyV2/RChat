@@ -41,6 +41,7 @@ import { MaskedText, MaskedTogether } from './ui'
 import { Row, Surface } from './layout'
 import { time } from '../lib/platform/time'
 import { IconButton, IconLink } from './controls'
+import { notAName } from '../lib/names'
 
 const ICONS: Record<FileKind, LucideIcon> = {
   archive: FileArchive,
@@ -225,8 +226,8 @@ export function FileCardBody({
               return (
                 <IconButton
                   icon={ExtraIcon}
-                  label={extraLabel}
-                  tooltip={x.hint ? `${extraLabel} ${x.hint}` : extraLabel}
+                  label={notAName(extraLabel)}
+                  tooltip={notAName(x.hint ? `${extraLabel} ${x.hint}` : extraLabel)}
                   key={x.kind}
                   onClick={x.run}
                   size="sm"

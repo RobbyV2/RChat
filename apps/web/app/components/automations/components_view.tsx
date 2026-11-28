@@ -4,6 +4,7 @@ import { useId, useState } from 'react'
 import { Check, ChevronDown, ExternalLink } from 'lucide-react'
 import { Stack, Row, Surface, Inset } from '../layout'
 import { AppButton, Button, CardButton } from '../controls'
+import { notAName } from '../../lib/label'
 
 // The buttons and menus under an automation's message, as the shared rules write them.
 export type ButtonStyle = 'plain' | 'primary' | 'danger'
@@ -70,6 +71,8 @@ export const pickedLabel = (s: Select, picks: readonly string[]) =>
   s.placeholder ||
   'Choose'
 
+const appWords = (text: string | undefined) => (text === undefined ? undefined : notAName(text))
+
 interface Shared {
   // Why nothing can be used ("Sign in to use this"); null when it can.
   reason: string | null
@@ -97,7 +100,7 @@ function ButtonView({
       aria-busy={wait ? true : undefined}
       aria-describedby={reason ? reasonId : undefined}
       disabled={reason !== null || wait !== undefined}
-      title={reason ?? wait ?? (c.do === 'link' ? c.url : undefined)}
+      title={appWords(reason ?? wait ?? (c.do === 'link' ? c.url : undefined))}
       onClick={() => onPress(c.cid)}
       style={c.style ?? 'plain'}
       pressed={role ? pressed : undefined}
@@ -150,7 +153,7 @@ function SelectView({
         aria-busy={wait ? true : undefined}
         aria-describedby={reason ? reasonId : undefined}
         disabled={off}
-        title={reason ?? wait}
+        title={appWords(reason ?? wait)}
         onClick={() => (open ? close() : setOpen(true))}
         onKeyDown={e => {
           if (e.key === 'Escape' && open) close()

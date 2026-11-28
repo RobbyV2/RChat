@@ -23,6 +23,7 @@ import { allKey, selectKey } from '../lib/shortcuts'
 import type { Message, UserRef } from '../lib/types'
 import { useMedia } from './context_menu'
 import { Row, Surface } from './layout'
+import { notAName } from '../lib/names'
 
 // Clicks on these never pick a row.
 const INTERACTIVE =
@@ -304,8 +305,8 @@ export function SelectionBar({
       place="shrink-0"
       variant={a.danger ? 'danger' : 'text'}
       icon={a.icon}
-      title={a.label}
-      label={a.label}
+      title={notAName(a.label)}
+      label={notAName(a.label)}
     >
       <span className={sheet || compact ? 'sr-only' : 'hidden lg:inline'}>{a.label}</span>
     </Button>

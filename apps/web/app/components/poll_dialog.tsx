@@ -25,6 +25,7 @@ import { Button, IconButton } from './controls'
 import { Row, Stack, Surface } from './layout'
 import { SendLaterDialog } from './scheduled'
 import { Chips, Dialog, FieldError, fieldCls, smallFieldCls } from './ui'
+import { labelWith } from '../lib/names'
 
 const KINDS: PollKind[] = ['single', 'multiple', 'ranked', 'rating', 'yes_no']
 const SHOWS: ShowResults[] = ['always', 'after_vote', 'after_close']
@@ -146,8 +147,8 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
                     {...(o.emoji ? { glyph: o.emoji } : { icon: Smile })}
                     label={
                       o.emoji
-                        ? `Remove emoji of option ${i + 1}`
-                        : `Add an emoji to option ${i + 1}`
+                        ? labelWith`Remove emoji of option ${i + 1}`
+                        : labelWith`Add an emoji to option ${i + 1}`
                     }
                     tooltip={o.emoji ? 'Remove emoji' : 'Add an emoji'}
                   />
@@ -171,7 +172,7 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
                   />
                   <IconButton
                     icon={Trash2}
-                    label={`Remove option ${i + 1}`}
+                    label={labelWith`Remove option ${i + 1}`}
                     disabled={d.options.length <= 2}
                     onClick={() => patch({ options: d.options.filter((_, j) => j !== i) })}
                   />

@@ -63,12 +63,14 @@ export function AccountSwitcherTile() {
   const group = model.groups.find(g => g.rows.some(r => r.active))
   const row = group?.rows.find(r => r.active)
   if (!row || !group) return <RailInstance />
-  const title =
-    label.line(
-      'Switch account',
-      () =>
-        labelWith`Acting as ${label(accountLabel(row.display))} on ${label(instanceName(group.name))} (${label(instanceAddress(group.host))}).`
-    ) + (model.otherBadge ? ' ' + model.otherBadge + ' mentions on other accounts' : '')
+  const acting = label.line(
+    'Switch account',
+    () =>
+      labelWith`Acting as ${label(accountLabel(row.display))} on ${label(instanceName(group.name))} (${label(instanceAddress(group.host))}).`
+  )
+  const title = model.otherBadge
+    ? labelWith`${acting} ${model.otherBadge} mentions on other accounts`
+    : acting
   return (
     <div className="w-16">
       <CardButton
@@ -139,7 +141,7 @@ export function SettingsAccountPicker({ section }: { section: SettingsSection | 
         {rows.map(({ row, name }, i) => (
           <option key={keyOf(row)} value={keyOf(row)}>
             {label.line(
-              `Account ${i + 1}`,
+              labelWith`Account ${i + 1}`,
               () => labelWith`${label(accountLabel(row.display))} · ${label(instanceName(name))}`
             )}
           </option>

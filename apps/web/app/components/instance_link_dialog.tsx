@@ -30,7 +30,7 @@ function Choose({ dialog, close }: { dialog: InstanceLinkDialog; close: () => vo
             {dialog.users.map((name, index) => (
               <option key={name} value={name}>
                 {label.line(
-                  `Account ${index + 1}`,
+                  labelWith`Account ${index + 1}`,
                   () => labelWith`${label(accountLabel(name))} · ${label(instanceAddress(host))}`
                 )}
               </option>

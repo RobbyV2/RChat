@@ -1,7 +1,7 @@
 'use client'
 import { Covered } from './covered'
 import { asAccount } from '../lib/people'
-import { accountLabel, personName } from '../lib/names'
+import { accountLabel, personName, labelWith } from '../lib/names'
 import { Name, NameSelect } from './name'
 import { useP2pApp, useP2p, P2pProvider } from '../lib/client/p2p_react'
 
@@ -175,9 +175,12 @@ function DmListControl({ prefs }: { prefs: DmListPrefs }) {
 
   const open = useStore(s => s.contextMenu?.owner === DM_LIST_MENU)
   const on = filtersOn(prefs)
-  const label = on
-    ? `Sort and filter, ${on === 1 ? '1 filter' : `${on} filters`} on`
-    : 'Sort and filter'
+  const label =
+    on === 0
+      ? 'Sort and filter'
+      : on === 1
+        ? 'Sort and filter, 1 filter on'
+        : labelWith`Sort and filter, ${on} filters on`
   return (
     <IconButton
       icon={ListFilter}

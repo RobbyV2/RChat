@@ -1,7 +1,7 @@
 'use client'
 import { Covered } from '../covered'
 import { Name, NameInput } from '../name'
-import { p2pKey, p2pName } from '../../lib/names'
+import { p2pKey, p2pName, notAName, labelList, unnamed, type Label } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
 import { ActorLabel, PeerActorTag, usePeerActor } from '../view_actor'
 import { IdentityEnrollment } from './identity_enrollment'
@@ -90,12 +90,13 @@ export const lastTsOf =
   (rooms: Record<string, { lastTs: number }>, me: string | null) => (ik: string) =>
     me ? (rooms[dmRoomId(me, ik)]?.lastTs ?? 0) : 0
 
-const count = (n: number, one: string, many: string) => (n ? `${n} ${n === 1 ? one : many}` : '')
+const count = (n: number, one: string, many: string) =>
+  n ? [notAName(`${n} ${n === 1 ? one : many}`)] : []
 
 // The P2P tile in the rail's P2P frame: opens the contacts. What waits for an answer (message
 // requests, server invites, co-owner and transfer asks) shows as its badge; conversation pings
 // count on the DM tile.
-function P2pRailTileBody({ actorLabel }: { actorLabel?: string }) {
+function P2pRailTileBody({ actorLabel }: { actorLabel?: Label }) {
   const identity = useP2pApp()!
   const { p2p } = identity
 
@@ -107,14 +108,12 @@ function P2pRailTileBody({ actorLabel }: { actorLabel?: string }) {
   const invites = useP2p(s => s.serverInvites.length)
   const asks = useP2p(s => s.coOwnerAsks.length + s.transferAsks.length)
   const badge = useP2p(p2pTileCount)
-  const label = [
-    actorLabel ?? 'Peer-to-peer',
-    count(pending, 'message request', 'message requests'),
-    count(invites, 'server invite', 'server invites'),
-    count(asks, 'request to answer', 'requests to answer'),
-  ]
-    .filter(Boolean)
-    .join(', ')
+  const label = labelList([
+    actorLabel ?? unnamed('Peer-to-peer'),
+    ...count(pending, 'message request', 'message requests'),
+    ...count(invites, 'server invite', 'server invites'),
+    ...count(asks, 'request to answer', 'requests to answer'),
+  ])
   return (
     <Tile
       data-p2p-tile

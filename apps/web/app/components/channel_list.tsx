@@ -28,6 +28,7 @@ import { PingBadge } from './ping_badge'
 import { useLoaded, useServerLooks } from '../lib/place/use_looks'
 import { ChannelEnd } from './typing_indicator'
 import { look as moves } from '../lib/motion/play'
+import { notAName } from '../lib/names'
 
 function PrivateIcon() {
   return (
@@ -273,7 +274,7 @@ export function ChannelList({
             {state.canManage && (
               <IconButton
                 icon={Plus}
-                label={`Create channel in ${category.name}`}
+                label={notAName(`Create channel in ${category.name}`)}
                 tooltip="Create channel"
                 size="sm"
                 onClick={() => channels.startCreate(category.key)}

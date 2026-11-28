@@ -9,6 +9,7 @@ import { ColorField } from './color_field'
 import { Row, Stack } from './layout'
 import { UserAvatar } from './user_avatar'
 import { CardButton } from './controls'
+import { notAName } from '../lib/names'
 
 interface Props {
   username: string
@@ -37,7 +38,7 @@ export function AvatarPicker({
   const theme = useStore(s => s.theme)
   const option = (value: AvatarKind, label: string) => (
     <CardButton
-      title={`${label} avatar`}
+      title={notAName(`${label} avatar`)}
       disabled={disabled}
       onClick={() => onKind(value)}
       tone="outlined"

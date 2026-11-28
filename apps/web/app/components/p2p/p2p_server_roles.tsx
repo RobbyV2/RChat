@@ -2,7 +2,7 @@
 import { Covered } from '../covered'
 import { Button, IconButton, CardButton } from '../controls'
 import { Name, useNameLabels } from '../name'
-import { p2pName, type NameLabeller } from '../../lib/names'
+import { p2pName, type NameLabeller, labelWith, unnamed } from '../../lib/names'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -166,6 +166,7 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
 
   const own = useP2p(s => ownsP2pServer(v, s.me))
   const mask = useMask(own)
+  const say = useNameLabels()
   const [open, setOpen] = useState(false)
   const edit = can(v, P.ManageRoles) && r.below
   const locked = !can(v, P.ManageRoles) ? 'Needs Manage roles' : r.below ? null : ROLE_LOCKED
@@ -240,7 +241,7 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
             {edit && (!r.held || can(v, P.ManageChannels)) && (
               <IconButton
                 icon={Trash2}
-                label={`Delete ${mask(r.name)}`}
+                label={labelWith`Delete ${say.covered(r.name, 'this role', own)}`}
                 tone="danger"
                 size="sm"
                 onClick={() => peerServer.forIdentity(identity).deleteRole(v, r, acct)}
@@ -288,7 +289,7 @@ function RolesTabBody({ v }: { v: ServerView }) {
   const acct = useAccount()
   const ready = usePermissionRules()
   const own = useP2p(s => ownsP2pServer(v, s.me))
-  const mask = useMask(own)
+  const say = useNameLabels()
   const [tab, setTab] = useState<RolesTabKind>('rank')
   const edit = can(v, P.ManageRoles)
   const fixed = v.roles.filter(r => !edit || !r.below)
@@ -372,11 +373,11 @@ function RolesTabBody({ v }: { v: ServerView }) {
               name={<Masked text={r.name} own={own} />}
               swatch={hex(r.color)}
               up={{
-                text: `Show ${mask(r.name)} higher`,
+                text: labelWith`Show ${say.covered(r.name, 'this role', own)} higher`,
                 run: roleAction('p2p_role_show_up', v, r, acct, identity),
               }}
               down={{
-                text: `Show ${mask(r.name)} lower`,
+                text: labelWith`Show ${say.covered(r.name, 'this role', own)} lower`,
                 run: roleAction('p2p_role_show_down', v, r, acct, identity),
               }}
               menu={longPress((x, y) =>
@@ -414,7 +415,7 @@ function MemberCardBody({ room, ik }: { room: string; ik: string }) {
   const v = useP2p(s => s.servers[room])
   const me = useP2p(s => s.me)
   const own = useP2p(s => ownsP2pServer(v, s.me))
-  const mask = useMask(own)
+  const say = useNameLabels()
   const m = v?.members.find(x => x.ik === ik)
   if (!v || !m) return null
   const roles = m.roles.flatMap(id => v.roles.find(r => r.id === id) ?? [])
@@ -497,7 +498,7 @@ function MemberCardBody({ room, ik }: { room: string; ik: string }) {
               {mayTakeRole(v, m, r, me) ? (
                 <IconButton
                   icon={X}
-                  label={`Remove ${mask(r.name)}`}
+                  label={labelWith`Remove ${say.covered(r.name, 'this role', own)}`}
                   tone="danger"
                   size="xs"
                   onClick={e => {
@@ -518,21 +519,19 @@ function MemberCardBody({ room, ik }: { room: string; ik: string }) {
 
 // ----- A channel's permissions -----
 
-// A subject's name as text (labels): @everyone, the role's (`maskRole`) or the member's.
+// A subject's name as a label: @everyone, the role's or the member's.
 const subjectText =
   (identity: P2pApp) =>
-  (
-    say: NameLabeller,
-    v: ServerView,
-    subj: string,
-    me: string | null,
-    maskRole: (t: string) => string
-  ) => {
+  (say: NameLabeller, v: ServerView, subj: string, me: string | null, ownServer: boolean) => {
     const { memberName } = identity
     return subj === `r:${EVERYONE}`
-      ? '@everyone'
+      ? unnamed('@everyone')
       : subj.startsWith('r:')
-        ? maskRole(v.roles.find(x => `r:${x.id}` === subj)?.name ?? 'Deleted role')
+        ? say.covered(
+            v.roles.find(x => `r:${x.id}` === subj)?.name ?? 'Deleted role',
+            'this role',
+            ownServer
+          )
         : say(p2pName(memberName(v.id, subj.slice(2)), subj === `u:${me}`), 'this member')
   }
 
@@ -691,7 +690,7 @@ function ChannelAccessBody({
     restrictSend: channel?.restrict_send === true,
   }
   const listed = (subj: string) => src.rows.some(r => r.subject === subj)
-  const label = (subj: string) => subjectText(identity)(say, v, subj, me, maskRole)
+  const label = (subj: string) => subjectText(identity)(say, v, subj, me, own)
   const people = v.members
     .filter(m => m.m === 'join' && m.below && !m.owner && !listed(`u:${m.ik}`))
     .sort((a, b) => a.name.localeCompare(b.name))

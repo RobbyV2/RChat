@@ -246,6 +246,7 @@ describe('layering', () => {
     'apps/web/app/components/layout/index.tsx',
     'apps/web/app/components/controls.tsx',
     'apps/web/app/lib/controls.ts',
+    'apps/web/app/lib/label.ts',
     'apps/web/app/lib/layout/index.ts',
   ]
 

@@ -55,6 +55,7 @@ import { time } from '../lib/platform/time'
 import { useLive } from '../lib/place/react'
 import { Loaded, useLoad } from './loaded'
 import { FUNCTIONAL } from '../lib/motion/functional'
+import { notAName } from '../lib/names'
 
 export const SHEET_QUERY = '(pointer: coarse), (max-width: 639px)'
 
@@ -384,7 +385,7 @@ function PickerGrid({ sheet, label, onPick, onClose, data }: BodyProps & { data:
         return (
           <IconButton
             icon={Icon}
-            label={c.label}
+            label={notAName(c.label)}
             key={c.id}
             aria-current={on ? 'true' : undefined}
             onClick={() => jump(c.id)}
@@ -428,7 +429,7 @@ function PickerGrid({ sheet, label, onPick, onClose, data }: BodyProps & { data:
                 data-cell=""
                 data-s={s}
                 data-i={i}
-                label={e.name}
+                label={notAName(e.name)}
                 touch={sheet}
               >
                 {withTone(e, tone)}
@@ -567,7 +568,7 @@ function PickerGrid({ sheet, label, onPick, onClose, data }: BodyProps & { data:
                     if (!sheet) searchRef.current?.focus()
                   }}
                   glyph={toneHand(t)}
-                  label={name}
+                  label={notAName(name)}
                   size="lg"
                 />
               ))}

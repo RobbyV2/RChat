@@ -1,6 +1,6 @@
 'use client'
 
-import { personName, p2pKey, p2pName } from '../lib/names'
+import { personName, p2pKey, p2pName, type Said } from '../lib/names'
 import { Name, useNameLabels } from './name'
 import { useState, type ReactNode } from 'react'
 import { Forward, Image as ImageIcon, X } from 'lucide-react'
@@ -186,7 +186,7 @@ export function ReplyPreview({
 
 // A bar above the composer input. The composer shows one at most. `onClose` runs on X and on
 // Escape.
-export function ComposerBar({
+export function ComposerBar<const L extends string>({
   children,
   actions,
   onClose,
@@ -195,7 +195,7 @@ export function ComposerBar({
   children: ReactNode
   actions?: ReactNode
   onClose: () => void
-  closeLabel: string
+  closeLabel: Said<L>
 }) {
   return (
     <Surface

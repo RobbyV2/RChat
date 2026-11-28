@@ -95,15 +95,17 @@ describe('the download pill', () => {
   })
 
   test('its label names the shown file; the sender hint goes in the title only', () => {
-    expect(primaryText('Download', 'clip.mp4')).toEqual({
+    expect<{ label: string; title: string }>(primaryText('Download', 'clip.mp4')).toEqual({
       label: 'Download clip.mp4',
       title: 'Download clip.mp4',
     })
-    expect(primaryText('Save', '****.mp4')).toEqual({
+    expect<{ label: string; title: string }>(primaryText('Save', '****.mp4')).toEqual({
       label: 'Save ****.mp4',
       title: 'Save ****.mp4',
     })
-    expect(primaryText('Download', 'clip.mp4', "from bob's browser")).toEqual({
+    expect<{ label: string; title: string }>(
+      primaryText('Download', 'clip.mp4', "from bob's browser")
+    ).toEqual({
       label: 'Download clip.mp4',
       title: "Download clip.mp4 from bob's browser",
     })

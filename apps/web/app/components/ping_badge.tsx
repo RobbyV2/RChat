@@ -1,7 +1,9 @@
 import { badgeLook, placed } from '../lib/controls'
 import { badgeText } from '../lib/pings'
+import { labelWith, type Label } from '../lib/names'
 
-export const pingLabel = (n: number) => `${n} ${n === 1 ? 'notification' : 'notifications'}`
+export const pingLabel = (n: number): Label =>
+  n === 1 ? labelWith`${n} notification` : labelWith`${n} notifications`
 
 export function PingBadge({ count, className = '' }: { count: number; className?: string }) {
   if (count <= 0) return null

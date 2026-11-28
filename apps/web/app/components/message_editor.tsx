@@ -13,10 +13,11 @@ import { FormatToolbar, useFormatting } from './format_toolbar'
 import { fullTimeOf } from '../lib/timestamps'
 import { Row, Stack, Surface } from './layout'
 import type { EditBinding } from '../lib/place/row_acts'
+import { unnamed } from '../lib/names'
 
 export const editAction = (onClick: () => void): ToolbarAction => ({
   key: 'edit',
-  label: 'Edit',
+  label: unnamed('Edit'),
   icon: Pencil,
   onClick,
 })

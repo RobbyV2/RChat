@@ -2,7 +2,7 @@
 
 import { ask, sendTo } from '../lib/asks'
 import { Name, NameInput } from './name'
-import { handleName } from '../lib/names'
+import { handleName, type Said, notAName, unnamed } from '../lib/names'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import { Check, Copy, Lock, LockOpen, Plus } from 'lucide-react'
 import { readLocal, writeLocal } from '../lib/instances'
@@ -105,14 +105,14 @@ function Chip({ status }: { status: PasswordStatus }) {
   )
 }
 
-function CopyButton({
+function CopyButton<const L extends string>({
   text,
   label,
   disabled,
   why,
 }: {
   text: string | null
-  label: string
+  label: Said<L>
   disabled?: boolean
   why?: string
 }) {
@@ -123,7 +123,7 @@ function CopyButton({
       <IconButton
         icon={copied ? Check : Copy}
         label={label}
-        tooltip={copied ? 'Copied' : label}
+        tooltip={copied ? 'Copied' : unnamed(label)}
         size="sm"
         disabled={off}
         onClick={() => {
@@ -721,7 +721,7 @@ export function MemberListSwitch({ server, hide }: { server: string; hide: boole
       <div>
         <SettingSwitch
           label={HIDE_MEMBERS_LABEL}
-          hint={siteOn ? hideMembersLine(hide) : SITE_OFF_LINE}
+          hint={notAName(siteOn ? hideMembersLine(hide) : SITE_OFF_LINE)}
           value={siteOn && !hide}
           onChange={flip}
           disabled={busy || !siteOn}

@@ -43,6 +43,7 @@ import { placePopover, type Align, type Side } from '../lib/autocomplete'
 import { placeCard, SHEET_QUERY, type Point } from '../lib/profile'
 import { COARSE_QUERY, useMedia } from '../lib/use_media'
 import { fieldLook, sectionHeadingLook } from '../lib/controls'
+import { type Said } from '../lib/names'
 
 export const fieldCls = fieldLook
 // A small field or select beside others on a toolbar line (a search filter).
@@ -753,7 +754,7 @@ export function PaneCorner({ ref }: { ref: Ref<HTMLSpanElement> }) {
 }
 
 // The header of a side panel (thread, search).
-export function PanelHeader({
+export function PanelHeader<const L extends string>({
   icon: Icon,
   title,
   closeTitle,
@@ -762,7 +763,7 @@ export function PanelHeader({
 }: {
   icon: LucideIcon
   title: string
-  closeTitle: string
+  closeTitle: Said<L>
   actor?: ReactNode
   onClose: () => void
 }) {
@@ -949,12 +950,12 @@ export function TopDialog({
 
 // A full screen page over the app (invite, config link) with the logo and theme toggle on top.
 // The close button shows only when signed in or a guest.
-export function LinkPage({
+export function LinkPage<const L extends string>({
   closeTitle,
   onClose,
   children,
 }: {
-  closeTitle: string
+  closeTitle: Said<L>
   onClose: () => void
   children: ReactNode
 }) {

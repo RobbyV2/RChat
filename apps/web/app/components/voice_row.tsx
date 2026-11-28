@@ -1,6 +1,6 @@
 'use client'
 
-import { p2pName, type NameValue } from '../lib/names'
+import { p2pName, type NameValue, notAName } from '../lib/names'
 import { personName } from '../lib/names'
 import { Name } from './name'
 import { Lock, Volume2 } from 'lucide-react'
@@ -163,9 +163,11 @@ function Row({
       <SideRow
         data-voice-channel={channel.name}
         title={locked ? NO_CONNECT : connected ? 'Open voice channel' : 'Join voice channel'}
-        label={`${connected ? 'Open' : 'Join'} voice channel ${mask(channel.name)}${
-          count ? `, ${count} connected` : ''
-        }${locked ? `. ${NO_CONNECT}` : ''}`}
+        label={notAName(
+          `${connected ? 'Open' : 'Join'} voice channel ${mask(channel.name)}${
+            count ? `, ${count} connected` : ''
+          }${locked ? `. ${NO_CONNECT}` : ''}`
+        )}
         aria-disabled={locked || undefined}
         onClick={() => {
           if (!locked) voice.enter(channel.key)

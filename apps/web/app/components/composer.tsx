@@ -3,7 +3,7 @@ import { isUnsupported } from '../lib/place/feature'
 import { OwnLoadNotice } from './own_load'
 
 import { Name } from './name'
-import { instanceName } from '../lib/names'
+import { instanceName, notAName } from '../lib/names'
 import { Button, IconButton } from './controls'
 import { PeerCodeButton } from './p2p/peer_code_button'
 import { useActorSuffix, usePlaceActor } from './view_actor'
@@ -257,7 +257,7 @@ export function Composer({ list = 'main' }: { list?: ComposerList }) {
               <IconButton
                 icon={ChartColumn}
                 label="Create poll"
-                tooltip={isUnsupported(poll) ? poll.line : undefined}
+                tooltip={isUnsupported(poll) ? notAName(poll.line) : undefined}
                 disabled={isUnsupported(poll)}
                 tight
                 data-create-poll

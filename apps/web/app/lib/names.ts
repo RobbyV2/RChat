@@ -1,6 +1,10 @@
 import { isGuestName } from './guest_voice'
+import { unnamed, type Label, type Said } from './label'
 import type { Person } from './people'
 import { isWebhookAuthor } from './webhooks'
+
+export { labelList, labelWith, notAName, unnamed } from './label'
+export type { Label, Said, Words } from './label'
 
 // The names the app draws: people, servers, instances, accounts and P2P identities. A name is a
 // value only the functions below make, and only the `Name` component draws one, so every name on
@@ -191,11 +195,7 @@ const GENERIC: Record<NameKind, string> = {
   p2p: 'Contact',
 }
 
-declare const spoken: unique symbol
-
-// Text for a label, a tooltip or an option that holds a name as the viewer may read it: made only
-// by `nameLabel` and the two functions that put labels together.
-export type NameLabel = string & { readonly [spoken]: true }
+export type NameLabel = Label
 
 // What a label or a tooltip says in place of the name: `generic` in streamer mode.
 export const nameLabel = (
@@ -203,19 +203,7 @@ export const nameLabel = (
   view: NameView,
   generic: string = GENERIC[name.kind],
   withUsername = false
-): NameLabel => (view.streamer ? generic : shownNameText(name, view, withUsername)) as NameLabel
-
-// The app's own words where a label stands for a name it does not have ("a contact").
-export const unnamed = (words: string): NameLabel => words as NameLabel
-
-// A line around name labels: labelWith`Message ${label}`. Only labels and counts go in.
-export const labelWith = (
-  words: TemplateStringsArray,
-  ...parts: readonly (NameLabel | number)[]
-): NameLabel => words.reduce((line, word, i) => line + String(parts[i - 1]) + word) as NameLabel
-
-export const labelList = (labels: readonly NameLabel[], between = ', '): NameLabel =>
-  labels.join(between) as NameLabel
+): Label => (view.streamer ? generic : shownNameText(name, view, withUsername)) as Label
 
 // Labels for several names under one view of each.
 export interface NameLabeller {
@@ -223,10 +211,10 @@ export interface NameLabeller {
   // Streamer mode is on: labels say what kind of thing a name is.
   readonly hiding: boolean
   // A line that names things: `generic` in its place in streamer mode.
-  line(generic: string, named: () => NameLabel): string
+  line<const G extends string>(generic: Said<G>, named: () => Label): Label
   // Text beside a name that streamer mode hides too (a channel's name), through the filter
   // unless it is the viewer's own.
-  covered(text: string, generic: string, own?: boolean): NameLabel
+  covered<const G extends string>(text: string, generic: Said<G>, own?: boolean): Label
 }
 
 export const nameLabeller = (
@@ -238,9 +226,10 @@ export const nameLabeller = (
     nameLabel(name, viewOf(name), generic, withUsername)
   const made: NameLabeller = Object.assign(label, {
     hiding: streamer,
-    line: (generic: string, named: () => NameLabel) => (streamer ? generic : named()),
-    covered: (text: string, generic: string, own = false) =>
-      (streamer ? generic : own ? text : mask(text)) as NameLabel,
+    line: <const G extends string>(generic: Said<G>, named: () => Label) =>
+      streamer ? unnamed(generic) : named(),
+    covered: <const G extends string>(text: string, generic: Said<G>, own = false) =>
+      (streamer ? generic : own ? text : mask(text)) as string as Label,
   })
   return made
 }

@@ -15,6 +15,7 @@ import {
 import { applyFormat, FORMATS, formatKey, keysLabel, type Format } from '../lib/format'
 import { time } from '../lib/platform/time'
 import { Surface } from './layout'
+import { notAName } from '../lib/names'
 
 const ICONS: Record<Format, LucideIcon> = {
   bold: Bold,
@@ -122,8 +123,8 @@ export function FormatToolbar({
           <IconButton
             key={format}
             icon={Icon}
-            label={label}
-            tooltip={keys ? `${label} (${keysLabel(keys)})` : label}
+            label={notAName(label)}
+            tooltip={notAName(keys ? `${label} (${keysLabel(keys)})` : label)}
             shape="square"
             data-format={format}
             onMouseDown={e => e.preventDefault()}

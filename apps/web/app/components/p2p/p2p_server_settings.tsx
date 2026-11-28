@@ -1,6 +1,6 @@
 'use client'
 import { Name, NameInput, useNameLabels } from '../name'
-import { p2pName } from '../../lib/names'
+import { p2pName, labelWith } from '../../lib/names'
 import { PeerActorTag } from '../view_actor'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
@@ -293,7 +293,8 @@ function Channels({ v }: { v: ServerView }) {
 
   const edit = can(v, P.ManageChannels)
   const me = useP2p(s => s.me)
-  const mask = useMask(useP2p(s => ownsP2pServer(v, s.me)))
+  const own = useP2p(s => ownsP2pServer(v, s.me))
+  const say = useNameLabels()
   const [names, setNames] = useState<Record<string, string>>({})
   const [topics, setTopics] = useState<Record<string, string>>({})
   const [fresh, setFresh] = useState('')
@@ -389,8 +390,7 @@ function Channels({ v }: { v: ServerView }) {
               {edit && (voice || texts.length > 1) && (
                 <IconButton
                   icon={Trash2}
-                  label={`Delete ${label}`}
-                  tooltip={`Delete ${voice ? mask(c.name) : `#${mask(c.name)}`}`}
+                  label={labelWith`Delete ${say.covered(label, 'this channel', own)}`}
                   tone="error"
                   size="sm"
                   onClick={() =>

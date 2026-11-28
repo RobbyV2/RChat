@@ -101,8 +101,12 @@ describe('streamer mode', () => {
     const hidden = nameLabeller(true, view().mask, viewOf(true))
     expect<string>(shown(name)).toBe('**** Den')
     expect<string>(hidden(name, 'this server')).toBe('this server')
-    expect(shown.line('Open server', () => labelWith`Open ${shown(name)}`)).toBe('Open **** Den')
-    expect(hidden.line('Open server', () => labelWith`Open ${hidden(name)}`)).toBe('Open server')
+    expect<string>(shown.line('Open server', () => labelWith`Open ${shown(name)}`)).toBe(
+      'Open **** Den'
+    )
+    expect<string>(hidden.line('Open server', () => labelWith`Open ${hidden(name)}`)).toBe(
+      'Open server'
+    )
     expect<string>(shown.covered('darn talk', 'Channel')).toBe('**** talk')
     expect<string>(shown.covered('darn talk', 'Channel', true)).toBe('darn talk')
     expect<string>(hidden.covered('darn talk', 'Channel', true)).toBe('Channel')

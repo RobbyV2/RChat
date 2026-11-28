@@ -21,6 +21,7 @@ import { longPress } from './context_menu'
 import { Button, Chip, IconButton } from './controls'
 import { Row, Stack, Surface, Inset } from './layout'
 import { fieldCls, smallFieldCls } from './ui'
+import { notAName } from '../lib/names'
 
 // The member search of server settings, the same on hosted servers and P2P rooms: a search
 // field, filters shown as removable chips, and rows that open the member's action menu by
@@ -146,7 +147,7 @@ export function MemberFilterBar({
               <span className="truncate">{c.label}</span>
               <IconButton
                 icon={X}
-                label={`Remove ${c.label}`}
+                label={notAName(`Remove ${c.label}`)}
                 tone="inherit"
                 size="sm"
                 onClick={() => onChange(dropChip(value, c))}

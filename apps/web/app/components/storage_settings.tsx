@@ -17,6 +17,7 @@ import { Button } from './controls'
 import { Row, Stack } from './layout'
 import { SettingSwitch } from './settings_fields'
 import { Dialog, FieldError, sectionCls } from './ui'
+import { notAName } from '../lib/names'
 
 // The small lock beside a place whose new messages are stored encrypted.
 export function StoredLock({ size = 14 }: { size?: number }) {
@@ -68,7 +69,7 @@ export function StorageSettings({
       <Stack gap="sm">
         <SettingSwitch
           label={SEAL_LABEL}
-          hint={reason ?? sealDescription(place)}
+          hint={notAName(reason ?? sealDescription(place))}
           value={state.on}
           disabled={!state.available || busy}
           onChange={on => (on ? setAsking('on') : void turn(false))}

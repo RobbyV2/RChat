@@ -1,6 +1,6 @@
 'use client'
 import { Name, useNameLabel, useNameLabels } from '../name'
-import { labelList, labelWith, roomName, p2pName } from '../../lib/names'
+import { labelList, labelWith, roomName, p2pName, unnamed, notAName } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
 import { PeerActorTag } from '../view_actor'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -148,8 +148,8 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
       )}
       data-drop-onto={folder === null ? 'Create folder' : undefined}
       tone={active ? 'p2p-server-active' : 'p2p-server'}
-      label={`${called}, peer-to-peer${voiceLabel(voice)}`}
-      tooltip={`${called}, peer-to-peer${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}${voiceLabel(voice)}`}
+      label={labelWith`${called}, peer-to-peer${voiceLabel(voice)}`}
+      tooltip={labelWith`${called}, peer-to-peer${unnamed(muted ? ', muted' : '')}${pings ? labelWith`, ${pingLabel(pings)}` : unnamed('')}${voiceLabel(voice)}`}
     >
       <span
         className={`flex h-full w-full items-center justify-center rounded-inherit ${muted && !active ? 'opacity-50' : ''}`}
@@ -212,7 +212,7 @@ function P2pFolderEntryBody({
   const voice = useP2pVoice(folder.open ? [] : list.map(v => v.id))
   const say = useNameLabels()
   const label =
-    folder.name ||
+    (folder.name ? notAName(folder.name) : null) ??
     say.line(
       'Folder',
       () => labelWith`P2P folder: ${labelList(list.map(v => say(roomName(v.name))))}`
@@ -220,7 +220,7 @@ function P2pFolderEntryBody({
   const theme = useStore(s => s.theme)
   const style = folderStyle(folder.color, theme) as CSSProperties | undefined
   const header = {
-    label: `${label}${voiceLabel(voice)}`,
+    label: labelWith`${label}${voiceLabel(voice)}`,
     'aria-expanded': folder.open,
     'data-drop-onto': 'Add to folder',
     'data-p2p-tile': '',

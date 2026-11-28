@@ -20,6 +20,7 @@ import {
   unnamed,
   type NameLabel,
   type NameLabeller,
+  notAName,
 } from '../names'
 
 // Keep a one-use worker ticket through the normal signed-out startup redirect.
@@ -59,9 +60,8 @@ export function shareRooms(
     peer_channel: 'Peer channel',
   }
   const add = (room: Room, named: (say: NameLabeller) => NameLabel, reason: string | null) => {
-    const numbered = names[room.kind] + ' ' + ++counts[room.kind]
-    const label =
-      say === null || s.streamer || streamer ? numbered : say.line(numbered, () => named(say))
+    const numbered = notAName(names[room.kind] + ' ' + ++counts[room.kind])
+    const label = say === null || s.streamer || streamer ? numbered : named(say)
     rooms.push({ ...room, key: JSON.stringify(room), label, reason })
   }
   if (!identity) {

@@ -4,6 +4,7 @@ import { encode } from 'uqr'
 import { sharing } from '../lib/platform'
 import { useCopied } from '../lib/use_copied'
 import { IconButton } from './controls'
+import { type Said, unnamed } from '../lib/names'
 
 const QR_SIZE = {
   sm: 'size-36 shrink-0',
@@ -48,13 +49,19 @@ export function QrCode({
   )
 }
 
-export function CopyButton({ text, label }: { text: string; label: string }) {
+export function CopyButton<const L extends string>({
+  text,
+  label,
+}: {
+  text: string
+  label: Said<L>
+}) {
   const [copied, flashCopied] = useCopied()
   return (
     <IconButton
       icon={copied ? Check : Copy}
       label={label}
-      tooltip={copied ? 'Copied' : label}
+      tooltip={copied ? 'Copied' : unnamed(label)}
       size="sm"
       onClick={() =>
         void sharing()

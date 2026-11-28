@@ -1,7 +1,7 @@
 'use client'
 import { ask, sendTo } from '../../lib/asks'
 import { Name, NameInput } from '../name'
-import { personCalled } from '../../lib/names'
+import { personCalled, notAName } from '../../lib/names'
 import { asAccount } from '../../lib/people'
 import { askKick } from '../../lib/place/moderation'
 import { HostedServer } from '../../lib/place/place'
@@ -173,10 +173,10 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
                 />
                 <IconButton
                   icon={Trash2}
-                  label={`Delete ${c.name}`}
+                  label={notAName(`Delete ${c.name}`)}
                   tooltip={
                     deletable
-                      ? `Delete ${c.name}`
+                      ? notAName(`Delete ${c.name}`)
                       : c.kind === 'text'
                         ? 'Cannot delete the only text channel'
                         : 'Cannot delete the only channel'
