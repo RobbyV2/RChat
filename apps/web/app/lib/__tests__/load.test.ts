@@ -1,7 +1,15 @@
 import { describe, expect, test } from 'bun:test'
 import { ApiError } from '../api'
 import { ManualTime } from '../clock'
-import { LOAD_DEADLINE_MS, fromRequest, fromStore, overdueIn, retryIn, type Load } from '../load'
+import {
+  LOAD_DEADLINE_MS,
+  fromLive,
+  fromRequest,
+  fromStore,
+  overdueIn,
+  retryIn,
+  type Load,
+} from '../load'
 
 const settle = () => new Promise<void>(done => queueMicrotask(() => queueMicrotask(done)))
 
@@ -167,6 +175,36 @@ describe('a value a store holds', () => {
     expect(
       fromStore<S, number[]>(clock, s, (_state, make) => make.loading()).get().retry
     ).toBeNull()
+  })
+})
+
+describe('a live value', () => {
+  test('is a load that follows it, with the retry given', () => {
+    const clock = new ManualTime()
+    let list: number[] | null = null
+    const listeners = new Set<() => void>()
+    const live = {
+      get: () => list,
+      subscribe: (l: () => void) => {
+        listeners.add(l)
+        return () => listeners.delete(l)
+      },
+    }
+    const again = () => {}
+    const load = fromLive<number[] | null, number[]>(
+      clock,
+      live,
+      (value, make) => (value === null ? make.loading() : make.ready(value)),
+      again
+    )
+    expect(load.get().status).toBe('loading')
+    expect(load.get().retry).toBe(again)
+    let told = 0
+    load.subscribe(() => told++)
+    list = [1]
+    for (const l of listeners) l()
+    expect(told).toBe(1)
+    expect(load.get().status).toBe('ready')
   })
 })
 

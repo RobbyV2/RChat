@@ -1,10 +1,21 @@
 'use client'
 
+import { fromLive } from '../lib/load'
+import { time } from '../lib/platform/time'
+import { Loaded, useLoad } from './loaded'
 import { useStoreApi } from '../lib/client/react'
 import { isUnsupported } from '../lib/place/feature'
 import { pins as pinsFeature, type Pinned, type Pins, type PinsState } from '../lib/place/pins'
 import { useFeature, useLive } from '../lib/place/react'
-import { useEffect, useId, useLayoutEffect, useRef, type MouseEvent, type ReactNode } from 'react'
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type MouseEvent,
+  type ReactNode,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { ChartColumn, FileText, Pin, X, type LucideIcon } from 'lucide-react'
 import { PreviewSpoiler, RevealChannelPreview } from './preview_reveal'
@@ -424,7 +435,23 @@ export function HeaderPopover({
 
 // The pinned messages of one conversation, as a popover (a sheet on phones).
 function PinsPanel({ pins, state, canUnpin }: { pins: Pins; state: PinsState; canUnpin: boolean }) {
-  const { list, failed, place } = state
+  const { place } = state
+  const load = useLoad(
+    useMemo(
+      () =>
+        fromLive<PinsState, Pinned[]>(
+          time(),
+          pins.state,
+          (s, make) => {
+            if (s.list === null)
+              return s.failed ? make.failed('Try again in a moment.') : make.loading()
+            return s.list.length ? make.ready(s.list) : make.empty()
+          },
+          pins.open
+        ),
+      [pins]
+    )
+  )
   return (
     <HeaderPopover icon={Pin} title={PINS_TITLE} button="[data-pins-button]" onClose={pins.close}>
       <Surface
@@ -434,42 +461,34 @@ function PinsPanel({ pins, state, canUnpin }: { pins: Pins; state: PinsState; ca
         pad="md"
         place="min-h-0 flex-1 overflow-y-auto overscroll-contain"
       >
-        {list === null && !failed && (
-          <Surface tone="plain" radius="none" pad="xl">
-            <p className="text-center text-sm text-on-surface-variant">Loading pinned messages</p>
-          </Surface>
-        )}
-        {list === null && failed && (
-          <Surface tone="plain" radius="none" pad="xl" gap="sm" align="center">
-            <span className="text-sm text-on-surface-variant">
-              Couldn&apos;t load pinned messages.
-            </span>
-            <Button onClick={pins.open}>Retry</Button>
-          </Surface>
-        )}
-        {list !== null && list.length === 0 && (
-          <Surface tone="plain" radius="none" pad="2xl" gap="md" align="center">
-            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-surface-container-highest text-on-surface-variant">
-              <Pin size={26} />
-            </span>
-            <p className="text-center text-sm text-on-surface-variant">{`This ${place} doesn't have any pinned messages yet.`}</p>
-          </Surface>
-        )}
-        {list !== null && list.length > 0 && (
-          <Stack as="ul" gap="sm" aria-label={`Pinned messages in this ${place}`}>
-            {list.map(pinned => (
-              <PinEntry
-                key={pinned.key}
-                pinned={pinned}
-                server={state.server}
-                canUnpin={canUnpin}
-                onJump={pins.jump}
-                onUnpin={pins.unpin}
-                profiles={state.profiles}
-              />
-            ))}
-          </Stack>
-        )}
+        <Loaded
+          load={load}
+          what="pinned messages"
+          empty={
+            <Surface tone="plain" radius="none" pad="2xl" gap="md" align="center">
+              <span className="flex h-14 w-14 items-center justify-center rounded-full bg-surface-container-highest text-on-surface-variant">
+                <Pin size={26} />
+              </span>
+              <p className="text-center text-sm text-on-surface-variant">{`This ${place} doesn't have any pinned messages yet.`}</p>
+            </Surface>
+          }
+        >
+          {list => (
+            <Stack as="ul" gap="sm" aria-label={`Pinned messages in this ${place}`}>
+              {list.map(pinned => (
+                <PinEntry
+                  key={pinned.key}
+                  pinned={pinned}
+                  server={state.server}
+                  canUnpin={canUnpin}
+                  onJump={pins.jump}
+                  onUnpin={pins.unpin}
+                  profiles={state.profiles}
+                />
+              ))}
+            </Stack>
+          )}
+        </Loaded>
       </Surface>
     </HeaderPopover>
   )

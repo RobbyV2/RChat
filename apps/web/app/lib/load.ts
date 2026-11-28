@@ -223,6 +223,24 @@ export function fromStore<S, T>(
   }
 }
 
+// The same over a live value (what a place feature hands out).
+export const fromLive = <S, T>(
+  time: Time,
+  live: Live<S>,
+  select: (state: S, make: LoadMaker<T>) => Load<T>,
+  retry: (() => void) | null = null
+): Live<Load<T>> =>
+  fromStore(
+    time,
+    {
+      getState: live.get,
+      subscribe: live.subscribe,
+      ...(live.initial ? { getInitialState: live.initial } : {}),
+    },
+    select,
+    retry
+  )
+
 // Whether a loading load passed its deadline at `elapsed`, and how long until it does.
 export const overdueIn = (overdueAt: number, elapsed: number): number =>
   Math.max(0, overdueAt - elapsed)
