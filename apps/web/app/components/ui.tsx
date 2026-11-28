@@ -609,8 +609,8 @@ export function LinkPage({
 }) {
   const authed = useStore(s => s.me !== null || s.guest)
   return (
-    <div className="invite-backdrop fixed inset-x-0 top-app z-page flex h-app flex-col overflow-y-auto safe-x-4 pb-[max(var(--space-lg),env(safe-area-inset-bottom))]">
-      <header className="flex shrink-0 items-center justify-between pt-3 pb-2">
+    <div className="invite-backdrop fixed inset-x-0 top-app z-page flex h-app flex-col overflow-y-auto safe-x-4 pt-4 pb-[max(var(--space-lg),env(safe-area-inset-bottom))]">
+      <header className="flex shrink-0 items-center justify-between pb-2">
         <img src="/rchat_logo.png" alt="RChat" className="h-9 w-auto" />
         <div className="flex items-center gap-1">
           <ThemeToggle />

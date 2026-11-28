@@ -692,7 +692,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                 pad="md"
                 inset="sides"
                 look="md:border-l md:border-outline-variant"
-                place="min-w-0 md:flex-1 max-md:hidden"
+                place="min-w-0 md:flex-1"
               >
                 <ChannelTopic channel={channel} />
               </Inset>

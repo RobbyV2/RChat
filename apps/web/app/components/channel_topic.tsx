@@ -72,9 +72,12 @@ export function ChannelTopic({
         aria-expanded={open}
         onClick={() => setOpen(!open)}
         tone="muted"
+        place={variant === 'header' ? 'w-full md:w-fit' : undefined}
       >
         <span
-          className={variant === 'header' ? 'truncate text-xs md:text-sm' : 'line-clamp-2 text-sm'}
+          className={
+            variant === 'header' ? 'min-w-0 truncate text-xs md:text-sm' : 'line-clamp-2 text-sm'
+          }
         >
           <Masked text={line} />
         </span>
