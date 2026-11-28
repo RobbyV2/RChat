@@ -90,7 +90,7 @@ impl Typer {
         if self.bucket.spend(1.0, at) < 0.0 {
             return Vec::new();
         }
-        let place = ws_typing_place(db, user, &scope).await;
+        let place = ws_typing_place(&crate::ws::LAYER, db, user, &scope).await;
         let mut out: Vec<WsEvent> = match (same, &place) {
             (true, Some(_)) => {
                 self.active = None;

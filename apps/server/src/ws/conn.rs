@@ -319,7 +319,7 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
         };
     }
     let member_servers: HashSet<String> = match &username {
-        Some(user) => match ws_member_servers(&state.read(), user).await {
+        Some(user) => match ws_member_servers(&crate::ws::LAYER, &state.read(), user).await {
             Ok(servers) => servers,
             Err(e) => return refuse(e),
         },
@@ -482,7 +482,7 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
                         Ok(ClientMsg::P2pHosting { peer_id, ids, relays, relay_sets }) => {
                             let (ids, relays) = hosting_relays(hosting_ids(ids), relays, relay_sets);
                             if let Some(user) = access.user.clone() && crate::p2p::valid_peer_id(&peer_id) {
-                                let (live, checked) = match ws_live_hosted(&state.read(), &user, &ids).await {
+                                let (live, checked) = match ws_live_hosted(&crate::ws::LAYER, &state.read(), &user, &ids).await {
                                     Some(live) => (live, ids.clone()),
                                     None => (Vec::new(), Vec::new()),
                                 };
@@ -755,11 +755,15 @@ pub(super) async fn look(
     let server = server.map(|s| s.to_lowercase());
     access.looking = server.clone().filter(|_| access.user.is_some());
     let (target, peek, seen) = match (access.user.clone(), server) {
-        (Some(user), Some(s)) if !ws_banned(&state.read(), &s, &user).await.unwrap_or(true) => {
+        (Some(user), Some(s))
+            if !ws_banned(&crate::ws::LAYER, &state.read(), &s, &user)
+                .await
+                .unwrap_or(true) =>
+        {
             state
                 .hub
                 .listen(conn, &[Topic::View(s.clone()), Topic::Server(s.clone())]);
-            let member = ws_is_member(&state.read(), &s, &user)
+            let member = ws_is_member(&crate::ws::LAYER, &state.read(), &s, &user)
                 .await
                 .unwrap_or(false);
             let open = !member

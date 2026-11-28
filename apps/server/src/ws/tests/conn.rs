@@ -729,7 +729,7 @@ async fn deletion_frames_use_the_evidence_available_to_each_socket() {
         "UPDATE servers SET members_visible = 0 WHERE name = 'rchat'",
     )
     .await;
-    let server = crate::api::access::ws_server_lite(&state.db, "rchat")
+    let server = crate::api::access::ws_server_lite(&crate::ws::LAYER, &state.db, "rchat")
         .await
         .unwrap()
         .unwrap();

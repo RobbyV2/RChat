@@ -613,14 +613,28 @@ mod tests {
             ),
             (
                 "typing",
-                match ws_typing_place(&state.db, user, &format!("c{}", c.general)).await {
+                match ws_typing_place(
+                    crate::ws::Layer::for_tests(),
+                    &state.db,
+                    user,
+                    &format!("c{}", c.general),
+                )
+                .await
+                {
                     Some(_) => Ok(()),
                     None => timed_out_err(),
                 },
             ),
             (
                 "thread typing",
-                match ws_typing_place(&state.db, user, &format!("t{}", c.carols)).await {
+                match ws_typing_place(
+                    crate::ws::Layer::for_tests(),
+                    &state.db,
+                    user,
+                    &format!("t{}", c.carols),
+                )
+                .await
+                {
                     Some(_) => Ok(()),
                     None => timed_out_err(),
                 },
@@ -1202,8 +1216,15 @@ mod tests {
         assert_eq!(status(rename("lobby").await), timed_out_err());
         assert!(status(time_out(state, "mo", "carol", json!({"seconds": 60})).await).is_err());
         assert!(status(audit().await).is_ok(), "reading the audit log stays");
-        let sees =
-            |who: &'static str| crate::api::access::ws_sees_timeouts(&state.db, "club", who, false);
+        let sees = |who: &'static str| {
+            crate::api::access::ws_sees_timeouts(
+                crate::ws::Layer::for_tests(),
+                &state.db,
+                "club",
+                who,
+                false,
+            )
+        };
         let mods = id_of(&state.db, "INSERT INTO roles(server, name, color, perms) VALUES('club', 'mods', '#ffffff', 128) RETURNING id").await;
         exec(
             &state.db,

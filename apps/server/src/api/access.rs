@@ -643,7 +643,7 @@ pub(crate) async fn readable_by_name(db: &Db, keys: &[String]) -> sqlx::Result<V
     let reading = Reading::now(db).await;
     let mut readable = Vec::new();
     for key in keys {
-        if ws_server_lite(db, key)
+        if server_lite_now(db, key)
             .await?
             .is_some_and(|lite| reading.reads(&lite))
         {
@@ -1664,7 +1664,7 @@ pub(crate) async fn read_link_channel(
         return Err(not_found());
     }
     if let Some(u) = viewer
-        && ws_banned(db, channel.server().name(), &u.username).await?
+        && is_banned(db, channel.server().name(), &u.username).await?
     {
         return Err(not_found());
     }
@@ -1759,7 +1759,7 @@ async fn channel_list_part(
 impl ResolvedChannel {
     /// The view rules of this channel as stored now.
     pub(crate) async fn view_rules(&self, db: &Db) -> sqlx::Result<ViewRules> {
-        ws_view_rules(db, self.id()).await
+        view_rules(db, self.id()).await
     }
 
     pub fn id(&self) -> i64 {
@@ -2563,6 +2563,7 @@ pub(crate) async fn channel_manager_servers(db: &Db, user: &User) -> sqlx::Resul
 /// Every other answer holds (`None`) until the channel's rules or the viewer's memberships
 /// change. Never answers a client with target data.
 pub(crate) async fn ws_channel_seen(
+    _: &crate::ws::Layer,
     db: &Db,
     server: &str,
     cid: i64,
@@ -2603,13 +2604,19 @@ pub struct ViewRules {
 }
 
 /// The current view rules of channel `cid`, for `ws_view_under` once it is gone.
-pub(crate) async fn ws_view_rules(db: &Db, cid: i64) -> sqlx::Result<ViewRules> {
+#[cfg(test)]
+pub(crate) async fn ws_view_rules(
+    _: &crate::ws::Layer,
+    db: &Db,
+    cid: i64,
+) -> sqlx::Result<ViewRules> {
     view_rules(db, cid).await
 }
 
 /// WS event filtering for a deleted channel: could `username` (or a guest) view a channel of
 /// `server` with these `rules`, under the same rule as `ws_channel_seen`. Never answers a client.
 pub(crate) async fn ws_view_under(
+    _: &crate::ws::Layer,
     db: &Db,
     server: &str,
     rules: &ViewRules,
@@ -2625,6 +2632,7 @@ pub(crate) async fn ws_view_under(
 /// `layout_changed` filtering: whether `username` manages channels in `server`, so it sees
 /// categories without a channel it can view. Guests never do. Never answers a client.
 pub(crate) async fn ws_manages_channels(
+    _: &crate::ws::Layer,
     db: &Db,
     server: &str,
     username: Option<&str>,
@@ -2648,6 +2656,7 @@ pub(crate) async fn ws_manages_channels(
 /// history, otherwise `Some(Some(joined_at))` (now for non-members). Never answers a client
 /// with target data.
 pub(crate) async fn ws_channel_read_since(
+    _: &crate::ws::Layer,
     db: &Db,
     server: &str,
     cid: i64,
@@ -2688,13 +2697,14 @@ pub(crate) async fn ws_channel_read_since(
 /// the rule of `ResolvedChannel::read_since`. `None` when they can't view it (or on any
 /// error), `Some(None)` with read history. Never answers a client with target data.
 pub(crate) async fn ws_read_floor(
+    layer: &crate::ws::Layer,
     db: &Db,
     server: &str,
     cid: i64,
     username: Option<&str>,
 ) -> Option<Option<i64>> {
     match username {
-        Some(name) => ws_channel_read_since(db, server, cid, name).await,
+        Some(name) => ws_channel_read_since(layer, db, server, cid, name).await,
         None => {
             let access = channel_access(db, server, cid, None).await.ok()?;
             match (access.view, access.history) {
@@ -2711,6 +2721,7 @@ pub(crate) async fn ws_read_floor(
 /// thread, `Some(Some(created_at of its root))` for a reply. `None` once the message or its root
 /// is gone. Never answers a client with target data.
 pub(crate) async fn ws_thread_start(
+    _: &crate::ws::Layer,
     db: &Db,
     id: i64,
     root: bool,
@@ -2746,6 +2757,7 @@ pub(crate) async fn ws_thread_start(
 /// Whether `username` (or a guest) can view the channel, with any error meaning "not viewable".
 #[cfg(test)]
 pub(crate) async fn ws_channel_viewable(
+    _: &crate::ws::Layer,
     db: &Db,
     server: &str,
     cid: i64,
@@ -2757,7 +2769,13 @@ pub(crate) async fn ws_channel_viewable(
 /// Voice: whether `username` may be in the voice channel through membership alone: an account
 /// that holds View and Connect there, or a guest who holds Connect and Speak. A site admin gets
 /// no more than a plain member here, so nobody sees them in a voice channel hidden from them.
-pub(crate) async fn ws_voice_viewable(db: &Db, server: &str, cid: i64, username: &str) -> bool {
+pub(crate) async fn ws_voice_viewable(
+    _: &crate::ws::Layer,
+    db: &Db,
+    server: &str,
+    cid: i64,
+    username: &str,
+) -> bool {
     match channel_access_of(db, server, cid, Some(username), true).await {
         Ok((access, true)) => access.holds(masks::VIEW | held::CONNECT),
         Ok((access, false)) => access.holds(masks::VIEW | masks::GUEST_VOICE),
@@ -2767,6 +2785,7 @@ pub(crate) async fn ws_voice_viewable(db: &Db, server: &str, cid: i64, username:
 
 /// Voice: what `username` holds in the channel through membership alone. Nothing on an error.
 pub(crate) async fn ws_voice_rights(
+    _: &crate::ws::Layer,
     db: &Db,
     server: &str,
     cid: i64,
@@ -2781,6 +2800,7 @@ pub(crate) async fn ws_voice_rights(
 /// Voice: which of `users` in the voice channel are muted for everyone there: those who are
 /// timed out in `server` or hold no Speak in the channel.
 pub(crate) async fn ws_voice_silenced(
+    layer: &crate::ws::Layer,
     db: &Db,
     server: &str,
     cid: i64,
@@ -2792,7 +2812,7 @@ pub(crate) async fn ws_voice_silenced(
     for name in users {
         let speaks = match masks.get(name) {
             Some(mask) => mask & held::SPEAK != 0,
-            None => ws_voice_rights(db, server, cid, name)
+            None => ws_voice_rights(layer, db, server, cid, name)
                 .await
                 .holds(held::SPEAK),
         };
@@ -2807,6 +2827,7 @@ pub(crate) async fn ws_voice_silenced(
 /// members permission, or a site admin). A timeout keeps this read-only view (`view_perms`).
 /// Never sent to anyone else.
 pub(crate) async fn ws_sees_timeouts(
+    _: &crate::ws::Layer,
     db: &Db,
     server: &str,
     username: &str,
@@ -2947,7 +2968,7 @@ impl ReportScope {
         channel: Option<(i64, bool)>,
     ) -> Result<bool, ApiError> {
         match &self.server {
-            Some(server) => Ok(ws_sees_reports(db, server, username, channel).await?),
+            Some(server) => Ok(sees_reports_now(db, server, username, channel).await?),
             None => Ok(username == self.viewer),
         }
     }
@@ -2980,6 +3001,16 @@ pub(crate) async fn report_servers(db: &Db, user: &User) -> sqlx::Result<Vec<Str
 /// one that is gone and was open to everyone, unless they manage channels. Being a site admin
 /// gives nothing here: the event would show who they are. Never answers a client.
 pub(crate) async fn ws_sees_reports(
+    _: &crate::ws::Layer,
+    db: &Db,
+    server: &str,
+    username: &str,
+    channel: Option<(i64, bool)>,
+) -> sqlx::Result<bool> {
+    sees_reports_now(db, server, username, channel).await
+}
+
+async fn sees_reports_now(
     db: &Db,
     server: &str,
     username: &str,
@@ -3009,7 +3040,12 @@ pub(crate) async fn ws_sees_reports(
 
 /// WS ban fan-out and `look`: whether `username` is banned from `server`. Only used to drop
 /// events or skip a subscription, never sent to anyone else.
-pub(crate) async fn ws_banned(db: &Db, server: &str, username: &str) -> sqlx::Result<bool> {
+pub(crate) async fn ws_banned(
+    _: &crate::ws::Layer,
+    db: &Db,
+    server: &str,
+    username: &str,
+) -> sqlx::Result<bool> {
     is_banned(db, server, username).await
 }
 
@@ -3033,7 +3069,12 @@ pub(crate) fn typing_scope(scope: &str) -> Option<(&str, i64)> {
     Some((kind, id))
 }
 
-pub(crate) async fn ws_typing_place(db: &Db, username: &str, scope: &str) -> Option<TypingPlace> {
+pub(crate) async fn ws_typing_place(
+    _: &crate::ws::Layer,
+    db: &Db,
+    username: &str,
+    scope: &str,
+) -> Option<TypingPlace> {
     let (kind, id) = typing_scope(scope)?;
     let user = crate::db::get_user(db, username).await.ok()??;
     let display_name = user.display_name.clone();
@@ -3101,6 +3142,7 @@ fn ws_result(res: Result<bool, ApiError>) -> sqlx::Result<bool> {
 }
 
 pub(crate) async fn ws_server_open(
+    _: &crate::ws::Layer,
     db: &Db,
     name: &str,
     username: Option<&str>,
@@ -3117,6 +3159,7 @@ pub(crate) async fn ws_server_open(
 /// When the guest grant `grant` on `server` ends because the extra password it came through
 /// expires (None: no such expiry). Realtime subscriptions recheck at this time.
 pub(crate) async fn ws_grant_deadline(
+    _: &crate::ws::Layer,
     db: &Db,
     server: &str,
     grant: &str,
@@ -3153,6 +3196,7 @@ pub(crate) async fn servers_with_expired_passwords(
 }
 
 pub(crate) async fn ws_voice_channel(
+    _: &crate::ws::Layer,
     db: &Db,
     username: &str,
     id: i64,
@@ -3168,6 +3212,7 @@ pub(crate) async fn ws_voice_channel(
 
 /// The voice channel `id` as a guest holding `grant` (if any) sees it.
 pub(crate) async fn ws_guest_voice_channel(
+    _: &crate::ws::Layer,
     db: &Db,
     id: i64,
     grant: Option<&str>,
@@ -3187,7 +3232,12 @@ pub(crate) async fn ws_guest_voice_channel(
 
 /// Realtime gates and reposts: whether `username` is a member of `server`. Never answers a
 /// client.
-pub(crate) async fn ws_is_member<'e, E>(ex: E, server: &str, username: &str) -> sqlx::Result<bool>
+pub(crate) async fn ws_is_member<'e, E>(
+    _: &crate::ws::Layer,
+    ex: E,
+    server: &str,
+    username: &str,
+) -> sqlx::Result<bool>
 where
     E: sqlx::Executor<'e, Database = sqlx::Any>,
 {
@@ -3197,6 +3247,7 @@ where
 /// Realtime reposts: the admin flag and stored permission bits of `username` in `server`.
 /// Never answers a client.
 pub(crate) async fn ws_member_role<'e, E>(
+    _: &crate::ws::Layer,
     ex: E,
     server: &str,
     username: &str,
@@ -3246,7 +3297,11 @@ where
 
 /// Realtime gates and reposts: the server and current row of channel `id`. Never answers a
 /// client.
-pub(crate) async fn ws_channel_now(db: &Db, id: i64) -> sqlx::Result<Option<(String, Channel)>> {
+pub(crate) async fn ws_channel_now(
+    _: &crate::ws::Layer,
+    db: &Db,
+    id: i64,
+) -> sqlx::Result<Option<(String, Channel)>> {
     let row =
         sqlx::query("SELECT server, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive, text_only, perm_sync FROM channels WHERE id = $1")
             .bind(id)
@@ -3284,7 +3339,15 @@ pub struct ChannelPolicy {
 
 /// Channel rules shared by every connection: whether everyone in the server may view it,
 /// and whether someone who views it can lack read history.
-pub(crate) async fn ws_channel_policy(db: &Db, cid: i64) -> sqlx::Result<Option<ChannelPolicy>> {
+pub(crate) async fn ws_channel_policy(
+    _: &crate::ws::Layer,
+    db: &Db,
+    cid: i64,
+) -> sqlx::Result<Option<ChannelPolicy>> {
+    channel_policy_now(db, cid).await
+}
+
+async fn channel_policy_now(db: &Db, cid: i64) -> sqlx::Result<Option<ChannelPolicy>> {
     let sql = format!(
         "SELECT c.server, CASE WHEN {} THEN 0 ELSE 1 END, CASE WHEN NOT {} OR {} THEN 1 ELSE 0 END FROM channels c WHERE c.id = $1",
         private_sql(),
@@ -3307,7 +3370,7 @@ pub(crate) async fn ws_channel_policy(db: &Db, cid: i64) -> sqlx::Result<Option<
 
 /// Whether someone who views channel `cid` can lack read history there.
 pub(crate) async fn limits_history(db: &Db, cid: i64) -> sqlx::Result<bool> {
-    Ok(ws_channel_policy(db, cid)
+    Ok(channel_policy_now(db, cid)
         .await?
         .is_some_and(|policy| policy.limits_history))
 }
@@ -3315,6 +3378,7 @@ pub(crate) async fn limits_history(db: &Db, cid: i64) -> sqlx::Result<bool> {
 /// Realtime subscription checks: `None` when `server` doesn't exist, otherwise its password
 /// hash. Never answers a client.
 pub(crate) async fn ws_server_password_hash(
+    _: &crate::ws::Layer,
     db: &Db,
     server: &str,
 ) -> sqlx::Result<Option<Option<String>>> {
@@ -3329,7 +3393,16 @@ pub(crate) async fn ws_server_password_hash(
 
 /// Event rewrites: the summary of server `name`, `None` when it doesn't exist or is being purged.
 /// Never answers a client.
-pub(crate) async fn ws_server_lite(db: &Db, name: &str) -> sqlx::Result<Option<ServerSummaryLite>> {
+pub(crate) async fn ws_server_lite(
+    _: &crate::ws::Layer,
+    db: &Db,
+    name: &str,
+) -> sqlx::Result<Option<ServerSummaryLite>> {
+    server_lite_now(db, name).await
+}
+
+/// The summary of server `name`, `None` when it doesn't exist or is being purged.
+async fn server_lite_now(db: &Db, name: &str) -> sqlx::Result<Option<ServerSummaryLite>> {
     let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {LITE_COLUMNS} FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'"
     )))
@@ -3343,7 +3416,11 @@ pub(crate) async fn ws_server_lite(db: &Db, name: &str) -> sqlx::Result<Option<S
 }
 
 /// The servers `user` is a member of. Never answers a client.
-pub(crate) async fn ws_member_servers(db: &Db, user: &str) -> sqlx::Result<HashSet<String>> {
+pub(crate) async fn ws_member_servers(
+    _: &crate::ws::Layer,
+    db: &Db,
+    user: &str,
+) -> sqlx::Result<HashSet<String>> {
     Ok(
         sqlx::query("SELECT server FROM members WHERE username = $1")
             .bind(user)
@@ -3357,7 +3434,11 @@ pub(crate) async fn ws_member_servers(db: &Db, user: &str) -> sqlx::Result<HashS
 
 /// Which of `servers` keep their members to themselves (`members_visible` off). Never answers a
 /// client.
-pub(crate) async fn ws_closed_servers(db: &Db, servers: &[&str]) -> sqlx::Result<HashSet<String>> {
+pub(crate) async fn ws_closed_servers(
+    _: &crate::ws::Layer,
+    db: &Db,
+    servers: &[&str],
+) -> sqlx::Result<HashSet<String>> {
     if servers.is_empty() {
         return Ok(HashSet::new());
     }
@@ -3390,7 +3471,11 @@ pub(crate) async fn presence_mode(db: &Db, user: &str) -> sqlx::Result<Option<(b
 
 /// `p2p_who` and `p2p_peer`: whether `hoster` appears offline, `None` for no such account.
 /// Never answers a client.
-pub(crate) async fn ws_appear_offline(db: &Db, hoster: &str) -> sqlx::Result<Option<bool>> {
+pub(crate) async fn ws_appear_offline(
+    _: &crate::ws::Layer,
+    db: &Db,
+    hoster: &str,
+) -> sqlx::Result<Option<bool>> {
     sqlx::query("SELECT appear_offline FROM users WHERE username = $1")
         .bind(hoster)
         .fetch_optional(db)
@@ -3400,7 +3485,12 @@ pub(crate) async fn ws_appear_offline(db: &Db, hoster: &str) -> sqlx::Result<Opt
 }
 
 /// `p2p_who`: whether `a` and `b` have a DM. Never answers a client.
-pub(crate) async fn ws_dm_between(db: &Db, a: &str, b: &str) -> sqlx::Result<bool> {
+pub(crate) async fn ws_dm_between(
+    _: &crate::ws::Layer,
+    db: &Db,
+    a: &str,
+    b: &str,
+) -> sqlx::Result<bool> {
     Ok(sqlx::query(
         "SELECT 1 FROM dms WHERE (user_a = $1 AND user_b = $2) OR (user_a = $2 AND user_b = $1)",
     )
@@ -3414,6 +3504,7 @@ pub(crate) async fn ws_dm_between(db: &Db, a: &str, b: &str) -> sqlx::Result<boo
 /// Calls: the two people of DM `dm_id`, `None` where `resolve_dm` answers 404 to `user`.
 /// Never answers a client.
 pub(crate) async fn ws_dm_users(
+    _: &crate::ws::Layer,
     db: &Db,
     dm_id: i64,
     user: &str,
@@ -3427,7 +3518,11 @@ pub(crate) async fn ws_dm_users(
 /// `p2p_peer`: the live P2P attachment of message `message_id`, with columns media_id,
 /// channel_id, server, user_a, user_b, created_at, media_hoster and media_expires_at. The
 /// caller checks who may read it. Never answers a client.
-pub(crate) async fn ws_p2p_message(db: &Db, message_id: i64) -> sqlx::Result<Option<AnyRow>> {
+pub(crate) async fn ws_p2p_message(
+    _: &crate::ws::Layer,
+    db: &Db,
+    message_id: i64,
+) -> sqlx::Result<Option<AnyRow>> {
     sqlx::query(
         "SELECT m.media_id, m.channel_id, c.server, d.user_a, d.user_b, m.created_at, m.media_hoster, m.media_expires_at FROM messages m LEFT JOIN channels c ON c.id = m.channel_id LEFT JOIN dms d ON d.id = m.dm_id WHERE m.id = $1 AND m.media_kind = 'p2p' AND m.media_removed = 0",
     )
@@ -3441,7 +3536,13 @@ pub(crate) async fn ws_p2p_message(db: &Db, message_id: i64) -> sqlx::Result<Opt
 /// `staff.view_server` entry for a server they are no member of). What only instance powers
 /// show stays shut until a confirmation. Any refusal or failure is `false`. Never answers a
 /// client with target data.
-pub(crate) async fn ws_staff_file(db: &Db, admin: &str, id: i64, file: &str) -> bool {
+pub(crate) async fn ws_staff_file(
+    _: &crate::ws::Layer,
+    db: &Db,
+    admin: &str,
+    id: i64,
+    file: &str,
+) -> bool {
     let Ok(Some(user)) = crate::db::get_user(db, admin).await else {
         return false;
     };
@@ -3462,6 +3563,7 @@ pub(crate) async fn ws_staff_file(db: &Db, admin: &str, id: i64, file: &str) -> 
 /// channel_id, server, user_a, user_b and created_at. The caller checks who may read them.
 /// Never answers a client.
 pub(crate) async fn ws_hosted_messages(
+    _: &crate::ws::Layer,
     db: &Db,
     hoster: &str,
     ids: &[String],
@@ -3483,7 +3585,12 @@ pub(crate) async fn ws_hosted_messages(
 /// `p2p_hosting`: which of `ids` are live P2P attachments hosted by `user`: not removed, not
 /// expired. `None` when the database can't say, so nothing is dropped by mistake. Never answers
 /// a client.
-pub(crate) async fn ws_live_hosted(db: &Db, user: &str, ids: &[String]) -> Option<Vec<String>> {
+pub(crate) async fn ws_live_hosted(
+    _: &crate::ws::Layer,
+    db: &Db,
+    user: &str,
+    ids: &[String],
+) -> Option<Vec<String>> {
     if ids.is_empty() {
         return Some(Vec::new());
     }
@@ -3574,206 +3681,6 @@ mod tests {
 
     fn diff(after: (u64, u64), before: (u64, u64)) -> (u64, u64) {
         (after.0 - before.0, after.1 - before.1)
-    }
-
-    const GATE_ONLY: [&str; 8] = [
-        "effective_perms(",
-        "member_perms(db",
-        "has_perm(db",
-        "channel_access(",
-        "channel_viewable(",
-        "manages_channels(db",
-        "is_banned(",
-        "live_grant_servers(",
-    ];
-
-    fn free_calls<'a>(code: &'a str, token: &'a str) -> impl Iterator<Item = usize> + 'a {
-        code.match_indices(token).map(|(at, _)| at).filter(|&at| {
-            !code[..at].ends_with("fn ")
-                && !code[..at]
-                    .chars()
-                    .next_back()
-                    .is_some_and(|c| c == '.' || c == '_' || c.is_alphanumeric())
-        })
-    }
-
-    fn calls(code: &str, token: &str) -> bool {
-        free_calls(code, token).next().is_some()
-    }
-
-    fn ident(text: &str) -> &str {
-        let end = text
-            .find(|c: char| c != '_' && !c.is_alphanumeric())
-            .unwrap_or(text.len());
-        &text[..end]
-    }
-
-    /// The calls in `code` (of `file`, under `src/`) that reach server data around the gate.
-    fn bypasses(file: &str, code: &str) -> Vec<String> {
-        let mut found: Vec<String> = GATE_ONLY
-            .iter()
-            .filter(|token| calls(code, token))
-            .map(|token| token.to_string())
-            .collect();
-        if file.starts_with("ws/") {
-            return found;
-        }
-        if file != "api/mod.rs" && calls(code, "token_row(") {
-            found.push("token_row(".to_string());
-        }
-        for (at, _) in code.match_indices(" as ") {
-            let name = code[..at]
-                .rsplit(|c: char| c != '_' && !c.is_alphanumeric())
-                .next()
-                .unwrap_or_default();
-            let renamed = name.starts_with("ws_")
-                || name == "is_member"
-                || name == "member_role"
-                || (name == "token_row" && file != "api/mod.rs");
-            if renamed {
-                found.push(format!("{name} as"));
-            }
-        }
-        let checks = free_calls(code, "ws_").filter_map(|at| {
-            let name = ident(&code[at..]);
-            let rest = &code[at + name.len()..];
-            (rest.starts_with('(') || rest.starts_with("::<")).then(|| (at, format!("{name}(")))
-        });
-        let members = ["is_member(", "member_role("]
-            .into_iter()
-            .flat_map(|token| free_calls(code, token).map(move |at| (at, token.to_string())));
-        for (at, call) in checks.chain(members) {
-            let within = code[..at]
-                .rsplit_once("fn ")
-                .map_or("", |(_, rest)| ident(rest));
-            found.push(format!("{call} in {within}"));
-        }
-        found
-    }
-
-    /// The code outside test modules of every source file but the gate's own.
-    fn sources(dir: &std::path::Path, root: &std::path::Path, found: &mut Vec<(String, String)>) {
-        for entry in std::fs::read_dir(dir).expect("read src") {
-            let path = entry.expect("entry").path();
-            let file = path
-                .strip_prefix(root)
-                .expect("under src")
-                .to_string_lossy()
-                .replace('\\', "/");
-            let name = path.file_name().and_then(|n| n.to_str());
-            match path.extension().and_then(|e| e.to_str()) {
-                _ if name == Some("tests") || name == Some("tests.rs") => {}
-                _ if file == "api/access" || file == "api/access.rs" => {}
-                _ if path.is_dir() => sources(&path, root, found),
-                Some("rs") => {
-                    let src = std::fs::read_to_string(&path).expect("read");
-                    found.push((file, crate::api::test_util::non_test_code(&src)));
-                }
-                _ => {}
-            }
-        }
-    }
-
-    #[test]
-    fn the_gate_lint_sees_free_calls_only() {
-        assert!(calls("let b = is_banned(db, s, u)", "is_banned("));
-        assert!(calls("crate::api::token_row(db, t)", "token_row("));
-        assert!(!calls("access.has_perm(db, p)", "has_perm(db"));
-        assert!(!calls("ws_banned(db, s, u)", "is_banned("));
-        assert!(!calls("pub fn ws_limits(&self) -> Limits", "ws_limits("));
-        assert!(!calls(
-            "ws_channel_viewable(db, s, c, u)",
-            "channel_viewable("
-        ));
-    }
-
-    #[test]
-    fn the_gate_lint_catches_bypasses() {
-        let caught = [
-            ("api/polls.rs", "let lite = ws_server_lite(db, name)"),
-            ("api/polls.rs", "crate::api::access::ws_channel_now(db, id)"),
-            ("fanout.rs", "let pair = ws_dm_users::<Db>(db, id)"),
-            ("api/auth.rs", "let row = crate::api::token_row(db, token)"),
-            ("api/polls.rs", "async fn vote() { is_member(db, s, u) }"),
-            ("api/servers.rs", "async fn kick() { is_member(db, s, u) }"),
-            (
-                "api/servers.rs",
-                "fn set_admin() {}\nfn kick() { member_role(db, s, u) }",
-            ),
-            (
-                "api/servers.rs",
-                "async fn create_channel() { ws_view_rules(db, id) }",
-            ),
-            ("ws/conn.rs", "let b = is_banned(db, s, u)"),
-            (
-                "api/servers.rs",
-                "async fn insert_member_locked() { is_member(&mut *tx, s, u) }",
-            ),
-            (
-                "api/servers.rs",
-                "async fn set_admin() { member_role(&mut *tx, s, u) }",
-            ),
-            (
-                "api/servers.rs",
-                "async fn delete_channel() { ws_view_rules(db, id) }",
-            ),
-            (
-                "api/pins.rs",
-                "use crate::api::access::ws_channel_now as channel_row;\nfn f() { channel_row(db, id) }",
-            ),
-            (
-                "api/polls.rs",
-                "use crate::api::access::{is_member as member, ServerAccess};",
-            ),
-            ("api/auth.rs", "use crate::api::token_row as row;"),
-        ];
-        for (file, code) in caught {
-            assert!(!bypasses(file, code).is_empty(), "{file}: {code}");
-        }
-        let allowed = [
-            ("ws/repost.rs", "ws_server_lite(db, name)"),
-            ("ws/conn.rs", "token_row(db, token)"),
-            (
-                "api/mod.rs",
-                "pub(crate) async fn token_row(db: &Db) { token_row(db) }",
-            ),
-            ("ws/filter.rs", "match ws_is_member(db, server, user)"),
-            (
-                "api/servers.rs",
-                "if access.member_in(&mut *tx, u).await? { access.role_in(&mut *tx, u) }",
-            ),
-            ("api/servers.rs", "channel.view_rules(db)"),
-            ("limits.rs", "pub fn ws_limits(&self) -> Limits {"),
-            ("api/servers.rs", "if access.is_member() { news_feed(db) }"),
-        ];
-        for (file, code) in allowed {
-            assert_eq!(bypasses(file, code), Vec::<String>::new(), "{file}: {code}");
-        }
-    }
-
-    #[test]
-    fn handlers_only_reach_servers_through_the_gate() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut files = Vec::new();
-        sources(&root, &root, &mut files);
-        let names: Vec<&str> = files.iter().map(|(file, _)| file.as_str()).collect();
-        for file in ["api/polls.rs", "bin/server.rs", "db/mod.rs", "ws/conn.rs"] {
-            assert!(names.contains(&file), "{file} is scanned");
-        }
-        assert!(!names.iter().any(|file| file.starts_with("api/access")));
-        let found: Vec<String> = files
-            .iter()
-            .flat_map(|(file, code)| {
-                bypasses(file, code)
-                    .into_iter()
-                    .map(move |b| format!("{file}: {b}"))
-            })
-            .collect();
-        assert!(
-            found.is_empty(),
-            "calls around the gate:\n{}",
-            found.join("\n")
-        );
     }
 
     #[tokio::test]
@@ -5392,9 +5299,16 @@ mod tests {
             let found = get("/server_search?q=ope", who, &[]).await;
             assert_eq!(json(&found)[0]["name"], "open", "{who:?}");
             assert!(
-                ws_server_open(db, "open", who, false, &Proof::none())
-                    .await
-                    .expect("gate"),
+                ws_server_open(
+                    crate::ws::Layer::for_tests(),
+                    db,
+                    "open",
+                    who,
+                    false,
+                    &Proof::none()
+                )
+                .await
+                .expect("gate"),
                 "{who:?} follows it live"
             );
         }
@@ -5488,9 +5402,16 @@ mod tests {
                 let found = get("/server_search?q=ope", who, &[]).await;
                 assert_eq!(answer(&found), (200, b"[]".as_slice()), "{mode}: {who:?}");
                 assert!(
-                    !ws_server_open(db, "open", who, false, &Proof::none())
-                        .await
-                        .expect("gate"),
+                    !ws_server_open(
+                        crate::ws::Layer::for_tests(),
+                        db,
+                        "open",
+                        who,
+                        false,
+                        &Proof::none()
+                    )
+                    .await
+                    .expect("gate"),
                     "{mode}: {who:?} can't follow it live"
                 );
                 let card = get("/invites/vault", who, &[("x-invite-password", "pw")]).await;
@@ -5526,9 +5447,16 @@ mod tests {
             let found = get("/server_search?q=ope", Some("bob"), &[]).await;
             assert_eq!(json(&found)[0]["name"], "open", "{mode}: a member finds it");
             assert!(
-                ws_server_open(db, "open", Some("bob"), false, &Proof::none())
-                    .await
-                    .expect("gate")
+                ws_server_open(
+                    crate::ws::Layer::for_tests(),
+                    db,
+                    "open",
+                    Some("bob"),
+                    false,
+                    &Proof::none()
+                )
+                .await
+                .expect("gate")
             );
             assert_eq!(
                 get("/servers/open", Some("root"), &[]).await.0,
@@ -5661,9 +5589,16 @@ mod tests {
                                 }
                             }
                             assert_eq!(
-                                ws_server_open(db, name, who, false, &Proof::none())
-                                    .await
-                                    .expect("gate"),
+                                ws_server_open(
+                                    crate::ws::Layer::for_tests(),
+                                    db,
+                                    name,
+                                    who,
+                                    false,
+                                    &Proof::none()
+                                )
+                                .await
+                                .expect("gate"),
                                 readable,
                                 "{at}: {who:?} follows it live"
                             );

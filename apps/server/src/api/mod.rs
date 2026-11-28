@@ -2175,13 +2175,23 @@ fn auth_unavailable(e: sqlx::Error) -> ApiError {
     ApiError::unavailable(AUTH_UNAVAILABLE, None)
 }
 
+/// The realtime sign-in and session checks: `token_row` for the socket layer.
+pub(crate) async fn socket_session(
+    _: &crate::ws::Layer,
+    db: &Db,
+    limits: &crate::limits::Limits,
+    token: &str,
+) -> sqlx::Result<Option<AnyRow>> {
+    token_row(db, limits, token).await
+}
+
 /// The account row (`users.*`, plus the session's `session_created_at`) holding session
 /// `token`, `None` when no live account has it. REST sign-in and the realtime sign-in and
 /// session checks all use it. Never answers a client.
 /// The account row of session `token`, with `session_created_at`: `None` for an unknown
 /// token, an account being deleted, or a session past `SESSION_MAX_AGE_SECS` or idle past
 /// `SESSION_IDLE_SECS`.
-pub(crate) async fn token_row(
+async fn token_row(
     db: &Db,
     limits: &crate::limits::Limits,
     token: &str,

@@ -36,7 +36,7 @@ pub(super) async fn on_event(
     }
     if let (Some(server), Some(user)) = (self_grant(ev, access.user.as_deref()), &access.user) {
         let started = Instant::now();
-        match ws_is_member(&state.read(), server, user).await {
+        match ws_is_member(&crate::ws::LAYER, &state.read(), server, user).await {
             Ok(true) => {}
             Ok(false) => return Some(false),
             Err(e) => return access.hold(e, started).then_some(false),
@@ -55,7 +55,15 @@ pub(super) async fn on_event(
         && me != username
     {
         let started = Instant::now();
-        match ws_sees_timeouts(&state.read(), server, me, access.site_admin).await {
+        match ws_sees_timeouts(
+            &crate::ws::LAYER,
+            &state.read(),
+            server,
+            me,
+            access.site_admin,
+        )
+        .await
+        {
             Ok(sees) => deliver = sees,
             Err(e) => return access.hold(e, started).then_some(false),
         }
@@ -69,7 +77,7 @@ pub(super) async fn on_event(
         && let Some(me) = access.user.as_deref()
     {
         let started = Instant::now();
-        match ws_sees_reports(&state.read(), server, me, *channel).await {
+        match ws_sees_reports(&crate::ws::LAYER, &state.read(), server, me, *channel).await {
             Ok(sees) => deliver = sees,
             Err(e) => return access.hold(e, started).then_some(false),
         }

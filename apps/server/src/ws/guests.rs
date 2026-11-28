@@ -145,14 +145,21 @@ pub(super) async fn guest_voice(
 
 async fn admit(state: &AppState, access: &Access, channel_id: i64) -> Result<String, Refused> {
     let gone = || Refused::from("Channel not found");
-    let Some((server, _)) = ws_channel_now(&state.db, channel_id).await? else {
+    let Some((server, _)) = ws_channel_now(&crate::ws::LAYER, &state.db, channel_id).await? else {
         return Err(gone());
     };
     if !access.subs.contains(&server) {
         return Err(gone());
     }
     let grant = access.grants.get(&server).map(String::as_str);
-    let channel = ws_guest_voice_channel(&state.db, channel_id, grant, &state.limits).await?;
+    let channel = ws_guest_voice_channel(
+        &crate::ws::LAYER,
+        &state.db,
+        channel_id,
+        grant,
+        &state.limits,
+    )
+    .await?;
     if channel.kind() != ChannelKind::Voice {
         return Err("Not a voice channel".into());
     }

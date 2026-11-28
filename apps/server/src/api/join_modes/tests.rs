@@ -654,7 +654,7 @@ async fn servers_from_before_join_modes_read_their_mode_from_the_password() {
             "{key}: nothing is written"
         );
     }
-    let lite = crate::api::access::ws_server_lite(db, "inv")
+    let lite = crate::api::access::ws_server_lite(crate::ws::Layer::for_tests(), db, "inv")
         .await
         .expect("lite")
         .expect("found");

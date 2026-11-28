@@ -203,7 +203,8 @@ pub(super) async fn voice_msg(
             deafened,
         } => {
             switched_on(state, CallKind::Rtc).await?;
-            let channel = ws_voice_channel(&state.read(), user, channel_id).await?;
+            let channel =
+                ws_voice_channel(&crate::ws::LAYER, &state.read(), user, channel_id).await?;
             if channel.kind() != ChannelKind::Voice {
                 return Err("Not a voice channel".into());
             }
@@ -277,7 +278,7 @@ pub(super) async fn voice_msg(
             if !state.hub.call_ok(user, dm_id) {
                 return Err(CALLING_TOO_OFTEN.into());
             }
-            let (a, b) = ws_dm_users(&state.read(), dm_id, user)
+            let (a, b) = ws_dm_users(&crate::ws::LAYER, &state.read(), dm_id, user)
                 .await?
                 .ok_or_else(|| "DM not found".to_string())?;
             if a == b {
@@ -329,7 +330,7 @@ pub(super) async fn voice_msg(
             if !state.hub.accept_ok(user) {
                 return Err(TOO_FAST.into());
             }
-            let (a, b) = ws_dm_users(&state.read(), dm_id, user)
+            let (a, b) = ws_dm_users(&crate::ws::LAYER, &state.read(), dm_id, user)
                 .await?
                 .ok_or_else(|| "No incoming call".to_string())?;
             let ringing = state.hub.call_kind(dm_id);
@@ -419,7 +420,7 @@ pub(super) async fn relay_signal(
         {
             return Err(crate::api::access::TIMED_OUT.into());
         }
-        if !ws_voice_rights(&state.read(), &server, cid, user)
+        if !ws_voice_rights(&crate::ws::LAYER, &state.read(), &server, cid, user)
             .await
             .holds(held::VIDEO)
         {
@@ -480,9 +481,10 @@ pub(super) async fn send_voice_snapshot(state: &AppState, out: &Out, access: &mu
         } = &ev
             && !users.is_empty()
         {
-            let muted = ws_voice_silenced(&state.read(), server, *channel_id, users)
-                .await
-                .unwrap_or_default();
+            let muted =
+                ws_voice_silenced(&crate::ws::LAYER, &state.read(), server, *channel_id, users)
+                    .await
+                    .unwrap_or_default();
             for username in users.iter().filter(|u| muted.contains(*u)) {
                 let ev = WsEvent::VoiceMuted {
                     server: server.clone(),

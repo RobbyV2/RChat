@@ -555,10 +555,18 @@ async fn paths_agree(db: &Db, w: &World, stored: Option<i64>, model: bool) {
                 let held = [sql[0], sql[0] && sql[1], sql[0] && sql[2]];
                 assert_eq!(held, [view, send, history], "overwrite_sql: {what}");
             }
-            let rules = ws_view_rules(db, *id).await.expect("view rules");
-            let under = ws_view_under(db, SERVER, &rules, viewer.map(|p| p.name))
+            let rules = ws_view_rules(crate::ws::Layer::for_tests(), db, *id)
                 .await
-                .expect("view under");
+                .expect("view rules");
+            let under = ws_view_under(
+                crate::ws::Layer::for_tests(),
+                db,
+                SERVER,
+                &rules,
+                viewer.map(|p| p.name),
+            )
+            .await
+            .expect("view under");
             assert_eq!(under, view, "view_under: {what}");
         }
     }
@@ -586,7 +594,7 @@ async fn paths_agree(db: &Db, w: &World, stored: Option<i64>, model: bool) {
             .collect();
         let denied = |bit: Mask| others.iter().any(|o| o.deny & bit != 0);
         let public = stage & V != 0 && !denied(V);
-        let policy = ws_channel_policy(db, *id)
+        let policy = ws_channel_policy(crate::ws::Layer::for_tests(), db, *id)
             .await
             .expect("policy")
             .expect("channel");
@@ -881,7 +889,9 @@ async fn hosted_cases_hold_through_the_gate() {
                     let stand = standing(db, SERVER, user.as_ref(), caps)
                         .await
                         .expect("standing");
-                    let rules = ws_view_rules(db, cid).await.expect("rules");
+                    let rules = ws_view_rules(crate::ws::Layer::for_tests(), db, cid)
+                        .await
+                        .expect("rules");
                     channel_mask(
                         &rules.rules,
                         &stand,
@@ -1369,7 +1379,9 @@ mod rest {
             let policy = async || {
                 let slot = state.hub.channels().slot(c.channel);
                 let policy = slot
-                    .get_or_try_init(|| ws_channel_policy(db, c.channel))
+                    .get_or_try_init(|| {
+                        ws_channel_policy(crate::ws::Layer::for_tests(), db, c.channel)
+                    })
                     .await
                     .expect("policy");
                 policy.as_ref().map(|p| (p.public_view, p.limits_history))
@@ -1382,7 +1394,7 @@ mod rest {
             );
             assert_eq!(policy().await, Some((false, true)), "the kept policy");
             assert_eq!(
-                ws_channel_policy(db, c.channel)
+                ws_channel_policy(crate::ws::Layer::for_tests(), db, c.channel)
                     .await
                     .expect("fresh")
                     .map(|p| (p.public_view, p.limits_history)),

@@ -287,6 +287,7 @@ impl Seat<'_> {
                     return false;
                 }
                 let Ok(silenced) = crate::api::access::ws_voice_silenced(
+                    &crate::ws::LAYER,
                     &self.state.db,
                     self.server,
                     self.channel,

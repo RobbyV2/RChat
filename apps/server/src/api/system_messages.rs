@@ -909,10 +909,26 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(events[0].ends_with(&format!("c{:?}={:?}", Some(random), Some(random))));
         assert!(
-            !crate::api::access::ws_channel_viewable(db, "club", random, Some("carol")).await,
+            !crate::api::access::ws_channel_viewable(
+                crate::ws::Layer::for_tests(),
+                db,
+                "club",
+                random,
+                Some("carol")
+            )
+            .await,
             "the channel gate drops the broadcast for carol"
         );
-        assert!(crate::api::access::ws_channel_viewable(db, "club", random, Some("bob")).await);
+        assert!(
+            crate::api::access::ws_channel_viewable(
+                crate::ws::Layer::for_tests(),
+                db,
+                "club",
+                random,
+                Some("bob")
+            )
+            .await
+        );
         match list(&state, "carol", random).await {
             Err(ApiError(code, _, _)) => assert_eq!(code, StatusCode::NOT_FOUND),
             Ok(_) => panic!("carol read the restricted channel"),

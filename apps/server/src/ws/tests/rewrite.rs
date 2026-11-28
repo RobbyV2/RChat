@@ -461,8 +461,14 @@ async fn channel_events_reach_only_viewers_with_their_own_positions() {
     .await;
     let after = insert_id(db, "INSERT INTO channels(server, name, created_at, position) VALUES('open', 'after', 1, 2) RETURNING id").await;
     exec(db, "UPDATE channels SET position = 1 WHERE name = 'secret'").await;
-    let (_, hidden) = ws_channel_now(db, secret).await.unwrap().unwrap();
-    let (_, shown) = ws_channel_now(db, after).await.unwrap().unwrap();
+    let (_, hidden) = ws_channel_now(&crate::ws::LAYER, db, secret)
+        .await
+        .unwrap()
+        .unwrap();
+    let (_, shown) = ws_channel_now(&crate::ws::LAYER, db, after)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(shown.position, 2);
     let layout = crate::api::categories::current_layout(db, "open")
         .await
@@ -572,8 +578,10 @@ async fn channel_deleted_reaches_only_those_who_could_view_it() {
         .execute(db)
         .await
         .unwrap();
-    let rules = crate::api::access::ws_view_rules(db, secret).await.unwrap();
-    let open = crate::api::access::ws_view_rules(db, general)
+    let rules = crate::api::access::ws_view_rules(&crate::ws::LAYER, db, secret)
+        .await
+        .unwrap();
+    let open = crate::api::access::ws_view_rules(&crate::ws::LAYER, db, general)
         .await
         .unwrap();
     let mut warm_nora = Access::new(Some(s("nora")), false, set(&["open"]));
@@ -673,8 +681,12 @@ async fn deleting_a_hidden_channel_sends_its_non_viewers_no_layout() {
         .execute(db)
         .await
         .unwrap();
-    let rules = crate::api::access::ws_view_rules(db, secret).await.unwrap();
-    let shown = crate::api::access::ws_view_rules(db, after).await.unwrap();
+    let rules = crate::api::access::ws_view_rules(&crate::ws::LAYER, db, secret)
+        .await
+        .unwrap();
+    let shown = crate::api::access::ws_view_rules(&crate::ws::LAYER, db, after)
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM channels WHERE id = $1")
         .bind(secret)
         .execute(db)

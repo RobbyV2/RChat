@@ -23,7 +23,7 @@ use crate::api::access::{
     ws_server_password_hash, ws_thread_start, ws_view_under,
 };
 use crate::api::policy::{ServerJoining, TempChange};
-use crate::api::{Settings, restricted, token_row};
+use crate::api::{Settings, restricted, socket_session};
 use crate::db::{Db, User, now, setting_on};
 use crate::fanout::Topic;
 use crate::hub::{Epoch, Hub, PRESENCE_SERVERS_MAX, Scope};
@@ -640,7 +640,7 @@ impl Access {
         let slot = state.hub.channels().slot(cid);
         let db = state.read();
         let policy = slot
-            .get_or_try_init(|| ws_channel_policy(&db, cid))
+            .get_or_try_init(|| ws_channel_policy(&crate::ws::LAYER, &db, cid))
             .await
             .ok()?
             .as_ref()?;
@@ -655,7 +655,14 @@ impl Access {
         {
             return *floor;
         }
-        let floor = crate::api::access::ws_read_floor(&db, server, cid, self.user.as_deref()).await;
+        let floor = crate::api::access::ws_read_floor(
+            &crate::ws::LAYER,
+            &db,
+            server,
+            cid,
+            self.user.as_deref(),
+        )
+        .await;
         if self.floors.len() > 1000 {
             self.floors.clear();
         }
@@ -674,7 +681,7 @@ impl Access {
             InThread::Root(id) => (id, true),
             InThread::Of(id) => (id, false),
         };
-        let rooted = match ws_thread_start(db, id, root).await? {
+        let rooted = match ws_thread_start(&crate::ws::LAYER, db, id, root).await? {
             Some(None) => Rooted::Top,
             Some(Some(at)) => Rooted::At(at),
             None => Rooted::Gone,
@@ -724,7 +731,7 @@ impl Access {
             self.rosterless.clear();
             return;
         }
-        self.closed = match ws_closed_servers(db, &outside).await {
+        self.closed = match ws_closed_servers(&crate::ws::LAYER, db, &outside).await {
             Ok(closed) => closed,
             Err(_) => outside.into_iter().map(str::to_string).collect(),
         };
@@ -738,11 +745,19 @@ impl Access {
             Some(on) => on,
             None => Settings::cached(db).await.member_lists,
         };
-        self.rosterless =
-            match ws_rosterless(db, self.user.as_deref(), self.site_admin, &held, site).await {
-                Ok(hidden) => hidden,
-                Err(_) => held.into_iter().map(str::to_string).collect(),
-            };
+        self.rosterless = match ws_rosterless(
+            &crate::ws::LAYER,
+            db,
+            self.user.as_deref(),
+            self.site_admin,
+            &held,
+            site,
+        )
+        .await
+        {
+            Ok(hidden) => hidden,
+            Err(_) => held.into_iter().map(str::to_string).collect(),
+        };
     }
 
     /// Whether this connection gets no member list of `server`: it reads it from outside while
@@ -1000,7 +1015,7 @@ pub(super) async fn socket_account(
     limits: &Limits,
     token: &str,
 ) -> sqlx::Result<SocketAccount> {
-    let Some(row) = token_row(db, limits, token).await? else {
+    let Some(row) = socket_session(&crate::ws::LAYER, db, limits, token).await? else {
         return Ok(SocketAccount::Missing);
     };
     let user = User::from_row(&row)?;
@@ -1031,7 +1046,10 @@ pub(super) async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::
             let Some(mode) = presence_mode(&state.db, user).await? else {
                 return Ok(false);
             };
-            (ws_member_servers(db, user).await?, Some(mode))
+            (
+                ws_member_servers(&crate::ws::LAYER, db, user).await?,
+                Some(mode),
+            )
         }
         None => {
             if !setting_on(db, "guests_enabled").await? {
@@ -1094,7 +1112,7 @@ pub(super) async fn grant_deadlines(
 ) -> sqlx::Result<HashMap<String, i64>> {
     let mut deadlines = HashMap::new();
     for (server, grant) in grants {
-        if let Some(at) = ws_grant_deadline(db, server, grant).await? {
+        if let Some(at) = ws_grant_deadline(&crate::ws::LAYER, db, server, grant).await? {
             deadlines.insert(server.clone(), at);
         }
     }
@@ -1107,12 +1125,17 @@ pub(super) async fn still_held(
     name: &str,
     limits: &Limits,
 ) -> sqlx::Result<bool> {
-    if ws_server_password_hash(db, name).await?.is_none() {
+    if ws_server_password_hash(&crate::ws::LAYER, db, name)
+        .await?
+        .is_none()
+    {
         return Ok(true);
     }
     match &access.user {
         Some(user) => {
-            if access.member_servers.contains(name) && !ws_is_member(db, name, user).await? {
+            if access.member_servers.contains(name)
+                && !ws_is_member(&crate::ws::LAYER, db, name, user).await?
+            {
                 return Ok(false);
             }
             authed_sub_ok(db, name, user, access.site_admin).await
@@ -1129,10 +1152,10 @@ async fn channel_view(
     username: Option<&str>,
     cid: i64,
 ) -> sqlx::Result<Option<(String, bool, Option<i64>)>> {
-    let Some((owner, _)) = ws_channel_now(db, cid).await? else {
+    let Some((owner, _)) = ws_channel_now(&crate::ws::LAYER, db, cid).await? else {
         return Ok(None);
     };
-    let (view, until) = ws_channel_seen(db, &owner, cid, username).await?;
+    let (view, until) = ws_channel_seen(&crate::ws::LAYER, db, &owner, cid, username).await?;
     Ok(Some((owner, view, until)))
 }
 
@@ -1148,7 +1171,9 @@ pub(super) async fn channel_gate(
     let started = Instant::now();
     let slot = state.hub.channels().slot(cid);
     let read = state.read();
-    let shared = slot.get_or_try_init(|| ws_channel_policy(&read, cid)).await;
+    let shared = slot
+        .get_or_try_init(|| ws_channel_policy(&crate::ws::LAYER, &read, cid))
+        .await;
     let looked = match shared {
         Ok(Some(policy)) if policy.public_view => Ok(Some((policy.server.clone(), true, None))),
         Ok(Some(_)) => channel_view(&read, access.user.as_deref(), cid).await,
@@ -1183,7 +1208,15 @@ pub(super) async fn deleted_gate(
         return Some(false);
     };
     let started = Instant::now();
-    match ws_view_under(&state.read(), server, rules, access.user.as_deref()).await {
+    match ws_view_under(
+        &crate::ws::LAYER,
+        &state.read(),
+        server,
+        rules,
+        access.user.as_deref(),
+    )
+    .await
+    {
         Ok(view) => Some(view),
         Err(e) => access.hold(e, started).then_some(false),
     }

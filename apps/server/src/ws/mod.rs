@@ -38,6 +38,19 @@ pub use repost::{
     announce_expired_passwords, announce_purge, depart, settle, spawn_aftermath, sweep_and_log,
 };
 
+/// Proof that the caller is the socket layer. Only code in `ws` can make one, so the gate's
+/// socket predicates and the socket session lookup cannot be called from anywhere else.
+pub struct Layer(());
+
+pub(in crate::ws) const LAYER: Layer = Layer(());
+
+#[cfg(test)]
+impl Layer {
+    pub(crate) fn for_tests() -> &'static Layer {
+        &LAYER
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CallPhase {
@@ -101,17 +114,24 @@ pub(crate) async fn evict_unviewable(state: &AppState, server: &str, channel_id:
 
 /// Whether voice channel `cid` belongs to a server other than `server` now.
 async fn moved_away(state: &AppState, server: &str, cid: i64) -> bool {
-    matches!(ws_channel_now(&state.read(), cid).await, Ok(Some((owner, _))) if owner != server)
+    matches!(ws_channel_now(&crate::ws::LAYER, &state.read(), cid).await, Ok(Some((owner, _))) if owner != server)
 }
 
 /// Whether `user` may stay in voice channel `cid` of `server`.
 async fn may_stay(state: &AppState, server: &str, cid: i64, user: &str) -> bool {
     // A guest's own connection takes it out when it stops following the server.
     let open = is_guest(user)
-        || ws_server_open(&state.read(), server, Some(user), false, &Proof::none())
-            .await
-            .unwrap_or(false);
-    open && ws_voice_viewable(&state.read(), server, cid, user).await
+        || ws_server_open(
+            &crate::ws::LAYER,
+            &state.read(),
+            server,
+            Some(user),
+            false,
+            &Proof::none(),
+        )
+        .await
+        .unwrap_or(false);
+    open && ws_voice_viewable(&crate::ws::LAYER, &state.read(), server, cid, user).await
 }
 
 /// After `username`'s roles in `server` changed: takes them out of its voice when they may no
@@ -126,7 +146,9 @@ pub(crate) async fn member_voice_changed(state: &AppState, server: &str, usernam
             continue;
         }
         let one = [username.to_string()];
-        let Ok(silenced) = ws_voice_silenced(&state.read(), server, cid, &one).await else {
+        let Ok(silenced) =
+            ws_voice_silenced(&crate::ws::LAYER, &state.read(), server, cid, &one).await
+        else {
             continue;
         };
         state.hub.broadcast(WsEvent::VoiceMuted {
@@ -144,7 +166,14 @@ pub(crate) async fn member_voice_changed(state: &AppState, server: &str, usernam
 pub(crate) async fn end_voice_mute(state: &AppState, server: &str, username: &str) {
     for (channel_id, users) in state.hub.rooms_in(server, None) {
         if users.iter().any(|u| u == username) {
-            let rights = ws_voice_rights(&state.read(), server, channel_id, username).await;
+            let rights = ws_voice_rights(
+                &crate::ws::LAYER,
+                &state.read(),
+                server,
+                channel_id,
+                username,
+            )
+            .await;
             state.hub.broadcast(WsEvent::VoiceMuted {
                 server: server.to_string(),
                 channel_id,
@@ -161,7 +190,9 @@ pub(crate) async fn end_voice_mute(state: &AppState, server: &str, username: &st
 pub(crate) async fn voice_rules_changed(state: &AppState, server: &str, channel_id: Option<i64>) {
     evict_unviewable(state, server, channel_id).await;
     for (cid, users) in state.hub.rooms_in(server, channel_id) {
-        let Ok(silenced) = ws_voice_silenced(&state.read(), server, cid, &users).await else {
+        let Ok(silenced) =
+            ws_voice_silenced(&crate::ws::LAYER, &state.read(), server, cid, &users).await
+        else {
             continue;
         };
         for username in users.into_iter().filter(|u| !is_guest(u)) {
@@ -191,11 +222,19 @@ async fn guest_sub_ok(
     limits: &Limits,
 ) -> sqlx::Result<bool> {
     let proof = Proof::grants(grant.map(str::to_string).into_iter().collect(), limits);
-    ws_server_open(db, server, None, false, &proof).await
+    ws_server_open(&crate::ws::LAYER, db, server, None, false, &proof).await
 }
 
 async fn authed_sub_ok(db: &Db, server: &str, user: &str, site_admin: bool) -> sqlx::Result<bool> {
-    ws_server_open(db, server, Some(user), site_admin, &Proof::none()).await
+    ws_server_open(
+        &crate::ws::LAYER,
+        db,
+        server,
+        Some(user),
+        site_admin,
+        &Proof::none(),
+    )
+    .await
 }
 
 #[cfg(test)]

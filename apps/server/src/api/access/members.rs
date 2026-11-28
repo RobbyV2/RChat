@@ -179,6 +179,7 @@ pub(crate) async fn seen_authors(
 /// rule hides. A site admin sees every member list. A server that shows its members only to
 /// members is left to `ws_closed_servers`.
 pub(crate) async fn ws_rosterless(
+    _: &crate::ws::Layer,
     db: &Db,
     user: Option<&str>,
     site_admin: bool,

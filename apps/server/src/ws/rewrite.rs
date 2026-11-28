@@ -84,7 +84,15 @@ pub(super) async fn own_timeout(
         return Some(None);
     }
     let started = Instant::now();
-    let sees = match ws_sees_timeouts(&state.read(), server, username, access.site_admin).await {
+    let sees = match ws_sees_timeouts(
+        &crate::ws::LAYER,
+        &state.read(),
+        server,
+        username,
+        access.site_admin,
+    )
+    .await
+    {
         Ok(sees) => sees,
         Err(e) => return access.hold(e, started).then_some(None),
     };
@@ -273,6 +281,7 @@ pub(super) async fn layout_for(
     }
     let started = Instant::now();
     let manages = match crate::api::access::ws_manages_channels(
+        &crate::ws::LAYER,
         &state.read(),
         server,
         access.user.as_deref(),

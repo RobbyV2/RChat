@@ -9949,7 +9949,16 @@ mod tests {
             resolve_channel(db, cid, Some(&carol), &Proof::none()).await,
             Err(ApiError(StatusCode::NOT_FOUND, m, _)) if m == "Not found"
         ));
-        assert!(crate::api::access::ws_channel_viewable(db, "club", cid, Some("dave")).await);
+        assert!(
+            crate::api::access::ws_channel_viewable(
+                crate::ws::Layer::for_tests(),
+                db,
+                "club",
+                cid,
+                Some("dave")
+            )
+            .await
+        );
         done(state, path).await;
     }
 

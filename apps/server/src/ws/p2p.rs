@@ -134,11 +134,14 @@ impl Who {
 }
 
 async fn peer_facts(db: &Db, me: &str, hoster: &str) -> sqlx::Result<Option<Peer>> {
-    let Some(offline) = ws_appear_offline(db, hoster).await? else {
+    let Some(offline) = ws_appear_offline(&crate::ws::LAYER, db, hoster).await? else {
         return Ok(None);
     };
-    let dm = ws_dm_between(db, me, hoster).await?;
-    let servers = ws_member_servers(db, hoster).await?.into_iter().collect();
+    let dm = ws_dm_between(&crate::ws::LAYER, db, me, hoster).await?;
+    let servers = ws_member_servers(&crate::ws::LAYER, db, hoster)
+        .await?
+        .into_iter()
+        .collect();
     Ok(Some(Peer {
         offline,
         dm,
@@ -164,7 +167,9 @@ pub(super) async fn p2p_visible(
     let peer = match access.who.peers.get(hoster) {
         Some((at, peer)) if now < *at + P2P_WHO_TTL => match peer.clone() {
             Some(peer) => Some(Peer {
-                offline: ws_appear_offline(&db, hoster).await.ok()??,
+                offline: ws_appear_offline(&crate::ws::LAYER, &db, hoster)
+                    .await
+                    .ok()??,
                 ..peer
             }),
             None => None,
@@ -251,7 +256,7 @@ pub(super) async fn p2p_release(
     if !Settings::cached(&db).await.p2p_attachments {
         return deny(NOT_AVAILABLE);
     }
-    let row = ws_p2p_message(&db, message_id).await;
+    let row = ws_p2p_message(&crate::ws::LAYER, &db, message_id).await;
     let Ok(Some(row)) = row else {
         return deny(NOT_AVAILABLE);
     };
@@ -273,13 +278,17 @@ pub(super) async fn p2p_release(
     if p2p_blocked(state, &me, &hoster).await {
         return deny(NOT_AVAILABLE);
     }
-    let shown = matches!(ws_appear_offline(&db, &hoster).await, Ok(Some(false)))
-        || state.hub.in_p2p_call(&me, &hoster);
+    let shown = matches!(
+        ws_appear_offline(&crate::ws::LAYER, &db, &hoster).await,
+        Ok(Some(false))
+    ) || state.hub.in_p2p_call(&me, &hoster);
     let Some((hoster_peer, relays)) = state.hub.p2p_host_of(&hoster, &media_id).filter(|_| shown)
     else {
         return deny(NOT_AVAILABLE);
     };
-    if access.site_admin && !ws_staff_file(&state.db, &me, message_id, &media_id).await {
+    if access.site_admin
+        && !ws_staff_file(&crate::ws::LAYER, &state.db, &me, message_id, &media_id).await
+    {
         return deny(NOT_AVAILABLE);
     }
     let exp = now + crate::p2p::TOKEN_TTL;
@@ -351,7 +360,7 @@ async fn lookup_p2p_ids(
     hoster: &str,
     ids: &[String],
 ) -> Vec<String> {
-    let Ok(rows) = ws_hosted_messages(db, hoster, ids).await else {
+    let Ok(rows) = ws_hosted_messages(&crate::ws::LAYER, db, hoster, ids).await else {
         return Vec::new();
     };
     let mut cache = ReadCache::default();
@@ -405,7 +414,8 @@ async fn row_readable(
                 (true, _) => None,
                 (false, Some(since)) => *since,
                 (false, None) => {
-                    let since = ws_channel_read_since(db, &server, cid, me).await;
+                    let since =
+                        ws_channel_read_since(&crate::ws::LAYER, db, &server, cid, me).await;
                     cache.channels.insert(cid, since);
                     since
                 }

@@ -24,7 +24,7 @@ pub async fn announce_expired_passwords(
 ) -> sqlx::Result<()> {
     let db = &state.read();
     for name in servers_with_expired_passwords(db, since, until).await? {
-        if let Some(server) = ws_server_lite(db, &name).await? {
+        if let Some(server) = ws_server_lite(&crate::ws::LAYER, db, &name).await? {
             state.hub.broadcast(WsEvent::ServerUpdated { server });
         }
     }
@@ -237,15 +237,24 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
             }),
         },
         WsEvent::ChannelCreated { server, channel } => {
-            let (owner, channel) = ws_channel_now(db, channel.id).await.ok().flatten()?;
+            let (owner, channel) = ws_channel_now(&crate::ws::LAYER, db, channel.id)
+                .await
+                .ok()
+                .flatten()?;
             (owner == server).then_some(WsEvent::ChannelCreated { server, channel })
         }
         WsEvent::ChannelRenamed { server, channel } => {
-            let (owner, channel) = ws_channel_now(db, channel.id).await.ok().flatten()?;
+            let (owner, channel) = ws_channel_now(&crate::ws::LAYER, db, channel.id)
+                .await
+                .ok()
+                .flatten()?;
             (owner == server).then_some(WsEvent::ChannelRenamed { server, channel })
         }
         WsEvent::ChannelUpdated { server, channel } => {
-            let (owner, channel) = ws_channel_now(db, channel.id).await.ok().flatten()?;
+            let (owner, channel) = ws_channel_now(&crate::ws::LAYER, db, channel.id)
+                .await
+                .ok()
+                .flatten()?;
             (owner == server).then_some(WsEvent::ChannelUpdated { server, channel })
         }
         WsEvent::LayoutChanged {
@@ -270,31 +279,44 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
             })
         }
         WsEvent::ServerCreated { server } => {
-            let server = ws_server_lite(db, &server.name).await.ok().flatten()?;
+            let server = ws_server_lite(&crate::ws::LAYER, db, &server.name)
+                .await
+                .ok()
+                .flatten()?;
             Some(WsEvent::ServerCreated { server })
         }
         WsEvent::ServerRenamed { old_name, server } => {
-            let reused =
-                old_name != server.name && !matches!(ws_server_lite(db, &old_name).await, Ok(None));
-            let server = ws_server_lite(db, &server.name).await.ok().flatten()?;
+            let reused = old_name != server.name
+                && !matches!(
+                    ws_server_lite(&crate::ws::LAYER, db, &old_name).await,
+                    Ok(None)
+                );
+            let server = ws_server_lite(&crate::ws::LAYER, db, &server.name)
+                .await
+                .ok()
+                .flatten()?;
             (!reused).then_some(WsEvent::ServerRenamed { old_name, server })
         }
         WsEvent::ServerUpdated { server } => {
-            let server = ws_server_lite(db, &server.name).await.ok().flatten()?;
+            let server = ws_server_lite(&crate::ws::LAYER, db, &server.name)
+                .await
+                .ok()
+                .flatten()?;
             Some(WsEvent::ServerUpdated { server })
         }
-        WsEvent::ServerDeleted { name } => match ws_server_lite(db, &name).await {
+        WsEvent::ServerDeleted { name } => match ws_server_lite(&crate::ws::LAYER, db, &name).await
+        {
             Ok(Some(_)) => None,
             Ok(None) | Err(_) => Some(WsEvent::ServerDeleted { name }),
         },
         WsEvent::MemberJoined { server, member } => {
-            match ws_is_member(db, &server, &member.user.username).await {
+            match ws_is_member(&crate::ws::LAYER, db, &server, &member.user.username).await {
                 Ok(true) => Some(WsEvent::MemberJoined { server, member }),
                 Ok(false) | Err(_) => None,
             }
         }
         WsEvent::MemberLeft { server, username } => {
-            match ws_is_member(db, &server, &username).await {
+            match ws_is_member(&crate::ws::LAYER, db, &server, &username).await {
                 Ok(true) => {
                     evict_unviewable(state, &server, None).await;
                     None
@@ -306,7 +328,7 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
             server,
             username,
             banned,
-        } => match ws_is_member(db, &server, &username).await {
+        } => match ws_is_member(&crate::ws::LAYER, db, &server, &username).await {
             Ok(true) => {
                 evict_unviewable(state, &server, None).await;
                 None
@@ -321,7 +343,7 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
             let mut gone = Vec::new();
             let mut stayed = false;
             for username in usernames {
-                match ws_is_member(db, &server, &username).await {
+                match ws_is_member(&crate::ws::LAYER, db, &server, &username).await {
                     Ok(true) => stayed = true,
                     Ok(false) | Err(_) => gone.push(username),
                 }
@@ -334,11 +356,12 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
                 usernames: gone,
             })
         }
-        WsEvent::ServerBanned { server, username } => match ws_banned(db, &server, &username).await
-        {
-            Ok(true) => Some(WsEvent::ServerBanned { server, username }),
-            Ok(false) | Err(_) => None,
-        },
+        WsEvent::ServerBanned { server, username } => {
+            match ws_banned(&crate::ws::LAYER, db, &server, &username).await {
+                Ok(true) => Some(WsEvent::ServerBanned { server, username }),
+                Ok(false) | Err(_) => None,
+            }
+        }
         WsEvent::PresenceMode {
             username,
             appear_offline: _,
@@ -396,7 +419,7 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
             is_admin: _,
             perms: _,
         } => {
-            let (is_admin, perms) = ws_member_role(db, &server, &username)
+            let (is_admin, perms) = ws_member_role(&crate::ws::LAYER, db, &server, &username)
                 .await
                 .ok()
                 .flatten()?;
@@ -520,7 +543,7 @@ pub(crate) async fn repost(state: &AppState, op: Op) {
     match op {
         Op::Broadcast { event } => repost_event(state, event).await,
         Op::ForceOffline { server, user } => {
-            if !ws_is_member(&state.db, &server, &user)
+            if !ws_is_member(&crate::ws::LAYER, &state.db, &server, &user)
                 .await
                 .unwrap_or(false)
             {
@@ -537,9 +560,10 @@ pub(crate) async fn repost(state: &AppState, op: Op) {
             channel_id,
             reason: None,
         } => {
-            let allowed = match ws_channel_now(&state.read(), channel_id).await {
+            let allowed = match ws_channel_now(&crate::ws::LAYER, &state.read(), channel_id).await {
                 Ok(Some((server, _))) => {
-                    ws_voice_viewable(&state.read(), &server, channel_id, &user).await
+                    ws_voice_viewable(&crate::ws::LAYER, &state.read(), &server, channel_id, &user)
+                        .await
                 }
                 Ok(None) | Err(_) => false,
             };

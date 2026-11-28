@@ -165,13 +165,18 @@ async fn p2p_who_keeps_the_read_history_floor_and_the_p2p_switch() {
         Some(Vec::new()),
         "with P2P attachments off no file is offered; the peer stays for calls"
     );
-    let mut live = ws_live_hosted(db, "alice", &[s("old"), s("gone"), s("new")])
-        .await
-        .expect("live");
+    let mut live = ws_live_hosted(
+        &crate::ws::LAYER,
+        db,
+        "alice",
+        &[s("old"), s("gone"), s("new")],
+    )
+    .await
+    .expect("live");
     live.sort();
     assert_eq!(live, [s("new"), s("old")]);
     assert_eq!(
-        ws_live_hosted(db, "bob", &ids).await,
+        ws_live_hosted(&crate::ws::LAYER, db, "bob", &ids).await,
         Some(Vec::new()),
         "only the hoster's own messages count, so a shared browser adopts no one else's file"
     );
@@ -185,8 +190,14 @@ async fn p2p_who_keeps_the_read_history_floor_and_the_p2p_switch() {
         "UPDATE messages SET media_expires_at = 1 WHERE media_id = 'new'",
     )
     .await;
-    assert_eq!(ws_live_hosted(db, "alice", &ids).await, Some(Vec::new()));
-    assert_eq!(ws_live_hosted(db, "bob", &[]).await, Some(Vec::new()));
+    assert_eq!(
+        ws_live_hosted(&crate::ws::LAYER, db, "alice", &ids).await,
+        Some(Vec::new())
+    );
+    assert_eq!(
+        ws_live_hosted(&crate::ws::LAYER, db, "bob", &[]).await,
+        Some(Vec::new())
+    );
     crate::api::test_util::done(state, path).await;
 }
 

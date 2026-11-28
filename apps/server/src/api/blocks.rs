@@ -895,7 +895,15 @@ mod tests {
         let typing = |who: &str| {
             let db = state.db.clone();
             let (who, scope) = (who.to_string(), format!("d{}", dm.id));
-            async move { crate::api::access::ws_typing_place(&db, &who, &scope).await }
+            async move {
+                crate::api::access::ws_typing_place(
+                    crate::ws::Layer::for_tests(),
+                    &db,
+                    &who,
+                    &scope,
+                )
+                .await
+            }
         };
         assert!(typing("bob").await.is_none(), "bob's typing never goes out");
         assert!(typing("alice").await.is_none());

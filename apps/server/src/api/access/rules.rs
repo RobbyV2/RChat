@@ -951,9 +951,16 @@ mod tests {
         let open = |limits: &Limits| {
             let proof = Proof::grants(aged.clone(), limits);
             async move {
-                ws_server_open(db, "rchat", None, false, &proof)
-                    .await
-                    .expect("gate")
+                ws_server_open(
+                    crate::ws::Layer::for_tests(),
+                    db,
+                    "rchat",
+                    None,
+                    false,
+                    &proof,
+                )
+                .await
+                .expect("gate")
             }
         };
         assert!(!open(&short.limits).await);

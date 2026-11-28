@@ -299,9 +299,15 @@ async fn a_private_channel_opens_to_a_site_admin_only_after_a_confirmation() {
             Some((StatusCode::NOT_FOUND, "Not found".to_string()))
         );
         assert_eq!(
-            ws_channel_seen(db, "club", hidden, Some("root"))
-                .await
-                .expect("seen"),
+            ws_channel_seen(
+                crate::ws::Layer::for_tests(),
+                db,
+                "club",
+                hidden,
+                Some("root")
+            )
+            .await
+            .expect("seen"),
             (false, None)
         );
 
@@ -355,9 +361,15 @@ async fn a_private_channel_opens_to_a_site_admin_only_after_a_confirmation() {
             .await
             .expect("open");
         assert!(seen.staff_view());
-        let (view, until) = ws_channel_seen(db, "club", hidden, Some("root"))
-            .await
-            .expect("seen");
+        let (view, until) = ws_channel_seen(
+            crate::ws::Layer::for_tests(),
+            db,
+            "club",
+            hidden,
+            Some("root"),
+        )
+        .await
+        .expect("seen");
         assert!(view);
         assert!(
             until.is_some_and(
@@ -378,9 +390,15 @@ async fn a_private_channel_opens_to_a_site_admin_only_after_a_confirmation() {
             Vec::<i64>::new()
         );
         assert_eq!(
-            ws_channel_seen(db, "club", hidden, Some("root"))
-                .await
-                .expect("seen"),
+            ws_channel_seen(
+                crate::ws::Layer::for_tests(),
+                db,
+                "club",
+                hidden,
+                Some("root")
+            )
+            .await
+            .expect("seen"),
             (false, None)
         );
         temp.done(state).await;
@@ -400,7 +418,7 @@ async fn a_channel_the_admin_s_own_membership_opens_needs_no_confirmation() {
                 .expect("own");
             assert!(!channel.staff_view());
             assert_eq!(
-                ws_channel_seen(db, "club", id, Some("root"))
+                ws_channel_seen(crate::ws::Layer::for_tests(), db, "club", id, Some("root"))
                     .await
                     .expect("seen"),
                 (true, None)
@@ -578,13 +596,19 @@ async fn history_from_before_a_site_admin_s_join_waits_for_a_confirmation() {
             .expect("own membership");
         assert_eq!(channel.read_since(db).await.expect("since"), Some(100));
         assert_eq!(
-            ws_channel_read_since(db, "club", notes, "root").await,
+            ws_channel_read_since(crate::ws::Layer::for_tests(), db, "club", notes, "root").await,
             Some(Some(100))
         );
         assert_eq!(
-            ws_channel_seen(db, "club", notes, Some("root"))
-                .await
-                .expect("seen"),
+            ws_channel_seen(
+                crate::ws::Layer::for_tests(),
+                db,
+                "club",
+                notes,
+                Some("root")
+            )
+            .await
+            .expect("seen"),
             (true, None)
         );
         assert_eq!(
@@ -614,7 +638,7 @@ async fn history_from_before_a_site_admin_s_join_waits_for_a_confirmation() {
             .expect("whole history");
         assert!(opened.channel().expect("channel").staff_view());
         assert_eq!(
-            ws_channel_read_since(db, "club", notes, "root").await,
+            ws_channel_read_since(crate::ws::Layer::for_tests(), db, "club", notes, "root").await,
             Some(None)
         );
         age(db, VIEW_CHANNEL, CHANNEL_OPEN_SECS + 1).await;
@@ -624,7 +648,7 @@ async fn history_from_before_a_site_admin_s_join_waits_for_a_confirmation() {
             Some((StatusCode::NOT_FOUND, "Not found".to_string()))
         );
         assert_eq!(
-            ws_channel_read_since(db, "club", notes, "root").await,
+            ws_channel_read_since(crate::ws::Layer::for_tests(), db, "club", notes, "root").await,
             Some(Some(100))
         );
         temp.done(state).await;
@@ -677,9 +701,15 @@ async fn nothing_opens_when_the_entry_cannot_be_written() {
         )
         .await;
         assert_eq!(code(confirm), Some(down.clone()));
-        let (view, until) = ws_channel_seen(db, "club", hidden, Some("root"))
-            .await
-            .expect("seen");
+        let (view, until) = ws_channel_seen(
+            crate::ws::Layer::for_tests(),
+            db,
+            "club",
+            hidden,
+            Some("root"),
+        )
+        .await
+        .expect("seen");
         assert!(!view);
         assert!(
             until.is_some_and(|u| u <= now()),

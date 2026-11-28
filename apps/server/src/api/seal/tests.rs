@@ -499,7 +499,7 @@ async fn a_requirement_locks_the_switch_and_never_changes_it() {
             (403, FORCED.into(), Some(ReasonKind::Forced))
         );
         assert_eq!(reason(switch(&state, "alice", false).await).0, 403);
-        let lite = crate::api::access::ws_server_lite(db, "rchat")
+        let lite = crate::api::access::ws_server_lite(crate::ws::Layer::for_tests(), db, "rchat")
             .await
             .expect("lite")
             .expect("server");

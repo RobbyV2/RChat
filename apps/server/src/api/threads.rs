@@ -590,12 +590,23 @@ mod tests {
                 Some((StatusCode::NOT_FOUND, "Not found".to_string()))
             );
             assert_eq!(
-                ws_typing_place(db, "carol", &format!("t{root}")).await,
+                ws_typing_place(
+                    crate::ws::Layer::for_tests(),
+                    db,
+                    "carol",
+                    &format!("t{root}")
+                )
+                .await,
                 None
             );
-            let typing = ws_typing_place(db, "bob", &format!("t{root}"))
-                .await
-                .expect("typing place");
+            let typing = ws_typing_place(
+                crate::ws::Layer::for_tests(),
+                db,
+                "bob",
+                &format!("t{root}"),
+            )
+            .await
+            .expect("typing place");
             assert_eq!(
                 (
                     typing.dm_id,
@@ -653,9 +664,14 @@ mod tests {
         let root = post(db, (None, Some(dm)), "alice", "root").await;
         let first = reply(&state, "bob", root, "first").await.expect("reply");
         assert!(
-            ws_typing_place(db, "bob", &format!("t{root}"))
-                .await
-                .is_some()
+            ws_typing_place(
+                crate::ws::Layer::for_tests(),
+                db,
+                "bob",
+                &format!("t{root}")
+            )
+            .await
+            .is_some()
         );
         assert_eq!(
             code(reply(&state, "alice", first.id, "nested").await),
@@ -680,7 +696,16 @@ mod tests {
             code(reply(&state, "alice", root, "hi").await).map(|(c, _)| c),
             Some(StatusCode::FORBIDDEN)
         );
-        assert_eq!(ws_typing_place(db, "bob", &format!("t{root}")).await, None);
+        assert_eq!(
+            ws_typing_place(
+                crate::ws::Layer::for_tests(),
+                db,
+                "bob",
+                &format!("t{root}")
+            )
+            .await,
+            None
+        );
         assert_eq!(replies_of(&state, "bob", root).await, Ok(vec![first.id]));
         done(state, path).await;
     }
