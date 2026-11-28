@@ -7,6 +7,8 @@ import type { InboxEntry } from '../inbox'
 import type { Folder } from '../nav_layout'
 import type { Contact } from '../p2p/contacts'
 import type { P2pMessage } from '../p2p/dm'
+import type { Pins } from '../place/pins'
+import type { Threads } from '../place/threads'
 import type {
   CategoryView,
   ChannelView,
@@ -139,8 +141,15 @@ export type Target =
   // The rail's P2P tile.
   | { kind: 'p2p_home' }
   // A channel's or DM's header, for what its More button folds away when it is narrow. `list`:
-  // the header's conversation, none in a voice channel; `search`: the header has search.
-  | { kind: 'header'; list: string | null; search: boolean }
+  // the header's conversation, none in a voice channel; `search`: the header has search; `pins`
+  // and `threads`: those of the place the header belongs to, when it has them.
+  | {
+      kind: 'header'
+      list: string | null
+      search: boolean
+      pins?: Pins | null
+      threads?: Threads | null
+    }
   // A guest in the voice of `server`, by its connection's name: staff's menu on the guest's tile
   // and sidebar row.
   | { kind: 'voice_guest'; server: string; name: string }

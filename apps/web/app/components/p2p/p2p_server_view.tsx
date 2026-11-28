@@ -64,6 +64,7 @@ import { voiceLabel } from '../../lib/voice_rail'
 import { MutedIcon } from '../notify_menu'
 import { PinsButton } from '../pins'
 import { ThreadsButton } from '../threads'
+import { HeaderMore } from '../header_more'
 import { Masked, renameFieldCls } from '../ui'
 import { Row, Stack, Surface, Inset, Grid } from '../layout'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
@@ -652,7 +653,7 @@ function P2pChannelPaneBody({
       inset="sides"
       gap="sm"
       border="bottom"
-      look="h-14"
+      look="@container h-14"
       place="shrink-0"
     >
       <IconButton
@@ -710,8 +711,9 @@ function P2pChannelPaneBody({
       <Row gap="2xs" place="ml-auto shrink-0">
         {chat && !voiceCh && (
           <PlaceProvider place={P2pRoom.open(identity, room)}>
-            <PinsButton />
-            <ThreadsButton />
+            <PinsButton narrowHidden />
+            <ThreadsButton narrowHidden />
+            <HeaderMore scope={null} search={false} />
           </PlaceProvider>
         )}
         {!v.readOnly && (

@@ -22,6 +22,7 @@ import { displayName, shieldOf } from '../../lib/p2p/contacts'
 import { type P2pMessage } from '../../lib/p2p/dm'
 import { PinsButton } from '../pins'
 import { ThreadsButton } from '../threads'
+import { HeaderMore } from '../header_more'
 import { PingBadge, pingLabel } from '../ping_badge'
 import {
   AccountChip,
@@ -123,7 +124,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
       inset="sides"
       gap="2xs"
       border="bottom"
-      look="h-14"
+      look="@container h-14"
       place="shrink-0"
     >
       <IconButton
@@ -207,8 +208,9 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
       <Row gap="2xs" place="ml-auto shrink-0">
         <P2pCallButtons peer={peerIk} name={peerName} online={online} canCall={canAct} />
         <PlaceProvider place={P2pDm.open(identity, chat.room)}>
-          <PinsButton />
-          <ThreadsButton />
+          <PinsButton narrowHidden />
+          <ThreadsButton narrowHidden />
+          <HeaderMore scope={null} search={false} />
         </PlaceProvider>
       </Row>
     </Inset>

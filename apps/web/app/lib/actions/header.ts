@@ -32,8 +32,12 @@ export const headerActions: Action[] = [
     icon: Pin,
     ...onHeader,
     order: 110,
-    available: ctx => listOf(ctx) !== null,
-    run: ({ acct }) => acct.store.getState().openPins(),
+    available: ctx => listOf(ctx) !== null || !!headerOf(ctx)?.pins,
+    run: ctx => {
+      const pins = headerOf(ctx)?.pins
+      if (pins) pins.open()
+      else ctx.acct.store.getState().openPins()
+    },
   },
   {
     id: 'header_threads',
@@ -41,8 +45,12 @@ export const headerActions: Action[] = [
     icon: MessagesSquare,
     ...onHeader,
     order: 115,
-    available: ctx => listOf(ctx) !== null,
-    run: ({ acct }) => acct.store.getState().openThreads(),
+    available: ctx => listOf(ctx) !== null || !!headerOf(ctx)?.threads,
+    run: ctx => {
+      const threads = headerOf(ctx)?.threads
+      if (threads) threads.open()
+      else ctx.acct.store.getState().openThreads()
+    },
   },
   {
     id: 'header_search',

@@ -8,7 +8,9 @@ import { isActionMenu, menuItems } from '../actions/menu'
 import { paletteCommands } from '../actions/palette'
 import { resetSessionCaches, useStore, type ContextMenuItem } from '../store'
 import type { RChatState } from '../store_types'
-import { HEADER_MORE, HeaderMore } from '../../components/message_pane'
+import type { Pins } from '../place/pins'
+import type { Threads } from '../place/threads'
+import { HEADER_MORE, HeaderMore } from '../../components/header_more'
 import { drain, me, msg } from './fixtures'
 import { Secret } from '../secret'
 
@@ -130,6 +132,26 @@ describe('header More button', () => {
       await drain()
     }
     expect(calls).toEqual([['select', 'c1'], ['pins'], ['threads'], ['search']])
+  })
+
+  test('a header with no conversation of the account folds the pins and threads of its place', async () => {
+    signedIn()
+    const calls: string[] = []
+    const pins = { open: () => void calls.push('pins') } as unknown as Pins
+    const threads = { open: () => void calls.push('threads') } as unknown as Threads
+    const items = menuItems(
+      ctxFor(
+        useStore.getState(),
+        { kind: 'header', list: null, search: false, pins, threads },
+        'menu'
+      )
+    )
+    expect(items.map(shape)).toEqual([PINS, THREADS])
+    for (const item of items) {
+      item.action?.()
+      await drain()
+    }
+    expect(calls).toEqual(['pins', 'threads'])
   })
 
   test('its menu is the registry menu of the header, and its rows stay out of the palette', () => {

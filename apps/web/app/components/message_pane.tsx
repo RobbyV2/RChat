@@ -14,7 +14,6 @@ import {
   Hash,
   Lock,
   Menu,
-  MoreVertical,
   MessagesSquare,
   NotebookPen,
   Search,
@@ -30,8 +29,8 @@ import { useChannelCan } from '../lib/place/use_rights'
 import { useHostedServer, useLive } from '../lib/place/react'
 import { slowTitle } from '../lib/slowmode'
 import { messageRights } from '../lib/actions/message'
-import { actionPress, openActionMenu, useHasMenu } from '../lib/actions/menu'
-import type { Target } from '../lib/actions/types'
+import { actionPress, openActionMenu } from '../lib/actions/menu'
+import { HeaderMore } from './header_more'
 import {
   confirmDeleteMessage,
   useStore,
@@ -300,33 +299,6 @@ function SelfDmEmpty() {
         <span className="max-w-md text-center text-sm text-on-surface-variant">{SELF_DM_TEXT}</span>
       </Stack>
     </Surface>
-  )
-}
-
-export const HEADER_MORE = 'header-more'
-
-// The header actions that fold into one menu when the header is narrow.
-export function HeaderMore({ scope, search }: { scope: string | null; search: boolean }) {
-  const acct = useAccount()
-
-  const target: Target = { kind: 'header', list: scope, search }
-  const open = useStore(s => s.contextMenu?.owner === HEADER_MORE)
-  const has = useHasMenu(target)
-  if (!has) return null
-  return (
-    <IconButton
-      icon={MoreVertical}
-      label="More"
-      aria-haspopup="menu"
-      aria-expanded={open}
-      onClick={e => {
-        const r = e.currentTarget.getBoundingClientRect()
-        openActionMenu(r.right, r.bottom + 4, target, { owner: HEADER_MORE }, acct)
-      }}
-      size="lg"
-      tone="inherit"
-      place="@sm:hidden"
-    />
   )
 }
 
