@@ -152,3 +152,26 @@ test('a server named outside the place around loads through that server, none th
   expect(seen[0]).toBe(featureAt(looks, HostedServer.open(account, 'harbor')) as Looks)
   expect(seen[1]).toBe(accountLooks(account))
 })
+
+test('a server profile picture shows on a face, and the look reads through the feature', () => {
+  const account = testAccount('ann')
+  const profile = {
+    name: 'Annie',
+    avatar_kind: 'image',
+    avatar_color: null,
+    avatar_image: 'pic.webp',
+  }
+  const settings = account.store.getState().settings
+  account.store.setState({
+    settings: { ...settings, server_profiles: true, display_names: true },
+    servers: { harbor: serverDetail('harbor') },
+    memberInfo: { harbor: { bob: member('bob', { profile } as never) } },
+  } as never)
+  const here = featureAt(looks, HostedServer.open(account, 'harbor')) as Looks
+  const face = here.of(user('bob')).get()
+  expect(face.who.person.avatar_image).toBe('pic.webp')
+  expect(nameText(face.name)).toContain('Annie')
+  expect(here.look('bob').get()?.avatar_image).toBe('pic.webp')
+  expect(here.look('bob').get()).toEqual(here.look('bob').get())
+  expect(accountLooks(account).look('bob').get()).toBeNull()
+})

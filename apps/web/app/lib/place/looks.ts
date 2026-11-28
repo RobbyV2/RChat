@@ -7,7 +7,7 @@ import type { Look } from '../role_looks'
 import { byUsername, roleLook } from '../selectors'
 import { lookOf } from '../server_profile'
 import { maskOf } from '../store'
-import type { Message, UserRef } from '../types'
+import type { MemberLook, Message, UserRef } from '../types'
 import { defineFeature } from './feature'
 import { built, type Live } from './live'
 import type { P2pDm, P2pRoom } from './place'
@@ -32,6 +32,9 @@ export interface Looks {
   author: (m: Message, event?: string) => Live<Face>
   // Someone who is not read from a message (your own name on a message being sent).
   of: (user: UserRef) => Live<Face>
+  // The look someone set for the place (a hosted server's profile), as the place shows it now;
+  // null where there is none or until their member row is here.
+  look: (username: string) => Live<MemberLook | null>
   // The color the roles of `user` give their name here.
   color: (user: UserRef) => Live<string | undefined>
   // Loads what the place needs to draw the people called `names`, and again when what it keeps
@@ -45,9 +48,10 @@ const NO_ROLES: number[] = []
 
 const hosted = (account: AccountSession, server: string | null): Looks => {
   const { store } = account
-  const member = (username: string) => {
+  type State = ReturnType<typeof store.getState>
+  const now = (initial: boolean): State => (initial ? store.getInitialState() : store.getState())
+  const member = (s: State, username: string) => {
     if (server === null) return undefined
-    const s = store.getState()
     const list = s.members[server]?.list
     const known = s.memberInfo[server]
     return (
@@ -55,45 +59,62 @@ const hosted = (account: AccountSession, server: string | null): Looks => {
       (known && Object.hasOwn(known, username) ? (known[username] ?? undefined) : undefined)
     )
   }
-  const roles = (username: string) =>
+  const roles = (s: State, username: string) =>
     [
-      server === null ? undefined : store.getState().servers[server]?.roles,
-      member(username)?.role_ids ?? NO_ROLES,
+      server === null ? undefined : s.servers[server]?.roles,
+      member(s, username)?.role_ids ?? NO_ROLES,
     ] as const
-  const of = (user: UserRef): Live<Face> => {
-    const get = built(
-      () => {
-        const look = server === null ? null : lookOf(store.getState(), { server }, user.username)
-        return [
-          look === null,
-          look?.name,
-          look?.avatar_kind,
-          look?.avatar_color,
-          ...roles(user.username),
-        ] as const
-      },
-      ([none, name, kind, color, serverRoles, held]): Face => {
-        const person = shownUser(
-          user,
-          none
-            ? null
-            : {
-                name: name ?? null,
-                avatar_kind: kind ?? null,
-                avatar_color: color ?? null,
-                avatar_image: null,
-              }
-        )
-        const look = roleLook(serverRoles, [...held])
-        return {
-          who: { kind: 'account', person, server },
-          name: personName(person),
-          color: look.color,
-          icon: look.icon,
+  // The look `username` has here, in parts that compare by value.
+  const lookParts = (s: State, username: string) => {
+    const look = server === null ? null : lookOf(s, { server }, username)
+    return [
+      look === null,
+      look?.name ?? null,
+      look?.avatar_kind ?? null,
+      look?.avatar_color ?? null,
+      look?.avatar_image ?? null,
+      look?.avatar_pic,
+    ] as const
+  }
+  const asLook = ([none, name, kind, color, image, pic]: ReturnType<
+    typeof lookParts
+  >): MemberLook | null =>
+    none
+      ? null
+      : {
+          name,
+          avatar_kind: kind,
+          avatar_color: color,
+          avatar_image: image,
+          ...(pic === undefined ? {} : { avatar_pic: pic }),
         }
-      }
-    )
-    return { get, subscribe: changed => store.subscribe(changed) }
+  const look = (username: string): Live<MemberLook | null> => {
+    const at = (initial: boolean) =>
+      built(
+        () => lookParts(now(initial), username),
+        parts => asLook(parts)
+      )
+    return { get: at(false), initial: at(true), subscribe: changed => store.subscribe(changed) }
+  }
+  const of = (user: UserRef): Live<Face> => {
+    const at = (initial: boolean) =>
+      built(
+        () => {
+          const s = now(initial)
+          return [...lookParts(s, user.username), ...roles(s, user.username)] as const
+        },
+        ([none, name, kind, color, image, pic, serverRoles, held]): Face => {
+          const person = shownUser(user, asLook([none, name, kind, color, image, pic]))
+          const look = roleLook(serverRoles, [...held])
+          return {
+            who: { kind: 'account', person, server },
+            name: personName(person),
+            color: look.color,
+            icon: look.icon,
+          }
+        }
+      )
+    return { get: at(false), initial: at(true), subscribe: changed => store.subscribe(changed) }
   }
   const load = (names: readonly string[]) => {
     if (server === null || !names.length) return idle
@@ -115,9 +136,14 @@ const hosted = (account: AccountSession, server: string | null): Looks => {
     load,
     author: m => of(m.author),
     of,
+    look,
     color: user => ({
       get: () => {
-        const [serverRoles, held] = roles(user.username)
+        const [serverRoles, held] = roles(now(false), user.username)
+        return roleLook(serverRoles, [...held]).color
+      },
+      initial: () => {
+        const [serverRoles, held] = roles(now(true), user.username)
         return roleLook(serverRoles, [...held]).color
       },
       subscribe: changed => store.subscribe(changed),
@@ -126,6 +152,7 @@ const hosted = (account: AccountSession, server: string | null): Looks => {
 }
 
 const NO_COLOR: Live<string | undefined> = { get: () => undefined, subscribe: () => () => {} }
+const NO_LOOK: Live<MemberLook | null> = { get: () => null, subscribe: () => () => {} }
 
 const peer = (place: P2pRoom | P2pDm): Looks => {
   const { app, account, room } = place
@@ -174,6 +201,7 @@ const peer = (place: P2pRoom | P2pDm): Looks => {
     author: (m, event) =>
       face(m.author, () => (event === undefined ? undefined : shown.get().message(event)?.sender)),
     of: user => face(user, () => undefined),
+    look: () => NO_LOOK,
     color: () => NO_COLOR,
     load: () => idle,
   }

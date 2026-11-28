@@ -197,7 +197,6 @@ test('join and leave lines show the username next to a display name', () => {
   const html = render(
     <SystemNotice
       m={msg(6, { kind: 'join', author: impostor, content: '' })}
-      server="club"
       divider={null}
       onMenu={() => {}}
     />

@@ -2,7 +2,9 @@
 
 import { useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { lookIn, lookOf, shownParts, shownUser } from '../lib/server_profile'
+import { lookIn, shownParts, shownUser } from '../lib/server_profile'
+import { useServerLooks } from '../lib/place/use_looks'
+import { useWatch } from '../lib/place/react'
 import { useStore } from '../lib/store'
 import type { MemberLook, UserRef } from '../lib/types'
 import { personName } from '../lib/names'
@@ -17,7 +19,8 @@ export const useViewServer = () =>
 // The look someone set for a hosted server, as the server shows it now; null outside a server
 // and until their member row is loaded.
 export function useLook(server: string | null | undefined, username: string): MemberLook | null {
-  return useStore(useShallow(s => (server ? lookOf(s, { server }, username) : null)))
+  const here = useServerLooks(server)
+  return useWatch(() => here.look(username), [here, username])
 }
 
 // `user` as `server` shows them: the server name and avatar over the account's. Every place
@@ -26,8 +29,10 @@ export function useShown<T extends UserRef>(
   user: T,
   server: string | null | undefined
 ): T & ShownPerson {
-  const look = useLook(server, user.username)
-  return useMemo(() => shownUser(user, look), [user, look])
+  const here = useServerLooks(server)
+  const face = useWatch(() => here.of(user), [here, user])
+  // The face is built from `user` itself, so it keeps what `user` carries.
+  return face.who.person as T & ShownPerson
 }
 
 // The same for someone who may be missing (a deleted author).
@@ -35,9 +40,12 @@ export function useShownOrNull<T extends UserRef>(
   user: T | null | undefined,
   server: string | null | undefined
 ): (T & ShownPerson) | null {
-  const look = useLook(user ? server : null, user?.username ?? '')
-  return useMemo(() => (user ? shownUser(user, look) : null), [user, look])
+  const here = useServerLooks(user ? server : null)
+  const face = useWatch(() => (user ? here.of(user) : NOBODY), [here, user])
+  return user && face ? (face.who.person as T & ShownPerson) : null
 }
+
+const NOBODY = { get: () => null, subscribe: () => () => {} }
 
 // Turns member rows that carry their own look into the people a server shows.
 export function useShownMembers(server: string | null | undefined) {

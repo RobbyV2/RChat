@@ -28,26 +28,21 @@ import { MessageTime } from './timestamp'
 import { ProfileButton } from './profile_card'
 import { fieldCls, FieldError } from './ui'
 import { Name } from './name'
-import { personCalled } from '../lib/names'
-import { ShownName } from './shown_user'
+import { useAuthor } from '../lib/place/use_looks'
 import { Inset, Row, Stack } from './layout'
 
 // "alice joined the party." with a green arrow, "alice left the server." with a red one, a
 // storage line with a lock.
 export function SystemNotice({
   m,
-  server,
   divider,
-  local = false,
   onMenu,
 }: {
   m: Message
-  server: string | null
   divider: ReactNode
-  // A place that knows people by key: the name opens no profile.
-  local?: boolean
   onMenu?: (m: Message, x: number, y: number) => void
 }) {
+  const face = useAuthor(m)
   const [before, after] = systemParts(m)
   const join = m.kind === 'join'
   const storage = isStorage(m)
@@ -73,14 +68,11 @@ export function SystemNotice({
           {before}
           {bySite(m) ? (
             <span className="font-medium text-on-surface">{SITE_NAME}</span>
-          ) : local ? (
-            <Name
-              of={personCalled(m.author.display_name, m.author.username)}
-              look="font-medium text-on-surface"
-            />
+          ) : face.who.kind === 'key' ? (
+            <Name of={face.name} look="font-medium text-on-surface" />
           ) : (
-            <ProfileButton user={m.author} server={server} inline>
-              <ShownName user={m.author} server={server} link look="font-medium text-on-surface" />
+            <ProfileButton user={m.author} server={face.who.server} inline>
+              <Name of={face.name} withUsername link look="font-medium text-on-surface" />
             </ProfileButton>
           )}
           {after} <MessageTime ts={m.created_at} className="text-xs opacity-70" />
