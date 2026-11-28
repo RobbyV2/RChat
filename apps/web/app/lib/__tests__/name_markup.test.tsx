@@ -79,7 +79,9 @@ describe('variants', () => {
   test('fitted to a row, with the whole name in its title', () => {
     const fit = html(<Name of={ally} withUsername fit />)
     expect(fit.startsWith('<span title="Ally (alice)" class="streamer">')).toBe(true)
-    expect(fit).toContain('<span dir="auto" class="max-w-max min-w-0 flex-[1_1_4rem] truncate">')
+    expect(fit).toContain(
+      '<span dir="auto" class="max-w-max min-w-0 shrink grow basis-16 truncate">'
+    )
     Object.assign(initial, { streamer: true })
     expect(html(<Name of={ally} withUsername fit />).includes('title=')).toBe(false)
   })

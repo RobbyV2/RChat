@@ -34,10 +34,7 @@ const SPACING_SOURCES = [
 ]
 
 // Screens that set spacing classes of their own. On every other screen one fails the lint.
-const HAND_SPACED = [
-  'apps/web/app/components/backup_phrase/phrase_qr.tsx',
-  'apps/web/app/components/voice_grid.tsx',
-]
+const HAND_SPACED = []
 
 const SINKS = ['TO_REQUEST', 'TO_STORE', 'TO_CRYPTO', 'TO_SCREEN']
 

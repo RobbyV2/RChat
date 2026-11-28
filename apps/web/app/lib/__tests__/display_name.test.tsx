@@ -97,7 +97,7 @@ const USERNAME_AFTER = (display: string, username: string) =>
 // In a narrow row: the display name truncates first, and a username with no room left wraps
 // out of sight (it stays in the title and for screen readers).
 const FITTED = (display: string, username: string) =>
-  `<span class="flex h-[1lh] min-w-0 flex-wrap items-baseline overflow-hidden text-ellipsis"><span dir="auto" class="max-w-max min-w-0 flex-[1_1_4rem] truncate">${display}</span><span class="shrink-0 pl-1 text-on-surface-variant">(${username})</span></span>`
+  `<span class="flex min-w-0 flex-wrap gap-(--space-2xs) items-baseline justify-start h-lh text-ellipsis min-w-0 overflow-hidden"><span dir="auto" class="max-w-max min-w-0 shrink grow basis-16 truncate">${display}</span><span class="shrink-0 text-on-surface-variant">(${username})</span></span>`
 
 test('a member list name fits its row, with the whole name in its title', async () => {
   const row = (u: ReturnType<typeof user>, color?: string, icon?: Look['icon']) =>

@@ -77,7 +77,7 @@ import { profileTrigger } from './profile_card'
 import { CallDuration, CallType, DirectBadge } from './call_buttons'
 import { COARSE_QUERY, longPress, useMedia } from './context_menu'
 import { Dialog, Masked, useEscape, useOwn } from './ui'
-import { Row, Stack, Surface } from './layout'
+import { Row, Stack, Surface, Inset } from './layout'
 import { tileName } from '../lib/display_name'
 import { ownsP2pServer } from '../lib/p2p/server/types'
 import { ChannelTopic } from './channel_topic'
@@ -241,13 +241,24 @@ function AudioUnblock() {
   }, [blocked])
   if (!blocked) return null
   return (
-    <button
+    <Surface
       onClick={unblockAudio}
-      className={`${ctlBase} fixed top-[calc(var(--safe-top)+4rem)] left-1/2 z-top -translate-x-1/2 gap-2 bg-inverse-surface px-4 py-2 text-sm whitespace-nowrap font-medium text-inverse-on-surface shadow-elevation-3 hover:opacity-90`}
+      as="button"
+      row
+      pad="lg"
+      inset="chip"
+      gap="sm"
+      tone="plain"
+      radius="full"
+      justify="center"
+      elevation={3}
+      text="sm"
+      look={`${ctlLook} top-below-bar bg-inverse-surface font-medium whitespace-nowrap text-inverse-on-surface hover:opacity-90`}
+      place="fixed left-1/2 z-top -translate-x-1/2 shrink-0"
     >
       <Volume2 size={16} />
       Click to enable audio
-    </button>
+    </Surface>
   )
 }
 
@@ -355,14 +366,17 @@ export function LiveBadge({
   title?: string
 }) {
   return (
-    <span
+    <Inset
       title={title}
-      className={`flex shrink-0 items-center rounded-sm bg-danger font-bold tracking-wide text-on-danger ${
-        size === 'sm' ? 'px-1 py-px text-3xs leading-3' : 'px-1.5 py-0.5 text-2xs leading-4'
-      }`}
+      as="span"
+      row
+      pad={size === 'sm' ? '2xs' : 'xs'}
+      inset={size === 'sm' ? 'bar' : 'chip'}
+      look={`rounded-sm bg-danger font-bold tracking-wide text-on-danger ${size === 'sm' ? 'text-3xs leading-3' : 'text-2xs leading-4'}`}
+      place="shrink-0"
     >
       LIVE
-    </span>
+    </Inset>
   )
 }
 
@@ -476,14 +490,18 @@ export function Tile({
         onClick={onToggle}
         className="absolute inset-0 rounded-xl -outline-offset-3 transition-colors hover:bg-on-surface/5 focus-visible:outline-2 focus-visible:outline-primary"
       />
-      <span
+      <Surface
         {...(tile.local || isGuestName(user.username) ? {} : profileTrigger(store, user, server))}
         title={tile.local || isGuestName(user.username) ? undefined : 'View profile'}
-        className={`absolute bottom-1.5 left-1.5 flex max-w-[calc(100%-0.75rem)] ${
-          isGuestName(user.username) ? '' : 'cursor-pointer'
-        } items-center gap-1 rounded-md bg-scrim/70 font-medium text-white outline-offset-2 hover:bg-scrim/85 focus-visible:outline-2 focus-visible:outline-primary ${
-          compact ? 'px-1.5 py-0.5 text-2xs' : 'px-2 py-1 text-xs'
-        }`}
+        as="span"
+        row
+        pad={compact ? 'xs' : 'sm'}
+        inset="chip"
+        gap="2xs"
+        tone="plain"
+        radius="md"
+        look={`max-w-11/12 bg-scrim/70 font-medium text-white outline-offset-2 hover:bg-scrim/85 focus-visible:outline-2 focus-visible:outline-primary ${isGuestName(user.username) ? '' : 'cursor-pointer'} ${compact ? 'text-2xs' : 'text-xs'}`}
+        place="absolute bottom-1.5 left-1.5"
       >
         {screen ? (
           <Monitor size={compact ? 11 : 13} className="shrink-0" aria-hidden />
@@ -504,9 +522,9 @@ export function Tile({
         {status.forced === 'staff' && !screen && !compact && (
           <span className="shrink-0 opacity-75">{STAFF_MUTED}</span>
         )}
-      </span>
+      </Surface>
       {menu && (
-        <button
+        <Inset
           title="More"
           aria-label={`More for ${name}`}
           aria-haspopup="menu"
@@ -515,19 +533,23 @@ export function Tile({
             const r = e.currentTarget.getBoundingClientRect()
             menu(r.right, r.bottom + 4)
           }}
-          className={`absolute top-1.5 right-1.5 flex cursor-pointer items-center justify-center rounded-full bg-scrim/70 text-white outline-offset-2 hover:bg-scrim/85 focus-visible:outline-2 focus-visible:outline-primary ${
-            compact ? 'p-0.5' : 'p-1'
-          }`}
+          as="button"
+          row
+          pad={compact ? '3xs' : '2xs'}
+          justify="center"
+          look="cursor-pointer rounded-full bg-scrim/70 text-white outline-offset-2 hover:bg-scrim/85 focus-visible:outline-2 focus-visible:outline-primary"
+          place="absolute top-1.5 right-1.5"
         >
           <MoreVertical size={compact ? 12 : 16} />
-        </button>
+        </Inset>
       )}
     </div>
   )
 }
 
-const ctlBase =
-  'flex shrink-0 items-center justify-center rounded-full outline-offset-2 transition-colors focus-visible:outline-2 focus-visible:outline-primary'
+const ctlLook =
+  'outline-offset-2 transition-colors focus-visible:outline-2 focus-visible:outline-primary'
+const ctlBase = `flex shrink-0 items-center justify-center rounded-full ${ctlLook}`
 
 function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
   const identity = useP2pApp()
@@ -728,13 +750,20 @@ export function MeshNotice({ users, at }: { users: VoiceUser[]; at: 'stage' | 'd
   )
     return null
   const note = (
-    <p
+    <Surface
       role="note"
       data-p2p-voice-notice
-      className="rounded-lg border border-dashed border-tertiary bg-tertiary-container/40 px-2.5 py-1.5 text-xs text-on-surface"
+      as="p"
+      pad="sm"
+      inset="bar"
+      tone="plain"
+      radius="md"
+      text="xs"
+      ink="strong"
+      look="border border-dashed border-tertiary bg-tertiary-container/40"
     >
       {voiceNotice(fit)}
-    </p>
+    </Surface>
   )
   return at === 'stage' ? (
     <Surface pad="lg" inset="bar" tone="plain" radius="none" align="start" place="shrink-0">
@@ -861,7 +890,7 @@ function VoiceDockBody() {
     : QUALITY[quality]
   const { Icon } = status
   return (
-    <div className="shrink-0 border-t border-outline-variant bg-surface-container px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+    <Surface pad="sm" tone="base" radius="none" border="top" safe place="shrink-0">
       <Stack gap="sm">
         <Surface pad="2xs" tone="plain" radius="none">
           <Row gap="sm">
@@ -938,7 +967,7 @@ function VoiceDockBody() {
         {roomVoice && <MeshNotice users={users} at="dock" />}
         <CallControls size="sm" />
       </Stack>
-    </div>
+    </Surface>
   )
 }
 
@@ -1001,11 +1030,16 @@ function SharePill() {
   if (!sharing) return null
   return (
     <Surface pad="lg" inset="bar" tone="plain" radius="none" align="center" place="shrink-0">
-      <div
+      <Surface
         role="status"
-        className={`max-w-full min-w-0 bg-surface-container-high py-1 pr-1 pl-3 text-sm text-on-surface shadow-elevation-2 ${
-          audioNote ? 'rounded-3xl' : 'rounded-full'
-        }`}
+        pad="sm"
+        inset="chip"
+        tone="high"
+        radius="none"
+        elevation={2}
+        text="sm"
+        look={audioNote ? 'rounded-3xl' : 'rounded-full'}
+        place="max-w-full min-w-0"
       >
         <Row gap="sm">
           <span aria-hidden className="relative flex h-2.5 w-2.5 shrink-0">
@@ -1031,16 +1065,26 @@ function SharePill() {
               </Row>
             )}
           </Stack>
-          <button
+          <Surface
             title="Stop sharing"
             onClick={() => void toggleShare()}
-            className={`${ctlBase} h-7 shrink-0 gap-1 bg-danger px-3 text-xs font-semibold text-on-danger hover:brightness-110`}
+            as="button"
+            row
+            pad="md"
+            inset="sides"
+            gap="2xs"
+            tone="plain"
+            radius="full"
+            justify="center"
+            text="xs"
+            look={`${ctlLook} h-7 bg-danger font-semibold text-on-danger hover:brightness-110`}
+            place="shrink-0"
           >
             <ScreenShareOff size={14} aria-hidden />
             Stop
-          </button>
+          </Surface>
         </Row>
-      </div>
+      </Surface>
     </Surface>
   )
 }
@@ -1391,17 +1435,22 @@ export function VoiceGrid({
       {joined && <SharePill />}
       <div
         ref={area}
-        className={`min-h-0 flex-1 overflow-y-auto p-3 sm:p-4 ${
-          joined || channelId !== undefined || forVoice ? 'pb-20 sm:pb-22' : ''
+        className={`voice-stage min-h-0 flex-1 overflow-y-auto ${
+          joined || channelId !== undefined || forVoice ? 'voice-stage-clear' : ''
         }`}
       >
         {focused ? (
           <Stack gap="sm" place="h-full min-h-0">
             <div className="min-h-0 flex-1">{tile(focused, 'focus')}</div>
             {others.length > 0 && (
-              <div className="flex shrink-0 justify-center-safe gap-2 overflow-x-auto pb-1">
+              <Row
+                gap="sm"
+                align="stretch"
+                look="justify-center-safe"
+                place="shrink-0 overflow-x-auto"
+              >
                 {others.map(t => tile(t, 'strip'))}
-              </div>
+              </Row>
             )}
           </Stack>
         ) : tiles.length > 0 ? (
@@ -1426,52 +1475,84 @@ export function VoiceGrid({
           </Stack>
         )}
       </div>
-      <div
-        className={`pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-linear-to-t from-surface-container-lowest/90 to-transparent px-3 pt-6 pb-[max(0.75rem,env(safe-area-inset-bottom))] transition-opacity duration-300 ${
-          idle ? 'opacity-0' : 'opacity-100'
-        }`}
+      <Inset
+        row
+        pad="md"
+        justify="center"
+        safe
+        look={`bg-linear-to-t from-surface-container-lowest/90 to-transparent transition-opacity duration-300 ${idle ? 'opacity-0' : 'opacity-100'}`}
+        place="pointer-events-none absolute inset-x-0 bottom-0"
       >
         <div ref={bar} className="pointer-events-auto" onFocus={wake}>
           {joined ? (
             <CallControls />
           ) : forVoice ? (
             !p2pElsewhere && (
-              <button
+              <Surface
                 data-p2p-voice-join
                 disabled={!here.connect}
                 title={here.connect ? undefined : NO_CONNECT}
                 onClick={() => void p2pVoice?.join(forVoice.room, forVoice.ch)}
-                className={`${ctlBase} h-11 gap-2 bg-status-green px-6 text-sm font-semibold text-surface hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60`}
+                as="button"
+                row
+                pad="xl"
+                inset="sides"
+                gap="sm"
+                tone="plain"
+                radius="full"
+                justify="center"
+                text="sm"
+                look={`${ctlLook} h-11 bg-status-green font-semibold text-surface hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60`}
+                place="shrink-0"
               >
                 <Phone size={18} />
                 Join voice
-              </button>
+              </Surface>
             )
           ) : (
             channelId !== undefined &&
             mine !== null &&
             (shut !== null ? (
               tiles.length > 0 && (
-                <p className="rounded-full bg-surface-container-high px-4 py-2 text-sm text-on-surface-variant shadow-elevation-1">
+                <Surface
+                  as="p"
+                  pad="lg"
+                  inset="chip"
+                  tone="high"
+                  radius="full"
+                  elevation={1}
+                  text="sm"
+                  ink="muted"
+                >
                   {shut}
-                </p>
+                </Surface>
               )
             ) : (
-              <button
+              <Surface
                 disabled={!here.connect}
                 title={here.connect ? undefined : NO_CONNECT}
                 onClick={() => {
                   if (view?.kind === 'channel') void joinVoice(view.server, channelId)
                 }}
-                className={`${ctlBase} h-11 gap-2 bg-status-green px-6 text-sm font-semibold text-surface hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60`}
+                as="button"
+                row
+                pad="xl"
+                inset="sides"
+                gap="sm"
+                tone="plain"
+                radius="full"
+                justify="center"
+                text="sm"
+                look={`${ctlLook} h-11 bg-status-green font-semibold text-surface hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60`}
+                place="shrink-0"
               >
                 <Phone size={18} />
                 Join voice
-              </button>
+              </Surface>
             ))
           )}
         </div>
-      </div>
+      </Inset>
     </div>
   )
 }
@@ -1485,7 +1566,7 @@ export function CallBanner() {
       </CallOwner>
       <div
         data-call-banner
-        className="pointer-events-none fixed inset-x-0 top-app z-top flex max-h-[calc(100dvh-var(--safe-top))] flex-col items-center gap-2 overflow-y-auto pt-3 pb-5 empty:hidden"
+        className="call-stack pointer-events-none fixed inset-x-0 top-app z-top flex flex-col items-center overflow-y-auto empty:hidden"
       >
         {sessions.map(account => (
           <AccountProvider key={account.renderKey} session={account}>
@@ -1526,9 +1607,14 @@ function CallBannerBody() {
   const avatar = (size: number) => <RingAvatar user={other} size={size} streamer={streamer} />
   if (!incoming)
     return (
-      <div
+      <Surface
         role="status"
-        className="pointer-events-auto shrink-0 max-w-screen-inset rounded-full bg-surface-container-high py-1.5 pr-1.5 pl-2 shadow-elevation-3"
+        pad="xs"
+        tone="high"
+        radius="full"
+        elevation={3}
+        look="max-w-screen-inset"
+        place="pointer-events-auto shrink-0"
       >
         <Row gap="md">
           <Surface
@@ -1569,17 +1655,17 @@ function CallBannerBody() {
             <PhoneOff size={16} />
           </button>
         </Row>
-      </div>
+      </Surface>
     )
   return (
     <div
       role="alertdialog"
       aria-label="Incoming call"
-      className="pointer-events-auto flex shrink-0 w-72 max-w-screen-inset flex-col items-center gap-3 rounded-3xl bg-surface-container-high px-5 pt-6 pb-5 text-center shadow-elevation-3 max-sm:flex-row max-sm:rounded-2xl max-sm:px-4 max-sm:py-3 max-sm:text-left"
+      className="call-card max-w-screen-inset bg-surface-container-high shadow-elevation-3"
     >
       <span className="max-sm:hidden">{avatar(72)}</span>
       <span className="sm:hidden">{avatar(40)}</span>
-      <div className="flex min-w-0 flex-col items-center gap-0.5 max-sm:flex-1 max-sm:items-start">
+      <div className="call-card-who">
         <Name
           of={personName(asAccount(other, 'call'))}
           withUsername
@@ -1606,7 +1692,7 @@ function CallBannerBody() {
           />
         </Row>
       </div>
-      <div className="flex shrink-0 items-center gap-4 max-sm:gap-2 sm:mt-1">
+      <div className="call-card-actions">
         <button
           title="Decline"
           aria-label="Decline"
@@ -1640,7 +1726,7 @@ function RingAvatar({ user, size, streamer }: { user: UserRef; size: number; str
       />
       <span
         aria-hidden
-        className="absolute inset-0 rounded-full bg-status-green/30 [animation-delay:700ms] motion-safe:animate-ring"
+        className="absolute inset-0 rounded-full bg-status-green/30 animation-delay-700 motion-safe:animate-ring"
       />
       <span className="relative flex rounded-full ring-2 ring-status-green">
         {streamer ? (
@@ -1706,9 +1792,14 @@ function ContactCallBanner() {
   }
   if (!incoming)
     return (
-      <div
+      <Surface
         role="status"
-        className="pointer-events-auto shrink-0 max-w-screen-inset rounded-full bg-surface-container-high py-1.5 pr-1.5 pl-2 shadow-elevation-3"
+        pad="xs"
+        tone="high"
+        radius="full"
+        elevation={3}
+        look="max-w-screen-inset"
+        place="pointer-events-auto shrink-0"
       >
         <Row gap="md">
           <Surface
@@ -1743,18 +1834,18 @@ function ContactCallBanner() {
             <PhoneOff size={16} />
           </button>
         </Row>
-      </div>
+      </Surface>
     )
   return (
     <div
       role="alertdialog"
       aria-label="Incoming call"
       data-p2p-call-card
-      className="pointer-events-auto flex shrink-0 w-72 max-w-screen-inset flex-col items-center gap-3 rounded-3xl bg-surface-container-high px-5 pt-6 pb-5 text-center shadow-elevation-3 max-sm:flex-row max-sm:rounded-2xl max-sm:px-4 max-sm:py-3 max-sm:text-left"
+      className="call-card max-w-screen-inset bg-surface-container-high shadow-elevation-3"
     >
       <span className="max-sm:hidden">{avatar(72)}</span>
       <span className="sm:hidden">{avatar(40)}</span>
-      <div className="flex min-w-0 flex-col items-center gap-0.5 max-sm:flex-1 max-sm:items-start">
+      <div className="call-card-who">
         <Name of={p2pName(name)} look="w-full truncate text-base font-semibold" />
         <CallType video={c.video} p2p incoming chip={<P2pBadge />} />
         <Row
@@ -1772,7 +1863,7 @@ function ContactCallBanner() {
           <Name of={p2pName(name)} look="truncate" />
         </Row>
       </div>
-      <div className="flex shrink-0 items-center gap-4 max-sm:gap-2 sm:mt-1">
+      <div className="call-card-actions">
         <button
           title="Decline"
           aria-label="Decline"

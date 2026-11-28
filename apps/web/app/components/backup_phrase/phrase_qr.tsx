@@ -3,8 +3,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { Download, FileDown, Printer } from 'lucide-react'
 import { Button } from '../controls'
-import { Row, Stack } from '../layout'
-import { buttonLook } from '../../lib/controls'
+import { Row, Stack, Surface } from '../layout'
 import {
   KEY_DOT,
   KEY_PATH,
@@ -223,13 +222,22 @@ export function PhraseExport({
           Save SVG
         </Button>
         <span className="grid">
-          <span
+          <Surface
+            as="span"
             aria-hidden="true"
-            className={`invisible col-start-1 row-start-1 flex items-center gap-1.5 ${buttonLook('text', 'sm')}`}
+            row
+            pad="md"
+            inset="chip"
+            gap="xs"
+            tone="plain"
+            radius="full"
+            text="sm"
+            look="font-medium pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+            place="invisible col-start-1 row-start-1"
           >
             <FileDown size={16} />
             Save sheet
-          </span>
+          </Surface>
           {action === 'print' && (
             <Button
               icon={Printer}

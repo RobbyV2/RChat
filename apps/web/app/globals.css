@@ -613,6 +613,73 @@ body {
   font-weight: 500;
 }
 
+/* The call stage: room around the tiles, and under them for the bar of call controls. */
+.voice-stage {
+  padding: var(--space-md);
+}
+
+.voice-stage-clear {
+  padding-bottom: 5rem;
+}
+
+/* Incoming and ongoing calls, stacked under the top of the app. */
+.call-stack {
+  max-height: calc(100dvh - var(--safe-top));
+  gap: var(--space-sm);
+  padding-block: var(--space-md) var(--space-lg);
+}
+
+/* The card of an incoming call: a column on wide screens, one line on a phone. */
+.call-card {
+  pointer-events: auto;
+  display: flex;
+  width: 18rem;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+  border-radius: 1.5rem;
+  padding: var(--space-xl) var(--space-lg) var(--space-lg);
+  text-align: center;
+}
+
+.call-card-who {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3xs);
+}
+
+.call-card-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-lg);
+}
+
+@media (width < 40rem) {
+  .call-card {
+    flex-direction: row;
+    border-radius: 1rem;
+    padding: var(--space-md) var(--space-lg);
+    text-align: left;
+  }
+
+  .call-card-who {
+    flex: 1;
+    align-items: flex-start;
+  }
+
+  .call-card-actions {
+    gap: var(--space-sm);
+  }
+}
+
+@utility animation-delay-* {
+  animation-delay: calc(--value(integer) * 1ms);
+}
+
 /* The title of the desktop window clears the window's own buttons. */
 .titlebar-clear-mac {
   padding-inline: 5rem;

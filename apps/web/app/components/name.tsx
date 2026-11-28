@@ -69,14 +69,21 @@ function Body({ of, withUsername, fit }: { of: NameValue; withUsername: boolean;
   if (fit)
     return (
       <MaskedTogether word={revealKeyOf(of)}>
-        <span className="flex h-[1lh] min-w-0 flex-wrap items-baseline overflow-hidden text-ellipsis">
-          <span dir="auto" className="max-w-max min-w-0 flex-[1_1_4rem] truncate">
+        <Row
+          as="span"
+          gap="2xs"
+          align="baseline"
+          wrap
+          look="h-lh text-ellipsis"
+          place="min-w-0 overflow-hidden"
+        >
+          <span dir="auto" className="max-w-max min-w-0 shrink grow basis-16 truncate">
             <Masked text={main} own={shown} />
           </span>
-          <span className="shrink-0 pl-1 text-on-surface-variant">
+          <span className="shrink-0 text-on-surface-variant">
             (<Masked text={handle} own={shown} />)
           </span>
-        </span>
+        </Row>
       </MaskedTogether>
     )
   return (
