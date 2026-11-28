@@ -2,6 +2,7 @@ import { openActionMenu } from '../actions/menu'
 import { channelGroups, roomGroups } from '../categories'
 import type { AccountSession } from '../client/session'
 import type { P2pApp } from '../p2p/app/runtime'
+import { viewCan } from '../p2p/roles'
 import { ownsP2pServer } from '../p2p/server/types'
 import { P } from '../p2p/state'
 import { myPerms } from '../selectors'
@@ -151,7 +152,7 @@ const peer = (app: P2pApp, room: string): Channels => {
       },
       ([v, active, me, folded]): ChannelsState => {
         if (!v) return WAITING
-        const canManage = v.me === 'join' && (v.perms & P.ManageChannels) !== 0
+        const canManage = viewCan(v, P.ManageChannels)
         const shown = v.channels.filter(c => c.kind === 'text' || c.kind === 'voice')
         const groups = roomGroups({ channels: shown, categories: v.categories }, canManage)
         const entry = (c: (typeof shown)[number]): ChannelEntry => ({

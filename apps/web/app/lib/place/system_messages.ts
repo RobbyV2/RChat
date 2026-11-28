@@ -1,3 +1,4 @@
+import { viewCan } from '../p2p/roles'
 import { P } from '../p2p/state'
 import { ownsP2pServer } from '../p2p/server/types'
 import { myPerms } from '../selectors'
@@ -174,7 +175,7 @@ const peer = ({ app, room }: P2pRoom): SystemMessagesAt => {
     editor: derived(
       fromStore(app.useP2p, s => {
         const v = s.servers[room]
-        return v?.me === 'join' && (v.perms & P.ManageServer) !== 0
+        return !!v && viewCan(v, P.ManageServer)
       }),
       may => (may ? editor : null)
     ),
