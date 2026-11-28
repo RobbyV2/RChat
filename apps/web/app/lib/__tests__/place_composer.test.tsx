@@ -13,6 +13,7 @@ import { NO_THREADS_TEXT } from '../channel_perms'
 import { ChannelPermBit } from '../types'
 import { ReplyBar } from '../../components/replies'
 import { ComposerGate } from '../../components/composer_gate'
+import { AttachButton, ComposerFiles } from '../../components/composer_files'
 import { placeContract, type ContractWorld } from './helpers/place_contract'
 
 // Ann's side with the conversation on screen and a thread open beside it, a draft in each, and
@@ -234,6 +235,90 @@ placeContract(composer, (kind, world) => {
     expect(html).toContain('see you at noon')
     expect(html).toContain('aria-label="Emoji"')
     expect(html).toContain('aria-label="Send"')
+  })
+
+  test('a draft holds files where the place takes them, and one card draws either', () => {
+    const calls: unknown[][] = []
+    const main = seat(world(), calls)
+    const { ann } = world()
+    const key = mainKey()
+    const file = new File(['x'], 'cat.png', { type: 'image/png' })
+    const settings = { ...ann.account.store.getState().settings }
+    ann.account.store.setState({
+      settings: { ...settings, asset_uploads: true, p2p_attachments: true },
+    })
+    if (hosted)
+      ann.account.store.setState({
+        pending: { [key]: { file, spoiler: false, mode: 'server', scope: key } },
+        toggleSpoiler: (k: string) => void calls.push(['spoiler', k]),
+        setUploadAlt: (k: string, alt: string) => void calls.push(['alt', k, alt]),
+      } as never)
+    else if (ann.app) {
+      ann.app.useP2p.setState({
+        attaching: {
+          [key]: [
+            {
+              id: 4,
+              file,
+              spoiler: false,
+              progress: 0.5,
+              hashed: null,
+              preview: null,
+              error: null,
+            },
+          ],
+        },
+      })
+      Object.assign(ann.app.p2pFiles, {
+        toggleSpoiler: (k: string, id: number) => void calls.push(['spoiler', k, id]),
+        setAlt: (k: string, id: number, alt: string) => void calls.push(['alt', k, id, alt]),
+      })
+    }
+    const files = main.files.get()
+    expect(main.files.get()).toBe(files)
+    expect(files.add).toBe(hosted ? 'one' : 'many')
+    expect(files.peer).toBe(!hosted)
+    expect(files.stuck).toBe(false)
+    expect(files.held.map(f => f.file.name)).toEqual(['cat.png'])
+    expect(files.held[0].mode).toEqual(hosted ? { now: 'server', switchable: true } : null)
+    expect(files.held[0].status).toEqual(hosted ? null : { kind: 'preparing', done: 0.5 })
+    const { id } = files.held[0]
+    main.toggleSpoiler(id)
+    main.describe(id, 'a cat')
+    expect(calls).toEqual(
+      hosted
+        ? [
+            ['spoiler', key],
+            ['alt', key, 'a cat'],
+          ]
+        : [
+            ['spoiler', key, 4],
+            ['alt', key, 4, 'a cat'],
+          ]
+    )
+    expect(seat(world(), [], 'thread').files.get().held).toEqual([])
+    Object.assign(ann.account.store.getInitialState(), ann.account.store.getState())
+    if (ann.app) Object.assign(ann.app.useP2p.getInitialState(), ann.app.useP2p.getState())
+    const html = renderToStaticMarkup(
+      <AccountProvider session={ann.account}>
+        <P2pProvider identity={ann.app}>
+          <PlaceProvider place={ann.place}>
+            <ComposerFiles compose={main} />
+            <AttachButton compose={main} />
+          </PlaceProvider>
+        </P2pProvider>
+      </AccountProvider>
+    )
+    expect(html.match(/data-pending-file/g)?.length).toBe(1)
+    expect(html).toContain('cat.png')
+    expect(html).toContain('aria-label="Remove file"')
+    expect(html).toContain('aria-label="Describe this image"')
+    expect(html).toContain(hosted ? 'aria-label="Attach a file"' : 'aria-label="Attach files"')
+    ann.account.store.setState({
+      settings: { ...settings, asset_uploads: false, p2p_attachments: false },
+    })
+    expect(main.files.get().add).toBeNull()
+    expect(main.paste([file])).toBe(false)
   })
 
   // Ann as a member who may write here, then with `change` on her side of the place.

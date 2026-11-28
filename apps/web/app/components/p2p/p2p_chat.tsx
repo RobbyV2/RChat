@@ -23,7 +23,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react'
-import { CircleAlert, Clock, History, Plus, X } from 'lucide-react'
+import { CircleAlert, Clock, History, X } from 'lucide-react'
 import { useStore } from '../../lib/store'
 import { outgoing } from '../../lib/link_safety'
 import { actionPress, openActionMenu } from '../../lib/actions/menu'
@@ -69,8 +69,8 @@ import { DateDivider } from '../date_divider'
 import { ScheduledChip, SendLaterDialog, useDeviceItems, useDeviceOps } from '../scheduled'
 import { laterBlocked, type ComposerDraft } from '../../lib/scheduled'
 import { P2pBadge } from './p2p_badge'
-import { AttachmentList, PendingFiles } from './p2p_files'
-import { namePasted } from '../message_composer'
+import { AttachmentList } from './p2p_files'
+import { AttachButton, ComposerFiles, pastedFiles } from '../composer_files'
 import { Row, Stack, Surface, Dock } from '../layout'
 import { playsOn } from '../../lib/motion/play'
 
@@ -213,12 +213,10 @@ export function useP2pFlash(
 function P2pComposerBody({
   draftKey: key,
   list = 'main',
-  channelTextOnly = false,
   scope,
   title,
   placeholder,
 }: {
-  channelTextOnly?: boolean
   // Where the draft, files, reply and sends go (a conversation, channel or thread).
   draftKey: string
   list?: ComposerList
@@ -227,7 +225,7 @@ function P2pComposerBody({
   placeholder: string
 }) {
   const identity = useP2pApp()!
-  const { p2pDm, p2pFiles } = identity
+  const { p2pDm } = identity
 
   const account = useAccount()
   const { store } = account
@@ -237,14 +235,10 @@ function P2pComposerBody({
   const forwardClip = useForwardClip()
   const suffix = useActorSuffix(usePeerActor())
   const streamer = useStore(s => s.streamer)
-  const fileRef = useRef<HTMLInputElement>(null)
-  const files = useP2p(s => s.attaching[key]?.length ?? 0)
+  const { held: attached, stuck } = useLive(compose.files)
+  const files = attached.length
   // A thread's replies count in its channel's slow mode: the channel's countdown.
   const slowLeft = useCountdown(useP2p(s => s.slowUntil[key.split('#')[0]] ?? 0))
-  const siteTextOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
-  const held = useContext(ChannelCanContext)
-  const noFiles = channelTextOnly || !held.attach
-  const textOnly = noFiles || siteTextOnly
   const linkPrefs = useStore(s => s.linkPrefs)
   const { getText, setText } = compose
   const [laterOpen, setLaterOpen] = useState(false)
@@ -255,7 +249,7 @@ function P2pComposerBody({
 
   const tooLong = !fits(compose, text, max)
   const send = () => {
-    if ((noFiles && files > 0) || (!text.trim() && !files) || tooLong || slowLeft > 0) return
+    if (stuck || (!text.trim() && !files) || tooLong || slowLeft > 0) return
     const sent = text
     void p2pDm.send(key, outgoing(linkPrefs, sent)).then(ok => {
       if (ok && getText() === sent) setText('')
@@ -317,7 +311,7 @@ function P2pComposerBody({
             }}
           />
         )}
-        {(!textOnly || files > 0) && <PendingFiles room={key} />}
+        <ComposerFiles compose={compose} />
         <Stack gap="2xs" place="w-full">
           {slowLeft > 0 && (
             <Row as="p" role="status" data-p2p-slow-left gap="2xs" justify="end">
@@ -334,48 +328,13 @@ function P2pComposerBody({
               listKey={scope}
               placeholder={streamer ? 'Send a P2P message' : placeholder + suffix}
               slowLeft={slowLeft}
-              blocked={noFiles && files > 0}
+              blocked={stuck}
               bar={bar}
               inputProps={{ 'data-p2p-composer': '' }}
               later={laterDraft}
               onSend={send}
-              onPaste={e => {
-                if (textOnly) return false
-                const pasted = Array.from(e.clipboardData.items)
-                  .filter(i => i.kind === 'file')
-                  .map(i => i.getAsFile())
-                  .filter((f): f is File => f !== null)
-                if (!pasted.length) return false
-                p2pFiles.add(
-                  key,
-                  pasted.map(f => (f.name && f.name !== 'image.png' ? f : namePasted(f)))
-                )
-                return true
-              }}
-              tools={
-                !textOnly && (
-                  <>
-                    <IconButton
-                      icon={Plus}
-                      label="Attach files"
-                      size="lg"
-                      onClick={() => fileRef.current?.click()}
-                      place="shrink-0"
-                    />
-                    <input
-                      ref={fileRef}
-                      type="file"
-                      multiple
-                      data-p2p-file-input
-                      className="hidden"
-                      onChange={e => {
-                        p2pFiles.add(key, Array.from(e.target.files ?? []))
-                        e.target.value = ''
-                      }}
-                    />
-                  </>
-                )
-              }
+              onPaste={e => compose.paste(pastedFiles(e))}
+              tools={<AttachButton compose={compose} />}
             />
           </Stack>
         </Stack>
@@ -816,7 +775,6 @@ function IdentityChatBody(props: ChatBodyProps) {
             )}
             <P2pComposer
               draftKey={key}
-              channelTextOnly={props.channelTextOnly}
               scope={scope}
               title={props.title}
               placeholder={props.placeholder}

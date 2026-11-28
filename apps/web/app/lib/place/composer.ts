@@ -27,6 +27,8 @@ import { defineFeature } from './feature'
 import { built, type Live } from './live'
 import { P2pDm, P2pRoom } from './place'
 import { shownOf } from './shown'
+import { namePasted } from '../pasted_files'
+import type { UploadMode } from '../attachments'
 
 // Which of a place's lists a composer writes to: the conversation on screen or its open thread.
 export type ComposerList = 'main' | 'thread'
@@ -62,6 +64,36 @@ export interface ForwardTo {
   // Only text can be written there.
   textOnly: boolean
 }
+
+// A file held with a draft until it is sent.
+export interface DraftFile {
+  id: string
+  file: File
+  spoiler: boolean
+  // "Describe this image", as typed.
+  alt: string
+  // Which way it goes where there are two; `switchable` while the other way is open to it.
+  mode: { now: UploadMode; switchable: boolean } | null
+  // What stands under its name: nothing, its size once ready, how far it is prepared (0..1), or
+  // why it cannot be sent.
+  status:
+    | { kind: 'ready'; bytes: number }
+    | { kind: 'preparing'; done: number }
+    | { kind: 'failed'; why: string }
+    | null
+}
+
+export interface FilesState {
+  // How many files a draft takes at a time; null where none can be added.
+  add: 'one' | 'many' | null
+  held: DraftFile[]
+  // Held files cannot be sent here.
+  stuck: boolean
+  // Every file goes peer-to-peer.
+  peer: boolean
+}
+
+const NO_FILES: DraftFile[] = []
 
 // Why nothing can be written to a list, as the bar in the composer's place says it.
 export type Gate =
@@ -116,6 +148,17 @@ export interface Compose {
   editLast: () => boolean
   cancelReply: () => void
   toggleReplyMention: () => void
+  files: Live<FilesState>
+  // Adds files to the draft, as many as it takes.
+  attach: (files: File[]) => void
+  // Takes the files of a paste; false when none of them were taken.
+  paste: (files: File[]) => boolean
+  detach: (id: string) => void
+  describe: (id: string, alt: string) => void
+  toggleSpoiler: (id: string) => void
+  toggleMode: (id: string) => void
+  // A small picture of a held file, where the place made one.
+  thumbOf: (id: string) => Promise<string | null>
   // Where a forward sent from this list goes; null with nothing to write to.
   forwardTo: Live<ForwardTo | null>
   // Sends the message on the forward clipboard here. `showSource`: whether the copy names where
@@ -244,6 +287,57 @@ const hosted = (account: AccountSession): Composer =>
         }
       )
     const getGate = gate(false)
+    const files = (initial: boolean) =>
+      built(
+        () => {
+          const s = initial ? store.getInitialState() : store.getState()
+          const key = keyOf(initial)
+          const v = s.view
+          const server = v?.kind === 'channel' ? v.server : null
+          const channel =
+            list === 'thread'
+              ? s.panel?.kind === 'thread'
+                ? s.panel.root.channel_id
+                : null
+              : v?.kind === 'channel'
+                ? v.channelId
+                : null
+          return [
+            key === null ? undefined : s.pending[key],
+            textOnlyDestination(s, key),
+            s.settings.asset_uploads,
+            s.settings.p2p_attachments,
+            limitsOf(s.instance).upload_bytes,
+            server === null || channelCan(s, server, channel).attach,
+          ] as const
+        },
+        ([pending, textOnly, uploads, p2p, max, may]): FilesState => ({
+          add: !textOnly && (uploads || p2p) && may ? 'one' : null,
+          held:
+            pending && !textOnly
+              ? [
+                  {
+                    id: 'file',
+                    file: pending.file,
+                    spoiler: pending.spoiler,
+                    alt: pending.alt ?? '',
+                    mode: {
+                      now: pending.mode,
+                      switchable: uploads && p2p && pending.file.size <= max,
+                    },
+                    status: null,
+                  },
+                ]
+              : NO_FILES,
+          stuck: false,
+          peer: false,
+        })
+      )
+    const getFiles = files(false)
+    const onKey = (run: (key: string) => void) => {
+      const { key } = get()
+      if (key !== null) run(key)
+    }
     const forwardTo = (initial: boolean) =>
       built(
         () => {
@@ -259,6 +353,26 @@ const hosted = (account: AccountSession): Composer =>
           key === null ? null : { key, destination: { kind: 'instance', server }, textOnly }
       )
     return {
+      files: {
+        get: getFiles,
+        initial: files(true),
+        subscribe: changed => store.subscribe(changed),
+      },
+      attach: added => {
+        const file = added[0]
+        if (file) onKey(key => store.getState().uploadFile(key, file))
+      },
+      paste: pasted => {
+        const image = pasted.find(f => f.type.startsWith('image/'))
+        if (!image || getFiles().add === null) return false
+        onKey(key => store.getState().uploadFile(key, namePasted(image)))
+        return true
+      },
+      detach: () => onKey(key => store.getState().uploadFile(key, null)),
+      describe: (_, alt) => onKey(key => store.getState().setUploadAlt(key, alt)),
+      toggleSpoiler: () => onKey(key => store.getState().toggleSpoiler(key)),
+      toggleMode: () => onKey(key => store.getState().toggleUploadMode(key)),
+      thumbOf: async () => null,
       forwardTo: {
         get: forwardTo(false),
         initial: forwardTo(true),
@@ -467,6 +581,48 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
         }
       )
     const getGate = gate(false)
+    const files = (initial: boolean) =>
+      built(
+        () => {
+          const s = initial ? useP2p.getInitialState() : useP2p.getState()
+          const { store } = place.account
+          const site = (initial ? store.getInitialState() : store.getState()).settings
+          const key = keyOf(initial)
+          const ch = (list === 'thread' ? s.thread?.ch : s.chat?.ch) ?? null
+          const v = place.kind === 'p2pRoom' ? s.servers[room] : undefined
+          const mask = v && ch !== null ? p2pMask(v, ch) : null
+          return [
+            key === null ? undefined : s.attaching[key],
+            (v && ch !== null && v.channels.find(c => c.id === ch)?.text_only === true) ||
+              !(mask === null || canOf(mask).attach),
+            !site.asset_uploads && !site.p2p_attachments,
+          ] as const
+        },
+        ([attaching, noFiles, siteTextOnly]): FilesState => ({
+          add: noFiles || siteTextOnly ? null : 'many',
+          held: attaching?.length
+            ? attaching.map(p => ({
+                id: String(p.id),
+                file: p.file,
+                spoiler: p.spoiler,
+                alt: p.alt ?? '',
+                mode: null,
+                status: p.error
+                  ? { kind: 'failed', why: p.error }
+                  : p.hashed !== null && p.preview !== null
+                    ? { kind: 'ready', bytes: p.file.size }
+                    : { kind: 'preparing', done: p.progress },
+              }))
+            : NO_FILES,
+          stuck: noFiles && !!attaching?.length,
+          peer: true,
+        })
+      )
+    const getFiles = files(false)
+    const onFile = (id: string, run: (key: string, id: number) => void) => {
+      const { key } = get()
+      if (key !== null) run(key, Number(id))
+    }
     const forwardTo = (initial: boolean) =>
       built(
         () => {
@@ -493,6 +649,37 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
     // When each key last said it is typing; the place wants to hear it again only so often.
     const said = new Map<string, number>()
     return {
+      files: {
+        get: getFiles,
+        initial: files(true),
+        subscribe: changed => {
+          const stops = [useP2p.subscribe(changed), place.account.store.subscribe(changed)]
+          return () => stops.forEach(stop => stop())
+        },
+      },
+      attach: added => {
+        const { key } = get()
+        if (key !== null && added.length) app.p2pFiles.add(key, added)
+      },
+      paste: pasted => {
+        const { key } = get()
+        if (key === null || !pasted.length || getFiles().add === null) return false
+        app.p2pFiles.add(
+          key,
+          pasted.map(f => (f.name && f.name !== 'image.png' ? f : namePasted(f)))
+        )
+        return true
+      },
+      detach: id => onFile(id, (key, n) => app.p2pFiles.remove(key, n)),
+      describe: (id, alt) => onFile(id, (key, n) => app.p2pFiles.setAlt(key, n, alt)),
+      toggleSpoiler: id => onFile(id, (key, n) => app.p2pFiles.toggleSpoiler(key, n)),
+      toggleMode: () => {},
+      thumbOf: async id => {
+        const { key } = get()
+        const s = useP2p.getState()
+        const held = key === null ? undefined : s.attaching[key]?.find(p => String(p.id) === id)
+        return held?.preview?.thumb ? app.p2pFiles.thumb(held.preview.thumb) : null
+      },
       forwardTo: {
         get: forwardTo(false),
         initial: forwardTo(true),

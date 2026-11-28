@@ -3,28 +3,16 @@ import { OwnLoadNotice } from './own_load'
 
 import { Name } from './name'
 import { instanceName } from '../lib/names'
-import { Button, IconButton, Chip } from './controls'
+import { Button, IconButton } from './controls'
 import { PeerCodeButton } from './p2p/peer_code_button'
 import { useActorSuffix, useViewActor } from './view_actor'
-import { useEffect, useRef, useState } from 'react'
-import {
-  ChartColumn,
-  Clock,
-  Eye,
-  EyeOff,
-  File as FileIcon,
-  Plus,
-  Server,
-  Share2,
-  ShieldAlert,
-  X,
-} from 'lucide-react'
-import { type UploadMode, useMask, useStore, viewKey } from '../lib/store'
+import { useEffect, useState } from 'react'
+import { ChartColumn, Clock, ShieldAlert } from 'lucide-react'
+import { useMask, useStore, viewKey } from '../lib/store'
 import { limitsOf } from '../lib/instance_limits'
 import { useAccount } from '../lib/client/react'
 import { outgoing } from '../lib/link_safety'
-import { altError, describableFile } from '../lib/alt_text'
-import { AltField } from './alt_text'
+import { altError } from '../lib/alt_text'
 import { charCount, messageFilterOn } from '../lib/rules'
 import { dmPlaceholder } from '../lib/display_name'
 import { hasInviteCode, INVITE_POST_TEXT } from '../lib/p2p/flows'
@@ -36,12 +24,12 @@ import { clock } from '../lib/slowmode'
 import { useCountdown } from '../lib/countdown'
 import { Dialog, fieldCls, useOwnServer } from './ui'
 import { SITE_FILTER_NOTE } from '../lib/home'
-import { useUploadHint } from './upload_expiry'
 import { useHome } from '../lib/home_store'
 import { ReplyBar } from './replies'
 import { ComposerGate, useGate } from './composer_gate'
 import { ForwardBar, useForwardClip } from './forwards'
 import { ComposerField } from './composer_field'
+import { AttachButton, ComposerFiles, pastedFiles } from './composer_files'
 import { useCompose } from '../lib/place/use_composer'
 import { previewFor } from '../lib/apps/preview'
 import { CreatePollDialog } from './poll_dialog'
@@ -66,10 +54,6 @@ const UNITS = [
   { label: 'hours', mult: 3600 },
   { label: 'days', mult: 86400 },
 ]
-
-const IMG_EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'image/svg+xml': 'svg' }
-export const namePasted = (f: File) =>
-  new File([f], `pasted.${IMG_EXT[f.type] ?? f.type.split('/')[1] ?? 'png'}`, { type: f.type })
 
 function ExpiryDialog({
   onPick,
@@ -165,14 +149,6 @@ function SiteFilterNote() {
   )
 }
 
-const modeTitle = (mode: UploadMode, switchable: boolean, hint: string) => {
-  const what =
-    mode === 'p2p'
-      ? 'P2P: hosted from your browser while you are online, no size limit'
-      : `Server: uploaded to the server, ${hint}`
-  return switchable ? `${what}. Click for ${mode === 'p2p' ? 'server upload' : 'P2P'}` : what
-}
-
 export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const account = useAccount()
   const view = useStore(s => s.view)
@@ -181,7 +157,6 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const suffix = useActorSuffix(useViewActor())
   const streamer = useStore(s => s.streamer)
   const ownServer = useOwnServer(view?.kind === 'channel' ? view.server : null)
-  const uploadHint = useUploadHint(view?.kind === 'channel' ? view.server : null)
   const selfDm = useStore(s => {
     const v = s.view
     return v?.kind === 'dm' && s.dms.some(d => d.id === v.dmId && d.is_self)
@@ -192,9 +167,6 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const textOnly = useStore(s => textOnlyDestination(s, draftKey))
   const held = useStore(s => (draftKey ? s.pending[draftKey] : undefined)) ?? null
   const pending = textOnly ? null : held
-  const uploadsOn = useStore(s => s.settings.asset_uploads)
-  const p2pOn = useStore(s => s.settings.p2p_attachments)
-  const uploadMax = useStore(s => limitsOf(s.instance).upload_bytes)
   const compose = useCompose(thread ? 'thread' : 'main')
   const { text, max, replying } = useLive(compose.state)
   const { shut } = useGate(compose)
@@ -204,11 +176,6 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     useHostedServer(view?.kind === 'channel' ? view.server : null),
     placeChannel
   )
-  const canAttach = !textOnly && (uploadsOn || p2pOn) && can.attach
-  const uploadFile = useStore(s => s.uploadFile)
-  const toggleSpoiler = useStore(s => s.toggleSpoiler)
-  const setUploadAlt = useStore(s => s.setUploadAlt)
-  const toggleUploadMode = useStore(s => s.toggleUploadMode)
   const sendMessage = useStore(s => s.sendMessage)
   const sendThreadMessage = useStore(s => s.sendThreadMessage)
   const linkPrefs = useStore(s => s.linkPrefs)
@@ -224,7 +191,6 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     s =>
       s.settings.scheduled_messages || !!(s.scheduled.counts?.waiting || s.scheduled.counts?.failed)
   )
-  const fileRef = useRef<HTMLInputElement>(null)
   const channelId = thread ? threadChannel : view?.kind === 'channel' ? view.channelId : null
   const slowLeft = useSlowLeft(channelId)
 
@@ -257,12 +223,6 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           : view?.kind === 'dm'
             ? { kind: 'dm', id: view.dmId }
             : null
-
-  const switchable = pending !== null && uploadsOn && p2pOn && pending.file.size <= uploadMax
-
-  const attach = (file: File | null) => {
-    if (draftKey) uploadFile(draftKey, file)
-  }
 
   const count = charCount(text)
   const tooLong = count > max
@@ -392,59 +352,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           onClose={() => setExpiryOpen(false)}
         />
       )}
-      {pending && (
-        <Surface
-          pad="md"
-          tone="base"
-          radius="lg"
-          border
-          justify="between"
-          look="h-24 w-48"
-          place="relative"
-        >
-          <IconButton
-            icon={X}
-            label="Remove file"
-            tone="filled-danger"
-            size="xs"
-            onClick={() => attach(null)}
-            place="absolute -top-2 -right-2"
-          />
-          <div className="flex items-center justify-between">
-            <FileIcon size={20} className="text-primary" />
-            <Row gap="2xs">
-              <Chip
-                title={modeTitle(pending.mode, switchable, uploadHint)}
-                onClick={() => draftKey && toggleUploadMode(draftKey)}
-                disabled={!switchable}
-                on={pending.mode === 'p2p'}
-                icon={pending.mode === 'p2p' ? Share2 : Server}
-              >
-                {pending.mode === 'p2p' ? 'P2P' : 'Server'}
-              </Chip>
-              <IconButton
-                icon={pending.spoiler ? EyeOff : Eye}
-                label={pending.spoiler ? 'Unmark spoiler' : 'Mark as spoiler'}
-                size="sm"
-                pressed={pending.spoiler}
-                onClick={() => draftKey && toggleSpoiler(draftKey)}
-              />
-            </Row>
-          </div>
-          <span className="truncate text-xs">
-            {pending.spoiler ? 'Spoiler · ' : ''}
-            {pending.file.name}
-          </span>
-        </Surface>
-      )}
-      {pending && describableFile(pending.file.name, pending.file.type) && (
-        <div data-alt-field className="w-72 max-w-full">
-          <AltField
-            value={pending.alt ?? ''}
-            onChange={v => draftKey && setUploadAlt(draftKey, v)}
-          />
-        </div>
-      )}
+      <ComposerFiles compose={compose} />
       {slowLeft > 0 && (
         <Inset
           role="status"
@@ -480,35 +388,10 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
         bar={bar}
         later={laterDraft}
         onSend={send}
-        onPaste={e => {
-          if (!canAttach) return false
-          const file = Array.from(e.clipboardData.items)
-            .find(i => i.kind === 'file' && i.type.startsWith('image/'))
-            ?.getAsFile()
-          if (file) attach(namePasted(file))
-          return !!file
-        }}
+        onPaste={e => compose.paste(pastedFiles(e))}
         tools={
           <>
-            {canAttach && (
-              <>
-                <IconButton
-                  icon={Plus}
-                  label="Attach a file"
-                  tight
-                  onClick={() => fileRef.current?.click()}
-                />
-                <input
-                  ref={fileRef}
-                  type="file"
-                  className="hidden"
-                  onChange={e => {
-                    attach(e.target.files?.item(0) ?? null)
-                    e.target.value = ''
-                  }}
-                />
-              </>
-            )}
+            <AttachButton compose={compose} />
             {pollTarget && (
               <IconButton
                 icon={ChartColumn}

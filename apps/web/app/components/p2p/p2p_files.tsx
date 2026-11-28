@@ -2,21 +2,19 @@
 import { IconButton, MediaButton } from '../controls'
 import { Name } from '../name'
 import { instanceName } from '../../lib/names'
-import { altText, describableFile } from '../../lib/alt_text'
-import { AltField } from '../alt_text'
-import { withP2pIdentity } from '../../lib/client/p2p_react'
+import { altText } from '../../lib/alt_text'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useAccount } from '../../lib/client/react'
 
 import { useEffect, useState } from 'react'
-import { Download, Eye, EyeOff, FileText, Loader2, Waypoints, X } from 'lucide-react'
+import { Download } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
 import { peerChat } from '../../lib/actions/p2p_chat'
 import { fmtSize } from '../../lib/bytes'
 import { downloadName, kindOf } from '../../lib/sniff'
-import { type FileView, type PendingFile } from '../../lib/p2p/app'
+import { type FileView } from '../../lib/p2p/app'
 import type { Attachment } from '../../lib/p2p/content'
 import { AUTO_PAUSED_TEXT } from '../../lib/p2p/dm'
 import { SpoilerCover } from '../markdown_message'
@@ -26,8 +24,7 @@ import { ViewableImage } from '../media_lightbox'
 import { VideoAttachment } from '../video_attachment'
 import { Masked } from '../ui'
 import { useInstanceLabel } from '../instance_badge'
-import { Row, Stack, Surface, Inset } from '../layout'
-import { FUNCTIONAL } from '../../lib/motion/functional'
+import { Row, Stack, Inset } from '../layout'
 
 // P2P attachments in messages and in the composer. What a file is shown as comes from its
 // stored bytes only (sniff.ts): images, video and audio play inline, everything else (SVG and
@@ -358,111 +355,3 @@ export function AttachmentList({
     </Stack>
   )
 }
-
-function PendingChip({ room, p }: { room: string; p: PendingFile }) {
-  const identity = useP2pApp()!
-  const { p2pFiles } = identity
-
-  const ready = p.hashed !== null && p.preview !== null
-  const thumb = useThumb(p.preview?.thumb)
-  return (
-    <Surface
-      data-pending-file
-      pad="sm"
-      tone="base"
-      radius="lg"
-      justify="between"
-      look="h-24 w-40 border-tertiary/60 border-dashed border"
-      place="relative shrink-0"
-    >
-      <IconButton
-        icon={X}
-        label="Remove file"
-        tone="filled-danger"
-        size="xs"
-        onClick={() => p2pFiles.remove(room, p.id)}
-        place="absolute -top-2 -right-2"
-      />
-      <Row gap="2xs" justify="between">
-        {thumb ? (
-          <img src={thumb} alt="" aria-hidden className="h-10 w-14 rounded object-cover" />
-        ) : (
-          <FileText size={20} className="text-tertiary" />
-        )}
-        <IconButton
-          icon={p.spoiler ? EyeOff : Eye}
-          label={p.spoiler ? 'Unmark spoiler' : 'Mark as spoiler'}
-          size="sm"
-          pressed={p.spoiler}
-          onClick={() => p2pFiles.toggleSpoiler(room, p.id)}
-        />
-      </Row>
-      <span className="truncate text-xs">
-        {p.spoiler ? 'Spoiler · ' : ''}
-        {downloadName(p.file.name)}
-      </span>
-      <Row as="span" gap="2xs">
-        {!p.error && !ready && (
-          <Loader2 size={10} className={`text-on-surface-variant ${FUNCTIONAL.spinSafe}`} />
-        )}
-        <span
-          className={`text-2xs tabular-nums ${p.error ? 'text-error' : 'text-on-surface-variant'}`}
-        >
-          {p.error
-            ? p.error
-            : ready
-              ? fmtSize(p.file.size)
-              : `Preparing ${Math.floor(p.progress * 100)}%`}
-        </span>
-      </Row>
-    </Surface>
-  )
-}
-
-function PendingFilesBody({ room }: { room: string }) {
-  const { p2pFiles } = useP2pApp()!
-  const list = useP2p(s => s.attaching[room])
-  if (!list?.length) return null
-  return (
-    <Surface
-      pad="sm"
-      tone="plain"
-      radius="none"
-      align="start"
-      place="w-full overflow-x-auto"
-      aria-label="Files to send"
-    >
-      <Row gap="md" align="stretch">
-        {list.map(p => (
-          <div key={p.id} className="w-40 shrink-0">
-            <Stack gap="2xs">
-              <PendingChip room={room} p={p} />
-              {describableFile(p.file.name, p.file.type) && (
-                <AltField
-                  compact
-                  value={p.alt ?? ''}
-                  onChange={v => p2pFiles.setAlt(room, p.id, v)}
-                />
-              )}
-            </Stack>
-          </div>
-        ))}
-        <Inset
-          title="Sent peer-to-peer: stored on your devices and shared with the people in this conversation"
-          as="span"
-          row
-          pad="xs"
-          inset="chip"
-          gap="2xs"
-          look="rounded bg-tertiary-container text-2xs font-medium text-on-tertiary-container"
-          place="shrink-0 self-end"
-        >
-          <Waypoints size={10} />
-          P2P
-        </Inset>
-      </Row>
-    </Surface>
-  )
-}
-
-export const PendingFiles = withP2pIdentity(PendingFilesBody)

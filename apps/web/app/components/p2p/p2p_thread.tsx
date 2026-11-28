@@ -48,7 +48,6 @@ interface ThreadFacts {
   ownName: (ik: string) => string
   mayDelete: (p: P2pMessage) => boolean
   typers: string[]
-  textOnly?: boolean
   pendingTip: string
   // A server thread's rules for acting, a timeout among them; a conversation acts while its
   // composer is open.
@@ -79,7 +78,6 @@ function ServerThread({ t, v }: { t: P2pThread; v: ServerView }) {
   const moderator = held.manage && timedOut === null
   const mayDelete = useCallback((p: P2pMessage) => p.sender === me || moderator, [me, moderator])
   const ownName = useCallback((ik: string) => profileName(ik, room), [room])
-  const channel = v.channels.find(c => c.id === t.ch)
   const { acts: canAct } = useGate(composeAt(place, 'thread'))
   const names = useMemo(() => typers.map(nameOf), [typers, nameOf])
   return (
@@ -89,7 +87,6 @@ function ServerThread({ t, v }: { t: P2pThread; v: ServerView }) {
         ownName,
         mayDelete,
         typers: names,
-        textOnly: channel?.text_only,
         pendingTip: 'Waiting for a member to come online',
         canAct,
         timedOut: timedOut !== null,
@@ -256,7 +253,6 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
                     <P2pComposer
                       draftKey={key}
                       list="thread"
-                      channelTextOnly={f.textOnly}
                       scope={scope}
                       title="the thread"
                       placeholder="Message thread"
