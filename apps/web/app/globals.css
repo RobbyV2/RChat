@@ -484,7 +484,7 @@ body {
   }
 }
 
-/* The spacing scale: every gap and padding of the layout boxes (components/layout.tsx). */
+/* The spacing scale: every gap and padding of the layout boxes (components/layout). */
 :root {
   --space-3xs: 0.125rem;
   --space-2xs: 0.25rem;

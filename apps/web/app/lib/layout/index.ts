@@ -1,4 +1,4 @@
-// The looks of the layout primitives (`components/layout.tsx`): every gap and padding comes from
+// The looks of the layout primitives (`components/layout`): every gap and padding comes from
 // one spacing scale, the `--space-*` tokens of globals.css, and every alignment from a fixed set
 // of choices. A screen is built from these boxes and the controls; it sets no spacing of its own.
 

@@ -1,5 +1,5 @@
 import { createElement, type AllHTMLAttributes, type ReactNode, type Ref } from 'react'
-import { placed, type LayoutPlace, type Look } from '../lib/controls'
+import { placed, type LayoutPlace, type Look } from '../../lib/controls'
 import {
   dockLook,
   firstLineLook,
@@ -21,7 +21,7 @@ import {
   type SurfaceInset,
   type SurfaceRadius,
   type SurfaceTone,
-} from '../lib/layout'
+} from '../../lib/layout'
 
 // The boxes every screen is laid out with. Their spacing and alignment come only from their props
 // (the scale and choices of `lib/layout.ts`); they take no class names or styles, so a screen

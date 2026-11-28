@@ -28,7 +28,10 @@ const excluded = () => {
 }
 
 // The layout boxes, the controls and the name: they carry the spacing scale themselves.
-const SPACING_SOURCES = ['apps/web/app/components/{layout,controls,ui,name}.tsx']
+const SPACING_SOURCES = [
+  'apps/web/app/components/{controls,ui,name}.tsx',
+  'apps/web/app/components/layout/index.tsx',
+]
 
 // Screens that set spacing classes of their own. On every other screen one fails the lint.
 const HAND_SPACED = [

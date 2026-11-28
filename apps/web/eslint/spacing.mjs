@@ -1,6 +1,6 @@
 // Flags spacing written by hand in a class name or in the look of a layout box: padding, margin (other than auto), gap and
 // space-between classes, and arbitrary values. Screens get their spacing from the layout boxes of
-// components/layout.tsx, which carry the spacing scale, and their controls' fixed padding.
+// components/layout, which carry the spacing scale, and their controls' fixed padding.
 
 const SPACING =
   /^-?(p|px|py|pt|pb|pl|pr|ps|pe|m|mx|my|mt|mb|ml|mr|ms|me|gap|gap-x|gap-y|space-x|space-y)-(?!auto$)/
@@ -71,7 +71,7 @@ export default {
     docs: { description: 'Spacing comes from the layout boxes, not from class names' },
     schema: [],
     messages: {
-      hand: 'Spacing comes from the layout boxes (components/layout.tsx), not "{{word}}".',
+      hand: 'Spacing comes from the layout boxes (components/layout), not "{{word}}".',
     },
   },
   create(context) {
