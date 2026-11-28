@@ -3,6 +3,7 @@ import { create } from 'zustand'
 import type { LucideIcon } from 'lucide-react'
 import { fuzzy } from './fuzzy'
 import { defineSetting } from './settings'
+import { jsonObject, jsonOr } from './schema'
 
 // The command palette registers its opener here; Home and the mobile headers offer it once it did.
 interface PaletteState {
@@ -210,7 +211,7 @@ const capUsage = (used: UsageMap): UsageMap => {
 
 export const parsePalette = (raw: string | null): PalettePrefs => {
   try {
-    const data = raw ? (JSON.parse(raw) as unknown) : null
+    const data = jsonOr(raw, jsonObject, null)
     if (typeof data !== 'object' || data === null || Array.isArray(data)) return EMPTY_PALETTE
     const { v, used, index } = data as Record<string, unknown>
     if (v !== 1) return EMPTY_PALETTE

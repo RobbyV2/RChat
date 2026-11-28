@@ -14,6 +14,7 @@ import { removeP2pDb } from '../p2p/db'
 import { viewKey } from '../view'
 import type { AccountSession } from './session'
 import { time } from '../platform/time'
+import { anything, arr, jsonOr } from '../schema'
 
 const MAX_IDENTITIES = 8
 const validId = (id: unknown): id is string =>
@@ -35,7 +36,7 @@ function instanceUncovered(account: AccountSession) {
 
 function savedIds(key: string): string[] {
   try {
-    const saved: unknown = JSON.parse(readLocal(key) ?? '[]')
+    const saved: unknown = jsonOr(readLocal(key), arr(anything), [])
     if (Array.isArray(saved))
       return [...new Set(saved.filter(id => validId(id) && id !== 'main'))].slice(
         0,

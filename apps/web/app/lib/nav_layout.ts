@@ -1,5 +1,6 @@
 import { parseDmList, type DmListPrefs } from './dm_list'
 import { defineSetting } from './settings'
+import { jsonObject, jsonOr } from './schema'
 
 export interface Folder {
   id: string
@@ -75,7 +76,7 @@ const isId = (x: unknown): x is number => Number.isSafeInteger(x) && (x as numbe
 
 const parseJson = (raw: string | null): unknown => {
   try {
-    return raw ? JSON.parse(raw) : null
+    return jsonOr(raw, jsonObject, null)
   } catch {
     return null
   }

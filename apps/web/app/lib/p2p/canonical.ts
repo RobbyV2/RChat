@@ -1,4 +1,5 @@
 import { fromBase64Url, isRecord, toBase64Url } from '../bytes'
+import { anything, parseJson } from '../schema'
 
 // Canonical JSON, the RFC 8785 (JCS) subset every signed P2P record is hashed and signed over:
 // keys sorted by UTF-16 code units, no whitespace, JSON.stringify string escaping, integers only
@@ -75,12 +76,9 @@ export const canonicalBytes = (value: unknown) => utf8(canonical(value))
 // Parses text that must already be canonical: whitespace, unsorted or duplicate keys, floats and
 // non-NFC strings all fail, because re-encoding would not give the same text back.
 export const parseCanonical = (text: string): Json => {
-  let v: unknown
-  try {
-    v = JSON.parse(text)
-  } catch {
-    return fail('not JSON')
-  }
+  const read = parseJson(text, anything)
+  if (!read.ok) return fail('not JSON')
+  const v = read.value
   if (canonical(v) !== text) fail('not canonical')
   return v as Json
 }

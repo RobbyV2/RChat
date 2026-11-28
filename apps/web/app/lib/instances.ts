@@ -15,6 +15,7 @@ import { limitsOf } from './instance_limits'
 import { time } from './platform/time'
 import { sleep } from './clock'
 import { deviceStorage, readFrom, writeTo, type StorageLike } from './settings'
+import { jsonObject, jsonOr } from './schema'
 
 export {
   canReadSharedStorage,
@@ -419,7 +420,11 @@ export function readKnown(
   store: StorageLike | null = deviceStorage()
 ): Record<string, InstanceInfo> {
   try {
-    const raw = JSON.parse(readFrom(() => store, KNOWN_KEY) ?? '{}') as Record<string, unknown>
+    const raw = jsonOr(
+      readFrom(() => store, KNOWN_KEY),
+      jsonObject,
+      {}
+    )
     return Object.fromEntries(
       Object.entries(raw).filter(
         (e): e is [string, InstanceInfo] => validInfo(e[1], e[0]) && sameSite(e[0], e[1])

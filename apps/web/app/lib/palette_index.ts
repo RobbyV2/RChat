@@ -6,7 +6,7 @@
 
 import MiniSearch from 'minisearch'
 import type { BlobStore } from './platform/blobs'
-import { anything, arr, parseJson } from './schema'
+import { anything, arr, jsonObject, jsonOr, parseJson } from './schema'
 
 export type DocKind = 'message' | 'member'
 
@@ -85,7 +85,7 @@ export const EMPTY_MANIFEST: Manifest = { v: 1, buckets: [], filled: {} }
 
 export const parseManifest = (raw: string | null): Manifest => {
   try {
-    const data = raw ? (JSON.parse(raw) as unknown) : null
+    const data = jsonOr(raw, jsonObject, null)
     if (typeof data !== 'object' || data === null) return EMPTY_MANIFEST
     const { v, buckets, filled } = data as Record<string, unknown>
     if (v !== 1 || !Array.isArray(buckets)) return EMPTY_MANIFEST

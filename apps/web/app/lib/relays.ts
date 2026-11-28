@@ -1,6 +1,7 @@
 import { probeRelay, type IceCache } from './ice'
 import { device } from './platform'
 import { time } from './platform/time'
+import { jsonObject, jsonOr } from './schema'
 
 // The user's own STUN and TURN relays, on top of what the instance offers, for P2P files and
 // P2P calls. They live on this device only (credentials included) and are never sent to the
@@ -162,7 +163,7 @@ const cleanList = <T>(xs: unknown, clean: (x: unknown) => T | null, key: (t: T) 
 export const parseRelayPrefs = (raw: string | null): RelayPrefs => {
   let v: unknown
   try {
-    v = raw ? (JSON.parse(raw) as unknown) : null
+    v = jsonOr(raw, jsonObject, null)
   } catch {
     return defaultRelays()
   }

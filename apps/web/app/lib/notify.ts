@@ -6,6 +6,7 @@
 import type { GroupKind } from './types'
 import { time } from './platform/time'
 import { defineSetting } from './settings'
+import { jsonObject, jsonOr } from './schema'
 
 export type Level = 'all' | 'mentions' | 'nothing'
 export type MuteUntil = number | 'forever'
@@ -128,7 +129,7 @@ const isRoomKey = (k: string) => /^[A-Za-z0-9_-]{43}(\/[A-Za-z0-9_-]{11})?$/.tes
 export const parseNotify = (raw: string | null, now = time().now()): NotifyPrefs => {
   let data: unknown
   try {
-    data = raw ? JSON.parse(raw) : null
+    data = jsonOr(raw, jsonObject, null)
   } catch {
     return EMPTY_NOTIFY
   }

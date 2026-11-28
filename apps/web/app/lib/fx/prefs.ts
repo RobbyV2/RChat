@@ -2,6 +2,7 @@
 // parsed field by field. Pure. Motion is the account's Animations setting (`motion/setting.ts`),
 // shared with animations.
 import { SEASON_IDS, hemisphereOf, type Hemisphere, type SeasonId } from './seasons'
+import { jsonObject, jsonOr } from '../schema'
 
 export interface FxPrefs {
   v: 2
@@ -75,7 +76,7 @@ const read = (data: unknown, base: FxPrefs): FxPrefs => {
 
 export const parseFxPrefs = (raw: string | null): FxPrefs => {
   try {
-    return read(raw ? (JSON.parse(raw) as unknown) : null, defaultFxPrefs)
+    return read(jsonOr(raw, jsonObject, null), defaultFxPrefs)
   } catch {
     return defaultFxPrefs
   }

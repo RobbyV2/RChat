@@ -25,6 +25,7 @@ import type { SyncLimits } from '../sync'
 import type { VoiceLimits, VoiceUser } from '../voice'
 import type { Dms, P2pMessage } from '../dm'
 import { clip } from '../rate'
+import { jsonObject, jsonOr } from '../../schema'
 
 // P2P servers: groups whose membership, permissions, channels and
 // messages live only on their members' devices. Every event is a signed v2 event of one of two
@@ -114,7 +115,11 @@ export const parseCode = (text: string): InviteCode | null => {
   const t = text.trim()
   if (!t.startsWith(CODE_PREFIX)) return null
   try {
-    const x = JSON.parse(new TextDecoder().decode(fromB64u(t.slice(CODE_PREFIX.length))))
+    const x = jsonOr(
+      new TextDecoder().decode(fromB64u(t.slice(CODE_PREFIX.length))),
+      jsonObject,
+      null
+    )
     if (
       !isRecord(x) ||
       x.v !== 1 ||

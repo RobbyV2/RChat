@@ -177,6 +177,15 @@ const platformProperties = [
   })),
 ]
 const PLATFORM_FILES = ['apps/web/app/lib/platform/web*.ts']
+// JSON text becomes a value only against a schema: parseJson in app/lib/schema.ts.
+const jsonProperties = [
+  {
+    object: 'JSON',
+    property: 'parse',
+    message: 'Read JSON with parseJson or jsonOr and a schema (app/lib/schema.ts).',
+  },
+]
+const SCHEMA_FILES = ['apps/web/app/lib/schema.ts']
 const clockProperties = [
   ...['window', 'globalThis', 'self'].flatMap(object =>
     TIMERS.map(property => ({ object, property, message: CLOCK_MESSAGE }))
@@ -305,7 +314,77 @@ export default tseslint.config(
   },
   {
     files: ['apps/web/app/**/*.{ts,tsx}', 'docs/src/**/*.{ts,tsx}'],
-    ignores: [...NETWORK_FILES, ...CLOCK_FILES, ...STORAGE_FILES, ...PLATFORM_FILES, ...TEST_FILES],
+    ignores: [
+      ...NETWORK_FILES,
+      ...CLOCK_FILES,
+      ...STORAGE_FILES,
+      ...PLATFORM_FILES,
+      ...SCHEMA_FILES,
+      ...TEST_FILES,
+    ],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        ...networkGlobals,
+        ...clockGlobals,
+        ...storageGlobals,
+        ...platformGlobals,
+      ],
+      'no-restricted-properties': [
+        'error',
+        ...jsonProperties,
+        ...networkProperties,
+        ...clockProperties,
+        ...storageProperties,
+        ...platformProperties,
+      ],
+      ...clockSyntax,
+    },
+  },
+  {
+    files: NETWORK_FILES,
+    ignores: TEST_FILES,
+    rules: {
+      'no-restricted-globals': ['error', ...clockGlobals, ...storageGlobals, ...platformGlobals],
+      'no-restricted-properties': [
+        'error',
+        ...jsonProperties,
+        ...clockProperties,
+        ...storageProperties,
+        ...platformProperties,
+      ],
+      ...clockSyntax,
+    },
+  },
+  {
+    files: CLOCK_FILES,
+    rules: {
+      'no-restricted-globals': ['error', ...networkGlobals, ...storageGlobals, ...platformGlobals],
+      'no-restricted-properties': [
+        'error',
+        ...jsonProperties,
+        ...networkProperties,
+        ...storageProperties,
+        ...platformProperties,
+      ],
+    },
+  },
+  {
+    files: STORAGE_FILES,
+    rules: {
+      'no-restricted-globals': ['error', ...networkGlobals, ...clockGlobals, ...platformGlobals],
+      'no-restricted-properties': [
+        'error',
+        ...jsonProperties,
+        ...networkProperties,
+        ...clockProperties,
+        ...platformProperties,
+      ],
+      ...clockSyntax,
+    },
+  },
+  {
+    files: SCHEMA_FILES,
     rules: {
       'no-restricted-globals': [
         'error',
@@ -325,51 +404,13 @@ export default tseslint.config(
     },
   },
   {
-    files: NETWORK_FILES,
-    ignores: TEST_FILES,
-    rules: {
-      'no-restricted-globals': ['error', ...clockGlobals, ...storageGlobals, ...platformGlobals],
-      'no-restricted-properties': [
-        'error',
-        ...clockProperties,
-        ...storageProperties,
-        ...platformProperties,
-      ],
-      ...clockSyntax,
-    },
-  },
-  {
-    files: CLOCK_FILES,
-    rules: {
-      'no-restricted-globals': ['error', ...networkGlobals, ...storageGlobals, ...platformGlobals],
-      'no-restricted-properties': [
-        'error',
-        ...networkProperties,
-        ...storageProperties,
-        ...platformProperties,
-      ],
-    },
-  },
-  {
-    files: STORAGE_FILES,
-    rules: {
-      'no-restricted-globals': ['error', ...networkGlobals, ...clockGlobals, ...platformGlobals],
-      'no-restricted-properties': [
-        'error',
-        ...networkProperties,
-        ...clockProperties,
-        ...platformProperties,
-      ],
-      ...clockSyntax,
-    },
-  },
-  {
     files: PLATFORM_FILES,
     ignores: TEST_FILES,
     rules: {
       'no-restricted-globals': ['error', ...networkGlobals, ...clockGlobals, ...storageGlobals],
       'no-restricted-properties': [
         'error',
+        ...jsonProperties,
         ...networkProperties,
         ...clockProperties,
         ...storageProperties,

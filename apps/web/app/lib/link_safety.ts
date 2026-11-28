@@ -4,6 +4,7 @@
 
 import { parse } from 'tldts'
 import { defineSetting } from './settings'
+import { jsonObject, jsonOr } from './schema'
 
 declare const siteMark: unique symbol
 
@@ -58,7 +59,7 @@ const storedSite = (raw: unknown): Site | null => {
 
 export const parseLinkPrefs = (raw: string | null): LinkPrefs => {
   try {
-    const v = raw ? (JSON.parse(raw) as unknown) : null
+    const v = jsonOr(raw, jsonObject, null)
     if (typeof v !== 'object' || v === null || (v as { v?: unknown }).v !== 1)
       return DEFAULT_LINK_PREFS
     const { warn, strip, trusted } = v as { warn?: unknown; strip?: unknown; trusted?: unknown }

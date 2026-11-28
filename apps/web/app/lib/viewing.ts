@@ -4,6 +4,7 @@ import { client } from './client/client'
 import { readLocal, writeLocal, type InstanceConnection } from './instances'
 import type { WsEvent } from './types'
 import type { RChatState } from './store_types'
+import { jsonObject, jsonOr } from './schema'
 
 type Profile = Pick<RChatState, 'me' | 'guest'>
 type ViewingInstance = Pick<InstanceConnection, 'origin' | 'scoped'>
@@ -101,7 +102,7 @@ export function createViewing(connection: ViewingInstance | (() => ViewingInstan
     if (cached) return cached
     let value = clean
     try {
-      const saved = JSON.parse(readLocal(key) ?? 'null')
+      const saved = jsonOr(readLocal(key), jsonObject, null)
       if (saved?.v === 1)
         value = { personal: saved.personal === true, remember: saved.remember === true }
     } catch {

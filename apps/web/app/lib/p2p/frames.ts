@@ -1,4 +1,5 @@
 import { isRecord } from '../bytes'
+import { guarded, parseJson } from '../schema'
 
 // Wire framing for P2P sessions. Every frame is type (1 byte) | length (4 bytes, big endian) |
 // payload. Handshake frames carry the SIGMA-I messages; data frames are AES-256-GCM with a
@@ -214,13 +215,21 @@ const dec = new TextDecoder('utf-8', { fatal: true })
 
 export const encodeMessage = (m: Message) => enc.encode(JSON.stringify(m))
 
+const MESSAGE = guarded(
+  (x: unknown): x is Message => isRecord(x) && typeof x.t === 'string' && x.t.length <= 32,
+  'a message type'
+)
+
 export const decodeMessage = (b: Uint8Array): Message => {
-  let v: unknown
+  let text: string
   try {
-    v = JSON.parse(dec.decode(b))
+    text = dec.decode(b)
   } catch {
     return fail('message is not JSON')
   }
-  if (!isRecord(v) || typeof v.t !== 'string' || v.t.length > 32) fail('message has no type')
-  return v as Message
+  const read = parseJson(text, MESSAGE)
+  if (read.ok) return read.value
+  return fail(
+    !read.unknown && read.issue.expected === 'JSON' ? 'message is not JSON' : 'message has no type'
+  )
 }

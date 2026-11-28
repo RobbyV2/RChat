@@ -1,5 +1,6 @@
 import { contrast, hex, toHex, type Rgb } from './color'
 import { hctOf, solve } from './hct'
+import { jsonObject, jsonOr } from '../schema'
 
 export type Mode = 'light' | 'dark' | 'black'
 export type PaletteName = 'p' | 's' | 't' | 'n' | 'nv' | 'e'
@@ -322,7 +323,7 @@ export const parseLook = (raw: string | null, legacyTheme: string | null): LookV
   const base: LookV2 = { ...DEFAULT_LOOK, mode: legacyTheme === 'light' ? 'light' : 'dark' }
   let x: unknown
   try {
-    x = raw ? JSON.parse(raw) : null
+    x = jsonOr(raw, jsonObject, null)
   } catch {
     return base
   }

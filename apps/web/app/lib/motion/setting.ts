@@ -6,6 +6,7 @@ import type { MotionChoice } from '../fx/gate'
 import { BUILTIN_LABELS, BUILTIN_NAMES, isBuiltin, type BuiltinName } from './names'
 import { SLOT_IDS, isLook, type SlotId } from './slots'
 import { defineSetting } from '../settings'
+import { jsonObject, jsonOr } from '../schema'
 
 export const STYLES = ['subtle', 'lively', 'custom'] as const
 export type AnimStyle = (typeof STYLES)[number]
@@ -58,7 +59,7 @@ export const cleanChoices = (x: unknown): CustomChoices => {
 
 export const parseAnim = (raw: string | null): AnimPrefs => {
   try {
-    const data = raw ? (JSON.parse(raw) as unknown) : null
+    const data = jsonOr(raw, jsonObject, null)
     if (typeof data !== 'object' || data === null || Array.isArray(data)) return ANIM_DEFAULT
     const { v, on, motion, style, custom } = data as Record<string, unknown>
     if (v !== 1) return ANIM_DEFAULT

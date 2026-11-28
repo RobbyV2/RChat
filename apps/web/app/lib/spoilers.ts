@@ -1,4 +1,5 @@
 import { defineSetting } from './settings'
+import { jsonObject, jsonOr } from './schema'
 // `||spoilers||` in message markdown. One reader for everything: the message view, every
 // preview (replies, forwards, link cards, search, toasts) and, ported to Rust with the same
 // fixture (`__tests__/fixtures/spoilers.json`), the server's link preview fetcher
@@ -207,7 +208,7 @@ export const isShowSpoilers = (x: unknown): x is ShowSpoilers => x === 'click' |
 
 export const parseSpoilers = (raw: string | null): ShowSpoilers => {
   try {
-    const data = raw ? (JSON.parse(raw) as unknown) : null
+    const data = jsonOr(raw, jsonObject, null)
     if (typeof data !== 'object' || data === null) return 'click'
     const { v, show } = data as { v?: unknown; show?: unknown }
     return v === 1 && isShowSpoilers(show) ? show : 'click'

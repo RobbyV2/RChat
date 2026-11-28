@@ -4,7 +4,7 @@ import { accountStorage, peerStorage, SSO_LOGOUT_KEY } from './keys'
 import { addInstance, addAccount, addIdentity, type Book, type BookAccount } from './book'
 import type { Me } from '../types'
 import { sameSecret, Secret, TO_STORE } from '../secret'
-import { parseJson, record, str } from '../schema'
+import { jsonObject, jsonOr, parseJson, record, str } from '../schema'
 import { time } from '../platform/time'
 
 // A saved session token, read from and written to this device's storage.
@@ -144,7 +144,7 @@ export function accountUpdate(conn: InstanceConnection, me: Me) {
   const flag = peerStorage(conn, me.username).scoped('rchat_p2p:' + me.username)
   let main = false
   try {
-    const value = JSON.parse(readLocal(flag) ?? 'null')
+    const value = jsonOr(readLocal(flag), jsonObject, null)
     main = value?.v === 1 && value.on === true
   } catch {
     /* Ignore a malformed historical flag. */

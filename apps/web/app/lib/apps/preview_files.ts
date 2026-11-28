@@ -2,6 +2,7 @@ import { localKeys, readLocal, writeLocal } from '../instances'
 import { Sha256 } from '../sha256'
 import { viewingKey } from '../viewing'
 import { VIEW_LIMITS } from './ui/catalog'
+import { anything, int, jsonOr, obj, str } from '../schema'
 
 // An alias a remembered app answers, so its invocation stays local before the app loads.
 export type SavedAlias = { slash: string; argument: boolean }
@@ -28,21 +29,18 @@ const aliasList = (value: unknown): SavedAlias[] =>
         .slice(0, 64)
     : []
 
+const STORED_FILE = obj({
+  name: str(),
+  raw: str({ max: VIEW_LIMITS.chars }),
+  size: int().refine(n => n >= 0 && n <= VIEW_LIMITS.chars, 'a size within the limit'),
+  aliases: anything.optional(),
+})
+
 const storedFile = (
   key: string
 ): { name: string; raw: string; size: number; aliases?: unknown } | null => {
   try {
-    const entry = JSON.parse(readLocal(key) ?? 'null')
-    if (
-      entry &&
-      typeof entry.name === 'string' &&
-      typeof entry.raw === 'string' &&
-      entry.raw.length <= VIEW_LIMITS.chars &&
-      Number.isSafeInteger(entry.size) &&
-      entry.size >= 0 &&
-      entry.size <= VIEW_LIMITS.chars
-    )
-      return entry
+    return jsonOr(readLocal(key), STORED_FILE, null)
   } catch {
     /* Discard unreadable local definitions. */
   }

@@ -1,5 +1,6 @@
 import type { View } from './view'
 import { defineSetting } from './settings'
+import { jsonObject, jsonOr } from './schema'
 
 // Home's local state per account: the places visited last ("Jump back in") and the tips and
 // notices the user dismissed. Stored as `{v: 1, recents, tips}`; anything unreadable gives the
@@ -87,7 +88,7 @@ const recentOf = (x: unknown): Recent | null => {
 
 export const parseHome = (raw: string | null): HomePrefs => {
   try {
-    const data = raw ? (JSON.parse(raw) as unknown) : null
+    const data = jsonOr(raw, jsonObject, null)
     if (typeof data !== 'object' || data === null) return EMPTY_HOME
     const { v, recents, tips } = data as Record<string, unknown>
     if (v !== 1) return EMPTY_HOME

@@ -2,6 +2,7 @@ import { fromRequest, type LoadSource } from './load'
 import type { Live } from './place/live'
 import { time } from './platform/time'
 import { defineSetting } from './settings'
+import { jsonObject, jsonOr } from './schema'
 export type CategoryId =
   | 'recent'
   | 'people'
@@ -298,7 +299,7 @@ export const looksLikeEmoji = (s: string) => s.length <= 32 && EMOJI_SHAPE.test(
 export function parseEmojiPrefs(raw: string | null): EmojiPrefs {
   let data: unknown
   try {
-    data = raw ? JSON.parse(raw) : null
+    data = jsonOr(raw, jsonObject, null)
   } catch {
     return EMPTY_PREFS
   }

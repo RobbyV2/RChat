@@ -1,5 +1,6 @@
 import type { RecordStore, RecordTable } from '../platform/records'
 import type { LogEntry, LogPrefs } from './types'
+import { jsonObject, jsonOr } from '../schema'
 
 export const TABLE = 'rchat_cmdlog'
 export const PREFS = 'rchat_cmdlog_prefs'
@@ -26,7 +27,7 @@ const flag = (v: unknown, or: boolean) => (typeof v === 'boolean' ? v : or)
 
 export const parsePrefs = (raw: string | null): LogPrefs => {
   try {
-    const p: unknown = JSON.parse(raw ?? '')
+    const p: unknown = jsonOr(raw, jsonObject, null)
     if (typeof p !== 'object' || p === null || Array.isArray(p)) return DEFAULT_PREFS
     const { v, on, days, max, keep_after_sign_out } = p as Record<string, unknown>
     if (v !== 1) return DEFAULT_PREFS

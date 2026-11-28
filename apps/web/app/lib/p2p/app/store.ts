@@ -23,6 +23,7 @@ import type { SearchHit, ServerView, Servers } from '../server'
 import type { IdentityScope } from './scope'
 import type { DeviceSchedule } from '../scheduled'
 import type { ScheduledItem } from '../../scheduled'
+import { jsonObject, jsonOr } from '../../schema'
 
 // The P2P view model. IndexedDB (through the node) is the source of truth; this store only
 // mirrors what the UI shows. One node per signed-in account; guests never get one.
@@ -323,7 +324,7 @@ export const coversInstance = (s: Pick<P2pState, 'home' | 'server'>) => s.home |
 
 export const parseOn = (raw: string | null) => {
   try {
-    const v = raw ? (JSON.parse(raw) as unknown) : null
+    const v = jsonOr(raw, jsonObject, null)
     return typeof v === 'object' && v !== null && (v as { v?: unknown; on?: unknown }).v === 1
       ? (v as { on?: unknown }).on === true
       : false
@@ -342,7 +343,7 @@ export const parseImports = (
   lim: Pick<Local['transfer'], 'browserImportsKept'> = LOCAL.transfer
 ): string[] => {
   try {
-    const v = raw ? (JSON.parse(raw) as unknown) : null
+    const v = jsonOr(raw, jsonObject, null)
     const ids = (v as { v?: unknown; ids?: unknown } | null)?.ids
     return (v as { v?: unknown } | null)?.v === 1 && Array.isArray(ids)
       ? ids.filter((x): x is string => typeof x === 'string').slice(-lim.browserImportsKept)
@@ -373,7 +374,12 @@ export const parseAuto = (raw: string | null, l: Readonly<Local> = LOCAL) => {
   const d = autoDefaults(l)
   try {
     const v = raw
-      ? (JSON.parse(raw) as { v?: unknown; dm?: unknown; server?: unknown; daily?: unknown })
+      ? (jsonOr(raw, jsonObject, null) as {
+          v?: unknown
+          dm?: unknown
+          server?: unknown
+          daily?: unknown
+        })
       : null
     if (v?.v !== 1) return d
     const c = autoChoices(l)

@@ -63,3 +63,22 @@ test('only the web adapters of the platform call the clipboard, sharing, notices
     await found('apps/web/app/lib/platform/web_sharing.ts', 'export const x = localStorage\n')
   ).toBe(1)
 }, 120_000)
+
+test('only the schema module turns JSON text into a value', async () => {
+  const forms = [
+    'export const x = (t: string): unknown => JSON.parse(t)\n',
+    "export const x = (t: string): unknown => JSON['parse'](t)\n",
+  ]
+  for (const code of forms) {
+    expect([code, await found('apps/web/app/lib/x.ts', code)]).toEqual([code, 1])
+    expect([code, await found('apps/web/app/components/x.tsx', code)]).toEqual([code, 1])
+    expect([code, await found('apps/web/app/lib/p2p/x.ts', code)]).toEqual([code, 1])
+    expect([code, await found('apps/web/app/lib/api.ts', code)]).toEqual([code, 1])
+    expect([code, await found('apps/web/app/lib/settings.ts', code)]).toEqual([code, 1])
+    expect([code, await found('apps/web/app/lib/schema.ts', code)]).toEqual([code, 0])
+  }
+  const fine =
+    "import { anything, parseJson } from './schema'\nexport const x = (t: string) => parseJson(t, anything)\n"
+  expect(await found('apps/web/app/lib/x.ts', fine)).toBe(0)
+  expect(await found('apps/web/app/lib/x.ts', 'export const x = JSON.stringify({})\n')).toBe(0)
+}, 120_000)

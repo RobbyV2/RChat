@@ -9,6 +9,7 @@ import {
   type ActiveSeason,
   type SeasonId,
 } from './seasons'
+import { jsonObject, jsonOr } from '../schema'
 
 export const FX_SENT_KEY = 'fx_sent'
 export const FX_STREAKS_KEY = 'fx_streaks'
@@ -19,7 +20,7 @@ const whole = (x: unknown): x is number => typeof x === 'number' && Number.isInt
 
 const json = (raw: string | null): unknown => {
   try {
-    return raw ? JSON.parse(raw) : null
+    return jsonOr(raw, jsonObject, null)
   } catch {
     return null
   }

@@ -3,6 +3,7 @@ import { isRecord, plural } from './bytes'
 import { expiryText } from './rules'
 import type { PasswordStatus, ServerPassword, ServerPasswords } from './types'
 import { time } from './platform/time'
+import { jsonObject, jsonOr } from './schema'
 
 export const EXPIRY_PRESETS: { label: string; seconds: number }[] = [
   { label: '30 minutes', seconds: 30 * 60 },
@@ -92,7 +93,7 @@ export const secretsKey = (username: string) => `rchat_server_passwords:${userna
 export const parseSecrets = (raw: string | null): SecretBook => {
   let data: unknown
   try {
-    data = raw ? JSON.parse(raw) : null
+    data = jsonOr(raw, jsonObject, null)
   } catch {
     return emptySecrets()
   }

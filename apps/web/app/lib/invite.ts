@@ -2,6 +2,7 @@ import type { StorageLike } from './instances'
 import { replaceSpoilers, spoilerParts } from './spoilers'
 import type { Invite, InviteLinkInfo, InviteStatus, JoinMode } from './types'
 import { time } from './platform/time'
+import { jsonObject, jsonOr } from './schema'
 
 // An invite by name (`server`, with `password` when the link has one), or by an invite code
 // (`code`, with `server` empty until the code is looked up).
@@ -269,7 +270,7 @@ export const handoffFor = (
 ): InviteTarget | null => {
   if (!raw) return null
   try {
-    const saved = JSON.parse(raw) as Partial<InviteTarget & { at: number }>
+    const saved = jsonOr(raw, jsonObject, {}) as Partial<InviteTarget & { at: number }>
     const fresh = typeof saved.at === 'number' && saved.at <= now && now - saved.at < HANDOFF_MS
     if (!fresh || saved.server !== server || (saved.code ?? null) !== code) return null
     const password = typeof saved.password === 'string' ? saved.password : null

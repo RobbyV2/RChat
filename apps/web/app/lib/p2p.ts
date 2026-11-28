@@ -25,6 +25,7 @@ import { captureScreen, nextShareId, syncStream, tuneScreen, type ScreenCapture 
 import { cause, logError } from './log'
 import { time } from './platform/time'
 import { sleep, type Cancel } from './clock'
+import { jsonObject, jsonOr } from './schema'
 
 export interface StoredFile {
   name: string
@@ -174,7 +175,7 @@ const nowS = () => Math.floor(time().now() / 1000)
 
 const readJson = <T extends object>(key: string): Record<string, T> => {
   try {
-    const raw: unknown = JSON.parse(readLocal(key) ?? '{}')
+    const raw: unknown = jsonOr(readLocal(key), jsonObject, {})
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
     return Object.fromEntries(
       Object.entries(raw).filter(([, v]) => v !== null && typeof v === 'object')
@@ -905,7 +906,7 @@ export class P2pManager {
       )
       const bytes = good ? readBase64Url(payload) : null
       if (bytes === null) return null
-      const g: unknown = JSON.parse(new TextDecoder().decode(bytes))
+      const g: unknown = jsonOr(new TextDecoder().decode(bytes), jsonObject, null)
       if (!validGrant(g)) return null
       const ok =
         g.f === id &&

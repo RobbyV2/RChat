@@ -1,6 +1,7 @@
 import { readLocal, writeLocal } from '../instances'
 import type { AccountSession } from './session'
 import { time } from '../platform/time'
+import { jsonOr, num, obj, str } from '../schema'
 
 function accountKey(origin: string, username: string | null, prefix: string) {
   // A historical AccountId can be identical for different schemes on the same host.
@@ -124,7 +125,7 @@ export class AccountTabLock {
         if (lock) action()
       })
     } else {
-      const record = JSON.parse(readLocal(key) ?? 'null')
+      const record = jsonOr(readLocal(key), obj({ until: num() }), null)
       if (!record || !(record.until > time().now())) action()
     }
   }
@@ -141,7 +142,8 @@ export class AccountTabLock {
     const page = window
     const token = Array.from(crypto.getRandomValues(new Uint32Array(4))).join('-')
     type Record = { token: string; until: number }
-    const read = (): Record | null => JSON.parse(readLocal(lease.key) ?? 'null')
+    const read = (): Record | null =>
+      jsonOr(readLocal(lease.key), obj({ token: str(), until: num() }), null)
     const owns = () => {
       const record = read()
       return record?.token === token && record.until > time().now()

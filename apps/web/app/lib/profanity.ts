@@ -7,6 +7,7 @@ import { getBasePath } from './basePath'
 import { unavailable } from './capabilities'
 import { capabilities } from './platform'
 import { defineSetting } from './settings'
+import { jsonObject, jsonOr } from './schema'
 
 export const profanityKey = (username: string | null) => `rchat_profanity:${username ?? 'guest'}`
 
@@ -14,7 +15,7 @@ export const PROFANITY_DEFAULT = true
 
 export const parseProfanity = (raw: string | null): boolean => {
   try {
-    const data = raw ? (JSON.parse(raw) as unknown) : null
+    const data = jsonOr(raw, jsonObject, null)
     if (typeof data !== 'object' || data === null) return PROFANITY_DEFAULT
     const { v, on } = data as { v?: unknown; on?: unknown }
     return v === 1 && typeof on === 'boolean' ? on : PROFANITY_DEFAULT

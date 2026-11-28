@@ -76,6 +76,7 @@ import { DEVICE_META } from './sealed_db'
 import { NEUTRAL_TYPE, safeType, SNIFF_BYTES } from '../sniff'
 import { IV_BYTES, SALT_BYTES, type Kdf, type P2pSection } from './section'
 import { time } from '../platform/time'
+import { anything, jsonObject, jsonOr, parseJson } from '../schema'
 
 // Moving P2P to another device: every store except the excluded ones is dumped
 // as JSON lines, deflated, and sealed with AES-256-GCM under a key from Argon2id over a
@@ -737,7 +738,9 @@ export const parseDump = async (bytes: Uint8Array, lim: TransferLimits = LOCAL):
   // what it weighs, not its length times the number of pieces.
   let parts: string[] = []
   const line = (text: string) => {
-    const x = JSON.parse(text, revive) as unknown
+    const read = parseJson(text, anything, revive)
+    if (!read.ok) throw damaged()
+    const x = read.value
     if (!header) {
       if (!isRecord(x) || x.rchat !== HEADER) throw damaged()
       if (typeof x.v === 'number' && x.v > 1) throw new TransferError(NEWER_DUMP)
@@ -1481,7 +1484,7 @@ export const filesHead = async (
   const nl = text.indexOf('\n', FILES_MAGIC.length)
   if (nl < 0) return null
   try {
-    const x = JSON.parse(text.slice(FILES_MAGIC.length, nl)) as unknown
+    const x = jsonOr(text.slice(FILES_MAGIC.length, nl), jsonObject, null)
     if (
       isRecord(x) &&
       x.v === 1 &&
@@ -1615,7 +1618,7 @@ export const importFiles = async (
         cur = null
         let meta: unknown
         try {
-          meta = JSON.parse(new TextDecoder().decode(body))
+          meta = jsonOr(new TextDecoder().decode(body), jsonObject, null)
         } catch {
           meta = null
         }

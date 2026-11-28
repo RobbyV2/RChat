@@ -19,6 +19,17 @@ import {
   type LiveAccount,
 } from '../../../apps/web/app/lib/live_docs'
 import { WsClient } from '../../../apps/web/app/lib/ws'
+import {
+  anything,
+  choice,
+  jsonOr,
+  obj,
+  opt,
+  parseJson,
+  record,
+  str,
+  type Schema,
+} from '../../../apps/web/app/lib/schema'
 import { Connect } from './connect'
 import { Name, Note, Title } from './parts'
 import {
@@ -297,6 +308,14 @@ interface TryProps {
   picks?: Record<string, Pick>
 }
 
+const TRY_PROPS: Schema<TryProps> = obj({
+  method: str(),
+  path: str(),
+  body: opt(str()),
+  effect: opt(str()),
+  picks: opt(record(choice('server', 'channel', 'dm', 'me'))),
+})
+
 function Try({ method, path: template, body: initial = '', effect, picks = {} }: TryProps) {
   const account = useLive(selectedAccount)
   const state = useLive(s => (account ? stateOf(s, account) : null))
@@ -331,12 +350,8 @@ function Try({ method, path: template, body: initial = '', effect, picks = {} }:
         timeoutMs: 15000,
       })
       const text = await res.text()
-      let shown: unknown = text
-      try {
-        shown = text ? JSON.parse(text) : null
-      } catch {
-        shown = text
-      }
+      const read = text ? parseJson(text, anything) : null
+      const shown: unknown = read === null ? null : read.ok ? read.value : text
       setAnswer({
         status: res.status,
         statusText: res.statusText,
@@ -528,8 +543,8 @@ export function mount() {
     if (kind === 'events') root.render(<Events />)
     if (kind === 'connect') root.render(<Connect />)
     if (kind === 'try') {
-      const props = JSON.parse(el.dataset.props ?? '{}') as TryProps
-      root.render(<Try {...props} />)
+      const props = jsonOr(el.dataset.props ?? null, TRY_PROPS, null)
+      if (props) root.render(<Try {...props} />)
     }
   }
   void start()

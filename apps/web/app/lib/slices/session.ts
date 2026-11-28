@@ -144,6 +144,7 @@ import { ANIM_DEFAULT } from '../motion/setting'
 import { cause, logError } from '../log'
 import { sleep, type Cancel } from '../clock'
 import { came, recorded, refused } from '../tried'
+import { anything, jsonOr } from '../schema'
 
 // Waits before opening the URL again after a boot left nothing open because of 429s. Exported
 // so tests can shorten them.
@@ -154,7 +155,7 @@ const SWITCHED = 'You switched accounts'
 const readJson = <T>(key: string, fallback: T): T => {
   try {
     const raw = readLocal(key)
-    return raw ? (JSON.parse(raw) as T) : fallback
+    return jsonOr(raw, anything, fallback) as T
   } catch {
     return fallback
   }

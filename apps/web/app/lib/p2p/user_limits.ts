@@ -2,6 +2,7 @@ import { peerStorage } from '../client/keys'
 import { fmtSize, plural } from '../bytes'
 import { readLocal, writeLocal, type InstanceConnection } from '../instances'
 import { fit, localDefaults, RANGES, type Local } from './limits'
+import { jsonObject, jsonOr } from '../schema'
 
 // What one account runs P2P with: the instance's P2P_LIMITS (its `local.` names), then the
 // user's own overrides from Settings > Peer-to-peer > Advanced, each clamped to its range. Read
@@ -52,7 +53,7 @@ export const userLimitsKey = (username: string) => `rchat_p2p_limits:${username}
 export const parseUserLimits = (raw: string | null): UserLimits => {
   const out: UserLimits = { v: 1 }
   try {
-    const v = raw ? (JSON.parse(raw) as unknown) : null
+    const v = jsonOr(raw, jsonObject, null)
     if (typeof v !== 'object' || v === null || (v as { v?: unknown }).v !== 1) return out
     for (const f of FIELDS) {
       const x = (v as Record<string, unknown>)[f]

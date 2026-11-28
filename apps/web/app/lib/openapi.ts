@@ -3,7 +3,7 @@
 // secrets. Only `/api/` paths of this instance are ever called, under the base this client uses.
 
 import { apiTail } from './api_version'
-import { anything, parseJson } from './schema'
+import { anything, jsonObject, jsonOr, parseJson } from './schema'
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
@@ -582,7 +582,7 @@ const valuesOf = (x: unknown): Values | null => {
 // from the operation's template again).
 export const parseHistory = (raw: string | null): ApiHistory => {
   try {
-    const data = raw ? (JSON.parse(raw) as unknown) : null
+    const data = jsonOr(raw, jsonObject, null)
     if (!isObj(data) || (data.v !== 1 && data.v !== 2) || !Array.isArray(data.items))
       return EMPTY_HISTORY
     const legacy = data.v === 1

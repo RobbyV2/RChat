@@ -5,6 +5,7 @@ import type { DeviceKey, DeviceKeys, KeyVault } from '../platform'
 import { DEVICE_KEYS_META } from '../platform/device_keys'
 import { deviceAad, deviceSearchKey, openDevice, recordHeader, sealDevice } from '../seal_record'
 import { keyedWords, type Keyed } from './search_keys'
+import { anything, jsonOr } from '../schema'
 
 // Sealed event storage. A sealed room or DM keeps the `wire` of every event it stores as a device
 // record (seal_record.ts) under this device's key; ids, room ids, senders, sort keys, channels and
@@ -430,7 +431,7 @@ export class Sealing {
 
 const parsed = (plain: Uint8Array): unknown => {
   try {
-    return JSON.parse(dec.decode(plain)) as unknown
+    return jsonOr(dec.decode(plain), anything, undefined)
   } catch {
     return undefined
   }

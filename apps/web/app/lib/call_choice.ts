@@ -2,6 +2,7 @@ import type { CallLog } from './types'
 import { callTone } from './voice_layout'
 import { time } from './platform/time'
 import { defineSetting } from './settings'
+import { jsonObject, jsonOr } from './schema'
 
 // How a DM call connects: through the server (WebRTC via the instance) or direct (PeerJS).
 export type CallRoute = 'server' | 'p2p'
@@ -14,7 +15,7 @@ export const isRoute = (x: unknown): x is CallRoute => x === 'server' || x === '
 
 export const parseCallRoute = (raw: string | null): CallRoute => {
   try {
-    const data = raw ? (JSON.parse(raw) as unknown) : null
+    const data = jsonOr(raw, jsonObject, null)
     if (typeof data !== 'object' || data === null) return DEFAULT_ROUTE
     const { v, route } = data as { v?: unknown; route?: unknown }
     return v === 1 && isRoute(route) ? route : DEFAULT_ROUTE

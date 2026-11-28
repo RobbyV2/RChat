@@ -1,4 +1,5 @@
 import type { TrustKind } from './policy'
+import { jsonObject, jsonOr } from '../schema'
 
 // A trust token as a session keeps it. Times are Unix seconds, as the API gives them; every
 // comparison takes the server's clock in milliseconds (`Date.now()` plus the offset learned from
@@ -59,7 +60,7 @@ export const serialize = (t: Trust): string =>
 export const parseStored = (raw: string | null): Trust | null => {
   if (!raw) return null
   try {
-    const s = record(JSON.parse(raw))
+    const s = record(jsonOr(raw, jsonObject, null))
     if (!s || s.v !== 1) return null
     return trustOf(s.token, s.kind, s.expiresAt, s.budget, s.remaining, s.renewAt)
   } catch {

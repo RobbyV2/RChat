@@ -1,3 +1,4 @@
+import { jsonObject, jsonOr } from '../schema'
 // The device's client id for one instance (`X-Trust-Client`): 16 random bytes as 22 base64url
 // characters, made once per instance origin and sent only to that origin. It names no person
 // and no account.
@@ -30,7 +31,7 @@ export const newClientId = (random: Random = bytes => crypto.getRandomValues(byt
 const stored = (raw: string | null): string | null => {
   if (!raw) return null
   try {
-    const s: unknown = JSON.parse(raw)
+    const s: unknown = jsonOr(raw, jsonObject, null)
     const id =
       typeof s === 'object' && s !== null && 'v' in s && s.v === 1 && 'id' in s ? s.id : null
     return clientIdOk(id) ? id : null

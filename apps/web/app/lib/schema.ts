@@ -261,14 +261,37 @@ export const base64 = ({ max }: { max?: number } = {}): Schema<Uint8Array> =>
     return good(out)
   })
 
-export const parseJson = <T>(text: string, schema: Schema<T>): Parsed<T> => {
+// Any JSON object, its fields as they are (a stored record whose fields are read one by one).
+export const jsonObject: Schema<Record<string, unknown>> = new Schema(made, x =>
+  isObject(x) ? good(x) : bad('an object')
+)
+
+// A shape whose check is a type guard the code already has: `expected` names it in issues.
+export const guarded = <T>(is: (x: unknown) => x is T, expected: string): Schema<T> =>
+  new Schema(made, x => (is(x) ? good(x) : bad(expected)))
+
+// The one place JSON text becomes a value: read against `schema`. `revive` changes values as
+// they are read (JSON.parse's reviver).
+export const parseJson = <T>(
+  text: string,
+  schema: Schema<T>,
+  revive?: (key: string, value: unknown) => unknown
+): Parsed<T> => {
   let value: unknown
   try {
-    value = JSON.parse(text)
+    value = JSON.parse(text, revive)
   } catch {
     return bad('JSON')
   }
   return schema.parse(value)
+}
+
+// What `text` reads as against `schema`, or `fallback` for no text, text that is not JSON, and a
+// value of another shape.
+export const jsonOr = <T, F = T>(text: string | null, schema: Schema<T>, fallback: F): T | F => {
+  if (text === null) return fallback
+  const read = parseJson(text, schema)
+  return read.ok ? read.value : fallback
 }
 
 export const issueText = (issue: Issue) =>

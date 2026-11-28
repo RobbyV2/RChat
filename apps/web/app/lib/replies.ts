@@ -1,6 +1,7 @@
 import { replaceSpoilers, typedMarks } from './spoilers'
 import type { Message, ReplyRef } from './types'
 import { defineSetting } from './settings'
+import { jsonObject, jsonOr } from './schema'
 
 export interface Replying {
   message: Message
@@ -12,7 +13,7 @@ export const replyMentionKey = (username: string) => `rchat_reply_mention:${user
 export function parseReplyMention(raw: string | null): boolean {
   let data: unknown
   try {
-    data = raw ? JSON.parse(raw) : null
+    data = jsonOr(raw, jsonObject, null)
   } catch {
     return true
   }

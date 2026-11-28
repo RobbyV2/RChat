@@ -6,6 +6,7 @@ import { fromRequest, type Load } from './load'
 import { persistently } from './own_loads'
 import type { Live } from './place/live'
 import { device } from './platform'
+import { jsonObject, jsonOr } from './schema'
 
 export interface Announcement {
   id: string
@@ -36,7 +37,7 @@ export function refreshDelay(feed: AnnouncementFeed, elapsedMs = 0) {
 
 export function guestDismissals(raw: string | null, now: number): Record<string, number> {
   try {
-    const parsed: unknown = JSON.parse(raw ?? '{}')
+    const parsed: unknown = jsonOr(raw, jsonObject, {})
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
     return Object.fromEntries(
       Object.entries(parsed).filter(([, end]) => typeof end === 'number' && end > now)

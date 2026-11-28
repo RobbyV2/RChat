@@ -6,6 +6,7 @@ import type { Book } from './client/book'
 import { REDACTED, isSecretName } from './openapi'
 import { hostOf } from './qualified'
 import type { Secret } from './secret'
+import { anything, jsonObject, jsonOr, parseJson } from './schema'
 
 export interface LiveAccount {
   // `origin` and `username` together.
@@ -107,7 +108,10 @@ export function parseBody(
 ): { ok: true; value: unknown } | { ok: false; error: string } {
   if (!text.trim()) return { ok: true, value: undefined }
   try {
-    return { ok: true, value: JSON.parse(text) }
+    const read = parseJson(text, anything)
+    return read.ok
+      ? { ok: true, value: read.value }
+      : { ok: false, error: 'The body is not valid JSON.' }
   } catch {
     return { ok: false, error: 'The body is not valid JSON.' }
   }
@@ -182,7 +186,7 @@ export const RUN_AS_KEY = 'rchat_docs_run_as'
 export function parseRunAs(raw: string | null): string | null {
   if (!raw) return null
   try {
-    const v = JSON.parse(raw) as unknown
+    const v = jsonOr(raw, jsonObject, null)
     return isObj(v) && v.v === 1 && typeof v.key === 'string' ? v.key : null
   } catch {
     return null

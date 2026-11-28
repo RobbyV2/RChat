@@ -9,6 +9,7 @@ import {
   type InstanceConnection,
 } from '../instances'
 import { hostOf } from '../qualified'
+import { anything, jsonObject, jsonOr } from '../schema'
 
 // Reconstruct origins which can produce the historical authority. WHATWG URL
 // canonicalizes IP spellings, case, credentials-free ports and IDNs. The old
@@ -73,8 +74,10 @@ function namespace(
     const raw = readLocal(key)
     if (raw === null) return false
     try {
-      const value = JSON.parse(raw)
-      return slot === null ? Array.isArray(value) : value?.v === 1 && value.on === true
+      const value = jsonOr(raw, anything, null)
+      if (slot === null) return Array.isArray(value)
+      const flag = jsonOr(raw, jsonObject, null)
+      return flag?.v === 1 && flag.on === true
     } catch {
       return false
     }

@@ -8,6 +8,7 @@ import { apiRoot } from './api_version'
 import { safeNext } from './invite'
 import type { AuthInfo, LinkedProvider, Me } from './types'
 import { time } from './platform/time'
+import { choice, jsonObject, jsonOr, lit, nullable, num, obj, opt, str } from './schema'
 
 export const canUnlink = (
   me: Pick<Me, 'has_password'>,
@@ -27,7 +28,7 @@ export const SSO_KEY = 'rchat_sso'
 export { SSO_LOGOUT_KEY } from './client/keys'
 export function parseLogoutFlag(raw: string | null): boolean {
   try {
-    const flag = JSON.parse(raw ?? 'null')
+    const flag = jsonOr(raw, jsonObject, null)
     return flag?.v === 1 && flag.on === true
   } catch {
     return false
@@ -95,24 +96,31 @@ export function parseReturn(search: string): { code: string } | { error: SsoErro
   if (err) return { error: Object.hasOwn(messages, err) ? (err as SsoErrorCode) : 'failed' }
   return code && code.length <= 64 ? { code } : null
 }
+const INTENT = obj({
+  v: lit(1),
+  purpose: choice('login', 'link', 'reauth'),
+  confirm: opt(lit(true)),
+  origin: str(),
+  username: nullable(str()),
+  provider: str(),
+  back: str(),
+  verifier: str(),
+  at: num(),
+  code: opt(str()),
+  error: opt(choice(...(Object.keys(messages) as SsoErrorCode[]))),
+})
+
 export function parseIntent(raw: string | null, now: number): SsoIntent | null {
   try {
-    const i = JSON.parse(raw ?? 'null')
+    const i = jsonOr(raw, INTENT, null)
     if (
       !i ||
-      i.v !== 1 ||
-      !['login', 'link', 'reauth'].includes(i.purpose) ||
-      (i.confirm !== undefined && (i.confirm !== true || i.purpose !== 'login' || !i.username)) ||
-      !Number.isFinite(i.at) ||
+      (i.confirm !== undefined && (i.purpose !== 'login' || !i.username)) ||
       i.at > now ||
       now - i.at >= INTENT_TTL_MS ||
-      typeof i.verifier !== 'string' ||
       !/^[A-Za-z0-9_-]{43,128}$/.test(i.verifier) ||
-      typeof i.provider !== 'string' ||
-      typeof i.origin !== 'string' ||
       new URL(i.origin).origin !== i.origin ||
       !/^https?:/.test(i.origin) ||
-      !(i.username === null || typeof i.username === 'string') ||
       !safeNext(i.back)
     )
       return null

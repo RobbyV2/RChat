@@ -1,5 +1,6 @@
 import { accountUsername } from '../qualified'
 import type { AvatarKind } from '../types'
+import { jsonObject, jsonOr } from '../schema'
 
 export interface BookIdentity {
   local: string
@@ -52,7 +53,7 @@ function record(value: unknown): value is Record<string, unknown> {
 }
 function json(raw: string | null): unknown {
   try {
-    return JSON.parse(raw ?? 'null')
+    return jsonOr(raw, jsonObject, null)
   } catch {
     return null
   }

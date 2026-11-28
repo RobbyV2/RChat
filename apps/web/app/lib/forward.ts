@@ -4,6 +4,7 @@ import { readableNow } from './public_reading'
 import type { RChatState } from './store_types'
 import type { Message, SiteSettings, UserRef } from './types'
 import { defineSetting } from './settings'
+import { jsonObject, jsonOr } from './schema'
 
 // The forward clipboard: one copied message per account, kept until it is sent or dismissed.
 export type ForwardSource =
@@ -90,7 +91,7 @@ const isSource = (value: unknown): value is ForwardSource => {
 export function parseForward(raw: string | null): ForwardClip | null {
   let data: unknown
   try {
-    data = raw ? JSON.parse(raw) : null
+    data = jsonOr(raw, jsonObject, null)
   } catch {
     return null
   }

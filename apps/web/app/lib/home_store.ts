@@ -30,6 +30,7 @@ import {
   serverUnread,
   type RChatState,
 } from './store'
+import { arr, bool, int, jsonOr, obj, str, type Schema } from './schema'
 
 interface HomeState {
   owner: string | null
@@ -41,7 +42,13 @@ export interface UnreadSummary {
   dms: { pings: number; unread: boolean }
 }
 
-export const parseSummary = (value: string): UnreadSummary => JSON.parse(value) as UnreadSummary
+const SUMMARY: Schema<UnreadSummary> = obj({
+  servers: arr(obj({ name: str(), pings: int(), channels: int() })),
+  dms: obj({ pings: int(), unread: bool }),
+})
+const NO_SUMMARY: UnreadSummary = { servers: [], dms: { pings: 0, unread: false } }
+
+export const parseSummary = (value: string): UnreadSummary => jsonOr(value, SUMMARY, NO_SUMMARY)
 
 const emptyHome = (): HomePrefs => ({ ...EMPTY_HOME, recents: [], tips: [] })
 

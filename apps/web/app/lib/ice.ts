@@ -4,6 +4,7 @@ import { sessionStore, type InstanceConnection } from './instances'
 import type { IceServers, InstanceIce } from './types'
 import { time } from './platform/time'
 import { defineSetting } from './settings'
+import { jsonObject, jsonOr } from './schema'
 
 // The only source of ICE servers. Without it, PeerJS uses its own public STUN and TURN servers,
 // so every Peer and RTCPeerConnection gets its config from its owner. The instance supplies the
@@ -214,7 +215,7 @@ export interface IcePrefs {
 
 export const parseIce = (raw: string | null): IcePrefs => {
   try {
-    const v = raw ? (JSON.parse(raw) as unknown) : null
+    const v = jsonOr(raw, jsonObject, null)
     if (typeof v !== 'object' || v === null || (v as { v?: unknown }).v !== 1)
       return { on: true, relay: false }
     const { on, relay } = v as { on?: unknown; relay?: unknown }

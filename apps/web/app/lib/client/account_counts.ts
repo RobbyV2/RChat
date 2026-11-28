@@ -13,6 +13,7 @@ import { accountStorage } from './keys'
 import type { AccountSession } from './session'
 import { readToken } from './credentials'
 import { time } from '../platform/time'
+import { anything, int, jsonOr, obj, opt, record, union, type Schema } from '../schema'
 
 interface Counts {
   incoming: number
@@ -42,26 +43,26 @@ function countsKey(account: AccountSession, owner: string) {
   return 'rchat_counts:' + JSON.stringify([account.conn.origin, owner])
 }
 
+const COUNT = int().refine(n => n >= 0, 'a count')
+// A stored record; an older one has `badge` in place of `instance`, and no peers.
+const STORED_COUNTS: Schema<Counts> = union(
+  obj({ unread: COUNT, instance: COUNT, peers: record(COUNT), incoming: opt(anything) }).map(c => ({
+    incoming: count(c.incoming) ? c.incoming : 0,
+    instance: c.instance,
+    unread: c.unread,
+    peers: c.peers,
+  })),
+  obj({ unread: COUNT, badge: COUNT }).map(c => ({
+    incoming: 0,
+    instance: c.badge,
+    unread: c.unread,
+    peers: {},
+  }))
+)
+
 function readCounts(key: string): Counts | null {
   try {
-    const counts = JSON.parse(readLocal(key) ?? 'null')
-    if (!count(counts?.unread)) return null
-    if (counts.instance === undefined && count(counts.badge))
-      return { incoming: 0, instance: counts.badge, unread: counts.unread, peers: {} }
-    if (
-      !count(counts.instance) ||
-      !counts.peers ||
-      typeof counts.peers !== 'object' ||
-      Array.isArray(counts.peers) ||
-      !Object.values(counts.peers).every(count)
-    )
-      return null
-    return {
-      incoming: count(counts.incoming) ? counts.incoming : 0,
-      instance: counts.instance,
-      unread: counts.unread,
-      peers: counts.peers,
-    }
+    return jsonOr(readLocal(key), STORED_COUNTS, null)
   } catch {
     return null
   }
