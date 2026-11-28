@@ -11,7 +11,7 @@ use utoipa::{IntoParams, ToSchema};
 use crate::api::access::perms::Perm;
 use crate::api::access::{Proof, denied, resolve_server};
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, Paged, UserRef, bad, cursor_int, decode_cursor, encode_cursor,
+    ApiError, ApiErrorBody, Authed, Paged, UserRef, cursor_int, decode_cursor, encode_cursor,
     placeholders, user_from, user_refs,
 };
 use crate::db::{Db, PURGE_BATCH, now};
@@ -45,16 +45,18 @@ pub fn parse_reason(header: Option<&HeaderValue>) -> Result<Option<String>, ApiE
     let Some(header) = header else {
         return Ok(None);
     };
-    let raw = header.to_str().map_err(|_| bad(REASON_INVALID))?;
+    let raw = header
+        .to_str()
+        .map_err(|_| ApiError::invalid(REASON_INVALID, "reason"))?;
     let text = percent_encoding::percent_decode_str(raw)
         .decode_utf8()
-        .map_err(|_| bad(REASON_INVALID))?;
+        .map_err(|_| ApiError::invalid(REASON_INVALID, "reason"))?;
     let text = text.trim();
     if text.chars().any(char::is_control) {
-        return Err(bad(REASON_INVALID));
+        return Err(ApiError::invalid(REASON_INVALID, "reason"));
     }
     if text.chars().count() > REASON_MAX {
-        return Err(bad(REASON_TOO_LONG));
+        return Err(ApiError::invalid(REASON_TOO_LONG, "reason"));
     }
     Ok((!text.is_empty()).then(|| text.to_string()))
 }
@@ -932,7 +934,7 @@ fn filters(q: &AuditQuery) -> Result<(String, Vec<Bind>), ApiError> {
                 Bind::Text(a.as_str().to_string()),
                 &mut binds,
             ),
-            (false, None) => return Err(bad("Unknown action")),
+            (false, None) => return Err(ApiError::invalid("Unknown action", "action")),
         }
     }
     if let Some(actor) = q.actor.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
@@ -944,7 +946,7 @@ fn filters(q: &AuditQuery) -> Result<(String, Vec<Bind>), ApiError> {
     }
     if let Some(target) = q.target.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
         if target.chars().count() > TARGET_QUERY_MAX {
-            return Err(bad("Target search is too long"));
+            return Err(ApiError::invalid("Target search is too long", "target"));
         }
         add(
             " AND lower(target_name) LIKE lower({}) ESCAPE '\\'",

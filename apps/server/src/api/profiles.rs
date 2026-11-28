@@ -17,7 +17,7 @@ use crate::api::auth::{check_avatar, check_banner, clean_bio, clean_name_for, pr
 use crate::api::seal;
 use crate::api::timeouts::REASON_MAX;
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, OkResp, ProfanityTarget, Settings, UserRef, bad, check_len,
+    ApiError, ApiErrorBody, Authed, OkResp, ProfanityTarget, Settings, UserRef, check_len,
     check_profanity, ok, placeholders,
 };
 use crate::crypt::copies::{self, SERVER_BIOS, server_bio_binding};
@@ -1152,10 +1152,13 @@ pub(crate) async fn reset_member_profile(
     } = req;
     let (access, target) = moderated(&state, &user, &name, &username).await?;
     if target == user.username {
-        return Err(bad("You can't reset your own server profile"));
+        return Err(ApiError::invalid(
+            "You can't reset your own server profile",
+            "username",
+        ));
     }
     if fields.is_empty() && lock_secs.is_none() {
-        return Err(bad("Choose what to reset"));
+        return Err(ApiError::invalid("Choose what to reset", "fields"));
     }
     if lock_secs.is_some_and(|secs| !LOCK_SECS.contains(&secs)) {
         return Err(ApiError::invalid("Invalid lock", "lock_secs"));
@@ -1245,7 +1248,10 @@ pub(crate) async fn unlock_member_profile(
 ) -> Result<Json<OkResp>, ApiError> {
     let (access, target) = moderated(&state, &user, &name, &username).await?;
     if target == user.username {
-        return Err(bad("You can't unlock your own server profile"));
+        return Err(ApiError::invalid(
+            "You can't unlock your own server profile",
+            "username",
+        ));
     }
     let key = access.name().to_string();
     let actor = moderator(&state.db, &access, &target).await?;

@@ -3,6 +3,7 @@ use std::sync::LazyLock;
 
 use axum::Json;
 use axum::extract::{Path, State};
+use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::ToSchema;
@@ -14,7 +15,7 @@ use crate::api::join_modes::{ALPHABET, JoinMode, random_text};
 use crate::api::rare::{self, Rare};
 use crate::api::servers::guard_rchat;
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, JoinedVia, OkResp, ServerSummaryLite, bad, check_len, ok,
+    ApiError, ApiErrorBody, Authed, JoinedVia, OkResp, ServerSummaryLite, check_len, ok,
     placeholders,
 };
 use crate::db::{Db, NO_EXTRA_HASH, NO_PERMANENT_HASH, User, lock_server, now};
@@ -193,8 +194,9 @@ static WORD_LIST: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 /// Admin-chosen passwords (permanent and extra) need at least `SECRET_MIN` characters.
 pub fn check_strength(password: &str) -> Result<(), ApiError> {
     match password.trim().chars().count() < SECRET_MIN {
-        true => Err(bad(
+        true => Err(ApiError::invalid(
             "Use at least 8 characters, or leave it blank for a generated one",
+            "password",
         )),
         false => Ok(()),
     }
@@ -322,14 +324,25 @@ fn expiry(
     expires_at: Option<i64>,
 ) -> Result<Option<i64>, ApiError> {
     let at = match (expires_in, expires_at) {
-        (Some(_), Some(_)) => return Err(bad("Use either expires_in or expires_at")),
+        (Some(_), Some(_)) => {
+            return Err(ApiError::invalid(
+                "Use either expires_in or expires_at",
+                "expires_in",
+            ));
+        }
         (Some(secs), None) => t.saturating_add(secs),
         (None, Some(at)) => at,
         (None, None) => return Ok(None),
     };
     match at.saturating_sub(t) {
-        d if d < EXPIRY_MIN => Err(bad("The expiry must be at least a minute away")),
-        d if d > EXPIRY_MAX => Err(bad("The expiry can be at most a year away")),
+        d if d < EXPIRY_MIN => Err(ApiError::invalid(
+            "The expiry must be at least a minute away",
+            "expires_in",
+        )),
+        d if d > EXPIRY_MAX => Err(ApiError::invalid(
+            "The expiry can be at most a year away",
+            "expires_in",
+        )),
         _ => Ok(Some(at)),
     }
 }
@@ -383,7 +396,10 @@ pub(crate) async fn create_password(
     rare::check(&state, Rare::ServerPassword, Some(&user))?;
     let db = &state.db;
     if !access.lite().has_password {
-        return Err(bad("Make the server password protected first"));
+        return Err(ApiError::conflict(
+            StatusCode::BAD_REQUEST,
+            "Make the server password protected first",
+        ));
     }
     let link = match kind.unwrap_or(PasswordKind::Password) {
         PasswordKind::Password => false,
@@ -420,13 +436,23 @@ pub(crate) async fn create_password(
     if let Some(max) = max_uses
         && !(1..=USES_MAX).contains(&max)
     {
-        return Err(bad("Uses must be between 1 and 10000"));
+        return Err(ApiError::invalid(
+            "Uses must be between 1 and 10000",
+            "max_uses",
+        ));
     }
     if live_count(db, access.name(), t).await? >= ACTIVE_MAX {
-        return Err(bad(FULL));
+        return Err(ApiError::limit(
+            StatusCode::BAD_REQUEST,
+            FULL,
+            crate::api::error::Cap::ServerPasswords,
+        ));
     }
     if access.is_permanent_password(db, &secret).await? {
-        return Err(bad("That password is already in use"));
+        return Err(ApiError::conflict(
+            StatusCode::BAD_REQUEST,
+            "That password is already in use",
+        ));
     }
     let lookup = password_lookup(db, access.name(), &secret).await?;
     let taken = sqlx::query("SELECT 1 FROM server_passwords WHERE server = $1 AND lookup = $2")
@@ -436,7 +462,10 @@ pub(crate) async fn create_password(
         .await?
         .is_some();
     if taken {
-        return Err(bad("That password was already used here. Pick another one"));
+        return Err(ApiError::conflict(
+            StatusCode::BAD_REQUEST,
+            "That password was already used here. Pick another one",
+        ));
     }
     let found_by = match link {
         true => Some(code_lookup(db, &secret).await?),
@@ -468,19 +497,26 @@ pub(crate) async fn create_password(
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| match &e {
-            sqlx::Error::Database(d) if d.is_unique_violation() => {
-                bad("That password was already used here. Pick another one")
-            }
+            sqlx::Error::Database(d) if d.is_unique_violation() => ApiError::conflict(
+                StatusCode::BAD_REQUEST,
+                "That password was already used here. Pick another one",
+            ),
             _ => ApiError::from(e),
         })?;
     let Some(row) = row else {
         drop(tx);
         return Err(
             match live_count(db, access.name(), t).await? >= ACTIVE_MAX {
-                true => bad(FULL),
-                false => {
-                    bad("Too many old passwords. They are removed 30 days after they stop working")
-                }
+                true => ApiError::limit(
+                    StatusCode::BAD_REQUEST,
+                    FULL,
+                    crate::api::error::Cap::ServerPasswords,
+                ),
+                false => ApiError::limit(
+                    StatusCode::BAD_REQUEST,
+                    "Too many old passwords. They are removed 30 days after they stop working",
+                    crate::api::error::Cap::ServerPasswords,
+                ),
             },
         );
     };
@@ -723,7 +759,11 @@ pub(crate) async fn make_standing_invite(
         .await?
     else {
         drop(tx);
-        return Err(bad(FULL));
+        return Err(ApiError::limit(
+            StatusCode::BAD_REQUEST,
+            FULL,
+            crate::api::error::Cap::ServerPasswords,
+        ));
     };
     let opened = open_closed(&mut tx, access.name()).await?;
     audit::record(

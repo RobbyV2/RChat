@@ -14,7 +14,7 @@ use crate::api::audit::{self, Action, Actor, Details, Entry, Target, TargetKind}
 use crate::api::servers::check_name;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Category, CategoryStyle, ChannelLayout, LayoutCategory, OkResp,
-    ProfanityTarget, Separator, SeparatorStyle, bad, ok,
+    ProfanityTarget, Separator, SeparatorStyle, ok,
 };
 use crate::db::Db;
 use crate::state::AppState;
@@ -771,7 +771,12 @@ fn category_entry(server: &str, actor: &Actor, action: Action, category: &Catego
 }
 
 fn check_order(req: &LayoutReq, current: &ChannelLayout) -> Result<(), ApiError> {
-    let wrong = || bad("The order must list every channel and category exactly once");
+    let wrong = || {
+        ApiError::invalid(
+            "The order must list every channel and category exactly once",
+            "order",
+        )
+    };
     let want_cats: HashSet<i64> = current.categories.iter().map(|c| c.id).collect();
     let mut cats = HashSet::new();
     for c in &req.categories {
@@ -804,8 +809,12 @@ fn check_order(req: &LayoutReq, current: &ChannelLayout) -> Result<(), ApiError>
     let Some(places) = &req.separators else {
         return Ok(());
     };
-    let wrong =
-        || bad("The order must list every separator exactly once, after channels of its list");
+    let wrong = || {
+        ApiError::invalid(
+            "The order must list every separator exactly once, after channels of its list",
+            "separators",
+        )
+    };
     let want: HashSet<i64> = current.separators.iter().map(|s| s.id).collect();
     let lists: HashMap<Option<i64>, usize> = std::iter::once((None, req.uncategorized.len()))
         .chain(
@@ -879,8 +888,9 @@ pub(crate) async fn reorder_layout(
         || req.separators.as_ref().map_or(0, Vec::len) as i64
             > rchat_settings::items::SERVER_SEPARATORS_MAX.max()
     {
-        return Err(bad(
+        return Err(ApiError::invalid(
             "The order must list every channel and category exactly once",
+            "order",
         ));
     }
     let access =

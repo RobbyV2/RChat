@@ -300,9 +300,11 @@ pub(crate) async fn set_category_perm(
         .await?
         .try_get(0)?;
     if was.is_none() && now.is_some() && rules >= CHANNEL_PERM_MAX {
-        return Err(bad(&format!(
-            "A category can have at most {CHANNEL_PERM_MAX} permission rules"
-        )));
+        return Err(ApiError::limit(
+            StatusCode::BAD_REQUEST,
+            format!("A category can have at most {CHANNEL_PERM_MAX} permission rules"),
+            crate::api::error::Cap::ChannelPermRules,
+        ));
     }
     change_category_rule(&state, &user, &access, id, &subject, was, now).await?;
     Ok(ok())
@@ -501,7 +503,10 @@ pub(crate) async fn sync_channel_perms(
     .fetch_one(&state.db)
     .await?;
     let Some(category) = row.try_get::<Option<i64>, _>(0)? else {
-        return Err(bad("This channel is not in a category"));
+        return Err(ApiError::conflict(
+            StatusCode::BAD_REQUEST,
+            "This channel is not in a category",
+        ));
     };
     let place = Place {
         restrict_view: row.try_get::<i64, _>(1)? != 0,

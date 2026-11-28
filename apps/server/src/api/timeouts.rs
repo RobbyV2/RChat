@@ -10,7 +10,7 @@ use utoipa::ToSchema;
 use crate::api::access::perms::Perm;
 use crate::api::access::{Proof, ServerAccess, acting_on, resolve_server};
 use crate::api::audit::{self, Details, Entry, Target};
-use crate::api::{ApiError, ApiErrorBody, OkResp, bad, ok, placeholders};
+use crate::api::{ApiError, ApiErrorBody, OkResp, ok, placeholders};
 use crate::api::{Authed, check_len};
 use crate::db::{Db, now};
 use crate::state::AppState;
@@ -220,10 +220,13 @@ pub(crate) async fn set_timeout(
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::TimeoutMembers).await?;
     if target == user.username {
-        return Err(bad("You can't time out yourself"));
+        return Err(ApiError::invalid("You can't time out yourself", "username"));
     }
     if !(1..=TIMEOUT_MAX).contains(&seconds) {
-        return Err(bad("Timeouts last from 1 second to 28 days"));
+        return Err(ApiError::invalid(
+            "Timeouts last from 1 second to 28 days",
+            "seconds",
+        ));
     }
     let reason = clean_reason(reason)?;
     let key = access.name().to_string();
@@ -309,7 +312,10 @@ pub(crate) async fn remove_timeout(
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::TimeoutMembers).await?;
     if target == user.username {
-        return Err(bad("You can't remove your own timeout"));
+        return Err(ApiError::invalid(
+            "You can't remove your own timeout",
+            "username",
+        ));
     }
     let key = access.name().to_string();
     let actor = moderator(&state.db, &access, &target).await?;

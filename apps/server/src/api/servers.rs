@@ -45,7 +45,7 @@ use crate::api::users::Names;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Channel, ChannelPerm, LIST_MAX, MaybeAuthed, Member, Message,
     NAME_MAX, OFFSET_MAX, OkResp, Paged, ProfanityTarget, Role, RoleLimits, SLOWMODE_MAX,
-    ServerDetail, ServerSummary, ServerSummaryLite, Settings, TOPIC_MAX, UserRef, allowed, bad,
+    ServerDetail, ServerSummary, ServerSummaryLite, Settings, TOPIC_MAX, UserRef, allowed,
     check_len, check_profanity, cursor_int, decode_cursor, encode_cursor, header_grants, ok,
     page_bounds, placeholders, require_guest_ok, unique_capped, user_from, user_ref, user_refs,
     valid_color,
@@ -559,7 +559,10 @@ struct PagedList {
 }
 
 fn paged_list(raw: &str, list_key: &str) -> Result<PagedList, ApiError> {
-    let int = |v: &str| v.parse::<i64>().map_err(|_| bad("Invalid number"));
+    let int = |v: &str| {
+        v.parse::<i64>()
+            .map_err(|_| ApiError::invalid("Invalid number", "query"))
+    };
     let mut out = PagedList {
         offset: None,
         limit: None,
@@ -673,11 +676,21 @@ impl MemberListQuery {
                 }
                 "admins" => admins = Some(matches!(value.as_ref(), "1" | "true")),
                 "suggest" => suggest = Some(matches!(value.as_ref(), "1" | "true")),
-                "role" => role = Some(value.parse().map_err(|_| bad("Invalid role"))?),
+                "role" => {
+                    role = Some(
+                        value
+                            .parse()
+                            .map_err(|_| ApiError::invalid("Invalid role", "role"))?,
+                    )
+                }
                 "top_hoisted" => top_hoisted = Some(matches!(value.as_ref(), "1" | "true")),
                 "unhoisted" => unhoisted = Some(matches!(value.as_ref(), "1" | "true")),
                 "channel_id" => {
-                    channel_id = Some(value.parse().map_err(|_| bad("Invalid channel"))?)
+                    channel_id = Some(
+                        value
+                            .parse()
+                            .map_err(|_| ApiError::invalid("Invalid channel", "channel_id"))?,
+                    )
                 }
                 _ => {}
             }
@@ -801,7 +814,7 @@ async fn filtered_members(
             let parts = decode_cursor(raw, 2)?;
             match parts[0].as_str() {
                 "s" => Some(parts[1].clone()),
-                _ => return Err(bad("Invalid cursor")),
+                _ => return Err(ApiError::invalid("Invalid cursor", "cursor")),
             }
         }
         None => None,
@@ -886,7 +899,7 @@ async fn grouped_members(
             let parts = decode_cursor(raw, 3)?;
             match parts[0] == "g" && parts[1] == tag {
                 true => Some(parts[2].clone()),
-                false => return Err(bad("Invalid cursor")),
+                false => return Err(ApiError::invalid("Invalid cursor", "cursor")),
             }
         }
         None => None,
@@ -961,7 +974,7 @@ pub(crate) async fn check_name(
     name: &str,
 ) -> Result<(), ApiError> {
     if name.trim().is_empty() {
-        return Err(bad("Name required"));
+        return Err(ApiError::invalid("Name required", "name"));
     }
     check_len(name, NAME_MAX, what)?;
     check_profanity(db, target, name).await
@@ -970,7 +983,10 @@ pub(crate) async fn check_name(
 async fn check_server_name(db: &Db, name: &str) -> Result<(), ApiError> {
     check_name(db, ProfanityTarget::ServerNames, "Server name", name).await?;
     match name {
-        "." | ".." => Err(bad("Server name cannot be \".\" or \"..\"")),
+        "." | ".." => Err(ApiError::invalid(
+            "Server name cannot be \".\" or \"..\"",
+            "name",
+        )),
         _ => Ok(()),
     }
 }
@@ -1543,7 +1559,7 @@ async fn members_page(
             match parts[0].as_str() {
                 "o" => (true, Some(parts[1].clone()), 0),
                 "f" => (false, Some(parts[1].clone()), 0),
-                _ => return Err(bad("Invalid cursor")),
+                _ => return Err(ApiError::invalid("Invalid cursor", "cursor")),
             }
         }
         None => (
@@ -1710,7 +1726,7 @@ pub(crate) async fn list_members(
         }
         None if top_hoisted == Some(true) => match role {
             Some(role) => grouped_members(db, key, Some(role), limit, cursor.as_deref()).await?,
-            None => return Err(bad("top_hoisted needs a role")),
+            None => return Err(ApiError::invalid("top_hoisted needs a role", "top_hoisted")),
         },
         None => members_page(db, key, &state.hub, offset, limit, cursor.as_deref()).await?,
     };
@@ -3473,7 +3489,7 @@ pub(crate) async fn leave_server(
     let ended = end_membership(&mut tx, &key, &user.username).await?;
     tx.commit().await?;
     match ended {
-        None => Err(bad("Not a member")),
+        None => Err(ApiError::invalid("Not a member", "username")),
         Some(Ended { notice }) => {
             announce_system(&state, &key, notice).await;
             state.hub.broadcast(WsEvent::MemberLeft {
@@ -3699,7 +3715,10 @@ pub(crate) async fn update_server(
             rare::check(&state, Rare::ServerPassword, Some(&user))?;
             crate::api::passwords::check_strength(p)?;
             if new_key == key && access.is_live_extra_password(&state.db, p).await? {
-                return Err(bad("That password is already in use for this server"));
+                return Err(ApiError::conflict(
+                    StatusCode::BAD_REQUEST,
+                    "That password is already in use for this server",
+                ));
             }
             let hash = hash_in(Work::Server, p).await?;
             rare::take(&state, Rare::ServerPassword, Some(&user))?;
@@ -4037,7 +4056,7 @@ fn server_color(
         None => Ok(None),
         Some(None) => Ok(Some(None)),
         Some(Some(c)) if valid_color(&c) => Ok(Some(Some(c.to_lowercase()))),
-        Some(Some(_)) => Err(bad(&format!("Invalid {what} color"))),
+        Some(Some(_)) => Err(ApiError::invalid(format!("Invalid {what} color"), "color")),
     }
 }
 
@@ -4124,7 +4143,10 @@ async fn name_free(db: &Db, key: &str) -> Result<(), ApiError> {
                 "That name is not available yet".to_string(),
                 None,
             )),
-            _ => Err(bad("Server name is taken")),
+            _ => Err(ApiError::conflict(
+                StatusCode::BAD_REQUEST,
+                "Server name is taken",
+            )),
         },
     }
 }
@@ -4316,7 +4338,10 @@ pub(crate) async fn create_channel(
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::ManageChannels).await?;
     if kind == ChannelKind::Voice && req.text_only {
-        return Err(bad("Text only applies to text channels"));
+        return Err(ApiError::invalid(
+            "Text only applies to text channels",
+            "text_only",
+        ));
     }
     let key = access.name().to_string();
     if let Some(category) = req.category_id
@@ -4334,7 +4359,10 @@ pub(crate) async fn create_channel(
         .await?
         .is_some();
     if taken {
-        return Err(bad("Channel name is taken"));
+        return Err(ApiError::conflict(
+            StatusCode::BAD_REQUEST,
+            "Channel name is taken",
+        ));
     }
     let count: i64 = sqlx::query("SELECT COUNT(*) FROM channels WHERE server = $1")
         .bind(&key)
@@ -4489,19 +4517,29 @@ pub(crate) async fn update_channel(
     );
     if let Some(secs) = slowmode_seconds {
         if !(0..=SLOWMODE_MAX).contains(&secs) {
-            return Err(bad(&format!(
-                "Slow mode must be between 0 and {SLOWMODE_MAX} seconds"
-            )));
+            return Err(ApiError::invalid(
+                format!("Slow mode must be between 0 and {SLOWMODE_MAX} seconds"),
+                "slowmode_seconds",
+            ));
         }
         if kind == ChannelKind::Voice && secs != 0 {
-            return Err(bad("Slow mode only applies to text channels"));
+            return Err(ApiError::invalid(
+                "Slow mode only applies to text channels",
+                "slowmode_seconds",
+            ));
         }
     }
     if kind == ChannelKind::Voice && text_only == Some(true) {
-        return Err(bad("Text only applies to text channels"));
+        return Err(ApiError::invalid(
+            "Text only applies to text channels",
+            "text_only",
+        ));
     }
     if kind == ChannelKind::Voice && restrict_send == Some(true) {
-        return Err(bad("Require roles to send only applies to text channels"));
+        return Err(ApiError::invalid(
+            "Require roles to send only applies to text channels",
+            "restrict_send",
+        ));
     }
     let channel_name = match &name {
         Some(name) => {
@@ -4556,7 +4594,10 @@ pub(crate) async fn update_channel(
                 .await?
                 .is_some();
         if taken {
-            return Err(bad("Channel name is taken"));
+            return Err(ApiError::conflict(
+                StatusCode::BAD_REQUEST,
+                "Channel name is taken",
+            ));
         }
         sqlx::query("UPDATE channels SET name = $1 WHERE id = $2")
             .bind(channel_name)
@@ -4715,7 +4756,10 @@ pub(crate) async fn delete_channel(
         .await?
         .try_get(0)?;
     if count <= 1 {
-        return Err(bad("Cannot delete the only channel"));
+        return Err(ApiError::conflict(
+            StatusCode::BAD_REQUEST,
+            "Cannot delete the only channel",
+        ));
     }
     if kind == ChannelKind::Text {
         let text_count: i64 =
@@ -4725,7 +4769,10 @@ pub(crate) async fn delete_channel(
                 .await?
                 .try_get(0)?;
         if text_count <= 1 {
-            return Err(bad("Cannot delete the only text channel"));
+            return Err(ApiError::conflict(
+                StatusCode::BAD_REQUEST,
+                "Cannot delete the only text channel",
+            ));
         }
     }
     let rules = channel.view_rules(&state.db).await?;
@@ -4896,7 +4943,7 @@ pub(crate) async fn ban_member(
     access.require_perm(&state.db, Perm::Kick).await?;
     let key = access.name().to_string();
     if target == user.username {
-        return Err(bad("You can't ban yourself"));
+        return Err(ApiError::invalid("You can't ban yourself", "username"));
     }
     if !crate::api::names::could_be_username(&target) {
         return Err(ApiError::invalid("Invalid username", "username"));
@@ -5362,7 +5409,7 @@ pub(crate) async fn transfer_admin(
     let key = name.to_lowercase();
     let target = req.username.to_lowercase();
     if target == user.username {
-        return Err(bad("Cannot transfer to yourself"));
+        return Err(ApiError::invalid("Cannot transfer to yourself", "username"));
     }
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::ManageAdmins).await?;
@@ -5847,7 +5894,7 @@ async fn require_mentionable(db: &Db, access: &ServerAccess, on: bool) -> Result
 fn check_color(color: &str) -> Result<(), ApiError> {
     match valid_color(color) {
         true => Ok(()),
-        false => Err(bad("Invalid color")),
+        false => Err(ApiError::invalid("Invalid color", "color")),
     }
 }
 
@@ -5858,7 +5905,7 @@ fn check_icon(icon: Option<&str>) -> Result<Option<&'static str>, ApiError> {
         None => Ok(None),
         Some(text) => crate::api::reactions::canonical_emoji(text)
             .map(Some)
-            .ok_or_else(|| bad("Not an emoji")),
+            .ok_or_else(|| ApiError::invalid("Not an emoji", "emoji")),
     }
 }
 
@@ -7148,10 +7195,9 @@ pub(crate) async fn set_channel_perm(
             Some(flagged([view, send, history]))
         }
         (Some(_), Some(_), [Some(view), Some(send), Some(history)]) => {
-            let row = was
-                .as_ref()
-                .filter(listed)
-                .ok_or_else(|| bad("This rule changed. Try again."))?;
+            let row = was.as_ref().filter(listed).ok_or_else(|| {
+                ApiError::conflict(StatusCode::BAD_REQUEST, "This rule changed. Try again.")
+            })?;
             let flags = [view, send, history];
             match row.allow | row.deny {
                 0 => Some(flagged(flags)),
@@ -7178,8 +7224,9 @@ pub(crate) async fn set_channel_perm(
             masked(allow, deny, merge)
         }
         _ => {
-            return Err(bad(
+            return Err(ApiError::invalid(
                 "Send allow and deny, or can_view, can_send and can_read_history",
+                "allow",
             ));
         }
     };
@@ -7189,9 +7236,11 @@ pub(crate) async fn set_channel_perm(
         .await?
         .try_get(0)?;
     if was.is_none() && now.is_some() && rules >= CHANNEL_PERM_MAX {
-        return Err(bad(&format!(
-            "A channel can have at most {CHANNEL_PERM_MAX} permission rules"
-        )));
+        return Err(ApiError::limit(
+            StatusCode::BAD_REQUEST,
+            format!("A channel can have at most {CHANNEL_PERM_MAX} permission rules"),
+            crate::api::error::Cap::ChannelPermRules,
+        ));
     }
     let bypassed =
         guard_rule_edit(&state.db, &channel, &subject, was.as_ref(), now.as_ref()).await?;
@@ -7518,7 +7567,7 @@ pub(crate) async fn reorder_roles(
         || listed.len() != current.len()
         || current.iter().any(|id| !listed.contains(id))
     {
-        return Err(bad("List every role once"));
+        return Err(ApiError::invalid("List every role once", "order"));
     }
     let bypassed = require_moves(
         &mut tx,
@@ -7804,7 +7853,7 @@ pub(crate) async fn set_role_display(
         || listed.len() != places.roles.len()
         || places.roles.iter().any(|(id, _, _)| !listed.contains(id))
     {
-        return Err(bad("List every role once"));
+        return Err(ApiError::invalid("List every role once", "order"));
     }
     if asked == places.display {
         return Ok(Json(RoleOrder {

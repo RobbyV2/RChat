@@ -15,9 +15,7 @@ use super::access::{Proof, forbidden, not_found, resolve_channel, resolve_messag
 use super::audit::{self, Action, Details, Entry, Target};
 use super::budget;
 use super::messages::{Quotes, cannot_reply, load_message, partial_quote};
-use super::{
-    ApiError, Authed, Message, OkResp, ProfanityTarget, bad, check_len, check_profanity, ok,
-};
+use super::{ApiError, Authed, Message, OkResp, ProfanityTarget, check_len, check_profanity, ok};
 use crate::crypt::body::{Parts, Scope};
 use crate::db::{ChannelKind, Db, lock_server, now, pool_key, secret_key};
 use crate::identity::random_id;
@@ -134,7 +132,10 @@ pub(crate) async fn post(
     Json(req): Json<GuestText>,
 ) -> Result<Json<Posted>, ApiError> {
     if headers.contains_key("authorization") {
-        return Err(bad("Use the account message endpoint"));
+        return Err(ApiError::invalid(
+            "Use the account message endpoint",
+            "authorization",
+        ));
     }
     let db = &state.db;
     let proof = Proof::headers(&headers, &state.limits);
@@ -149,7 +150,7 @@ pub(crate) async fn post(
     } = req;
     check_len(&content, state.limits.message_max_chars, "Message")?;
     if content.trim().is_empty() {
-        return Err(bad("Message is empty"));
+        return Err(ApiError::invalid("Message is empty", "content"));
     }
     check_profanity(db, ProfanityTarget::Messages, &content).await?;
     if let Some(root) = thread_root_id {

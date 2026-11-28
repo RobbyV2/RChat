@@ -6,7 +6,7 @@ use utoipa::ToSchema;
 use crate::api::access::may_delete_in;
 use crate::api::bulk_delete::{JOB_LEASE, run_job};
 use crate::api::timeouts::clean_reason;
-use crate::api::{ApiError, bad, placeholders};
+use crate::api::{ApiError, placeholders};
 use crate::db::{Db, User, now};
 use crate::state::AppState;
 
@@ -107,12 +107,22 @@ pub(crate) fn options(
     let expires_at = match duration_secs {
         None => None,
         Some(d) if (BAN_MIN..=BAN_MAX).contains(&d) => Some(t + d),
-        Some(_) => return Err(bad("Ban length must be 60 to 63072000 seconds")),
+        Some(_) => {
+            return Err(ApiError::invalid(
+                "Ban length must be 60 to 63072000 seconds",
+                "duration_secs",
+            ));
+        }
     };
     let purge_hours = match purge_hours {
         None => 0,
         Some(h) if (0..=PURGE_HOURS_MAX).contains(&h) => h,
-        Some(_) => return Err(bad("Messages can be deleted from the last 0 to 168 hours")),
+        Some(_) => {
+            return Err(ApiError::invalid(
+                "Messages can be deleted from the last 0 to 168 hours",
+                "purge_hours",
+            ));
+        }
     };
     Ok(BanOptions {
         expires_at,

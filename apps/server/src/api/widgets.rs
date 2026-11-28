@@ -14,7 +14,7 @@ use super::access::{
     resolve_reading, resolve_server,
 };
 use super::{
-    ApiError, Authed, LIST_PAGE, MaybeAuthed, Message, Paged, Settings, audit, bad, guest_chat,
+    ApiError, Authed, LIST_PAGE, MaybeAuthed, Message, Paged, Settings, audit, guest_chat,
     messages, require_guest_ok, servers, unauthorized,
 };
 use crate::db::{ChannelKind, Db, User, now};
@@ -192,7 +192,12 @@ pub(crate) async fn framing(
 }
 
 fn origin(s: &str) -> Result<String, ApiError> {
-    let err = || bad("Enter a full HTTP or HTTPS origin without a path");
+    let err = || {
+        ApiError::invalid(
+            "Enter a full HTTP or HTTPS origin without a path",
+            "origins",
+        )
+    };
     let u = crate::instance::origin_url(s, "Origin", &["http", "https"]).map_err(|_| err())?;
     if u.path() != "/" || u.password().is_some() {
         return Err(err());
@@ -231,7 +236,7 @@ pub(crate) async fn list(
     let WidgetListQuery { limit, cursor } = query;
     let after = cursor.unwrap_or_default();
     if !after.is_empty() && (after.len() != 32 || !after.bytes().all(|b| b.is_ascii_hexdigit())) {
-        return Err(bad("Invalid cursor"));
+        return Err(ApiError::invalid("Invalid cursor", "cursor"));
     }
     let limit = limit.unwrap_or(LIST_PAGE).clamp(1, LIST_PAGE);
     let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -294,7 +299,11 @@ async fn save(
     if config.enabled
         && (!settings.widgets || config.mode == Mode::ReadLink && !settings.widget_read_links)
     {
-        return Err(bad("Widgets of this kind are turned off on this site"));
+        return Err(ApiError::off_site(
+            StatusCode::BAD_REQUEST,
+            "Widgets of this kind are turned off on this site",
+            &rchat_settings::items::WIDGETS,
+        ));
     }
     let server = access.name().to_string();
     let actor = access.audit_actor(db, Perm::ManageServer).await?;
@@ -303,10 +312,13 @@ async fn save(
     if channel.kind() == ChannelKind::Voice && !matches!(config.mode, Mode::Voice | Mode::Members)
         || channel.kind() == ChannelKind::Text && config.mode == Mode::Voice
     {
-        return Err(bad("Choose a channel of the right kind"));
+        return Err(ApiError::invalid(
+            "Choose a channel of the right kind",
+            "channel_id",
+        ));
     }
     if config.origins.len() > 32 {
-        return Err(bad("Choose up to 32 origins"));
+        return Err(ApiError::invalid("Choose up to 32 origins", "origins"));
     }
     config.origins = config
         .origins
@@ -319,14 +331,20 @@ async fn save(
     if matches!(config.mode, Mode::PublicRead | Mode::PublicChat)
         && (!public || channel.restricted(db).await?)
     {
-        return Err(bad("Choose a public text channel"));
+        return Err(ApiError::invalid(
+            "Choose a public text channel",
+            "channel_id",
+        ));
     }
     if config.origins.is_empty()
         && (!public
             || matches!(config.mode, Mode::ReadLink | Mode::Members)
             || channel.restricted(db).await?)
     {
-        return Err(bad("Set at least one allowed origin for this widget"));
+        return Err(ApiError::invalid(
+            "Set at least one allowed origin for this widget",
+            "origins",
+        ));
     }
     let origins = serde_json::to_string(&config.origins).expect("string list");
     let revision = random_id();
