@@ -201,6 +201,28 @@ describe('Profile', () => {
     expect(html).toContain('alpha-id')
   })
 
+  test('the style and the choice per slot show only while animations are on', () => {
+    const general = { kind: 'settings', section: 'general' } as const
+    const off = signedIn(general)
+    expect(off).not.toContain('aria-label="Style"')
+    expect(off).toContain('Also used by fun effects.')
+    Object.assign(initial, { anim: { on: true, motion: 'always', style: 'lively', custom: {} } })
+    const lively = signedIn(general)
+    expect(lively).toContain('aria-label="Style"')
+    for (const label of ['Subtle', 'Lively', 'Custom']) expect(lively).toContain(`>${label}</`)
+    expect(lively).not.toContain('aria-label="Customize"')
+    Object.assign(initial, {
+      anim: { on: true, motion: 'always', style: 'custom', custom: { dialog: 'core.pop' } },
+    })
+    const custom = signedIn(general)
+    expect(custom).toContain('aria-label="Customize"')
+    expect(custom.split('data-slot-choice=')).toHaveLength(33)
+    expect(custom).toContain('<option value="core.pop" selected="">Pop</option>')
+    expect(custom).toContain('data-slot-choice="press"')
+    const press = custom.slice(custom.indexOf('data-slot-choice="press"'))
+    expect(press.slice(0, press.indexOf('</select>'))).not.toContain('core.')
+  })
+
   test('a guest keeps the Animations row', () => {
     expect(guest({ kind: 'settings', section: 'general' })).toContain('aria-label="Animations"')
   })

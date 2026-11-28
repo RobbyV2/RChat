@@ -125,6 +125,21 @@ export const settingsActions: Action[] = [
     },
   },
   {
+    id: 'animation_style',
+    title: 'Animation style',
+    label: ({ s }) =>
+      s.anim.style === 'lively' ? 'Use subtle animations' : 'Use lively animations',
+    scope: 'global',
+    group: 'settings',
+    icon: Sparkles,
+    keywords: ['motion', 'appearance', 'subtle', 'lively'],
+    available: ({ s }) => local(s) && s.anim.on,
+    run: ({ acct }) => {
+      const { anim, setAnim } = acct.store.getState()
+      setAnim({ ...anim, style: anim.style === 'lively' ? 'subtle' : 'lively' })
+    },
+  },
+  {
     id: 'profanity',
     title: 'Profanity filter',
     label: ({ s }) =>

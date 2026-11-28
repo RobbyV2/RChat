@@ -65,11 +65,10 @@ import { canEditDisplayName } from '../lib/display_name'
 import { ColorField } from './color_field'
 import { InstanceDetails, useInstanceLabel } from './instance_badge'
 import { UserAvatar } from './user_avatar'
+import { AnimationsSetting } from './animations_setting'
 import { SettingNotes, SettingSwitch } from './settings_fields'
 import { Button, LinkButton } from './controls'
 import { Row, Stack, Surface, Grid, Lift } from './layout'
-import { MOTION_CHOICES, animHeldBack } from '../lib/motion/setting'
-import { useReducedMotion } from '../lib/motion/use_motion'
 import { NotificationsSection } from './notify_settings'
 import { ConfigSyncSection } from './config_sync'
 import { DocsEntry } from './docs_entry'
@@ -778,38 +777,6 @@ function ChatSection() {
         </PageRow>
       </Stack>
     </section>
-  )
-}
-
-function AnimationsSetting() {
-  const anim = useStore(s => s.anim)
-  const setAnim = useStore(s => s.setAnim)
-  const shown = useStore(s => s.me !== null || s.guest)
-  const reduced = useReducedMotion(anim.on && anim.motion === 'device')
-  if (!shown) return null
-  const held = animHeldBack(anim, reduced)
-  return (
-    <PageRow id="user_animations">
-      <SettingSwitch label="Animations" value={anim.on} onChange={on => setAnim({ ...anim, on })} />
-      <SettingNotes gap="lg">
-        <p className="text-xs text-on-surface-variant">
-          Things fade and move when they open, arrive or change.
-        </p>
-        <Stack gap="sm">
-          <Choice
-            label="Motion"
-            value={anim.motion}
-            options={MOTION_CHOICES}
-            onChange={motion => setAnim({ ...anim, motion })}
-          />
-          {held && (
-            <p role="status" className="text-xs text-on-surface">
-              {held}
-            </p>
-          )}
-        </Stack>
-      </SettingNotes>
-    </PageRow>
   )
 }
 

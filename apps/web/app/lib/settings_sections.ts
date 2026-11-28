@@ -1,7 +1,11 @@
 // The entries of the settings nav, the rows search finds in them, and which entry a request to
 // open settings lands on.
 
+import { SLOTS } from './motion/slots'
 import type { SearchRow } from './settings_search'
+
+// What the Customize rows of the Animations setting are called, so search finds them.
+const SLOT_WORDS = SLOTS.map(s => s.label.toLowerCase())
 
 export type SettingsSection =
   'profile' | 'general' | 'notifications' | 'privacy' | 'p2p' | 'sync' | 'palette' | 'information'
@@ -165,7 +169,15 @@ const ROWS: Record<SettingsSection, SettingsRow[]> = {
       id: 'user_animations',
       label: 'Animations',
       line: 'Things fade and move when they open, arrive or change.',
-      keywords: ['motion', 'reduced motion', 'appearance'],
+      keywords: [
+        'motion',
+        'reduced motion',
+        'appearance',
+        'subtle',
+        'lively',
+        'custom',
+        ...SLOT_WORDS,
+      ],
     },
     {
       id: 'user_streamer',
