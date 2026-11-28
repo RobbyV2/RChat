@@ -18,5 +18,5 @@ test('reaction pills center the emoji: one line box, moved by the emoji font off
     expect(cls.split(' ').sort()).toEqual(
       ['font-emoji', 'leading-none', 'relative', 'text-base', 'top-emoji-shift'].sort()
     )
-  expect(html).toContain('<span aria-hidden="true">99</span>')
+  expect(html).toContain('<span aria-hidden="true" class="inline-block">99</span>')
 })

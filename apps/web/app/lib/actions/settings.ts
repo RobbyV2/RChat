@@ -22,6 +22,7 @@ import { AVATAR_MODES, AVATAR_MODE_LABELS, parseAvatarMode } from '../avatar_set
 import { UNAVAILABLE } from '../capabilities'
 import { DOCS_PATH, docsFor } from '../docs_link'
 import { instanceLabel } from '../instance_label'
+import { MOTION_CHOICES, motionLabel } from '../motion/setting'
 import { capabilities, docsViewer } from '../platform'
 import { filterSwitch } from '../profanity'
 import type { RChatState } from '../store_types'
@@ -164,6 +165,35 @@ export const settingsActions: Action[] = [
     run: ({ acct }) => {
       const { anim, setAnim } = acct.store.getState()
       setAnim({ ...anim, style: anim.style === 'lively' ? 'subtle' : 'lively' })
+    },
+  },
+  {
+    id: 'motion',
+    title: 'Motion',
+    subtitle: ({ s }) => motionLabel(s.anim.motion),
+    scope: 'global',
+    group: 'settings',
+    icon: Sparkles,
+    keywords: ['animations', 'reduced', 'appearance'],
+    args: [
+      {
+        kind: 'choice',
+        name: 'value',
+        prompt: 'Motion',
+        choices: ({ s }) =>
+          MOTION_CHOICES.map(c => ({
+            value: c.value,
+            label: c.label,
+            radio: true,
+            checked: s.anim.motion === c.value,
+          })),
+      },
+    ],
+    available: ({ s }) => local(s),
+    run: ({ acct }, { value }) => {
+      const { anim, setAnim } = acct.store.getState()
+      const motion = MOTION_CHOICES.find(c => c.value === value)?.value
+      if (motion) setAnim({ ...anim, motion })
     },
   },
   {

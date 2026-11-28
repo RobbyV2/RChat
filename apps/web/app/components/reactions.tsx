@@ -106,7 +106,7 @@ function ReactionTooltip({
 
   return createPortal(
     <Surface
-      ref={ref}
+      ref={plays('tooltip', ref)}
       id={id}
       role="tooltip"
       data-reaction-tooltip
