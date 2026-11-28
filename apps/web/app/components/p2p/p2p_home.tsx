@@ -88,7 +88,7 @@ import { LabelText, useInstanceLabel } from '../instance_badge'
 import { useDrawerClose } from '../drawer'
 import { DmListSkeleton } from '../skeletons'
 import { Row, Stack, Surface, Inset } from '../layout'
-import { NoteBar } from './p2p_chat'
+import { GateNote } from '../gate_note'
 import { time } from '../../lib/platform/time'
 import { IconButton } from '../controls'
 
@@ -254,9 +254,9 @@ function MovingBannerBody({ bar = false }: { bar?: boolean }) {
   )
   if (bar)
     return (
-      <NoteBar role="status" data-p2p-moving>
+      <GateNote role="status" data-p2p-moving>
         {body}
-      </NoteBar>
+      </GateNote>
     )
   return (
     <Surface role="status" data-p2p-moving pad="lg" gap="md" align="start">

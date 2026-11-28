@@ -14,7 +14,7 @@ import { allPings } from '../../lib/selectors'
 import { P2P_DM_INTRO } from '../../lib/home'
 
 import { displayName, shieldOf } from '../../lib/p2p/contacts'
-import { fullNote, movedText, type P2pMessage } from '../../lib/p2p/dm'
+import { type P2pMessage } from '../../lib/p2p/dm'
 import { PinsButton } from '../pins'
 import { ThreadsButton } from '../threads'
 import { PingBadge, pingLabel } from '../ping_badge'
@@ -26,12 +26,11 @@ import {
   PresenceDot,
   useHasChip,
 } from './p2p_badge'
-import { ElsewhereNotice, MovingBanner } from './p2p_home'
 import { useRoomCallShare, VoiceGrid } from '../voice_grid'
 import { IncomingCallBar, P2pCallButtons } from './p2p_call'
 import { P2pDm } from '../../lib/place/place'
 import { PlaceProvider } from '../../lib/place/react'
-import { NoteBar, P2pChatBody, P2pIntro } from './p2p_chat'
+import { P2pChatBody, P2pIntro } from './p2p_chat'
 import { Row, Surface, Inset } from '../layout'
 
 const NONE: string[] = []
@@ -56,14 +55,10 @@ const statusLine = (online: boolean, name: string): ReactNode =>
 // Who the open conversation is with, who may write in it, and why not when they can't: for the
 // conversation and its threads.
 export function useDmFacts() {
-  const identity = useP2pApp()!
-  const { p2p } = identity
   const me = useP2p(s => s.me)
   const reader = useP2p(s => s.reader)
   const elsewhere = useP2p(s => s.elsewhere)
   const status = useP2p(s => s.status)
-  const movedAt = useP2p(s => s.movedAt)
-  const movingAt = useP2p(s => s.movingAt)
   const peer = useP2p(s => s.contacts.find(c => c.ik === s.chat?.peer))
   const presence = useP2p(s => (s.chat ? (s.presence[s.chat.peer] ?? 'offline') : 'offline'))
   const room = useP2p(s => (s.chat ? s.rooms[s.chat.room] : undefined))
@@ -74,30 +69,6 @@ export function useDmFacts() {
   const online = presence === 'online'
   const canAct = !reader && !elsewhere && peer?.state === 'mutual' && status !== 'moved'
   const mayDelete = useCallback((p: P2pMessage) => p.sender === me, [me])
-
-  const disabled: ReactNode =
-    reader || elsewhere ? (
-      <NoteBar>
-        <ElsewhereNotice />
-      </NoteBar>
-    ) : status === 'moved' ? (
-      <NoteBar>{movedText(movedAt)}</NoteBar>
-    ) : movingAt !== null ? (
-      <MovingBanner bar />
-    ) : room?.full ? (
-      <NoteBar role="status">{fullNote(room, p2p.limits().dag)}</NoteBar>
-    ) : !peer ? (
-      <NoteBar>This contact was removed.</NoteBar>
-    ) : peer.state === 'blocked' ? (
-      <NoteBar>
-        You blocked <Name of={p2pName(peerRaw)} look="font-medium" />. Remove the block to message
-        them again.
-      </NoteBar>
-    ) : peer.state !== 'mutual' ? (
-      <NoteBar>
-        <Name of={p2pName(peerRaw)} look="font-medium" /> isn&apos;t a mutual contact right now.
-      </NoteBar>
-    ) : null
 
   return {
     me,
@@ -110,7 +81,6 @@ export function useDmFacts() {
     room,
     canAct,
     mayDelete,
-    disabled,
   }
 }
 
@@ -135,7 +105,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
   const callShare = useRoomCallShare(chat?.room ?? '')
   const facts = useDmFacts()
   const { peer, peerIk, peerRaw, peerName, presence, online, room, canAct } = facts
-  const { mayDelete, disabled } = facts
+  const { mayDelete } = facts
   const chip = useHasChip(peerIk)
 
   if (!chat) return null
@@ -265,7 +235,6 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
       header={header}
       above={above}
       intro={<IntroBanner name={peerName} />}
-      disabled={disabled}
       canAct={canAct}
       title={peerName}
       placeholder={`Message ${peerName}`}

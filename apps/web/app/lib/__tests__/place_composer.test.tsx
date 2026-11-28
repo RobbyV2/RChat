@@ -10,6 +10,7 @@ import type { RChatState } from '../store_types'
 import type { View } from '../view'
 import { msg, user } from './fixtures'
 import { ReplyBar } from '../../components/replies'
+import { ComposerGate } from '../../components/composer_gate'
 import { placeContract, type ContractWorld } from './helpers/place_contract'
 
 // Ann's side with the conversation on screen and a thread open beside it, a draft in each, and
@@ -187,5 +188,84 @@ placeContract(composer, (kind, world) => {
     expect(html).toContain('see you at noon')
     expect(html).toContain('aria-label="Emoji"')
     expect(html).toContain('aria-label="Send"')
+  })
+
+  // Ann as a member who may write here, then with `change` on her side of the place.
+  const gated = (change: (hostedState: () => Partial<RChatState>) => void, peer: object = {}) => {
+    const main = seat(world(), [])
+    const { ann, server } = world()
+    if (hosted) {
+      const mine = { name: server, timed_out_until: undefined as number | undefined }
+      const me = { ...user('ann'), servers: [mine] }
+      ann.account.store.setState({ me } as never)
+      change(() => ({ me: { ...me, servers: [{ ...mine }] } }) as never)
+    } else if (ann.app) {
+      const state = {
+        reader: false,
+        elsewhere: false,
+        status: 'ready',
+        movedAt: null,
+        movingAt: null,
+        contacts: [{ ik: 'B', name: 'Bob', state: 'mutual' }],
+        rooms: { [world().room]: { peer: 'B', full: false } },
+        ...(kind === 'p2pDm' ? { chat: { room: world().room, ch: null, peer: 'B' } } : {}),
+        ...peer,
+      }
+      ann.app.useP2p.setState(state as never)
+    }
+    return main
+  }
+  const drawn = (main: ReturnType<typeof seat>) => {
+    const { account, app } = world().ann
+    Object.assign(account.store.getInitialState(), account.store.getState())
+    if (app) Object.assign(app.useP2p.getInitialState(), app.useP2p.getState())
+    return renderToStaticMarkup(
+      <AccountProvider session={world().ann.account}>
+        <P2pProvider identity={world().ann.app}>
+          <ComposerGate compose={main} />
+        </P2pProvider>
+      </AccountProvider>
+    )
+  }
+
+  test('a member who may write has an open composer', () => {
+    const main = gated(() => {})
+    const gate = main.gate.get()
+    expect(main.gate.get()).toBe(gate)
+    expect(gate).toEqual({ first: null, until: null, then: null })
+    expect(drawn(main)).toBe('')
+  })
+
+  test('what holds the composer back is said in its place', () => {
+    if (hosted) {
+      const main = gated(() => {})
+      const { ann, server } = world()
+      if (kind === 'hostedDm') {
+        ann.account.store.setState({ guest: true } as never)
+        expect(main.gate.get().first?.kind).toBe('guest')
+        expect(drawn(main)).toContain('data-guest-notice')
+        return
+      }
+      ann.account.store.setState({ me: { ...user('ann'), servers: [] } } as never)
+      expect(main.gate.get().first).toEqual({ kind: 'join', server })
+      const until = Math.floor(Date.now() / 1000) + 600
+      const mine = { name: server, timed_out_until: until }
+      ann.account.store.setState({ me: { ...user('ann'), servers: [mine] } } as never)
+      expect(main.gate.get()).toEqual({ first: null, until: until * 1000, then: null })
+      expect(drawn(main)).toContain('data-timed-out')
+      return
+    }
+    const away = gated(() => {}, { elsewhere: true })
+    expect(away.gate.get().first).toEqual({ kind: 'elsewhere' })
+    const moved = gated(() => {}, { status: 'moved', movedAt: 5 })
+    expect(moved.gate.get().first).toEqual({ kind: 'moved', at: 5 })
+    if (kind === 'p2pDm') {
+      const alone = gated(() => {}, { contacts: [] })
+      expect(alone.gate.get().first).toEqual({ kind: 'noContact' })
+      expect(drawn(alone)).toContain('This contact was removed.')
+      const blocked = gated(() => {}, { contacts: [{ ik: 'B', name: 'Bob', state: 'blocked' }] })
+      expect(blocked.gate.get().first?.kind).toBe('blocked')
+      expect(drawn(blocked)).toContain('You blocked')
+    }
   })
 })

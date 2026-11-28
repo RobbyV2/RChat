@@ -21,10 +21,9 @@ import {
 import { ChannelList } from '../channel_list'
 import { VoiceRow } from '../voice_row'
 import { IconButton, Button } from '../controls'
-import { P2pRoom } from '../../lib/place/place'
 import MemberSidebar from '../member_sidebar'
 
-import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, type CSSProperties } from 'react'
 import {
   Clock,
   Folder as FolderIcon,
@@ -44,7 +43,7 @@ import { allPings } from '../../lib/selectors'
 import { P2P_SERVER_INTRO } from '../../lib/home'
 import { channelScope, chatKey, serverScope } from '../../lib/p2p/app'
 import { displayName } from '../../lib/p2p/contacts'
-import { movedText, type P2pMessage } from '../../lib/p2p/dm'
+import { type P2pMessage } from '../../lib/p2p/dm'
 import { P } from '../../lib/p2p/state'
 import { serverPings, serverUnread } from '../../lib/p2p/alerts'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
@@ -56,6 +55,9 @@ import { ctxFor } from '../../lib/actions/ctx'
 import { registerAppActions } from '../../lib/actions'
 import { menuItems, openActionMenu } from '../../lib/actions/menu'
 import { peerServer } from '../../lib/actions/p2p_server'
+import { composeAt } from '../../lib/place/use_composer'
+import { P2pRoom } from '../../lib/place/place'
+import { useGate } from '../composer_gate'
 import type { DropTarget } from '../../lib/drag'
 import { AboutLine, ServerIcon } from '../server_about'
 import { longPress } from '../context_menu'
@@ -70,13 +72,13 @@ import { ThreadsButton } from '../threads'
 import { iconBtn, Masked, renameFieldCls } from '../ui'
 import { Row, Stack, Surface, Inset, Grid } from '../layout'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
-import { ElsewhereNotice, MovingBanner } from './p2p_home'
+import { ElsewhereNotice } from './p2p_home'
 import { ServerNotices } from './p2p_server_flows'
-import { SYNCING_TEXT, TRANSFERRED_TEXT } from '../../lib/p2p/flows'
-import { NoteBar, P2pChatBody, P2pIntro } from './p2p_chat'
+import { SYNCING_TEXT } from '../../lib/p2p/flows'
+import { P2pChatBody, P2pIntro } from './p2p_chat'
 import { VoiceDock, VoiceGrid } from '../voice_grid'
 import { MemberCard } from './p2p_server_roles'
-import { TimedOutBar, usePeerTimeoutEnds } from '../timeout_dialog'
+import { usePeerTimeoutEnds } from '../timeout_dialog'
 import { hex } from '../../lib/p2p/roles'
 import { slowTitle } from '../../lib/slowmode'
 import { serversLoading } from '../../lib/p2p/conversations'
@@ -656,88 +658,6 @@ const ServerIntro = () => (
 
 const NONE: string[] = []
 
-const NO_SEND_TEXT = 'You do not have permission to send messages in this channel.'
-
-// Why this device can't send in a server's channels (in place of the composer), or null, and
-// whether it may act on messages there: a timeout leaves deleting and downloads.
-export const sendBlockFor =
-  (identity: P2pApp) =>
-  (
-    v: ServerView,
-    st: {
-      reader: boolean
-      elsewhere: boolean
-      status: string
-      movedAt: number | null
-      movingAt: number | null
-      // When our timeout here ends, while it runs.
-      timedOut: number | null
-    },
-    // The channel: may we send there?
-    channel?: { send: boolean },
-    acct = client.shown()
-  ): { bar: ReactNode; canAct: boolean } => {
-    const { p2pServer } = identity
-
-    const out = v.readOnly
-      ? v.readOnly
-      : v.upgraded
-        ? TRANSFERRED_TEXT
-        : v.me === 'ban'
-          ? 'You are banned from this server.'
-          : v.me === 'leave'
-            ? 'You are no longer a member of this server.'
-            : v.me !== 'join'
-              ? (v.joinWait ?? 'Joining. You can write once a member has let you in.')
-              : null
-    const away =
-      st.reader || st.elsewhere ? (
-        <NoteBar>
-          <ElsewhereNotice />
-        </NoteBar>
-      ) : st.status === 'moved' ? (
-        <NoteBar>{movedText(st.movedAt)}</NoteBar>
-      ) : st.movingAt !== null ? (
-        <MovingBanner bar />
-      ) : out ? (
-        <NoteBar data-p2p-out>
-          {v.joinWait && v.me !== 'join' ? <span data-p2p-join-wait>{out}</span> : out}
-          {v.upgraded && v.next && (
-            <button
-              onClick={() => p2pServer.open(v.next as string)}
-              className="font-medium text-primary hover:underline"
-            >
-              Open the new copy
-            </button>
-          )}
-          {v.me !== 'join' && v.me !== 'invite' && v.me !== null && (
-            <button
-              onClick={() => peerServer.forIdentity(identity).confirmForget(v, acct)}
-              className="font-medium text-primary hover:underline"
-            >
-              Remove from this device
-            </button>
-          )}
-        </NoteBar>
-      ) : null
-    if (away) return { bar: away, canAct: false }
-    const block =
-      channel && !channel.send ? (
-        <NoteBar data-no-send>
-          <Row as="span" gap="sm">
-            <Lock size={16} className="shrink-0" />
-            <span>{NO_SEND_TEXT}</span>
-          </Row>
-        </NoteBar>
-      ) : v.full ? (
-        <NoteBar role="status">This server reached its storage limit on this device.</NoteBar>
-      ) : null
-    return {
-      bar: st.timedOut !== null ? <TimedOutBar ends={st.timedOut} /> : block,
-      canAct: block === null,
-    }
-  }
-
 function P2pChannelPaneBody({
   onMenu,
   onMembers,
@@ -759,9 +679,6 @@ function P2pChannelPaneBody({
   const me = useP2p(s => s.me)
   const reader = useP2p(s => s.reader)
   const elsewhere = useP2p(s => s.elsewhere)
-  const status = useP2p(s => s.status)
-  const movedAt = useP2p(s => s.movedAt)
-  const movingAt = useP2p(s => s.movingAt)
   const searchOpen = useP2p(s => s.panel === 'search')
   const typingIks = useP2p(s => (s.chat?.ch ? (s.serverTyping[chatKey(s.chat)] ?? NONE) : NONE))
   const menuPings = useStore(allPings)
@@ -961,12 +878,7 @@ function P2pChannelPaneBody({
     )
   }
 
-  const { bar: disabled, canAct } = sendBlockFor(identity)(
-    v,
-    { reader, elsewhere, status, movedAt, movingAt, timedOut },
-    channel,
-    acct
-  )
+  const { acts: canAct } = useGate(composeAt(P2pRoom.open(identity, v.id), 'main'))
 
   return (
     <ChannelCanContext.Provider value={held}>
@@ -976,7 +888,6 @@ function P2pChannelPaneBody({
         header={header}
         above={<ServerNotices v={v} />}
         intro={<ServerIntro />}
-        disabled={disabled}
         canAct={canAct}
         timedOut={timedOut !== null}
         title={`#${mask(channel.name)}`}

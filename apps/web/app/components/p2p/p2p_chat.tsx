@@ -55,6 +55,9 @@ import { fwdSource, p2pDestination, p2pForward } from '../../lib/forward'
 import { ForwardBar, useForwardClip, useVouchedFiles } from '../forwards'
 import { PinsWindow } from '../pins'
 import { ReplyBar } from '../replies'
+import { ComposerGate, useGate } from '../composer_gate'
+import { GateNote } from '../gate_note'
+import { composeAt } from '../../lib/place/use_composer'
 import { ListedRow } from '../listed_row'
 import { ThreadsWindow } from '../threads'
 import { TypingIndicator } from '../typing_indicator'
@@ -77,27 +80,6 @@ import { Row, Stack, Surface, Inset, Dock } from '../layout'
 // channels: what differs (the header, who may do what, names, mentions) comes in as props.
 
 const BODY_MAX = P2P_LIMITS.body
-
-// A note in the composer's place: why nothing can be sent here, or what is in the way. It keeps
-// clear of the bottom safe area as the composer does.
-export function NoteBar({
-  children,
-  ...rest
-}: {
-  children: ReactNode
-  role?: 'status'
-  [data: `data-${string}`]: string | boolean | undefined
-}) {
-  return (
-    <Dock gap="sm">
-      <Surface {...rest} pad="lg" tone="base">
-        <Row gap="sm" wrap text="sm" ink="muted">
-          {children}
-        </Row>
-      </Surface>
-    </Dock>
-  )
-}
 
 // The note at the top of a conversation. Once closed it stays closed for the account, in every
 // tab.
@@ -241,7 +223,6 @@ function P2pComposerBody({
   scope,
   title,
   placeholder,
-  disabled,
 }: {
   channelTextOnly?: boolean
   // A thread without replies: its first reply needs Start threads.
@@ -252,7 +233,6 @@ function P2pComposerBody({
   scope: string
   title: string
   placeholder: string
-  disabled: ReactNode
 }) {
   const identity = useP2pApp()!
   const { p2pDm, p2pFiles } = identity
@@ -261,6 +241,7 @@ function P2pComposerBody({
   const { store } = account
   const compose = useCompose(list)
   const { text, max, replying } = useLive(compose.state)
+  const { shut } = useGate(compose)
   const forwardClip = useForwardClip()
   const suffix = useActorSuffix(usePeerActor())
   const streamer = useStore(s => s.streamer)
@@ -278,15 +259,15 @@ function P2pComposerBody({
   const scheduledItems = useDeviceItems()
   const scheduledOps = useDeviceOps()
 
-  if (disabled) return <>{disabled}</>
+  if (shut) return <ComposerGate compose={compose} />
   if (unstarted && !held.threads)
     return (
-      <NoteBar data-no-send>
+      <GateNote data-no-send>
         <Row as="span" gap="sm">
           <Lock size={16} className="shrink-0" />
           <span>{NO_THREADS_TEXT}</span>
         </Row>
-      </NoteBar>
+      </GateNote>
     )
 
   const tooLong = !fits(compose, text, max)
@@ -640,7 +621,6 @@ export interface ChatBodyProps {
   above?: ReactNode
   intro?: ReactNode
   // In place of the composer, with the reason; null when sending works.
-  disabled: ReactNode
   canAct: boolean
   // A timeout of ours: messages can be deleted and files downloaded, nothing more.
   timedOut?: boolean
@@ -668,7 +648,7 @@ function IdentityChatBody(props: ChatBodyProps) {
   const identity = useP2pApp()!
   const { profileName, p2pDm, p2pFiles } = identity
 
-  const { chat, canAct, mayDelete, mayPin, disabled, forwardSkip, typingNames } = props
+  const { chat, canAct, mayDelete, mayPin, forwardSkip, typingNames } = props
   const timedOut = props.timedOut ?? false
   const key = chatKey(chat)
   const me = useP2p(s => s.me)
@@ -759,6 +739,7 @@ function IdentityChatBody(props: ChatBodyProps) {
     [idOf, list]
   )
   const on = useMemo(() => rowOn(rowJump), [rowOn, rowJump])
+  const { shut } = useGate(composeAt(place, 'main'))
   const pendingTip = props.peerFull ? 'Their storage is full' : props.pendingTip
   const rules = useMemo<RowRules>(
     () => ({ me, canAct, timedOut, held, threads: true, pendingTip, mayDelete }),
@@ -867,11 +848,11 @@ function IdentityChatBody(props: ChatBodyProps) {
           </MessageList>
           <div className="relative shrink-0">
             <TypingIndicator scope={null} bg="bg-surface" names={typingNames} />
-            {!disabled && (storageFull || props.peerFull) && (
-              <NoteBar data-p2p-full role="status">
+            {!shut && (storageFull || props.peerFull) && (
+              <GateNote data-p2p-full role="status">
                 <CircleAlert size={16} className="shrink-0 text-error" aria-hidden />
                 {storageFull ? STORAGE_FULL_TEXT : PEER_FULL_TEXT}
-              </NoteBar>
+              </GateNote>
             )}
             <P2pComposer
               draftKey={key}
@@ -879,7 +860,6 @@ function IdentityChatBody(props: ChatBodyProps) {
               scope={scope}
               title={props.title}
               placeholder={props.placeholder}
-              disabled={disabled}
             />
           </div>
           <PinsWindow canUnpin={canAct && !timedOut && mayPin} />

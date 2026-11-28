@@ -7,14 +7,12 @@ import { Button, IconButton } from './controls'
 import { PeerCodeButton } from './p2p/peer_code_button'
 import { useActorSuffix, useViewActor } from './view_actor'
 import { useEffect, useRef, useState } from 'react'
-import Link from 'next/link'
 import {
   ChartColumn,
   Clock,
   Eye,
   EyeOff,
   File as FileIcon,
-  Lock,
   Plus,
   Server,
   Share2,
@@ -23,13 +21,12 @@ import {
 } from 'lucide-react'
 import { errorText, type UploadMode, useMask, useStore, viewKey } from '../lib/store'
 import { limitsOf } from '../lib/instance_limits'
-import { guestPostingStatus, postGuest } from '../lib/guest_chat'
+import { postGuest } from '../lib/guest_chat'
 import { useAccount } from '../lib/client/react'
 import { TextComposer } from './text_composer'
 import { outgoing } from '../lib/link_safety'
 import { altError, describableFile } from '../lib/alt_text'
 import { AltField } from './alt_text'
-import { accountPrompt } from '../lib/features'
 import { charCount, messageFilterOn } from '../lib/rules'
 import { useShownOrNull, useViewServer } from './shown_user'
 import { dmPlaceholder } from '../lib/display_name'
@@ -38,7 +35,6 @@ import { hasInviteCode, INVITE_POST_TEXT } from '../lib/p2p/flows'
 import { parseSed } from '../lib/sed'
 import { useChannelCan } from '../lib/place/use_rights'
 import { useHostedServer, useLive } from '../lib/place/react'
-import { NO_THREADS_TEXT } from '../lib/channel_perms'
 import { textOnlyDestination } from '../lib/channel_content'
 import { clock } from '../lib/slowmode'
 import { useCountdown } from '../lib/countdown'
@@ -47,10 +43,10 @@ import { SITE_FILTER_NOTE } from '../lib/home'
 import { useUploadHint } from './upload_expiry'
 import { useHome } from '../lib/home_store'
 import { ReplyBar } from './replies'
+import { ComposerGate, useGate } from './composer_gate'
 import { ForwardBar, useForwardClip } from './forwards'
 import { ComposerField } from './composer_field'
 import { useCompose } from '../lib/place/use_composer'
-import { TimedOutBar, useMyTimeoutEnds } from './timeout_dialog'
 import { previewFor } from '../lib/apps/preview'
 import { CreatePollDialog } from './poll_dialog'
 import type { PollTarget } from '../lib/polls_store'
@@ -138,8 +134,6 @@ function ExpiryDialog({
     </Dialog>
   )
 }
-
-const NO_SEND = 'You do not have permission to send messages in this channel.'
 
 const useSlowLeft = (channelId: number | null): number =>
   useCountdown(useStore(s => (channelId === null ? 0 : (s.slowUntil[channelId] ?? 0))))
@@ -255,9 +249,6 @@ const modeTitle = (mode: UploadMode, switchable: boolean, hint: string) => {
 
 export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const account = useAccount()
-  const guest = useStore(s => s.guest)
-  const logout = useStore(s => s.logout)
-  const ask = useStore(s => accountPrompt(s.settings))
   const view = useStore(s => s.view)
   const servers = useStore(s => s.servers)
   const dms = useStore(s => s.dms)
@@ -271,10 +262,6 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   })
   const mask = useMask(ownServer || selfDm)
   const rootId = useStore(s => (s.panel?.kind === 'thread' ? s.panel.root.id : null))
-  const member = useStore(s => {
-    const v = s.view
-    return !s.me || v?.kind !== 'channel' || s.me.servers.some(x => x.name === v.server)
-  })
   const draftKey = thread ? (rootId !== null ? `t${rootId}` : null) : view ? viewKey(view) : null
   const textOnly = useStore(s => textOnlyDestination(s, draftKey))
   const held = useStore(s => (draftKey ? s.pending[draftKey] : undefined)) ?? null
@@ -284,18 +271,12 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const uploadMax = useStore(s => limitsOf(s.instance).upload_bytes)
   const compose = useCompose(thread ? 'thread' : 'main')
   const { text, max, replying } = useLive(compose.state)
+  const { gate, shut } = useGate(compose)
   const threadChannel = useStore(s => (s.panel?.kind === 'thread' ? s.panel.root.channel_id : null))
   const placeChannel = thread ? threadChannel : view?.kind === 'channel' ? view.channelId : null
   const can = useChannelCan(
     useHostedServer(view?.kind === 'channel' ? view.server : null),
     placeChannel
-  )
-  const unstarted = useStore(
-    s =>
-      thread &&
-      s.panel?.kind === 'thread' &&
-      s.panel.root.reply_count === 0 &&
-      !s.messages[`t${s.panel.root.id}`]?.length
   )
   const canAttach = !textOnly && (uploadsOn || p2pOn) && can.attach
   const uploadFile = useStore(s => s.uploadFile)
@@ -323,13 +304,9 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const focusSeen = useRef(focusAsk?.n ?? 0)
   const channelId = thread ? threadChannel : view?.kind === 'channel' ? view.channelId : null
-  const posting = useStore(s =>
-    guestPostingStatus(s, view?.kind === 'channel' ? view.server : null, channelId)
-  )
   const quote = useStore(s => (draftKey ? s.replying[draftKey]?.message : undefined))
   const shownQuote = useShownOrNull(quote?.author, useViewServer())
   const slowLeft = useSlowLeft(channelId)
-  const timedOutEnds = useMyTimeoutEnds(view?.kind === 'channel' ? view.server : null)
 
   useEffect(() => {
     if (!focusAsk || focusAsk.n === focusSeen.current) return
@@ -343,77 +320,41 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
 
   if (!thread && !view) return null
 
-  if (!guest && !member && view?.kind === 'channel') return <JoinBar server={view.server} />
+  if (gate?.kind === 'join') return <JoinBar server={gate.server} />
 
-  if (guest) {
-    if (posting === 'ready' && view?.kind === 'channel' && channelId !== null && draftKey) {
-      return (
-        <Dock data-guest-editor gap="sm">
-          <TextComposer
-            key={draftKey}
-            inputRef={inputRef}
-            label={thread ? 'Reply in thread' : 'Message as a guest'}
-            reply={shownQuote?.display_name}
-            cancelReply={() => cancelReply(draftKey)}
-            send={async content => {
-              const message = await account.lifetime.live(
-                postGuest(account.api, view.server, `/channels/${channelId}/guest-messages`, {
-                  content: outgoing(linkPrefs, content),
-                  reply_to: quote?.id,
-                  thread_root_id: thread && rootId !== null ? rootId : undefined,
-                })
-              )
-              account.store.getState().applyWsEvent({
-                type: 'message',
-                server: view.server,
-                channel_id: channelId,
-                dm_id: null,
-                dm_users: null,
-                message,
+  if (gate?.kind === 'guestWrite' && view?.kind === 'channel' && channelId !== null && draftKey) {
+    return (
+      <Dock data-guest-editor gap="sm">
+        <TextComposer
+          key={draftKey}
+          inputRef={inputRef}
+          label={thread ? 'Reply in thread' : 'Message as a guest'}
+          reply={shownQuote?.display_name}
+          cancelReply={() => cancelReply(draftKey)}
+          send={async content => {
+            const message = await account.lifetime.live(
+              postGuest(account.api, view.server, `/channels/${channelId}/guest-messages`, {
+                content: outgoing(linkPrefs, content),
+                reply_to: quote?.id,
+                thread_root_id: thread && rootId !== null ? rootId : undefined,
               })
-              cancelReply(draftKey)
-            }}
-          />
-        </Dock>
-      )
-    }
-    return (
-      <Dock>
-        <Surface data-guest-notice pad="lg" tone="base" radius="xl">
-          <p className="text-sm text-on-surface-variant">
-            {
-              {
-                off: 'Guest posting is off here.',
-                checking: 'Checking guest access…',
-                paused: 'Guest posting is paused by a moderator.',
-                unavailable: 'Guest posting is unavailable here.',
-                ready: '',
-              }[posting]
-            }{' '}
-            <Link href="/login" onClick={() => logout()} className="text-primary underline">
-              {ask}
-            </Link>{' '}
-            to use account features.
-          </p>
-        </Surface>
+            )
+            account.store.getState().applyWsEvent({
+              type: 'message',
+              server: view.server,
+              channel_id: channelId,
+              dm_id: null,
+              dm_users: null,
+              message,
+            })
+            cancelReply(draftKey)
+          }}
+        />
       </Dock>
     )
   }
 
-  if (view?.kind === 'channel' && timedOutEnds !== null) return <TimedOutBar ends={timedOutEnds} />
-
-  if (view?.kind === 'channel' && (!can.send || (unstarted && !can.threads))) {
-    return (
-      <Dock>
-        <Surface data-no-send row pad="lg" gap="sm" tone="base" radius="xl">
-          <Lock size={16} className="shrink-0 text-on-surface-variant" />
-          <span className="text-sm text-on-surface-variant">
-            {can.send ? NO_THREADS_TEXT : NO_SEND}
-          </span>
-        </Surface>
-      </Dock>
-    )
-  }
+  if (shut) return <ComposerGate compose={compose} />
 
   const placeholder = thread
     ? 'Message thread'

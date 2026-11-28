@@ -2,8 +2,13 @@ import type { AccountSession } from '../client/session'
 import { limitsOf } from '../instance_limits'
 import { chatKey, threadKey } from '../p2p/app/store'
 import { LIMITS as P2P_LIMITS } from '../p2p/content'
-import { bodyTooLong } from '../p2p/dm'
-import { personCalled, type PersonName } from '../names'
+import { bodyTooLong, fullNote } from '../p2p/dm'
+import { peerServer } from '../actions/p2p_server'
+import { guestPostingStatus } from '../guest_chat'
+import { p2pName, personCalled, type P2pName, type PersonName } from '../names'
+import { displayName } from '../p2p/contacts'
+import { TRANSFERRED_TEXT } from '../p2p/flows'
+import { channelCan } from '../selectors'
 import type { UserRef } from '../types'
 import { viewKey } from '../view'
 import { defineFeature } from './feature'
@@ -35,9 +40,45 @@ export interface Replying {
   mention: boolean | null
 }
 
+// Why nothing can be written to a list, as the bar in the composer's place says it.
+export type Gate =
+  // Not a member of the server yet.
+  | { kind: 'join'; server: string }
+  // A guest who may write here, in the guest's own field.
+  | { kind: 'guestWrite' }
+  | { kind: 'guest'; posting: 'off' | 'checking' | 'paused' | 'unavailable' }
+  | { kind: 'noSend' }
+  | { kind: 'noThreads' }
+  // The identity is in use on another device, or this one only reads.
+  | { kind: 'elsewhere' }
+  | { kind: 'moved'; at: number | null }
+  | { kind: 'moving' }
+  // No longer (or not yet) a member of the room. `next`: the copy that took the room's place;
+  // `forget`: whether the room can be removed from this device.
+  | { kind: 'out'; line: string; waiting: boolean; next: string | null; forget: boolean }
+  | { kind: 'full'; line: string }
+  | { kind: 'noContact' }
+  | { kind: 'blocked'; name: P2pName }
+  | { kind: 'notMutual'; name: P2pName }
+
+export interface GateState {
+  // What stands in the composer's place whatever else holds; null with nothing.
+  first: Gate | null
+  // When a timeout of the reader here ends (ms); null without one.
+  until: number | null
+  // What stands there once no timeout runs.
+  then: Gate | null
+}
+
+const OPEN: GateState = { first: null, until: null, then: null }
+
 // The text being written to one list of a place.
 export interface Compose {
   state: Live<ComposeState>
+  gate: Live<GateState>
+  // Opens the copy that took a room's place, and removes a room you are out of from this device.
+  openNext: () => void
+  forget: () => void
   getText: () => string
   setText: (text: string) => void
   // Whether the text is too big to send although its character count fits.
@@ -105,8 +146,76 @@ const hosted = (account: AccountSession): Composer =>
         })
       )
     const get = state(false)
+    const gate = (initial: boolean) =>
+      built(
+        () => {
+          const s = initial ? store.getInitialState() : store.getState()
+          const v = s.view
+          const server = v?.kind === 'channel' ? v.server : null
+          const root = s.panel?.kind === 'thread' ? s.panel.root : null
+          const channel =
+            list === 'thread'
+              ? (root?.channel_id ?? null)
+              : v?.kind === 'channel'
+                ? v.channelId
+                : null
+          const mine = server === null ? undefined : s.me?.servers.find(x => x.name === server)
+          const can = server === null ? null : channelCan(s, server, channel)
+          return [
+            server,
+            s.guest,
+            !s.me || server === null || mine !== undefined,
+            server === null ? null : guestPostingStatus(s, server, channel),
+            channel !== null && keyOf(initial) !== null,
+            mine?.timed_out_until,
+            can === null || can.send,
+            can === null || can.threads,
+            list === 'thread' &&
+              root !== null &&
+              root.reply_count === 0 &&
+              !s.messages[`t${root.id}`]?.length,
+          ] as const
+        },
+        ([
+          server,
+          guest,
+          member,
+          posting,
+          writable,
+          until,
+          send,
+          threads,
+          unstarted,
+        ]): GateState => {
+          if (server !== null && !guest && !member)
+            return { ...OPEN, first: { kind: 'join', server } }
+          if (guest) {
+            const kind = posting ?? 'unavailable'
+            const first: Gate =
+              kind === 'ready'
+                ? writable
+                  ? { kind: 'guestWrite' }
+                  : { kind: 'guest', posting: 'unavailable' }
+                : { kind: 'guest', posting: kind }
+            return { ...OPEN, first }
+          }
+          if (server === null) return OPEN
+          return {
+            first: null,
+            until: until === undefined || until === null ? null : until * 1000,
+            then: !send ? { kind: 'noSend' } : unstarted && !threads ? { kind: 'noThreads' } : null,
+          }
+        }
+      )
     return {
       state: { get, initial: state(true), subscribe: changed => store.subscribe(changed) },
+      gate: {
+        get: gate(false),
+        initial: gate(true),
+        subscribe: changed => store.subscribe(changed),
+      },
+      openNext: () => {},
+      forget: () => {},
       getText: () => get().text,
       setText: text => {
         const { key } = get()
@@ -173,10 +282,94 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
         }
       )
     const get = state(false)
+    const gate = (initial: boolean) =>
+      built(
+        () => {
+          const s = initial ? useP2p.getInitialState() : useP2p.getState()
+          const ch = list === 'thread' ? s.thread?.ch : s.chat?.ch
+          const v = place.kind === 'p2pRoom' ? s.servers[room] : undefined
+          const peerIk = s.chat?.room === room ? s.chat.peer : s.rooms[room]?.peer
+          return [
+            s.reader || s.elsewhere,
+            s.status === 'moved',
+            s.movedAt,
+            s.movingAt !== null,
+            v,
+            v && ch ? v.channels.find(c => c.id === ch)?.send : undefined,
+            place.kind === 'p2pDm' ? s.rooms[room] : undefined,
+            place.kind === 'p2pDm' ? s.contacts.find(c => c.ik === peerIk) : undefined,
+          ] as const
+        },
+        ([elsewhere, moved, movedAt, moving, v, send, conversation, contact]): GateState => {
+          const away: Gate | null = elsewhere
+            ? { kind: 'elsewhere' }
+            : moved
+              ? { kind: 'moved', at: movedAt }
+              : moving
+                ? { kind: 'moving' }
+                : null
+          if (away) return { ...OPEN, first: away }
+          if (place.kind === 'p2pDm') {
+            const first: Gate | null = conversation?.full
+              ? { kind: 'full', line: fullNote(conversation, app.p2p.limits().dag) }
+              : !contact
+                ? { kind: 'noContact' }
+                : contact.state === 'blocked'
+                  ? { kind: 'blocked', name: p2pName(displayName(contact)) }
+                  : contact.state !== 'mutual'
+                    ? { kind: 'notMutual', name: p2pName(displayName(contact)) }
+                    : null
+            return { ...OPEN, first }
+          }
+          if (!v) return OPEN
+          const line = v.readOnly
+            ? v.readOnly
+            : v.upgraded
+              ? TRANSFERRED_TEXT
+              : v.me === 'ban'
+                ? 'You are banned from this server.'
+                : v.me === 'leave'
+                  ? 'You are no longer a member of this server.'
+                  : v.me !== 'join'
+                    ? (v.joinWait ?? 'Joining. You can write once a member has let you in.')
+                    : null
+          if (line !== null)
+            return {
+              ...OPEN,
+              first: {
+                kind: 'out',
+                line,
+                waiting: !!v.joinWait && v.me !== 'join',
+                next: v.upgraded ? v.next : null,
+                forget: v.me !== 'join' && v.me !== 'invite' && v.me !== null,
+              },
+            }
+          return {
+            first: null,
+            until: v.timedOutUntil ?? null,
+            then:
+              send === false
+                ? { kind: 'noSend' }
+                : v.full
+                  ? { kind: 'full', line: 'This server reached its storage limit on this device.' }
+                  : null,
+          }
+        }
+      )
+    const getGate = gate(false)
     // When each key last said it is typing; the place wants to hear it again only so often.
     const said = new Map<string, number>()
     return {
       state: { get, initial: state(true), subscribe: changed => useP2p.subscribe(changed) },
+      gate: { get: getGate, initial: gate(true), subscribe: changed => useP2p.subscribe(changed) },
+      openNext: () => {
+        const { first } = getGate()
+        if (first?.kind === 'out' && first.next !== null) app.p2pServer.open(first.next)
+      },
+      forget: () => {
+        const v = useP2p.getState().servers[room]
+        if (v) peerServer.forIdentity(app).confirmForget(v, place.account)
+      },
       getText: () => get().text,
       setText: text => {
         const { key } = get()
