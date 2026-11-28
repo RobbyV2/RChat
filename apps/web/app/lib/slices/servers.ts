@@ -967,6 +967,8 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     | 'loadMyProfile'
     | 'saveMyProfile'
     | 'clearMyProfile'
+    | 'setMyProfilePicture'
+    | 'removeMyProfilePicture'
     | 'resetMemberProfile'
     | 'unlockMemberProfile'
     | 'noteProfileLock'
@@ -1184,6 +1186,24 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     clearMyProfile: async server => {
       try {
         keepMyProfile(server, await live(api.resetServerProfile(server)))
+        return null
+      } catch (e) {
+        if (profileLocked(e)) void get().loadMyProfile(server)
+        return errorText(e)
+      }
+    },
+    setMyProfilePicture: async (server, file, crop) => {
+      try {
+        keepMyProfile(server, await live(api.putProfileAvatar(server, file, crop)))
+        return null
+      } catch (e) {
+        if (profileLocked(e)) void get().loadMyProfile(server)
+        return errorText(e)
+      }
+    },
+    removeMyProfilePicture: async server => {
+      try {
+        keepMyProfile(server, await live(api.deleteProfileAvatar(server)))
         return null
       } catch (e) {
         if (profileLocked(e)) void get().loadMyProfile(server)

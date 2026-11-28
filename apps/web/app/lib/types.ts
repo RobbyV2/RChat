@@ -57,6 +57,8 @@ export interface UserRef {
   display_name: string
   avatar_kind: AvatarKind
   avatar_color: string | null
+  // The id of an uploaded picture on the instance; the built-in avatar shows without one.
+  avatar_image?: string | null
 }
 
 export interface ServerSummary {
@@ -214,6 +216,8 @@ export interface MemberLook {
   name: string | null
   avatar_kind: AvatarKind | null
   avatar_color: string | null
+  // A picture for this place: over this look's avatar, or the account's when it has no kind.
+  avatar_image?: string | null
 }
 
 export type ProfilesMode = 'all' | 'no_names' | 'off'
@@ -864,6 +868,7 @@ export interface SiteSettings {
   interactive_docs: boolean
   // Who is in each server, their presence and mention suggestions.
   member_lists: boolean
+  profile_pictures: boolean
   registration: Registration
   // Days; 0 or absent: no cap.
   upload_expiry_max_days?: number
@@ -1474,6 +1479,7 @@ export interface InstanceLimits {
   message_chars: number
   name_chars: number
   upload_bytes: number
+  avatar_upload_bytes?: number
   media_retention_secs: number
   page_size: number
   assertion_ttl_secs: number

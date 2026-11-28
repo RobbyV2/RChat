@@ -57,9 +57,16 @@ export const showsMore = (before: ShownParts, after: ShownParts) =>
 export const lookIn = (look: MemberLook, shown: ShownParts): MemberLook | null => {
   const name = shown.names ? look.name : null
   const kind = shown.rest ? look.avatar_kind : null
-  if (name === look.name && kind === look.avatar_kind) return look
-  if (name === null && kind === null) return null
-  return { name, avatar_kind: kind, avatar_color: kind === null ? null : look.avatar_color }
+  const image = shown.rest ? (look.avatar_image ?? null) : null
+  if (name === look.name && kind === look.avatar_kind && image === (look.avatar_image ?? null))
+    return look
+  if (name === null && kind === null && image === null) return null
+  return {
+    name,
+    avatar_kind: kind,
+    avatar_color: kind === null ? null : look.avatar_color,
+    ...(image === null ? {} : { avatar_image: image }),
+  }
 }
 
 const indexes = new WeakMap<readonly Member[], Map<string, Member>>()

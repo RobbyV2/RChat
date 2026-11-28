@@ -51,6 +51,7 @@ const SWITCHES = [
   'scheduled_messages',
   'interactive_docs',
   'member_lists',
+  'profile_pictures',
 ]
 
 describe('feature switches', () => {

@@ -332,7 +332,7 @@ pub(crate) async fn block_page(
     cursor: Option<&str>,
     limit: i64,
 ) -> Result<(Vec<BlockedUser>, Option<String>), ApiError> {
-    let base = "SELECT b.blocked, u.display_name, u.avatar_kind, u.avatar_color, b.created_at FROM blocks b JOIN users u ON u.username = b.blocked WHERE b.blocker = $1 AND u.password_hash <> '!purging' AND (lower(u.username) LIKE $2 ESCAPE '\\' OR lower(u.display_name) LIKE $2 ESCAPE '\\')";
+    let base = "SELECT b.blocked, u.display_name, u.avatar_kind, u.avatar_color, b.created_at, u.avatar_image FROM blocks b JOIN users u ON u.username = b.blocked WHERE b.blocker = $1 AND u.password_hash <> '!purging' AND (lower(u.username) LIKE $2 ESCAPE '\\' OR lower(u.display_name) LIKE $2 ESCAPE '\\')";
     let pattern = prefix_pattern(&q.trim().to_lowercase());
     let rows = match cursor {
         Some(raw) => {
@@ -367,6 +367,7 @@ pub(crate) async fn block_page(
                 display_name: r.try_get(1)?,
                 avatar_kind: AvatarKind::parse(&r.try_get::<String, _>(2)?)?,
                 avatar_color: r.try_get(3)?,
+                avatar_image: r.try_get("avatar_image")?,
             },
             blocked_at: r.try_get(4)?,
         });

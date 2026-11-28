@@ -189,6 +189,9 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "style TEXT NOT NULL DEFAULT 'default' CHECK(style IN ('default','dots','line'))",
     ),
     ("servers", "hide_members {INT} NOT NULL DEFAULT 0"),
+    ("users", "avatar_image TEXT"),
+    ("member_profiles", "avatar_image TEXT"),
+    ("servers", "icon_image TEXT"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -331,7 +334,9 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// (`channel_categories.style`).
 /// 68: member list visibility (`servers.hide_members`) and the View members permission, given to
 /// the stored @everyone permissions of every server.
-pub const SCHEMA_VERSION: i64 = 68;
+/// 69: uploaded pictures (`avatar_images`, `users.avatar_image`,
+/// `member_profiles.avatar_image`, `servers.icon_image`).
+pub const SCHEMA_VERSION: i64 = 69;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;
@@ -352,8 +357,10 @@ pub(super) const SEPARATORS_VERSION: i64 = 67;
 pub(super) const VIEW_MEMBERS_VERSION: i64 = 68;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
-pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 20] {
+pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 22] {
     [
+        "CREATE INDEX IF NOT EXISTS idx_users_avatar_image ON users(avatar_image) WHERE avatar_image IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_member_profiles_avatar_image ON member_profiles(avatar_image) WHERE avatar_image IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_roles_position ON roles(server, position)",
         "CREATE INDEX IF NOT EXISTS idx_tokens_sso ON tokens(sso_provider, sso_sid) WHERE sso_sid IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_users_username_key ON users(username_key)",

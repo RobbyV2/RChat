@@ -26,6 +26,7 @@ export const FEATURE_KEYS = [
   'scheduled_messages',
   'interactive_docs',
   'member_lists',
+  'profile_pictures',
 ] as const
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number]
@@ -56,6 +57,7 @@ const BEFORE_SWITCHES: Record<FeatureKey, boolean> = {
   scheduled_messages: false,
   interactive_docs: true,
   member_lists: true,
+  profile_pictures: false,
 }
 
 const registrationOf = (value: unknown): Registration => {

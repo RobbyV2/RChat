@@ -67,13 +67,18 @@ pub struct MemberLook {
     /// together with `avatar_kind`.
     #[schema(example = "#4caf50")]
     pub avatar_color: Option<String>,
+    /// The id of the profile picture uploaded for this server (see `UserRef.avatar_image`);
+    /// `null` without one. It shows over the avatar of this look, or over the account's when
+    /// `avatar_kind` is `null`. A look with an `avatar_kind` and no picture shows no picture.
+    #[serde(default)]
+    pub avatar_image: Option<String>,
 }
 
 impl MemberLook {
     fn shown(self) -> Option<MemberLook> {
-        match (&self.name, self.avatar_kind) {
-            (None, None) => None,
-            (_, _) => Some(self),
+        match (&self.name, self.avatar_kind, &self.avatar_image) {
+            (None, None, None) => None,
+            (_, _, _) => Some(self),
         }
     }
 
@@ -83,6 +88,11 @@ impl MemberLook {
             Some(kind) => (kind, self.avatar_color.clone()),
             None => (user.avatar_kind, user.avatar_color.clone()),
         };
+        let avatar_image = match (self.avatar_kind, &self.avatar_image) {
+            (_, Some(image)) => Some(image.clone()),
+            (Some(_), None) => None,
+            (None, None) => user.avatar_image.clone(),
+        };
         UserRef {
             username: user.username.clone(),
             display_name: self
@@ -91,6 +101,7 @@ impl MemberLook {
                 .unwrap_or_else(|| user.display_name.clone()),
             avatar_kind,
             avatar_color,
+            avatar_image,
         }
     }
 }
@@ -220,6 +231,7 @@ impl Stored {
             ProfileField::Avatar => {
                 self.look.avatar_kind = None;
                 self.look.avatar_color = None;
+                self.look.avatar_image = None;
             }
             ProfileField::Banner => self.banner_color = None,
         }
@@ -233,6 +245,7 @@ impl Stored {
                     name,
                     avatar_kind,
                     avatar_color: _,
+                    avatar_image,
                 },
             bio,
             banner_color,
@@ -240,13 +253,15 @@ impl Stored {
         } = self;
         name.is_none()
             && avatar_kind.is_none()
+            && avatar_image.is_none()
             && bio.is_none()
             && banner_color.is_none()
             && locked_until.is_none()
     }
 }
 
-const COLUMNS: &str = "name, bio, avatar_kind, avatar_color, banner_color, locked_until";
+const COLUMNS: &str =
+    "name, bio, avatar_kind, avatar_color, banner_color, locked_until, avatar_image";
 
 fn stored_row(r: &sqlx::any::AnyRow, at: usize) -> sqlx::Result<Stored> {
     let avatar_kind = r
@@ -261,6 +276,7 @@ fn stored_row(r: &sqlx::any::AnyRow, at: usize) -> sqlx::Result<Stored> {
                 Some(_) => r.try_get(at + 3)?,
                 None => None,
             },
+            avatar_image: r.try_get(at + 6)?,
         },
         bio: r.try_get(at + 1)?,
         banner_color: r.try_get(at + 4)?,
@@ -334,11 +350,13 @@ impl Shown {
             name,
             avatar_kind,
             avatar_color,
+            avatar_image,
         } = look;
         MemberLook {
             name: name.filter(|_| self.names),
             avatar_kind: avatar_kind.filter(|_| self.rest),
             avatar_color: avatar_color.filter(|_| self.rest),
+            avatar_image: avatar_image.filter(|_| self.rest),
         }
         .shown()
     }
@@ -492,13 +510,14 @@ async fn store(
                 name,
                 avatar_kind,
                 avatar_color,
+                avatar_image,
             },
         bio,
         banner_color,
         locked_until,
     } = profile;
     sqlx::query(
-        "INSERT INTO member_profiles(server, username, name, bio, avatar_kind, avatar_color, banner_color, locked_until, updated_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT(server, username) DO UPDATE SET name = excluded.name, bio = excluded.bio, avatar_kind = excluded.avatar_kind, avatar_color = excluded.avatar_color, banner_color = excluded.banner_color, locked_until = excluded.locked_until, updated_at = excluded.updated_at",
+        "INSERT INTO member_profiles(server, username, name, bio, avatar_kind, avatar_color, banner_color, locked_until, updated_at, avatar_image) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT(server, username) DO UPDATE SET name = excluded.name, bio = excluded.bio, avatar_kind = excluded.avatar_kind, avatar_color = excluded.avatar_color, banner_color = excluded.banner_color, locked_until = excluded.locked_until, updated_at = excluded.updated_at, avatar_image = excluded.avatar_image",
     )
     .bind(server)
     .bind(username)
@@ -509,6 +528,7 @@ async fn store(
     .bind(banner_color.as_deref())
     .bind(*locked_until)
     .bind(now())
+    .bind(avatar_image.as_deref())
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -831,6 +851,129 @@ pub(crate) async fn delete_profile(
     writable(&state, &access, &user).await?;
     let key = access.name().to_string();
     let saved = save(&state, &key, &user, |_| Stored::default()).await?;
+    Ok(Json(answer(
+        &user,
+        saved,
+        access.lite().profiles_mode,
+        shown_in(&state.db, &key).await?,
+    )))
+}
+
+/// Sets the picture of the caller's profile in `key` to `id` and removes the stored picture it
+/// replaces. A picture that could not be set is removed again.
+async fn set_picture(
+    state: &AppState,
+    key: &str,
+    user: &User,
+    id: Option<String>,
+) -> Result<Stored, ApiError> {
+    let mut replaced = None;
+    let saved = save(state, key, user, |mut next| {
+        replaced = std::mem::replace(&mut next.look.avatar_image, id.clone());
+        next
+    })
+    .await;
+    let unused = match &saved {
+        Ok(_) => replaced.filter(|old| Some(old) != id.as_ref()),
+        Err(_) => id,
+    };
+    if let Some(unused) = unused {
+        crate::api::avatars::discard(&mut *state.db.acquire().await?, &unused).await?;
+    }
+    saved
+}
+
+/// Upload your server profile picture
+///
+/// Sets the profile picture the caller shows in this server from the image in the request
+/// body, under the rules of `PUT /api/v1/me/avatar` (types, `limits.avatar_upload_bytes`,
+/// 40 megapixels, the crop `x`, `y`, `size`, the stored sizes). It shows over the avatar style
+/// of the server profile, or over the account's when the server profile has none. Only for
+/// signed-in members who are not timed out. Emits `member_profile` to the server and the
+/// caller. Requires the `server_profiles` and `profile_pictures` switches. Strict rate-limit
+/// bucket.
+#[utoipa::path(
+    put,
+    path = "/api/v1/servers/{name}/profile/avatar",
+    tag = "Servers",
+    params(("name" = String, Path, description = "Server name, case-insensitive"), crate::api::avatars::CropQuery),
+    request_body(content = Vec<u8>, content_type = "application/octet-stream", description = "The image file"),
+    responses(
+        (status = 200, description = "The caller's profile in the server; `look.avatar_image` is the id of the picture", body = ServerProfile),
+        (status = 400, description = "As `PUT /api/v1/me/avatar`: not an image of a known type, over 40 megapixels, or a crop outside the picture", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "`Not a member`; `You are timed out in this server`; `Server profiles are off in this server` (`reason.kind` `off_server`, `reason.control` `profiles_mode`); `A moderator locked your server profile` (`reason.kind` `locked`); or `Profile pictures are turned off on this site` (`reason.kind` `off_site`, `reason.control` `profile_pictures`)", body = ApiErrorBody),
+        (status = 404, description = "`Not found`: the `server_profiles` switch is off. `Server not found or wrong password`: no such server, or one you have no access to (identical responses)", body = ApiErrorBody),
+        (status = 408, description = "`The upload stopped sending data`", body = ApiErrorBody),
+        (status = 413, description = "`Picture exceeds 8MB limit` with the configured number (`reason.control` `avatar_upload_max_mib`)", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the strict bucket, or 3 of your uploads are already being read", body = ApiErrorBody),
+        (status = 503, description = "`Too many uploads right now, try again in a moment`", body = ApiErrorBody)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn put_profile_avatar(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+    axum::extract::Query(crop): axum::extract::Query<crate::api::avatars::CropQuery>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Body,
+) -> Result<Json<ServerProfile>, ApiError> {
+    let (user, access) = own(&state, &user, &name).await?;
+    writable(&state, &access, &user).await?;
+    let key = access.name().to_string();
+    let mode = access.lite().profiles_mode;
+    match mode {
+        ProfilesMode::Off => return Err(mode_off("Server profiles")),
+        ProfilesMode::All | ProfilesMode::NoNames => {}
+    }
+    unlocked(&stored(&state.db, &key, &user.username).await?)?;
+    let picture = crate::api::avatars::uploaded(&state, &user, &headers, crop, body).await?;
+    let id = crate::api::avatars::store(
+        &mut *state.db.acquire().await?,
+        &user.username,
+        Some(&key),
+        &picture,
+    )
+    .await?;
+    let saved = set_picture(&state, &key, &user, Some(id)).await?;
+    Ok(Json(answer(
+        &user,
+        saved,
+        mode,
+        shown_in(&state.db, &key).await?,
+    )))
+}
+
+/// Remove your server profile picture
+///
+/// Removes the picture of the caller's profile in this server; the rest of the profile stays.
+/// Only for signed-in members who are not timed out. Works while the `profile_pictures`
+/// switch is off. Emits `member_profile` to the server and the caller when a picture was
+/// removed. Strict rate-limit bucket.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/servers/{name}/profile/avatar",
+    tag = "Servers",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    responses(
+        (status = 200, description = "The caller's profile in the server, without a picture", body = ServerProfile),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "`Not a member`; `You are timed out in this server`; or `A moderator locked your server profile` (`reason.kind` `locked`, `reason.until` when the lock ends)", body = ApiErrorBody),
+        (status = 404, description = "`Not found`: the `server_profiles` switch is off. `Server not found or wrong password`: no such server, or one you have no access to (identical responses)", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the strict bucket", body = ApiErrorBody)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn delete_profile_avatar(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+) -> Result<Json<ServerProfile>, ApiError> {
+    let (user, access) = own(&state, &user, &name).await?;
+    writable(&state, &access, &user).await?;
+    let key = access.name().to_string();
+    let saved = set_picture(&state, &key, &user, None).await?;
     Ok(Json(answer(
         &user,
         saved,
@@ -1194,6 +1337,7 @@ mod tests {
             name: Some(name.to_string()),
             avatar_kind: None,
             avatar_color: None,
+            avatar_image: None,
         })
     }
 
@@ -1616,6 +1760,7 @@ mod tests {
             name: Some("Robert".to_string()),
             avatar_kind: Some(AvatarKind::Color),
             avatar_color: Some("#123456".to_string()),
+            avatar_image: None,
         });
         assert_eq!(
             listed(&state, Some("carol")).await,
@@ -2240,5 +2385,122 @@ mod tests {
                 json!(mode.as_str())
             );
         }
+    }
+
+    #[tokio::test]
+    async fn a_server_picture_shows_over_the_look_or_the_account_and_is_removed_with_it() {
+        use crate::api::avatars::image::tests::{halves, png};
+        let (state, path) = club("profile_picture").await;
+        let db = &state.db;
+        let upload = |by: &'static str| {
+            let state = state.clone();
+            async move {
+                let crop = serde_json::from_value(json!({})).expect("no crop");
+                put_profile_avatar(
+                    State(state),
+                    who(by),
+                    Path("club".to_string()),
+                    axum::extract::Query(crop),
+                    axum::http::HeaderMap::new(),
+                    axum::body::Body::from(png(&halves(80, 80))),
+                )
+                .await
+                .map(|Json(p)| p)
+            }
+        };
+        let pictures = "SELECT COUNT(*) FROM avatar_images";
+        let mut rx = state.hub.subscribe();
+        let set = upload("bob").await.expect("upload");
+        let id = set.look.avatar_image.clone().expect("a picture id");
+        assert_eq!(set.look.avatar_kind, None);
+        assert_eq!(set.effective.avatar_image.as_deref(), Some(id.as_str()));
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM avatar_images WHERE server = 'club' AND owner = 'bob'"
+            )
+            .await,
+            1
+        );
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::MemberProfile { profile: Some(look), .. }) if look.avatar_image.as_deref() == Some(id.as_str())
+        ));
+        let again = upload("bob").await.expect("replace");
+        let next = again.look.avatar_image.clone().expect("a new id");
+        assert_ne!(next, id);
+        assert_eq!(
+            count(db, pictures).await,
+            1,
+            "the picture before is removed"
+        );
+
+        let account = UserRef {
+            avatar_image: Some("account".to_string()),
+            ..UserRef::from_user(&mem_user("bob", false))
+        };
+        let kind = MemberLook {
+            avatar_kind: Some(AvatarKind::Color),
+            avatar_color: Some("#112233".to_string()),
+            ..MemberLook::default()
+        };
+        assert_eq!(kind.over(&account).avatar_image, None);
+        let named = MemberLook {
+            name: Some("Robert".to_string()),
+            ..MemberLook::default()
+        };
+        assert_eq!(
+            named.over(&account).avatar_image.as_deref(),
+            Some("account")
+        );
+        let both = MemberLook {
+            avatar_image: Some("server".to_string()),
+            ..kind
+        };
+        assert_eq!(both.over(&account).avatar_image.as_deref(), Some("server"));
+        assert_eq!(both.over(&account).avatar_kind, AvatarKind::Color);
+
+        let kept = patch(&state, "bob", json!({"bio": "hi"}))
+            .await
+            .expect("bio");
+        assert_eq!(kept.look.avatar_image.as_deref(), Some(next.as_str()));
+        let removed =
+            delete_profile_avatar(State(state.clone()), who("bob"), Path("club".to_string()))
+                .await
+                .expect("remove")
+                .0;
+        assert_eq!(removed.look.avatar_image, None);
+        assert_eq!(removed.bio.as_deref(), Some("hi"));
+        assert_eq!(count(db, pictures).await, 0);
+
+        upload("bob").await.expect("upload");
+        exec(
+            db,
+            "UPDATE servers SET profiles_mode = 'off' WHERE name = 'club'",
+        )
+        .await;
+        assert_eq!(
+            refusal(upload("bob").await),
+            (403, "Server profiles are off in this server".to_string())
+        );
+        exec(
+            db,
+            "UPDATE servers SET profiles_mode = 'all' WHERE name = 'club'",
+        )
+        .await;
+        assert_eq!(
+            refusal(upload("dave").await),
+            (403, "Not a member".to_string())
+        );
+        let _ = delete_profile(State(state.clone()), who("bob"), Path("club".to_string()))
+            .await
+            .expect("reset");
+        assert_eq!(count(db, pictures).await, 1, "left for the sweep");
+        exec(db, "UPDATE avatar_images SET created_at = 0").await;
+        assert_eq!(
+            crate::api::avatars::sweep(db, now()).await.expect("sweep"),
+            1
+        );
+        done(state, path).await;
     }
 }

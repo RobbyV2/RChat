@@ -48,6 +48,7 @@ const SETTINGS: Record<keyof SiteSettings, true> = {
   scheduled_messages: true,
   interactive_docs: true,
   member_lists: true,
+  profile_pictures: true,
   registration: true,
   upload_expiry_max_days: true,
   server_joining: true,

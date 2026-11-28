@@ -1,5 +1,6 @@
 // State and UI types of the store; store.ts re-exports them.
 
+import type { AvatarCrop } from './avatar_images'
 import type { Secret as Sealed } from './secret'
 import type { ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
@@ -473,6 +474,9 @@ export interface RChatState {
     banner_color?: string | null
   ) => Promise<void>
   setAppearOffline: (appearOffline: boolean) => Promise<void>
+  // Sets or removes the account's uploaded picture; the text of what went wrong, or null.
+  uploadAvatar: (file: Blob, crop: AvatarCrop | null) => Promise<string | null>
+  removeAvatar: () => Promise<string | null>
   setBio: (bio: string) => Promise<string | null>
   setDisplayName: (name: string) => Promise<string | null>
   changePassword: (
@@ -789,6 +793,12 @@ export interface RChatState {
   loadMyProfile: (server: string) => Promise<ServerProfile | null>
   saveMyProfile: (server: string, patch: ServerProfilePatch) => Promise<string | null>
   clearMyProfile: (server: string) => Promise<string | null>
+  setMyProfilePicture: (
+    server: string,
+    file: Blob,
+    crop: AvatarCrop | null
+  ) => Promise<string | null>
+  removeMyProfilePicture: (server: string) => Promise<string | null>
   resetMemberProfile: (
     server: string,
     username: string,

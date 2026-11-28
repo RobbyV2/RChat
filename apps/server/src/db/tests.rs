@@ -1429,6 +1429,63 @@ async fn scheduled_messages_upgrade_preserves_v60_rows() {
     }).await;
 }
 
+#[tokio::test]
+async fn profile_pictures_upgrade_keeps_accounts_and_server_profiles() {
+    on_each_database("avatar_images_upgrade", |url| async move {
+        let sqlite = !url.starts_with("postgres");
+        let db = super::open(Some(&url)).await.unwrap();
+        for sql in [
+            "DROP INDEX idx_users_avatar_image",
+            "DROP INDEX idx_member_profiles_avatar_image",
+            "DROP TABLE avatar_images",
+            "ALTER TABLE users DROP COLUMN avatar_image",
+            "ALTER TABLE member_profiles DROP COLUMN avatar_image",
+            "ALTER TABLE servers DROP COLUMN icon_image",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, avatar_color, created_at) VALUES('alice', 'Alice', 'x', 'text', 'color', '#112233', 1)",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('bob', 'Bob', 'x', 'text', 'identicon', 1)",
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('den', 'Den', 'alice', 1)",
+            "INSERT INTO members(server, username, joined_at) VALUES('den', 'bob', 1)",
+            "INSERT INTO member_profiles(server, username, name, avatar_kind, avatar_color, updated_at) VALUES('den', 'bob', 'Robert', 'color', '#445566', 2)",
+            "UPDATE settings SET value='68' WHERE key='schema_version'",
+        ] {
+            sqlx::query(sql).execute(&db).await.unwrap();
+        }
+        close(&db).await;
+        for round in 0..2 {
+            let db = super::open(Some(&url)).await.unwrap();
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM users WHERE username = 'alice' AND avatar_kind = 'color' AND avatar_color = '#112233'").await, 1);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM member_profiles WHERE server = 'den' AND username = 'bob' AND name = 'Robert' AND avatar_kind = 'color' AND avatar_color = '#445566'").await, 1);
+            let indexes = match sqlite {
+                true => "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_avatar_images_owner', 'idx_users_avatar_image', 'idx_member_profiles_avatar_image')",
+                false => "SELECT COUNT(*) FROM pg_indexes WHERE indexname IN ('idx_avatar_images_owner', 'idx_users_avatar_image', 'idx_member_profiles_avatar_image')",
+            };
+            assert_eq!(count(&db, indexes).await, 3);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM avatar_images").await, round);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM servers WHERE name = 'den' AND icon_image IS NULL").await, 1, "old servers have no picture");
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM avatar_images WHERE a128 IS NOT NULL OR a512 IS NOT NULL").await, 0);
+            if round == 0 {
+                assert_eq!(count(&db, "SELECT COUNT(*) FROM users WHERE avatar_image IS NULL").await, count(&db, "SELECT COUNT(*) FROM users").await, "old accounts have no picture");
+                assert_eq!(count(&db, "SELECT COUNT(*) FROM member_profiles WHERE avatar_image IS NULL").await, 1, "old server profiles have no picture");
+                sqlx::query("INSERT INTO avatar_images(id, owner, server, mime, s64, s128, s512, created_at) VALUES('aa', 'bob', 'den', 'image/png', $1, $1, $1, 5)").bind(vec![1u8, 2, 3]).execute(&db).await.unwrap();
+                sqlx::query("UPDATE member_profiles SET avatar_image = 'aa' WHERE server = 'den' AND username = 'bob'").execute(&db).await.unwrap();
+                sqlx::query("UPDATE users SET avatar_image = 'bb' WHERE username = 'alice'").execute(&db).await.unwrap();
+            }
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM users WHERE username = 'alice' AND avatar_image = 'bb'").await, 1);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM member_profiles WHERE avatar_image = 'aa'").await, 1);
+            let bytes: Vec<u8> = sqlx::query_scalar("SELECT s128 FROM avatar_images WHERE id = 'aa'").fetch_one(&db).await.unwrap();
+            assert_eq!(bytes, [1, 2, 3]);
+            if round == 1 {
+                sqlx::query("UPDATE servers SET name = 'lair' WHERE name = 'den'").execute(&db).await.unwrap();
+                assert_eq!(count(&db, "SELECT COUNT(*) FROM avatar_images WHERE server = 'lair'").await, 1, "the server key follows a rename");
+                sqlx::query("DELETE FROM servers WHERE name = 'lair'").execute(&db).await.unwrap();
+                assert_eq!(count(&db, "SELECT COUNT(*) FROM avatar_images").await, 0, "a deleted server takes its pictures");
+            }
+            close(&db).await;
+        }
+    }).await;
+}
+
 #[test]
 fn column_placeholders_fill_per_database() {
     let filled = |col: &str, sqlite: bool| match sqlite {
@@ -3318,6 +3375,7 @@ async fn stale_rows_are_swept() {
             reports: 0,
             p2p_backups: 0,
             member_counts: 0,
+            avatar_images: 0,
         }
     );
     assert_eq!(

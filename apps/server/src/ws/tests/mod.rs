@@ -53,6 +53,7 @@ fn message() -> Message {
             display_name: "Alice".to_string(),
             avatar_kind: AvatarKind::Identicon,
             avatar_color: None,
+            avatar_image: None,
         },
         content: "hi".to_string(),
         created_at: 1,

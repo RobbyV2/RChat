@@ -1185,6 +1185,101 @@
         ]
       }
     },
+    "/api/v1/avatars/{id}/{size}": {
+      "get": {
+        "tags": [
+          "Media"
+        ],
+        "summary": "Get a profile picture",
+        "description": "The profile picture `id` (`avatar_image` of a user or of a server profile) as a square of\n`size` pixels: 64, 128 or 512. `image/png` or `image/jpeg`, with\n`X-Content-Type-Options: nosniff`. An id never serves another picture, so the answer is\ncached for a year (`immutable`); a changed picture has a new id. No authentication: the id\nis 128 random bits that only people who were shown the user have. 404 while the\n`profile_pictures` switch is off. General rate-limit bucket.",
+        "operationId": "get_avatar",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Picture id, 32 hex characters",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "size",
+            "in": "path",
+            "description": "Side in pixels: 64, 128 or 512",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The picture",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "`If-None-Match` names this picture"
+          },
+          "404": {
+            "description": "`Not found`: no such picture or size, or the `profile_pictures` switch is off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the general bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
+        ]
+      }
+    },
     "/api/v1/blocks": {
       "get": {
         "tags": [
@@ -6800,6 +6895,248 @@
           },
           "429": {
             "description": "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the general bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/me/avatar": {
+      "put": {
+        "tags": [
+          "Account"
+        ],
+        "summary": "Upload your profile picture",
+        "description": "Sets the profile picture of the account from the image in the request body: a PNG, JPEG,\nGIF or WebP file (an animation gives its first frame) of at most\n`limits.avatar_upload_bytes` of `GET /api/v1/instance`, by default 8 MiB\n(`AVATAR_UPLOAD_MAX_MIB`), and at most 40 megapixels. The server turns the image as its\nEXIF orientation says, keeps the square `x`, `y`, `size` (without them the centered largest\nsquare), and stores it at 64, 128 and 512 pixels as PNG when it has transparency and as\nJPEG otherwise. Nothing else of the file is kept. The picture before is removed. The\nbuilt-in avatar (`avatar_kind`) stays as it is and shows where pictures are not shown.\nEmits `user_updated` to users who share a server or DM with the user. Requires a bearer\ntoken and the `profile_pictures` switch. Strict rate-limit bucket.",
+        "operationId": "put_my_avatar",
+        "parameters": [
+          {
+            "name": "x",
+            "in": "query",
+            "description": "Left edge of the square, in pixels of the image as it shows.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "y",
+            "in": "query",
+            "description": "Top edge of the square.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "Side of the square, at least 16.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "X-Audit-Reason",
+            "in": "header",
+            "description": "Why, for the server's audit log: percent-encoded UTF-8, at most 300 characters once decoded and trimmed, no control characters. Kept with every audit log entry the request writes",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "The image file",
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The picture is set; `avatar_image` is its id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeUpdated"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`The picture must be a PNG, JPEG, GIF or WebP image` or `The picture has too many pixels: up to 40 megapixels` (`reason.field` `image`); `The crop must be a square of at least 16 pixels inside the picture` or `Send x, y and size together` (`reason.field` `crop`); or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`Profile pictures are turned off on this site` (`reason.kind` `off_site`, `reason.control` `profile_pictures`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "408": {
+            "description": "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`Picture exceeds 8MB limit` with the configured number, or `Picture exceeds the size limit` for a body that did not declare its length (`reason.kind` `limit`, `reason.control` `avatar_upload_max_mib`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the strict bucket, or 3 of your uploads are already being read (`Too many uploads at once: ...`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`Too many uploads right now, try again in a moment`. Also `Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Account"
+        ],
+        "summary": "Remove your profile picture",
+        "description": "Removes the profile picture of the account, which shows its built-in avatar again. Removing\na picture that is not there changes nothing. Works while the `profile_pictures` switch is\noff. Emits `user_updated` to users who share a server or DM with the user when a picture\nwas removed. Requires a bearer token. Strict rate-limit bucket.",
+        "operationId": "delete_my_avatar",
+        "parameters": [
+          {
+            "name": "X-Audit-Reason",
+            "in": "header",
+            "description": "Why, for the server's audit log: percent-encoded UTF-8, at most 300 characters once decoded and trimmed, no control characters. Kept with every audit log entry the request writes",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The account without a picture",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeUpdated"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request: an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the strict bucket",
             "content": {
               "application/json": {
                 "schema": {
@@ -20106,6 +20443,296 @@
         ]
       }
     },
+    "/api/v1/servers/{name}/profile/avatar": {
+      "put": {
+        "tags": [
+          "Servers"
+        ],
+        "summary": "Upload your server profile picture",
+        "description": "Sets the profile picture the caller shows in this server from the image in the request\nbody, under the rules of `PUT /api/v1/me/avatar` (types, `limits.avatar_upload_bytes`,\n40 megapixels, the crop `x`, `y`, `size`, the stored sizes). It shows over the avatar style\nof the server profile, or over the account's when the server profile has none. Only for\nsigned-in members who are not timed out. Emits `member_profile` to the server and the\ncaller. Requires the `server_profiles` and `profile_pictures` switches. Strict rate-limit\nbucket.",
+        "operationId": "put_profile_avatar",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Server name, case-insensitive",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x",
+            "in": "query",
+            "description": "Left edge of the square, in pixels of the image as it shows.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "y",
+            "in": "query",
+            "description": "Top edge of the square.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "Side of the square, at least 16.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "X-Audit-Reason",
+            "in": "header",
+            "description": "Why, for the server's audit log: percent-encoded UTF-8, at most 300 characters once decoded and trimmed, no control characters. Kept with every audit log entry the request writes",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "The image file",
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The caller's profile in the server; `look.avatar_image` is the id of the picture",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerProfile"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "As `PUT /api/v1/me/avatar`: not an image of a known type, over 40 megapixels, or a crop outside the picture; or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`Not a member`; `You are timed out in this server`; `Server profiles are off in this server` (`reason.kind` `off_server`, `reason.control` `profiles_mode`); `A moderator locked your server profile` (`reason.kind` `locked`); or `Profile pictures are turned off on this site` (`reason.kind` `off_site`, `reason.control` `profile_pictures`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`Not found`: the `server_profiles` switch is off. `Server not found or wrong password`: no such server, or one you have no access to (identical responses)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "408": {
+            "description": "`The upload stopped sending data`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`Picture exceeds 8MB limit` with the configured number (`reason.control` `avatar_upload_max_mib`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the strict bucket, or 3 of your uploads are already being read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`Too many uploads right now, try again in a moment`. Also `Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Servers"
+        ],
+        "summary": "Remove your server profile picture",
+        "description": "Removes the picture of the caller's profile in this server; the rest of the profile stays.\nOnly for signed-in members who are not timed out. Works while the `profile_pictures`\nswitch is off. Emits `member_profile` to the server and the caller when a picture was\nremoved. Strict rate-limit bucket.",
+        "operationId": "delete_profile_avatar",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Server name, case-insensitive",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Audit-Reason",
+            "in": "header",
+            "description": "Why, for the server's audit log: percent-encoded UTF-8, at most 300 characters once decoded and trimmed, no control characters. Kept with every audit log entry the request writes",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The caller's profile in the server, without a picture",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerProfile"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request: an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or unknown bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`Not a member`; `You are timed out in this server`; or `A moderator locked your server profile` (`reason.kind` `locked`, `reason.until` when the lock ends)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`Not found`: the `server_profiles` switch is off. `Server not found or wrong password`: no such server, or one you have no access to (identical responses)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests in the strict bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/servers/{name}/report_mutes": {
       "get": {
         "tags": [
@@ -31233,6 +31860,7 @@
           "message_chars",
           "name_chars",
           "upload_bytes",
+          "avatar_upload_bytes",
           "media_retention_secs",
           "upload_kept_limited",
           "page_size",
@@ -31256,6 +31884,12 @@
             "format": "int64",
             "description": "Seconds an identity assertion stays valid.",
             "example": 300
+          },
+          "avatar_upload_bytes": {
+            "type": "integer",
+            "description": "Largest profile picture upload, in bytes: by default 8 MiB (`AVATAR_UPLOAD_MAX_MIB`).",
+            "example": 8388608,
+            "minimum": 0
           },
           "catch_up_delay_ms": {
             "type": "integer",
@@ -31566,6 +32200,13 @@
             ],
             "description": "Lowercase `#rrggbb` avatar color when `avatar_kind` is `color`. For identicons it is the\nchosen background color, or null for the default background.",
             "example": "#3366ff"
+          },
+          "avatar_image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The id of the uploaded profile picture (see `UserRef.avatar_image`); null without one."
           },
           "avatar_kind": {
             "$ref": "#/components/schemas/AvatarKind",
@@ -32052,6 +32693,13 @@
             ],
             "description": "Lowercase `#rrggbb` color of a `color` avatar or background of an `identicon`. Only set\ntogether with `avatar_kind`.",
             "example": "#4caf50"
+          },
+          "avatar_image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The id of the profile picture uploaded for this server (see `UserRef.avatar_image`);\n`null` without one. It shows over the avatar of this look, or over the account's when\n`avatar_kind` is `null`. A look with an `avatar_kind` and no picture shows no picture."
           },
           "avatar_kind": {
             "oneOf": [
@@ -37016,6 +37664,10 @@
             "$ref": "#/components/schemas/ProfileChoices",
             "description": "What an account's own `profile` choice does: `any` (it applies, wider or narrower than\n`profile_visibility`), `narrower` (only a narrower one applies; a wider one acts as no\nchoice) or `site` (every account follows `profile_visibility`; choices are kept). `any` by\ndefault (`PROFILE_CHOICES`)."
           },
+          "profile_pictures": {
+            "type": "boolean",
+            "description": "Whether accounts may upload a profile picture (`PUT /api/v1/me/avatar`) and pictures\nare served. Off: uploads answer 403 with reason `off_site`, `GET /api/v1/avatars/...`\nanswers 404, and clients draw the built-in avatars. A picture can still be removed."
+          },
           "profile_visibility": {
             "$ref": "#/components/schemas/Level",
             "description": "Who may see an account's profile (its description, banner color and creation time):\n`everyone`, `public_servers` (everyone, for an account in a server anyone can read;\nothers as `shared`) or `shared` (people who share a server, a direct conversation the\naccount wrote in or a friendship with it). `shared` by default (`PROFILE_VISIBILITY`).\nNever `friends`, which only an account chooses for itself (`profile` in\n`GET /api/v1/me/privacy`)."
@@ -37967,6 +38619,14 @@
             ],
             "description": "Avatar color as lowercase `#rrggbb` when `avatar_kind` is `color`. For identicons it is\nthe chosen background color, or `null` for the default background.",
             "example": "#4caf50"
+          },
+          "avatar_image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The id of the user's uploaded profile picture, served at\n`GET /api/v1/avatars/{id}/{size}`; `null` without one. The avatar of `avatar_kind` is\nwhat shows until the picture has loaded, and when it is not shown.",
+            "example": "0123456789abcdef0123456789abcdef"
           },
           "avatar_kind": {
             "$ref": "#/components/schemas/AvatarKind",

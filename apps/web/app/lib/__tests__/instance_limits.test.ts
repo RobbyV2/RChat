@@ -36,6 +36,7 @@ describe('instance limits', () => {
     expect(DEFAULT_LIMITS).toEqual({
       message_chars: 4000,
       upload_bytes: 25 * MIB,
+      avatar_upload_bytes: 8 * MIB,
       reconnect_base_ms: 1000,
       reconnect_cap_ms: 30000,
       reconnect_floor_ms: 250,

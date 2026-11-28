@@ -494,6 +494,9 @@ pub struct Limits {
     /// Largest upload, in bytes: by default 25 MiB (`UPLOAD_MAX_MIB`).
     #[schema(example = 26214400)]
     pub upload_bytes: usize,
+    /// Largest profile picture upload, in bytes: by default 8 MiB (`AVATAR_UPLOAD_MAX_MIB`).
+    #[schema(example = 8388608)]
+    pub avatar_upload_bytes: usize,
     /// Seconds an uploaded file is kept before it is deleted, unless its server chose otherwise
     /// (`upload_expiry` of the server). Files in DMs always use this.
     #[schema(example = 86400)]
@@ -562,6 +565,7 @@ impl Limits {
             message_chars: limits.message_max_chars,
             name_chars: crate::api::NAME_MAX,
             upload_bytes: limits.upload_bytes(),
+            avatar_upload_bytes: limits.avatar_upload_bytes(),
             media_retention_secs: crate::api::media::MEDIA_TTL_SECS,
             upload_kept_limited: limits.upload_server_kept_bytes() > 0
                 || limits.upload_owner_kept_bytes() > 0,

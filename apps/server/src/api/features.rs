@@ -28,10 +28,11 @@ pub enum Feature {
     ScheduledMessages,
     InteractiveDocs,
     MemberLists,
+    ProfilePictures,
 }
 
 impl Feature {
-    pub const ALL: [Feature; 23] = [
+    pub const ALL: [Feature; 24] = [
         Feature::ServerReports,
         Feature::InstanceReports,
         Feature::Widgets,
@@ -55,6 +56,7 @@ impl Feature {
         Feature::ScheduledMessages,
         Feature::InteractiveDocs,
         Feature::MemberLists,
+        Feature::ProfilePictures,
     ];
 
     /// The `Settings` field and the key in the `settings` table.
@@ -83,6 +85,7 @@ impl Feature {
             Feature::ScheduledMessages => "scheduled_messages",
             Feature::InteractiveDocs => "interactive_docs",
             Feature::MemberLists => "member_lists",
+            Feature::ProfilePictures => "profile_pictures",
         }
     }
 
@@ -112,6 +115,7 @@ impl Feature {
             Feature::ScheduledMessages => "FEATURE_SCHEDULED_MESSAGES",
             Feature::InteractiveDocs => "FEATURE_INTERACTIVE_DOCS",
             Feature::MemberLists => "FEATURE_MEMBER_LISTS",
+            Feature::ProfilePictures => "FEATURE_PROFILE_PICTURES",
         }
     }
 
@@ -140,7 +144,8 @@ impl Feature {
             | Feature::Docs
             | Feature::ScheduledMessages
             | Feature::InteractiveDocs
-            | Feature::MemberLists => true,
+            | Feature::MemberLists
+            | Feature::ProfilePictures => true,
         }
     }
 }
@@ -218,6 +223,7 @@ mod tests {
                 ("scheduled_messages", "FEATURE_SCHEDULED_MESSAGES", true),
                 ("interactive_docs", "FEATURE_INTERACTIVE_DOCS", true),
                 ("member_lists", "FEATURE_MEMBER_LISTS", true),
+                ("profile_pictures", "FEATURE_PROFILE_PICTURES", true),
             ]
         );
         assert_eq!(

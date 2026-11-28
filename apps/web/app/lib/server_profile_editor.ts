@@ -120,13 +120,27 @@ export const extrasOf = (d: ProfileDraft): RoomExtras => {
   return out
 }
 
-// The look a draft gives under a place's mode.
-export const draftLook = (d: ProfileDraft, mode: ProfilesMode, names = true): MemberLook | null => {
+// The picture a place holds for a profile, outside the draft: it is set and removed at once.
+export type ProfilePicture = Pick<MemberLook, 'avatar_image'>
+
+// The look a draft gives under a place's mode, with the picture the place holds.
+export const draftLook = (
+  d: ProfileDraft,
+  mode: ProfilesMode,
+  names = true,
+  picture: ProfilePicture = {}
+): MemberLook | null => {
   if (mode === 'off') return null
   const s = settled(d)
   const name = mode === 'all' && names && s.name ? s.name : null
-  if (name === null && s.avatar === null) return null
-  return { name, avatar_kind: s.avatar?.kind ?? null, avatar_color: s.avatar?.color ?? null }
+  const image = picture.avatar_image ?? null
+  if (name === null && s.avatar === null && image === null) return null
+  return {
+    name,
+    avatar_kind: s.avatar?.kind ?? null,
+    avatar_color: s.avatar?.color ?? null,
+    ...(image === null ? {} : { avatar_image: image }),
+  }
 }
 
 // The account (or P2P identity) as the place would show it with the draft saved.
@@ -134,8 +148,9 @@ export const previewUser = <T extends UserRef>(
   account: T,
   d: ProfileDraft,
   mode: ProfilesMode,
-  names = true
-): T & ShownPerson => shownUser(account, draftLook(d, mode, names))
+  names = true,
+  picture: ProfilePicture = {}
+): T & ShownPerson => shownUser(account, draftLook(d, mode, names, picture))
 
 // Characters left in the description, as the editor counts them.
 export const bioLeft = (d: ProfileDraft) => PROFILE_FIELDS.bio.max - count(cleanBio(d.bio))

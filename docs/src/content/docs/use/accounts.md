@@ -25,7 +25,7 @@ Settings → Profile → Sign-in sets a backup phrase, when the instance allows 
 
 ## Profile
 
-Settings → Profile → Your profile holds the display name, avatar, banner and about me. Members can also set a name, avatar, banner and description for one server, where the server and the instance allow it. Who sees your profile and can find you by name is under Settings → Privacy.
+Settings → Profile → Your profile holds the display name, picture, avatar, banner and about me. Upload picture takes a PNG, JPEG, GIF or WebP image and a square crop of it. The identicon or color avatar stays and shows while the picture loads. Members can also set a name, picture, avatar, banner and description for one server, where the server and the instance allow it. Who sees your profile and can find you by name is under Settings → Privacy.
 
 ## Guests
 

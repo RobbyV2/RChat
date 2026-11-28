@@ -25,14 +25,18 @@ S3_SECRET_KEY=...
 
 The server addresses the bucket by path (`https://s3.example.com/rchat/...`), which MinIO and most S3-compatible stores accept.
 
-| Setting                  | Default | Limit                                                                         |
-| ------------------------ | ------- | ----------------------------------------------------------------------------- |
-| `UPLOAD_MAX_MIB`         | 25      | Largest upload, 1 to 512 MiB.                                                 |
-| `UPLOAD_BUDGET_MIB`      | 2048    | MiB one account uploads in a day.                                             |
-| `UPLOAD_EXPIRY_MAX_DAYS` | 0       | The longest file expiry a server may choose, 0 to 365 days. 0 means no limit. |
-| `FEATURE_FILE_UPLOADS`   | on      | Uploads to this instance at all.                                              |
+| Setting                    | Default | Limit                                                                         |
+| -------------------------- | ------- | ----------------------------------------------------------------------------- |
+| `UPLOAD_MAX_MIB`           | 25      | Largest upload, 1 to 512 MiB.                                                 |
+| `UPLOAD_BUDGET_MIB`        | 2048    | MiB one account uploads in a day.                                             |
+| `UPLOAD_EXPIRY_MAX_DAYS`   | 0       | The longest file expiry a server may choose, 0 to 365 days. 0 means no limit. |
+| `FEATURE_FILE_UPLOADS`     | on      | Uploads to this instance at all.                                              |
+| `AVATAR_UPLOAD_MAX_MIB`    | 8       | Largest profile picture upload, 1 to 64 MiB.                                  |
+| `FEATURE_PROFILE_PICTURES` | on      | Uploaded profile pictures.                                                    |
 
 A file is removed 1 day after upload unless its server chose a longer expiry. The message stays and shows that the file was removed. P2P attachments never reach the instance (see [Files](/docs/p2p/files/)).
+
+Profile pictures live in the database. The server keeps a square crop of each at 64, 128 and 512 pixels and nothing else of the uploaded file.
 
 ## Settings and keys
 

@@ -153,6 +153,8 @@ pub struct User {
     pub password_kind: String,
     pub avatar_kind: AvatarKind,
     pub avatar_color: Option<String>,
+    /// The id of the uploaded profile picture, when the account has one.
+    pub avatar_image: Option<String>,
     pub banner_color: Option<String>,
     pub bio: Option<String>,
     /// The description stored sealed (`copies::BIOS`), in place of `bio`. Read with
@@ -225,6 +227,7 @@ impl User {
             password_kind: row.try_get("password_kind")?,
             avatar_kind: AvatarKind::parse(&row.try_get::<String, _>("avatar_kind")?)?,
             avatar_color: row.try_get("avatar_color")?,
+            avatar_image: row.try_get("avatar_image")?,
             banner_color: row.try_get("banner_color")?,
             bio: row.try_get("bio")?,
             bio_sealed: match row.try_get("bio_sealed") {

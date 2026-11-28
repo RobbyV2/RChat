@@ -7,6 +7,7 @@ const MIB = 1024 * 1024
 export interface ClientLimits {
   message_chars: number
   upload_bytes: number
+  avatar_upload_bytes: number
   reconnect_base_ms: number
   reconnect_cap_ms: number
   reconnect_floor_ms: number
@@ -24,6 +25,7 @@ export interface ClientLimits {
 export const DEFAULT_LIMITS: Readonly<ClientLimits> = Object.freeze({
   message_chars: 4000,
   upload_bytes: 25 * MIB,
+  avatar_upload_bytes: 8 * MIB,
   reconnect_base_ms: 1000,
   reconnect_cap_ms: 30000,
   reconnect_floor_ms: 250,

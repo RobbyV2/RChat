@@ -579,6 +579,14 @@ export const ADMIN_ROWS: AdminRow[] = [
     label: 'Member lists',
     line: 'Allow users to view server member lists. Turning this off hides member lists across all servers.',
   },
+  {
+    key: 'profile_pictures',
+    env: 'FEATURE_PROFILE_PICTURES',
+    group: 'Accounts',
+    kind: 'switch',
+    label: 'Profile pictures',
+    line: 'Lets people upload a profile picture. Turning it off stops uploads and shows the built-in avatars.',
+  },
 ]
 
 export const adminRow = (key: string) => ADMIN_ROWS.find(r => r.key === key)

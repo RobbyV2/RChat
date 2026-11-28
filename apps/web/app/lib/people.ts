@@ -7,9 +7,10 @@ import type { MemberLook, UserRef } from './types'
 const minted: unique symbol = Symbol('person')
 type Minted = typeof minted
 
-// Someone as a place shows them.
+// Someone as a place shows them. `avatar_image` is there only for someone with a picture.
 export class ShownPerson implements UserRef {
   declare private readonly shown: true
+  declare readonly avatar_image?: string
   constructor(
     by: Minted,
     readonly username: string,
@@ -54,6 +55,7 @@ export type AccountWhy =
 // Someone as their account or identity has them.
 export class AccountPerson implements UserRef {
   declare private readonly account: true
+  declare readonly avatar_image?: string
   constructor(
     by: Minted,
     readonly why: AccountWhy,
@@ -68,12 +70,14 @@ export class AccountPerson implements UserRef {
 
 export type Person = ShownPerson | AccountPerson
 
+const pictureOf = (image: string | null | undefined) => (image ? { avatar_image: image } : {})
+
 const plain = new WeakMap<UserRef, ShownPerson>()
 const looked = new WeakMap<UserRef, WeakMap<MemberLook, ShownPerson>>()
 
 // `ref` as a place shows it: the name and avatar of the look over the account's. An explicit
-// avatar kind replaces the whole account avatar, color included. The username never changes,
-// so the identicon keeps its seed. The other fields of `ref` come along. The same `ref` and
+// avatar kind replaces the whole account avatar, color and picture included; a picture of the
+// look shows over either. The username never changes, so the identicon keeps its seed. The other fields of `ref` come along. The same `ref` and
 // `look` give the same person, so a list row that takes one renders again only when they change.
 export function shownUser<T extends UserRef>(
   ref: T,
@@ -81,14 +85,17 @@ export function shownUser<T extends UserRef>(
 ): T & ShownPerson {
   const known = look ? looked.get(ref)?.get(look) : plain.get(ref)
   if (known) return known as T & ShownPerson
-  const avatar =
+  const built =
     !look || look.avatar_kind === null
       ? { avatar_kind: ref.avatar_kind, avatar_color: ref.avatar_color }
       : { avatar_kind: look.avatar_kind, avatar_color: look.avatar_color }
+  const { avatar_image: account = null, ...rest } = ref
+  const image = look ? (look.avatar_image ?? (look.avatar_kind === null ? account : null)) : account
+  const avatar = { ...built, ...pictureOf(image) }
   const name = look && look.name !== null ? look.name : ref.display_name
   const person = Object.assign(
     new ShownPerson(minted, ref.username, name, avatar.avatar_kind, avatar.avatar_color),
-    { ...ref, display_name: name, ...avatar }
+    { ...rest, display_name: name, ...avatar }
   ) as T & ShownPerson
   if (!look) plain.set(ref, person)
   else {
@@ -106,6 +113,7 @@ export function asAccount<T extends UserRef>(user: T, why: AccountWhy): T & Acco
   let known = accounts.get(user)
   const before = known?.get(why)
   if (before) return before as T & AccountPerson
+  const { avatar_image: image, ...rest } = user
   const person = Object.assign(
     new AccountPerson(
       minted,
@@ -115,7 +123,7 @@ export function asAccount<T extends UserRef>(user: T, why: AccountWhy): T & Acco
       user.avatar_kind,
       user.avatar_color
     ),
-    { ...user }
+    { ...rest, ...pictureOf(image) }
   ) as T & AccountPerson
   if (!known) accounts.set(user, (known = new Map()))
   known.set(why, person)
@@ -125,10 +133,23 @@ export function asAccount<T extends UserRef>(user: T, why: AccountWhy): T & Acco
 // An account known only by what its picture needs.
 export const pictured = (
   username: string,
-  avatar: { kind: UserRef['avatar_kind']; color: string | null } | null | undefined,
+  avatar:
+    | { kind: UserRef['avatar_kind']; color: string | null; image?: string | null }
+    | null
+    | undefined,
   why: AccountWhy
 ): AccountPerson =>
-  new AccountPerson(minted, why, username, '', avatar?.kind ?? 'identicon', avatar?.color ?? null)
+  Object.assign(
+    new AccountPerson(
+      minted,
+      why,
+      username,
+      '',
+      avatar?.kind ?? 'identicon',
+      avatar?.color ?? null
+    ),
+    pictureOf(avatar?.image)
+  )
 
 const identities = new Map<string, UserRef>()
 

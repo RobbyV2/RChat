@@ -22,7 +22,7 @@ pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 pub const SESSION_IDLE_MIN: i64 = 300;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 125] = [
+const RANGES: [(&str, i64, i64); 126] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("RATE_LIMIT_STRICT_PER_SECOND", 1, 1_000),
@@ -56,6 +56,7 @@ const RANGES: [(&str, i64, i64); 125] = [
     ("UPLOAD_BUFFER_MIB", 32, 1_048_576),
     ("UPLOAD_SERVER_KEPT_MIB", 0, 1_048_576),
     ("UPLOAD_OWNER_KEPT_MIB", 0, 1_048_576),
+    ("AVATAR_UPLOAD_MAX_MIB", 1, 64),
     ("MESSAGE_MAX_CHARS", 1, 100_000),
     ("MESSAGE_RATE_PER_MINUTE", 0, 100_000),
     ("MESSAGE_RATE_BURST", 0, 100_000),
@@ -287,6 +288,7 @@ pub struct Limits {
     pub upload_buffer_mib: u64,
     pub upload_server_kept_mib: u64,
     pub upload_owner_kept_mib: u64,
+    pub avatar_upload_max_mib: u64,
     pub message_max_chars: usize,
     pub message_rate_per_minute: u32,
     pub message_rate_burst: u32,
@@ -423,6 +425,7 @@ impl Default for Limits {
             upload_buffer_mib: DEFAULT_BUFFER_MIB,
             upload_server_kept_mib: 8192,
             upload_owner_kept_mib: 16384,
+            avatar_upload_max_mib: 8,
             message_max_chars: 4000,
             message_rate_per_minute: 2400,
             message_rate_burst: 100,
@@ -711,6 +714,7 @@ impl Limits {
             upload_buffer_mib: e.num("UPLOAD_BUFFER_MIB", d.upload_buffer_mib)?,
             upload_server_kept_mib: e.num("UPLOAD_SERVER_KEPT_MIB", d.upload_server_kept_mib)?,
             upload_owner_kept_mib: e.num("UPLOAD_OWNER_KEPT_MIB", d.upload_owner_kept_mib)?,
+            avatar_upload_max_mib: e.num("AVATAR_UPLOAD_MAX_MIB", d.avatar_upload_max_mib)?,
             message_max_chars: e.num("MESSAGE_MAX_CHARS", d.message_max_chars)?,
             message_rate_per_minute: e.num("MESSAGE_RATE_PER_MINUTE", d.message_rate_per_minute)?,
             message_rate_burst: e.num("MESSAGE_RATE_BURST", d.message_rate_burst)?,
@@ -873,6 +877,7 @@ impl Limits {
             upload_buffer_mib,
             upload_server_kept_mib,
             upload_owner_kept_mib,
+            avatar_upload_max_mib,
             message_max_chars,
             message_rate_per_minute,
             message_rate_burst,
@@ -1034,6 +1039,7 @@ impl Limits {
             ("UPLOAD_BUFFER_MIB", set(upload_buffer_mib)),
             ("UPLOAD_SERVER_KEPT_MIB", set(upload_server_kept_mib)),
             ("UPLOAD_OWNER_KEPT_MIB", set(upload_owner_kept_mib)),
+            ("AVATAR_UPLOAD_MAX_MIB", set(avatar_upload_max_mib)),
             ("MESSAGE_MAX_CHARS", set(message_max_chars)),
             ("MESSAGE_RATE_PER_MINUTE", set(message_rate_per_minute)),
             ("MESSAGE_RATE_BURST", set(message_rate_burst)),
@@ -1287,6 +1293,11 @@ impl Limits {
     /// The largest upload in bytes (`UPLOAD_MAX_MIB`).
     pub fn upload_bytes(&self) -> usize {
         self.upload_max_mib as usize * MIB
+    }
+
+    /// The largest profile picture upload in bytes (`AVATAR_UPLOAD_MAX_MIB`).
+    pub fn avatar_upload_bytes(&self) -> usize {
+        self.avatar_upload_max_mib as usize * MIB
     }
 
     /// The largest request body that carries an upload: the upload and 1 MiB for the rest.

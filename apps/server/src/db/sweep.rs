@@ -61,6 +61,7 @@ pub struct Swept {
     pub reports: u64,
     pub p2p_backups: u64,
     pub member_counts: u64,
+    pub avatar_images: u64,
 }
 
 pub(crate) async fn delete_batched(db: &Db, sql: &'static str, cutoff: i64) -> sqlx::Result<u64> {
@@ -227,6 +228,7 @@ pub(crate) async fn sweep_stale_at(db: &Db, limits: &Limits, t: i64) -> sqlx::Re
         reports: crate::api::reports::sweep(db, limits.report_retention_days, t).await?,
         p2p_backups: crate::api::p2p_backup::sweep(db, t).await?,
         member_counts: fix_member_counts(db, COUNT_BATCH).await?,
+        avatar_images: crate::api::avatars::sweep(db, t).await?,
     })
 }
 

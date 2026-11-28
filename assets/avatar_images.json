@@ -1,0 +1,8 @@
+{
+  "sizes": [64, 128, 512],
+  "types": ["image/png", "image/jpeg"],
+  "max_pixels": 40000000,
+  "min_crop": 16,
+  "p2p_sizes": [128, 512],
+  "p2p_max_bytes": 262144
+}

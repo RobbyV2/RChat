@@ -933,6 +933,7 @@ mod tests {
             name: Some("Robert".to_string()),
             avatar_kind: None,
             avatar_color: None,
+            avatar_image: None,
         });
         let reader = card_for(&state, in_server(by("carol"), "open"), "bob")
             .await

@@ -272,6 +272,8 @@ pub struct SettingsPatch {
     interactive_docs: Option<bool>,
     /// Member lists: who is in a server, their presence and mention suggestions.
     member_lists: Option<bool>,
+    /// Uploaded profile pictures.
+    profile_pictures: Option<bool>,
     registration: Option<Registration>,
     upload_expiry_max_days: Option<i64>,
     server_creation: Option<ServerCreation>,
@@ -372,6 +374,7 @@ pub(crate) async fn patch_settings(
         scheduled_messages,
         interactive_docs,
         member_lists,
+        profile_pictures,
         registration,
         upload_expiry_max_days,
         server_creation,
@@ -504,6 +507,7 @@ pub(crate) async fn patch_settings(
         Feature::ScheduledMessages => scheduled_messages,
         Feature::InteractiveDocs => interactive_docs,
         Feature::MemberLists => member_lists,
+        Feature::ProfilePictures => profile_pictures,
     };
     let switches = [
         ("profanity_filter", profanity_filter),
@@ -1014,7 +1018,7 @@ pub(crate) async fn list_users(
     let (rows, next) = state.replica(async |db| name_page(
         db,
         &format!(
-            "SELECT username, display_name, avatar_kind, avatar_color FROM users WHERE (lower(username) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND password_hash <> '!purging'{marked}"
+            "SELECT username, display_name, avatar_kind, avatar_color, avatar_image FROM users WHERE (lower(username) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND password_hash <> '!purging'{marked}"
         ),
         "username",
         &page,
@@ -1032,6 +1036,7 @@ pub(crate) async fn list_users(
             display_name,
             avatar_kind: AvatarKind::parse(&r.try_get::<String, _>(2)?)?,
             avatar_color: r.try_get(3)?,
+            avatar_image: r.try_get("avatar_image")?,
         });
     }
     Ok(Paged(users, next))
@@ -4654,6 +4659,7 @@ mod tests {
                 password_kind,
                 avatar_kind,
                 avatar_color,
+                avatar_image: _,
                 banner_color,
                 bio,
                 bio_sealed,

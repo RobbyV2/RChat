@@ -59,6 +59,7 @@ import { SHORTCUTS, shortcutLabel, type Shortcut } from '../lib/shortcuts'
 import { shownParts } from '../lib/server_profile'
 import type { AvatarKind, ServerSummary } from '../lib/types'
 import { AvatarPicker } from './avatar_picker'
+import { PictureField } from './avatar_upload'
 import { ServerProfileList, ServerProfileRow } from './server_profile_list'
 import { DisplayNameField } from './display_name'
 import { canEditDisplayName } from '../lib/display_name'
@@ -402,6 +403,10 @@ function ProfileFields() {
   const [color, setColor] = useState(draft.color)
   const [background, setBackground] = useState(draft.background)
   const [banner, setBanner] = useState<string | null>(me?.banner_color ?? null)
+  const pictures = useStore(s => s.settings.profile_pictures)
+  const maxBytes = useStore(s => limitsOf(s.instance).avatar_upload_bytes)
+  const uploadAvatar = useStore(s => s.uploadAvatar)
+  const removeAvatar = useStore(s => s.removeAvatar)
   if (!me) return null
   return (
     <PageRow id="user_profile">
@@ -409,6 +414,16 @@ function ProfileFields() {
       <Stack gap="xl">
         <Stack gap="lg">
           {editName && <DisplayNameField focus={focusName} />}
+          <PictureField
+            avatar={<UserAvatar person={asAccount(me, 'own')} size={48} />}
+            source={{
+              off: pictures ? null : 'Profile pictures are turned off on this site',
+              maxBytes,
+              has: !!me.avatar_image,
+              upload: (file, crop) => uploadAvatar(file, crop),
+              remove: removeAvatar,
+            }}
+          />
           <AvatarPicker
             username={me.username}
             kind={kind}

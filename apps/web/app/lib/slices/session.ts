@@ -1631,6 +1631,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     | 'saveRelays'
     | 'answerRelayPrompt'
     | 'patchMe'
+    | 'uploadAvatar'
+    | 'removeAvatar'
     | 'setBio'
     | 'setDisplayName'
     | 'setAppearOffline'
@@ -1778,6 +1780,28 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         if (mark !== sessionMark()) return
         set(s => (s.me ? { me: { ...s.me, ...user } } : {}))
       }),
+
+    uploadAvatar: async (file, crop) => {
+      try {
+        const mark = sessionMark()
+        const user = await api.putAvatar(file, crop)
+        if (mark === sessionMark()) set(s => (s.me ? { me: { ...s.me, ...user } } : {}))
+        return null
+      } catch (e) {
+        return errorText(e)
+      }
+    },
+
+    removeAvatar: async () => {
+      try {
+        const mark = sessionMark()
+        const user = await api.deleteAvatar()
+        if (mark === sessionMark()) set(s => (s.me ? { me: { ...s.me, ...user } } : {}))
+        return null
+      } catch (e) {
+        return errorText(e)
+      }
+    },
 
     setBio: async bio => {
       const { me, settings } = get()

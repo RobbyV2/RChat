@@ -34,10 +34,13 @@ import {
   previewUser,
   sameDraft,
   type ProfileDraft,
+  type ProfilePicture,
 } from '../lib/server_profile_editor'
 import { errorText, useStore } from '../lib/store'
+import { limitsOf } from '../lib/instance_limits'
 import type { AvatarKind, ProfilesMode, ServerProfile, UserRef } from '../lib/types'
 import { AvatarPicker } from './avatar_picker'
+import { PictureField, type PictureSource } from './avatar_upload'
 import { BannerPicker } from './settings_menu'
 import { useLook } from './shown_user'
 import { useNow } from './timeout_dialog'
@@ -61,6 +64,9 @@ export interface StoredProfile {
   names: boolean
   saved: ProfileDraft
   lock: LockState
+  // The picture of the profile there, set and removed at once, outside the draft. Left out
+  // where a place keeps no pictures.
+  picture?: PictureSource & { look: ProfilePicture }
 }
 
 export interface ProfileEditorSource<P> {
@@ -85,7 +91,7 @@ export interface ProfileEditorSource<P> {
 type Shown = Omit<ProfileEditorSource<unknown>, 'stored' | 'read'> & StoredProfile
 
 function Preview({ source, draft }: { source: Shown; draft: ProfileDraft }) {
-  const user = previewUser(source.account, draft, source.mode, source.names)
+  const user = previewUser(source.account, draft, source.mode, source.names, source.picture?.look)
   const bio = shownBio(user, { bio: source.accountBio, server_bio: draft.bio.trim() || null })
   const banner = shownBanner(user, {
     banner_color: source.accountBanner,
@@ -206,7 +212,7 @@ function Editor({ source, onClose }: { source: Shown; onClose: () => void }) {
   const color =
     draft.avatar?.kind === 'color' ? (draft.avatar.color ?? DEFAULT_COLOR) : DEFAULT_COLOR
   const background = draft.avatar?.kind === 'identicon' ? draft.avatar.color : null
-  const picture = previewUser(account, shown, source.mode, source.names)
+  const picture = previewUser(account, shown, source.mode, source.names, source.picture?.look)
   const finish = async (run: () => Promise<string | null>) => {
     if (busy) return
     setBusy(true)
@@ -276,6 +282,14 @@ function Editor({ source, onClose }: { source: Shown; onClose: () => void }) {
               ? "This server doesn't use server names."
               : 'Names are off on this site.'}
           </p>
+        )}
+        {source.picture && (
+          <PictureField
+            source={source.picture}
+            avatar={source.avatar(asAccount(picture, 'editor'), 48)}
+            note={`Only this server shows it. Without one, your ${origin} picture shows.`}
+            disabled={locked || busy}
+          />
         )}
         <Stack gap="sm">
           {draft.avatar === null ? (
@@ -408,6 +422,10 @@ function HostedProfileDialog({ server }: { server: string }) {
   const displayNames = useStore(s => s.settings.display_names !== false)
   const save = useStore(s => s.saveMyProfile)
   const clear = useStore(s => s.clearMyProfile)
+  const pictures = useStore(s => s.settings.profile_pictures)
+  const maxBytes = useStore(s => limitsOf(s.instance).avatar_upload_bytes)
+  const setPicture = useStore(s => s.setMyProfilePicture)
+  const removePicture = useStore(s => s.removeMyProfilePicture)
   // Read when the dialog opens: a lock or a reset may be newer than what the page holds, and a
   // server that isn't open here holds nothing. What the page learns meanwhile replaces it.
   const [load, source] = useAccountSource(() => ask.serverProfile(server), [server])
@@ -435,6 +453,14 @@ function HostedProfileDialog({ server }: { server: string }) {
           names: mine.mode === 'all' && displayNames,
           saved: draftOfProfile(mine),
           lock: lockState(mine.locked_until, Math.floor(now / 1000)),
+          picture: {
+            off: pictures ? null : 'Profile pictures are turned off on this site',
+            maxBytes,
+            has: !!mine.look.avatar_image,
+            look: { avatar_image: mine.look.avatar_image ?? null },
+            upload: (file, crop) => then(setPicture(server, file, crop)),
+            remove: () => then(removePicture(server)),
+          },
         }),
         avatar: accountAvatar,
         handles: true,

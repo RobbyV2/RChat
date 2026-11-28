@@ -1100,6 +1100,7 @@ fn user_at(r: &sqlx::any::AnyRow) -> Result<UserRef, ApiError> {
         display_name: r.try_get(1)?,
         avatar_kind: AvatarKind::parse(&r.try_get::<String, _>(2)?)?,
         avatar_color: r.try_get(3)?,
+        avatar_image: r.try_get("avatar_image")?,
     })
 }
 
@@ -1112,7 +1113,7 @@ pub(crate) async fn friend_page(
     limit: i64,
 ) -> Result<(Vec<Friend>, Option<String>), ApiError> {
     let db = state.read();
-    let base = "SELECT f.friend, u.display_name, u.avatar_kind, u.avatar_color, f.created_at, u.appear_offline, lower(u.display_name) FROM friends f JOIN users u ON u.username = f.friend WHERE f.username = $1 AND u.password_hash <> '!purging' AND (lower(u.username) LIKE $2 ESCAPE '\\' OR lower(u.display_name) LIKE $2 ESCAPE '\\')";
+    let base = "SELECT f.friend, u.display_name, u.avatar_kind, u.avatar_color, f.created_at, u.appear_offline, lower(u.display_name), u.avatar_image FROM friends f JOIN users u ON u.username = f.friend WHERE f.username = $1 AND u.password_hash <> '!purging' AND (lower(u.username) LIKE $2 ESCAPE '\\' OR lower(u.display_name) LIKE $2 ESCAPE '\\')";
     let order = "ORDER BY lower(u.display_name), f.friend";
     let pattern = prefix_pattern(&q.trim().to_lowercase());
     let take = match online_only {
@@ -1225,7 +1226,7 @@ pub(crate) async fn list_requests(
         false => ("r.sender", "r.recipient"),
     };
     let base = format!(
-        "SELECT {other}, u.display_name, u.avatar_kind, u.avatar_color, r.created_at FROM friend_requests r JOIN users u ON u.username = {other} WHERE {me} = $1 AND u.password_hash <> '!purging'"
+        "SELECT {other}, u.display_name, u.avatar_kind, u.avatar_color, r.created_at, u.avatar_image FROM friend_requests r JOIN users u ON u.username = {other} WHERE {me} = $1 AND u.password_hash <> '!purging'"
     );
     let order = format!("ORDER BY r.created_at DESC, {other} DESC");
     let db = state.read();

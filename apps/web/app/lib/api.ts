@@ -86,6 +86,7 @@ import type {
 import type { UploadExpiry, UploadExpiryState } from './upload_expiry'
 import type { ServerIconKind } from './server_about'
 import type { LayoutOrder } from './categories'
+import type { AvatarCrop } from './avatar_images'
 import type { Page } from './lists'
 import type { UnreadCount } from './unread_banner'
 import { retrySeconds } from './rate_limit'
@@ -446,6 +447,10 @@ export class ApiClient {
     return `${this.base}/media/${seg(id)}`
   }
 
+  avatarUrl(id: string, size: number) {
+    return `${this.base}/avatars/${seg(id)}/${size}`
+  }
+
   hasToken(candidate: Sealed | null) {
     return this.token !== null && this.token.same(candidate)
   }
@@ -576,6 +581,9 @@ export interface LoginRequest {
   password?: string
   words?: string[]
 }
+
+const cropQuery = (crop: AvatarCrop | null) =>
+  crop ? `?x=${crop.x}&y=${crop.y}&size=${crop.size}` : ''
 
 export interface MeUpdated extends UserRef {
   banner_color: string | null
@@ -726,6 +734,13 @@ export const endpoints = (c: ApiClient) => ({
       .then(list => list.map(localSummary)),
   patchMe: (avatar_kind: AvatarKind, avatar_color?: string, banner_color?: string | null) =>
     c.req<MeUpdated>('PATCH', '/me', { avatar_kind, avatar_color, banner_color }),
+  putAvatar: (file: Blob, crop: AvatarCrop | null) =>
+    c.req<MeUpdated>('PUT', `/me/avatar${cropQuery(crop)}`, file),
+  deleteAvatar: () => c.req<MeUpdated>('DELETE', '/me/avatar'),
+  putProfileAvatar: (server: string, file: Blob, crop: AvatarCrop | null) =>
+    c.req<ServerProfile>('PUT', `/servers/${seg(server)}/profile/avatar${cropQuery(crop)}`, file),
+  deleteProfileAvatar: (server: string) =>
+    c.req<ServerProfile>('DELETE', `/servers/${seg(server)}/profile/avatar`),
   setBio: (bio: string | null) => c.req<MeUpdated>('PATCH', '/me', { bio }),
   setDisplayName: (display_name: string) => c.req<MeUpdated>('PATCH', '/me', { display_name }),
   setAppearOffline: (appear_offline: boolean) =>

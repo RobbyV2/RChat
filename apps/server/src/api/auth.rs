@@ -51,6 +51,8 @@ pub struct Me {
     /// chosen background color, or null for the default background.
     #[schema(example = "#3366ff")]
     pub avatar_color: Option<String>,
+    /// The id of the uploaded profile picture (see `UserRef.avatar_image`); null without one.
+    pub avatar_image: Option<String>,
     /// Lowercase `#rrggbb` profile banner color; null means the default derived from the avatar.
     #[schema(example = "#112233")]
     pub banner_color: Option<String>,
@@ -576,6 +578,7 @@ pub(crate) async fn me_payload(db: &Db, user: &User) -> Result<Me, ApiError> {
         display_name: user.display_name.clone(),
         avatar_kind: user.avatar_kind,
         avatar_color: user.avatar_color.clone(),
+        avatar_image: user.avatar_image.clone(),
         banner_color: user.banner_color.clone(),
         bio: crate::crypt::copies::bio_of(db, user).await?,
         is_site_admin: user.is_site_admin,
@@ -1530,9 +1533,7 @@ pub(crate) async fn patch_me(
             .await?;
     }
     tx.commit().await?;
-    let stored = get_user(&state.db, &user.username)
-        .await?
-        .ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "Unauthorized".to_string(), None))?;
+    let stored = stored_account(&state, &user.username).await?;
     let user_ref = UserRef::from_user(&stored);
     let renamed = display_name
         .as_ref()
@@ -1557,12 +1558,37 @@ pub(crate) async fn patch_me(
             seq,
         });
     }
-    Ok(Json(MeUpdated {
-        user: user_ref,
-        bio: crate::crypt::copies::bio_of(&state.db, &stored).await?,
-        banner_color: stored.banner_color,
-        appear_offline: stored.appear_offline,
-    }))
+    Ok(Json(me_updated(&state.db, stored).await?))
+}
+
+async fn stored_account(state: &AppState, username: &str) -> Result<User, ApiError> {
+    get_user(&state.db, username)
+        .await?
+        .ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "Unauthorized".to_string(), None))
+}
+
+/// `user` as the answer to a change of their own profile.
+pub(crate) async fn me_updated(db: &Db, user: User) -> Result<MeUpdated, ApiError> {
+    Ok(MeUpdated {
+        user: UserRef::from_user(&user),
+        bio: crate::crypt::copies::bio_of(db, &user).await?,
+        banner_color: user.banner_color,
+        appear_offline: user.appear_offline,
+    })
+}
+
+/// The account of `username` after its avatar changed: tells the users who share a server or
+/// DM with it, and gives the answer.
+pub(crate) async fn profile_changed(
+    state: &AppState,
+    username: &str,
+) -> Result<MeUpdated, ApiError> {
+    let stored = stored_account(state, username).await?;
+    state.hub.broadcast(WsEvent::UserUpdated {
+        user: UserRef::from_user(&stored),
+        scope: crate::api::access::user_scope(&state.read(), &stored.username).await,
+    });
+    me_updated(&state.db, stored).await
 }
 
 #[cfg(test)]

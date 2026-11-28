@@ -1030,6 +1030,7 @@ mod tests {
                     display_name: s("alice"),
                     avatar_kind: crate::db::AvatarKind::Identicon,
                     avatar_color: None,
+                    avatar_image: None,
                 },
                 is_admin: false,
                 is_creator: false,
@@ -1151,6 +1152,7 @@ mod tests {
                 display_name: s("new"),
                 avatar_kind: crate::db::AvatarKind::Identicon,
                 avatar_color: None,
+                avatar_image: None,
             },
         });
         assert_eq!(drain(&mut early), vec![1, 2]);

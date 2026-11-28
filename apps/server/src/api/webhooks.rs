@@ -148,6 +148,7 @@ pub fn author_ref(id: i64, name: Option<&str>, avatar: Option<&str>) -> UserRef 
         display_name: name.unwrap_or("Webhook").to_string(),
         avatar_kind,
         avatar_color,
+        avatar_image: None,
     }
 }
 
@@ -1154,6 +1155,7 @@ fn poster(hook: &Hook, name: &str, kind: AvatarKind, color: Option<String>) -> U
         password_kind: String::new(),
         avatar_kind: kind,
         avatar_color: color,
+        avatar_image: None,
         banner_color: None,
         bio: None,
         bio_sealed: None,

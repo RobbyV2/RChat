@@ -7,6 +7,7 @@ pub mod alt_text;
 pub mod announcements;
 pub mod audit;
 pub mod auth;
+pub mod avatars;
 pub mod bans;
 pub mod blocks;
 pub mod brand;
@@ -152,6 +153,12 @@ pub struct UserRef {
     /// the chosen background color, or `null` for the default background.
     #[schema(example = "#4caf50")]
     pub avatar_color: Option<String>,
+    /// The id of the user's uploaded profile picture, served at
+    /// `GET /api/v1/avatars/{id}/{size}`; `null` without one. The avatar of `avatar_kind` is
+    /// what shows until the picture has loaded, and when it is not shown.
+    #[serde(default)]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    pub avatar_image: Option<String>,
 }
 
 impl UserRef {
@@ -161,6 +168,7 @@ impl UserRef {
             display_name: user.display_name.clone(),
             avatar_kind: user.avatar_kind,
             avatar_color: user.avatar_color.clone(),
+            avatar_image: user.avatar_image.clone(),
         }
     }
 }
@@ -172,6 +180,7 @@ pub fn missing_user(username: &str) -> UserRef {
             display_name: format!("Guest {tag}"),
             avatar_kind: AvatarKind::Identicon,
             avatar_color: None,
+            avatar_image: None,
         };
     }
     UserRef {
@@ -179,6 +188,7 @@ pub fn missing_user(username: &str) -> UserRef {
         display_name: username.to_string(),
         avatar_kind: AvatarKind::Color,
         avatar_color: Some("#9e9e9e".to_string()),
+        avatar_image: None,
     }
 }
 
@@ -202,6 +212,7 @@ fn row_user_ref(r: &sqlx::any::AnyRow) -> sqlx::Result<UserRef> {
         display_name: r.try_get(1)?,
         avatar_kind: AvatarKind::parse(&r.try_get::<String, _>(2)?)?,
         avatar_color: r.try_get(3)?,
+        avatar_image: r.try_get(4)?,
     })
 }
 
@@ -217,7 +228,7 @@ pub async fn user_refs(db: &Db, names: &[String]) -> HashMap<String, UserRef> {
     }
     for chunk in keys.chunks(500) {
         let sql = format!(
-            "SELECT username, display_name, avatar_kind, avatar_color FROM users WHERE username IN ({})",
+            "SELECT username, display_name, avatar_kind, avatar_color, avatar_image FROM users WHERE username IN ({})",
             placeholders(1, chunk.len())
         );
         let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
@@ -1566,6 +1577,11 @@ pub struct Settings {
     /// nobody but instance staff gets a server's member list; existing servers and members stay.
     #[serde(default = "yes")]
     pub member_lists: bool,
+    /// Whether accounts may upload a profile picture (`PUT /api/v1/me/avatar`) and pictures
+    /// are served. Off: uploads answer 403 with reason `off_site`, `GET /api/v1/avatars/...`
+    /// answers 404, and clients draw the built-in avatars. A picture can still be removed.
+    #[serde(default = "yes")]
+    pub profile_pictures: bool,
     /// Who may create an account with a password: `open`, `sso` (only through single
     /// sign-on) or `closed`. `POST /api/v1/auth/register` answers 404 unless it is `open` and
     /// `password_login` is on.
@@ -1766,6 +1782,7 @@ impl Settings {
         scheduled_messages: false,
         interactive_docs: false,
         member_lists: false,
+        profile_pictures: false,
         registration: Registration::Closed,
         upload_expiry_max_days: 1,
         server_creation: ServerCreation::Nobody,
@@ -1850,6 +1867,7 @@ impl Settings {
             scheduled_messages: feature(Feature::ScheduledMessages),
             interactive_docs: feature(Feature::InteractiveDocs),
             member_lists: feature(Feature::MemberLists),
+            profile_pictures: feature(Feature::ProfilePictures),
             registration: value(Registration::KEY)
                 .map_or(Some(Registration::Open), |v| Registration::parse(&v))
                 .unwrap_or(Registration::Closed),
@@ -1941,6 +1959,7 @@ impl Settings {
             scheduled_messages,
             interactive_docs,
             member_lists,
+            profile_pictures,
             registration: _,
             upload_expiry_max_days: _,
             server_creation: _,
@@ -1981,6 +2000,7 @@ impl Settings {
             Feature::ScheduledMessages => scheduled_messages,
             Feature::InteractiveDocs => interactive_docs,
             Feature::MemberLists => member_lists,
+            Feature::ProfilePictures => profile_pictures,
         }
     }
 
@@ -2394,6 +2414,14 @@ pub fn routes(
                 put(p2p_backup::put_backup).delete(p2p_backup::delete_backup),
             )
             .route(
+                "/me/avatar",
+                put(avatars::put_my_avatar).delete(avatars::delete_my_avatar),
+            )
+            .route(
+                "/servers/{name}/profile/avatar",
+                put(profiles::put_profile_avatar).delete(profiles::delete_profile_avatar),
+            )
+            .route(
                 "/me/p2p_backup/{ik}/versions/{version}",
                 delete(p2p_backup::delete_version),
             )
@@ -2513,6 +2541,7 @@ fn api_routes(
 ) -> Router<AppState> {
     Router::new()
         .route("/me", get(auth::me).patch(auth::patch_me))
+        .route("/avatars/{id}/{size}", get(avatars::get_avatar))
         .route("/me/sso", get(oidc::list))
         .route("/me/sso/{provider}", delete(oidc::unlink))
         // The static ticket path also matches DELETE for a provider named "ticket".
@@ -3208,6 +3237,7 @@ pub(crate) mod test_util {
             password_kind: "text".to_string(),
             avatar_kind: AvatarKind::Identicon,
             avatar_color: None,
+            avatar_image: None,
             banner_color: None,
             bio: None,
             bio_sealed: None,
