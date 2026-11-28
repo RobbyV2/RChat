@@ -11293,7 +11293,13 @@ mod tests {
             keys.sort();
             assert_eq!(
                 keys,
-                ["avatar_color", "avatar_kind", "display_name", "username"],
+                [
+                    "avatar_color",
+                    "avatar_image",
+                    "avatar_kind",
+                    "display_name",
+                    "username"
+                ],
                 "only what a suggestion shows"
             );
         }

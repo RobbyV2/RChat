@@ -1656,6 +1656,7 @@ mod tests {
                     "display_name": "bob",
                     "avatar_kind": "identicon",
                     "avatar_color": null,
+                    "avatar_image": null,
                 },
                 "profile": {"bio": "about bob", "banner_color": "#102030", "created_at": 22},
                 "member": {
