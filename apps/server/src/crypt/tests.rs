@@ -1496,8 +1496,11 @@ mod reads {
 
     /// Each column that may be stored sealed: its table, the column and the column of its
     /// record.
-    const COLUMNS: [(&str, &str, &str); 17] = [
+    const COLUMNS: [(&str, &str, &str); 20] = [
         ("scheduled_messages", "content", "body"),
+        ("scheduled_messages", "media_name", "body"),
+        ("scheduled_messages", "media_alt", "body"),
+        ("scheduled_messages", "poll", "body"),
         ("messages", "content", "body"),
         ("messages", "webhook_embeds", "body"),
         ("messages", "media_filename", "body"),

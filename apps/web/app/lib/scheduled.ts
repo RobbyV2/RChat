@@ -131,6 +131,9 @@ export interface ScheduledItem {
   // The composer draft key: hosted `c<id>`, `d<id>`, `t<root>`; P2P room keys.
   place: string
   body: string
+  // The names of the files it carries, and the question of its poll.
+  files: string[]
+  poll: string | null
   // A hosted message id as text, or a P2P event id.
   reply: string | null
   at: number
@@ -177,6 +180,13 @@ export const chipTitle = (c: { waiting: number; unsent: number }) => {
 }
 
 export const PAUSED_TEXT = 'Paused when you were signed out everywhere'
+
+// What a row shows of its message: the text, else its poll or its files.
+export const summaryOf = (i: Pick<ScheduledItem, 'body' | 'files' | 'poll'>): string => {
+  if (i.body.trim()) return i.body
+  if (i.poll !== null) return `Poll: ${i.poll}`
+  return i.files.join(', ')
+}
 
 export const stateText = (i: ScheduledItem): string | null => {
   if (i.state === 'failed') return `Not sent: ${i.error ?? SEND_FAILED}`
@@ -229,6 +239,8 @@ export const fromHosted = (row: ScheduledMessage): ScheduledItem => ({
   side: 'hosted',
   place: hostedPlace(row),
   body: row.content,
+  files: row.media ? [row.media.filename] : [],
+  poll: row.poll?.question ?? null,
   reply: row.reply_to === null ? null : String(row.reply_to),
   at: row.at * 1000,
   next: row.next_at * 1000,
@@ -297,25 +309,27 @@ export interface ScheduledOps {
 
 // What Send later says it can't take from a draft right now.
 export const BLOCKED = {
-  text: 'Send later takes text only for now',
+  text: "Send later can't take a forward or a file shared from this device",
   empty: 'Type a message first',
   long: 'Message is too long',
   off: 'Turned off on this site',
   full: (n: number) => `You have ${n} waiting`,
 } as const
 
-// Why Send later can't take a draft now, or null: files, a forward or a poll; no text; too long;
-// the instance's switch off; `cap` (0 for none) waiting already.
+// Why Send later can't take a draft now, or null: `rich` (a forward, or a file this device
+// would have to serve); neither text nor `files`; too long; the instance's switch off; `cap` (0
+// for none) waiting already.
 export const laterBlocked = (d: {
   text: string
   rich: boolean
+  files?: boolean
   tooLong: boolean
   on: boolean
   cap: number
   waiting: number
 }): string | null => {
   if (d.rich) return BLOCKED.text
-  if (!d.text.trim()) return BLOCKED.empty
+  if (!d.text.trim() && !d.files) return BLOCKED.empty
   if (d.tooLong) return BLOCKED.long
   if (!d.on) return BLOCKED.off
   if (d.cap > 0 && d.waiting >= d.cap) return BLOCKED.full(d.cap)

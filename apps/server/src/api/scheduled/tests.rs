@@ -1286,7 +1286,8 @@ async fn waiting_rows_follow_a_place_into_and_out_of_sealed_storage() {
                 .map_err(refusal)
                 .expect("row")
                 .content
-                .shown(),
+                .shown()
+                .content,
             "before the switch"
         );
         let server = crate::api::seal::jobs::Target::Server("rchat".to_string());
@@ -1575,4 +1576,225 @@ async fn a_server_failure_waits_out_each_backoff_step_then_fails() {
         ("failed".to_string(), Some(SERVER_FAILED.to_string()), None)
     );
     crate::api::test_util::done(state, path).await;
+}
+
+/// An upload of `uploader` stored at `at`, with the instance's default time before it expires.
+async fn upload(db: &Db, id: &str, uploader: &str, at: i64) {
+    sqlx::query("INSERT INTO media(id, filename, mime, size, data, uploader, uploaded_at) VALUES($1, 'cat.png', 'image/png', 1, $2, $3, $4)")
+        .bind(id)
+        .bind(vec![1u8])
+        .bind(uploader)
+        .bind(at)
+        .execute(db)
+        .await
+        .expect("media");
+}
+
+#[tokio::test]
+async fn a_scheduled_file_waits_for_its_message_and_goes_with_it() {
+    let (state, path) = temp_state("scheduled_file").await;
+    let db = &state.db;
+    let p = place(&state).await;
+    let t = now();
+    let old = t - crate::api::media::MEDIA_TTL_SECS - 100;
+    upload(db, "held", "alice", old).await;
+    upload(db, "loose", "alice", old).await;
+    let body = |media: &str| {
+        json!({
+            "channel_id": p.general,
+            "content": "",
+            "media_id": media,
+            "media_spoiler": true,
+            "media_alt": " a cat ",
+            "at": t + 60,
+        })
+    };
+    let row = schedule(&state, "alice", body("held"), t)
+        .await
+        .expect("schedule");
+    let media = row.media.clone().expect("media");
+    assert_eq!(
+        (
+            media.id.as_str(),
+            media.filename.as_str(),
+            media.spoiler,
+            media.alt.as_deref()
+        ),
+        ("held", "cat.png", true, Some("a cat"))
+    );
+    let again = schedule(&state, "alice", body("held"), t)
+        .await
+        .expect_err("held by a row");
+    assert_eq!(
+        (again.0, again.1.as_str()),
+        (400, "This file is already attached to a message")
+    );
+    let theirs = schedule(&state, "bob", body("loose"), t)
+        .await
+        .expect_err("not bob's");
+    assert_eq!(theirs.0, 403);
+    let none = schedule(&state, "alice", body("nope"), t)
+        .await
+        .expect_err("unknown");
+    assert_eq!((none.0, none.1.as_str()), (400, "Unknown media"));
+    let alt_only =
+        json!({ "channel_id": p.general, "content": "x", "media_alt": "a cat", "at": t + 60 });
+    assert_eq!(
+        schedule(&state, "alice", alt_only, t)
+            .await
+            .expect_err("no file")
+            .0,
+        400
+    );
+
+    upload(db, "lapsed", "alice", old).await;
+    let lapsed = schedule(&state, "alice", body("lapsed"), t)
+        .await
+        .expect("schedule");
+    exec(
+        db,
+        &format!(
+            "UPDATE scheduled_messages SET status = 'failed' WHERE id = {}",
+            lapsed.id
+        ),
+    )
+    .await;
+    crate::api::media::sweep(db, None).await.expect("sweep");
+    assert_eq!(
+        num(db, "SELECT COUNT(*) FROM media WHERE id = 'lapsed'").await,
+        0,
+        "a failed message does not hold its file"
+    );
+    assert_eq!(
+        num(db, "SELECT COUNT(*) FROM media WHERE id = 'held'").await,
+        1,
+        "a file a waiting message carries stays past its time"
+    );
+    assert_eq!(
+        num(db, "SELECT COUNT(*) FROM media WHERE id = 'loose'").await,
+        0
+    );
+
+    assert_eq!(run_due_at(&state, t + 61).await.expect("run"), 1);
+    let (status, _, sent) = status_of(db, row.id).await;
+    assert_eq!(status, "sent");
+    let sent = sent.expect("message");
+    assert_eq!(
+        num(db, &format!("SELECT COUNT(*) FROM messages WHERE id = {sent} AND media_id = 'held' AND media_spoiler = 1 AND media_alt = 'a cat' AND body IS NULL")).await,
+        1
+    );
+    assert!(
+        num(db, "SELECT uploaded_at FROM media WHERE id = 'held'").await >= t,
+        "its time before it expires starts when it is sent"
+    );
+    assert_eq!(
+        num(db, &format!("SELECT COUNT(*) FROM messages WHERE id = {sent} AND (media_expires_at IS NULL OR media_expires_at > {t})")).await,
+        1,
+        "and the message says so"
+    );
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn a_scheduled_poll_posts_a_poll() {
+    let (state, path) = temp_state("scheduled_poll").await;
+    let db = &state.db;
+    let p = place(&state).await;
+    let t = now();
+    let poll = json!({"question": "Lunch?", "kind": "single", "options": [{"text": "Pizza"}, {"text": "Soup"}]});
+    let body = json!({ "channel_id": p.general, "content": "", "poll": poll, "at": t + 60 });
+    let row = schedule(&state, "alice", body, t).await.expect("schedule");
+    assert_eq!(
+        row.poll.as_ref().map(|v| v["question"].clone()),
+        Some(json!("Lunch?"))
+    );
+    let short = json!({ "channel_id": p.general, "content": "", "poll": {"question": "q", "kind": "single", "options": [{"text": "a"}]}, "at": t + 60 });
+    assert_eq!(
+        schedule(&state, "alice", short, t)
+            .await
+            .expect_err("one option")
+            .0,
+        400
+    );
+    let shape =
+        json!({ "channel_id": p.general, "content": "", "poll": {"nope": 1}, "at": t + 60 });
+    assert_eq!(
+        schedule(&state, "alice", shape, t)
+            .await
+            .expect_err("shape")
+            .3
+            .as_deref(),
+        Some("poll")
+    );
+    upload(db, "file", "alice", t).await;
+    let both = json!({ "channel_id": p.general, "content": "", "media_id": "file", "poll": poll, "at": t + 60 });
+    assert_eq!(
+        schedule(&state, "alice", both, t)
+            .await
+            .expect_err("both")
+            .1,
+        "Polls cannot have attachments"
+    );
+    assert_eq!(run_due_at(&state, t + 61).await.expect("run"), 1);
+    let sent = status_of(db, row.id).await.2.expect("message");
+    assert_eq!(
+        num(
+            db,
+            &format!("SELECT COUNT(*) FROM messages WHERE id = {sent} AND kind = 'poll'")
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        num(
+            db,
+            &format!("SELECT COUNT(*) FROM poll_options WHERE message_id = {sent}")
+        )
+        .await,
+        2
+    );
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn a_sealed_place_stores_no_plain_file_name_description_or_poll() {
+    for (state, temp) in crate::api::test_util::each_db_keyed("scheduled_sealed_extras").await {
+        let db = &state.db;
+        let Place {
+            general,
+            dm,
+            root: _,
+        } = place(&state).await;
+        seal_places(&state, dm).await;
+        let t = now();
+        upload(db, "held", "alice", t).await;
+        let file = json!({ "dm_id": dm, "content": "", "media_id": "held", "media_alt": "a cat", "at": t + 60 });
+        let with_file = schedule(&state, "alice", file, t).await.expect("file");
+        let poll = json!({"question": "Lunch?", "kind": "single", "options": [{"text": "Pizza"}, {"text": "Soup"}]});
+        let asked = json!({ "channel_id": general, "content": "", "poll": poll, "at": t + 60 });
+        let with_poll = schedule(&state, "alice", asked, t).await.expect("poll");
+        assert_eq!(
+            num(db, "SELECT COUNT(*) FROM scheduled_messages WHERE body IS NOT NULL AND content = '' AND media_name IS NULL AND media_alt IS NULL AND poll IS NULL").await,
+            2
+        );
+        let media = with_file.media.expect("media");
+        assert_eq!(
+            (media.filename.as_str(), media.alt.as_deref()),
+            ("cat.png", Some("a cat"))
+        );
+        assert_eq!(with_poll.poll.expect("poll")["question"], json!("Lunch?"));
+        assert_eq!(
+            unseal_pending(db, &crate::api::seal::jobs::Target::All)
+                .await
+                .map_err(refusal)
+                .expect("unseal"),
+            2
+        );
+        assert_eq!(
+            num(db, "SELECT COUNT(*) FROM scheduled_messages WHERE body IS NULL AND (media_name = 'cat.png' AND media_alt = 'a cat' OR poll LIKE '%Lunch?%')").await,
+            2
+        );
+        assert_eq!(seal_pending(db).await.map_err(refusal).expect("seal"), 2);
+        temp.done(state).await;
+    }
 }

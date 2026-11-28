@@ -4,7 +4,7 @@
 
 import { isLate, scheduleProblem, SEND_FAILED, settleWait } from '../scheduled'
 import { b64u, bytesOf, randomBytes } from './canonical'
-import { isEventId } from './content'
+import { type Attachment, isAttachment, isEventId, LIMITS as EV } from './content'
 import type { P2pDatabase, ScheduledRecord } from './db'
 import { bodyTooLong, DmError, TOO_LONG_TEXT } from './dm'
 import { ServerError, SlowModeError } from './server/types'
@@ -45,7 +45,10 @@ export const readScheduled = (x: unknown): ScheduledRecord | null => {
   const r = x as Record<string, unknown>
   if (!text(r.id) || bytesOf(r.id, SCHEDULED_ID_LEN) === null) return null
   if (!text(r.key) || !parseDraftKey(r.key)) return null
-  if (!text(r.body) || !r.body.trim() || bodyTooLong(r.body)) return null
+  if (!text(r.body) || bodyTooLong(r.body)) return null
+  if (r.att !== undefined && !(Array.isArray(r.att) && r.att.every(isAttachment))) return null
+  const att = (r.att ?? []) as Attachment[]
+  if (att.length > EV.att || (!r.body.trim() && !att.length)) return null
   if (r.reply !== undefined && !isEventId(r.reply)) return null
   if (!time(r.at) || !time(r.next) || !time(r.created)) return null
   if (!STATES.includes(r.state as ScheduledRecord['state'])) return null
@@ -57,6 +60,7 @@ export const readScheduled = (x: unknown): ScheduledRecord | null => {
     key: r.key,
     body: r.body,
     ...(r.reply !== undefined ? { reply: r.reply as string } : {}),
+    ...(att.length ? { att } : {}),
     at: r.at,
     next: r.next,
     created: r.created,
@@ -74,7 +78,7 @@ export interface ScheduleDeps {
   db: P2pDatabase
   clock?: Clock
   // Sends `body` to the place of draft key `key` now: the event id, or throws why not.
-  post: (key: string, body: string, reply?: string) => Promise<string>
+  post: (key: string, body: string, reply?: string, att?: Attachment[]) => Promise<string>
   // Whether our own message `body` reached `key` at or after `since`: a send a closed tab cut off.
   sentSince: (key: string, body: string, since: number) => Promise<boolean>
   // The rows changed.
@@ -131,16 +135,18 @@ export class DeviceSchedule {
     if (!this.stopped) void this.serial(() => this.check())
   }
 
-  async add(key: string, m: { body: string; reply?: string; at: number }) {
+  async add(key: string, m: { body: string; reply?: string; at: number; att?: Attachment[] }) {
     if (!parseDraftKey(key)) throw new ScheduleError('Not available here')
     const problem = scheduleProblem(m.at, this.clock.now())
     if (problem) throw new ScheduleError(problem)
-    this.checkBody(m.body)
+    const att = m.att ?? []
+    this.checkBody(m.body, att.length > 0)
     const row: ScheduledRecord = {
       id: b64u(randomBytes(SCHEDULED_ID_LEN)),
       key,
       body: m.body,
       ...(m.reply && isEventId(m.reply) ? { reply: m.reply } : {}),
+      ...(att.length ? { att } : {}),
       at: m.at,
       next: m.at,
       created: this.clock.now(),
@@ -153,9 +159,14 @@ export class DeviceSchedule {
     return row
   }
 
-  edit(id: string, body: string) {
-    this.checkBody(body)
-    return this.change(id, r => (r.state === 'sending' ? null : { ...r, body }))
+  // New text; one that carries files may lose all of it.
+  async edit(id: string, body: string) {
+    if (bodyTooLong(body)) throw new ScheduleError(TOO_LONG_TEXT)
+    const done = await this.change(id, r =>
+      r.state === 'sending' || (!body.trim() && !r.att?.length) ? null : { ...r, body }
+    )
+    if (!done && !body.trim()) throw new ScheduleError('Type a message first')
+    return done
   }
 
   removeReply(id: string) {
@@ -191,8 +202,8 @@ export class DeviceSchedule {
     return this.serial(() => this.sendRow(id, true))
   }
 
-  private checkBody(body: string) {
-    if (!body.trim()) throw new ScheduleError('Type a message first')
+  private checkBody(body: string, files: boolean) {
+    if (!body.trim() && !files) throw new ScheduleError('Type a message first')
     if (bodyTooLong(body)) throw new ScheduleError(TOO_LONG_TEXT)
   }
 
@@ -280,7 +291,7 @@ export class DeviceSchedule {
     if (!r || !ok) return r?.state === 'sending' ? 'It is being sent' : null
     let error: string | null = null
     try {
-      await this.deps.post(r.key, r.body, r.reply)
+      await this.deps.post(r.key, r.body, r.reply, r.att)
       await this.settle(id, claim, null)
     } catch (e) {
       error = e instanceof Error ? e.message : SEND_FAILED

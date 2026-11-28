@@ -1,5 +1,5 @@
 // The `scheduled` store as the schedule reads and writes it. A row of a room or DM that stores
-// its events sealed keeps its body and reply in a device record (`box`); the rest of the row
+// its events sealed keeps its body, reply and files in a device record (`box`); the rest of the row
 // stays plain so the due index works. Rows are parsed here once, on their way out of the store.
 
 import type { P2pDatabase, ScheduledRecord, SealedScheduled, StoredScheduled } from './db'
@@ -30,20 +30,26 @@ export class ScheduledRows {
     if (room === null || typeof rest.id !== 'string') return null
     const inner = await this.sealing?.unbox(SCHEDULED_STORE, rest.id, room, box)
     if (typeof inner !== 'object' || inner === null) return null
-    const { body, reply } = inner as { body?: unknown; reply?: unknown }
-    return readScheduled({ ...rest, body, ...(reply !== undefined ? { reply } : {}) })
+    const { body, reply, att } = inner as { body?: unknown; reply?: unknown; att?: unknown }
+    return readScheduled({
+      ...rest,
+      body,
+      ...(reply !== undefined ? { reply } : {}),
+      ...(att !== undefined ? { att } : {}),
+    })
   }
 
   // The row as it is stored now: boxed while its room stores its events sealed.
   private async stored(r: ScheduledRecord): Promise<StoredScheduled> {
     const room = roomOf(r.key)
-    const { body, reply, ...rest } = r
+    const { body, reply, att, ...rest } = r
     const box =
       room === null
         ? null
         : await this.sealing?.box(SCHEDULED_STORE, r.id, room, {
             body,
             ...(reply !== undefined ? { reply } : {}),
+            ...(att !== undefined ? { att } : {}),
           })
     return box ? { ...rest, box } : r
   }

@@ -193,6 +193,14 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("member_profiles", "avatar_image TEXT"),
     ("servers", "icon_image TEXT"),
     ("scheduled_messages", "body {BYTES}"),
+    ("scheduled_messages", "media_id TEXT"),
+    (
+        "scheduled_messages",
+        "media_spoiler {INT} NOT NULL DEFAULT 0",
+    ),
+    ("scheduled_messages", "media_name TEXT"),
+    ("scheduled_messages", "media_alt TEXT"),
+    ("scheduled_messages", "poll TEXT"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -340,7 +348,9 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 70: the Change server profile permission, given to the stored @everyone permissions of every
 /// server.
 /// 71: sealed scheduled messages (`scheduled_messages.body`).
-pub const SCHEMA_VERSION: i64 = 71;
+/// 72: files and polls of scheduled messages (`scheduled_messages.media_id`, `media_spoiler`,
+/// `media_name`, `media_alt`, `poll`).
+pub const SCHEMA_VERSION: i64 = 72;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;
@@ -364,10 +374,11 @@ pub(super) const VIEW_MEMBERS_VERSION: i64 = 68;
 pub(super) const CHANGE_PROFILE_VERSION: i64 = 70;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
-pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 22] {
+pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 23] {
     [
         "CREATE INDEX IF NOT EXISTS idx_users_avatar_image ON users(avatar_image) WHERE avatar_image IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_member_profiles_avatar_image ON member_profiles(avatar_image) WHERE avatar_image IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_scheduled_media ON scheduled_messages(media_id) WHERE media_id IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_roles_position ON roles(server, position)",
         "CREATE INDEX IF NOT EXISTS idx_tokens_sso ON tokens(sso_provider, sso_sid) WHERE sso_sid IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_users_username_key ON users(username_key)",

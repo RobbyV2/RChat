@@ -48,6 +48,7 @@ import {
   type ScheduledSide,
   sortItems,
   stateText,
+  summaryOf,
   whenText,
   whenTitle,
 } from '../lib/scheduled'
@@ -295,7 +296,7 @@ function ScheduledRowView({
     getText: () => text,
     setText,
     save: () => {
-      if (!text.trim()) return
+      if (!text.trim() && !item.files.length) return
       void ops.edit(item.key, text).then(e => {
         setError(e)
         if (!e) onEdit(null)
@@ -319,7 +320,9 @@ function ScheduledRowView({
         </span>
         {!editing && item.state !== 'sending' && (
           <Row gap="3xs" place="shrink-0">
-            <IconButton icon={Pencil} label="Edit" size="sm" onClick={() => row.edit()} />
+            {item.poll === null && (
+              <IconButton icon={Pencil} label="Edit" size="sm" onClick={() => row.edit()} />
+            )}
             {item.state === 'paused' ? (
               <IconButton icon={Play} label="Resume" size="sm" onClick={run('scheduled_resume')} />
             ) : (
@@ -358,7 +361,7 @@ function ScheduledRowView({
         </Stack>
       ) : (
         <p className="min-w-0 truncate text-sm text-on-surface-variant">
-          <Masked text={previewText(item.body)} />
+          <Masked text={previewText(summaryOf(item))} />
         </p>
       )}
       {showPlace && (

@@ -98,6 +98,8 @@ describe('send later rows', () => {
         side: 'hosted',
         place: 'c1',
         body: 'hi',
+        files: [],
+        poll: null,
         reply: null,
         at: 1,
         next: 1,

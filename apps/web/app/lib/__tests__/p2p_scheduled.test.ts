@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { ManualClock, settle } from './p2p_net'
 import { b64u, randomBytes } from '../p2p/canonical'
+import type { Attachment } from '../p2p/content'
 import { P2pStore, type ScheduledRecord } from '../p2p/db'
 import { DmError } from '../p2p/dm'
+import { EMPTY_ROOT } from '../p2p/hashing'
 import {
   CHECK_MS,
   DeviceSchedule,
@@ -32,7 +34,7 @@ interface Rig {
   store: P2pStore
   sch: DeviceSchedule
   clock: ManualClock
-  posts: { key: string; body: string; reply?: string }[]
+  posts: { key: string; body: string; reply?: string; att?: Attachment[] }[]
   // What the next sends do, in order; a send past the list goes through.
   next: (() => Promise<string>)[]
   rows: () => Promise<ScheduledRecord[]>
@@ -46,8 +48,8 @@ const rig = async (over: Partial<ScheduleDeps> = {}, start = true): Promise<Rig>
   const sch = new DeviceSchedule({
     db: store.db,
     clock,
-    post: async (key, body, reply) => {
-      posts.push({ key, body, ...(reply ? { reply } : {}) })
+    post: async (key, body, reply, att) => {
+      posts.push({ key, body, ...(reply ? { reply } : {}), ...(att ? { att } : {}) })
       const step = next.shift()
       return step ? step() : 'event'
     },
@@ -285,6 +287,67 @@ describe('device schedule', () => {
     r.sch.poke()
     await settle()
     expect(r.posts).toEqual([])
+  })
+})
+
+const why = (p: Promise<unknown>) =>
+  p.then(
+    () => 'ok',
+    (e: Error) => e.message
+  )
+
+describe('scheduled files', () => {
+  const FILE: Attachment = {
+    h: EMPTY_ROOT,
+    size: 0,
+    blocks: 0,
+    name: 'notes.txt',
+    mime: 'text/plain',
+  }
+
+  test('files go out with the message, also without text', async () => {
+    const r = await rig()
+    await r.sch.add('room', { body: '', at: r.clock.now() + 5 * MIN, att: [FILE] })
+    expect(r.sch.list()[0].att).toEqual([FILE])
+    expect(await why(r.sch.add('room', { body: ' ', at: r.clock.now() + 5 * MIN }))).toBe(
+      'Type a message first'
+    )
+    await r.clock.advance(5 * MIN)
+    expect(r.posts).toEqual([{ key: 'room', body: '', att: [FILE] }])
+  })
+
+  test('an edit may clear the text of one that has files, never of one without', async () => {
+    const r = await rig()
+    const at = r.clock.now() + 5 * MIN
+    const withFile = await r.sch.add('room', { body: 'see this', at, att: [FILE] })
+    const plain = await r.sch.add('room', { body: 'words', at })
+    expect(await r.sch.edit(withFile.id, '')).toBe(true)
+    expect(await why(r.sch.edit(plain.id, ' '))).toBe('Type a message first')
+    expect(
+      r.sch
+        .list()
+        .map(x => x.body)
+        .sort()
+    ).toEqual(['', 'words'])
+  })
+
+  test('stored rows with files that are not files are never sent', async () => {
+    const r = await rig()
+    const row = await r.sch.add('room', { body: 'x', at: r.clock.now() + 5 * MIN, att: [FILE] })
+    expect(readScheduled({ ...row, att: [{ ...FILE, name: '' }] })).toBeNull()
+    expect(readScheduled({ ...row, att: 'nope' })).toBeNull()
+    expect(readScheduled({ ...row, body: '', att: [] })).toBeNull()
+    expect(readScheduled({ ...row, body: '' })?.att).toEqual([FILE])
+  })
+
+  test('a sealed room keeps the file names in the device record', async () => {
+    const r = await rig()
+    await r.store.sealing.setRoom('room', true)
+    await r.sch.add('room', { body: '', at: r.clock.now() + 5 * MIN, att: [FILE] })
+    const stored = (await r.store.sealing.stored.getAll('scheduled')) as unknown[]
+    expect(JSON.stringify(stored)).not.toContain('notes.txt')
+    expect(stored.every(isSealedScheduled)).toBe(true)
+    expect(r.sch.list()[0].att).toEqual([FILE])
   })
 })
 

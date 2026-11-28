@@ -744,7 +744,8 @@ const hosted = (account: AccountSession): Composer =>
           reply: reply ? { id: String(reply.message.id), mention: reply.mention } : null,
           blocked: laterBlocked({
             text,
-            rich: !!st.pending[key] || st.forwardClip !== null || ui.busy,
+            rich: st.forwardClip !== null || ui.busy || st.pending[key]?.mode === 'p2p',
+            files: !!st.pending[key],
             tooLong: charCount(text) > max,
             on: st.settings.scheduled_messages,
             cap: limitsOf(st.instance).scheduled_per_account,
@@ -1054,7 +1055,12 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
       if (key === null) return null
       const reply = st.replying?.room === key ? st.replying.id : undefined
       const body = outgoing(place.account.store.getState().linkPrefs, text)
-      return app.p2pScheduled.add(key, { body, reply, at, draft: text })
+      // The files being attached stay on this device until the message is sent.
+      const att = await app.p2pFiles.stage(key, body)
+      if (att === null) return null
+      const error = await app.p2pScheduled.add(key, { body, reply, at, draft: text, att })
+      if (!error && att.length) app.p2pFiles.clear(key)
+      return error
     }
     // When each key last said it is typing; the place wants to hear it again only so often.
     const said = new Map<string, number>()
@@ -1180,9 +1186,8 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
           blocked: laterBlocked({
             text,
             rich:
-              (st.attaching[key]?.length ?? 0) > 0 ||
-              place.account.store.getState().forwardClip !== null ||
-              ui.busy,
+              place.account.store.getState().forwardClip !== null || ui.busy || getFiles().stuck,
+            files: (st.attaching[key]?.length ?? 0) > 0,
             tooLong: charCount(text) > max || bodyTooLong(text),
             on: app.p2pScheduled.here(),
             cap: 0,

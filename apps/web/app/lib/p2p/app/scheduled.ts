@@ -1,4 +1,5 @@
 import { type ScheduledItem, type ScheduledLabel, whenText } from '../../scheduled'
+import type { Attachment } from '../content'
 import type { P2pStore, ScheduledRecord } from '../db'
 import { DeviceSchedule, parseDraftKey, ScheduleError } from '../scheduled'
 import type { IdentityScope, P2pParts } from './scope'
@@ -41,6 +42,8 @@ export function createScheduledPart(parts: Pick<P2pParts, 'store' | 'dms'>, scop
     side: 'device',
     place: r.key,
     body: r.body,
+    files: (r.att ?? []).map(a => a.name),
+    poll: null,
     reply: r.reply ?? null,
     at: r.at,
     next: r.next,
@@ -97,7 +100,7 @@ export function createScheduledPart(parts: Pick<P2pParts, 'store' | 'dms'>, scop
     if (state.scheduled) return
     const sch = new DeviceSchedule({
       db: s.db,
-      post: (key, body, reply) => parts.dms.p2pDm.post(key, body, { reply }),
+      post: (key, body, reply, att) => parts.dms.p2pDm.post(key, body, { reply, att }),
       sentSince: (key, body, since) => sentSince(s, me, key, body, since),
       onChange: publish,
     })
@@ -144,9 +147,12 @@ export function createScheduledPart(parts: Pick<P2pParts, 'store' | 'dms'>, scop
   }
 
   const p2pScheduled = {
-    // Schedules `body` for `at` (ms) at a draft key; the draft (still `draft`, as typed) and the
-    // reply bar clear.
-    async add(key: string, m: { body: string; reply?: string; at: number; draft?: string }) {
+    // Schedules `body` for `at` (ms) at a draft key, with the files `att` this device keeps; the
+    // draft (still `draft`, as typed) and the reply bar clear.
+    async add(
+      key: string,
+      m: { body: string; reply?: string; at: number; draft?: string; att?: Attachment[] }
+    ) {
       const { draft = m.body, ...row } = m
       const error = await attempt(sch => sch.add(key, row))
       if (error || !scope.current()) return error

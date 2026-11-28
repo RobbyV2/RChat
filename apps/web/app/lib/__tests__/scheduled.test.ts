@@ -22,6 +22,7 @@ import {
   SLOW_FAILED,
   sortItems,
   stateText,
+  summaryOf,
   WAITING_SLOW,
   whenText,
   type ScheduledItem,
@@ -173,6 +174,8 @@ const item = (over: Partial<ScheduledItem>): ScheduledItem => ({
   side: 'hosted',
   place: 'c1',
   body: 'hi',
+  files: [],
+  poll: null,
   reply: null,
   at: 100,
   next: 100,
@@ -181,6 +184,14 @@ const item = (over: Partial<ScheduledItem>): ScheduledItem => ({
   deferred: false,
   label: null,
   ...over,
+})
+
+describe('what a row shows', () => {
+  test('the text, else the poll, else the files', () => {
+    expect(summaryOf({ body: 'hi', files: ['a.png'], poll: null })).toBe('hi')
+    expect(summaryOf({ body: ' ', files: [], poll: 'Lunch?' })).toBe('Poll: Lunch?')
+    expect(summaryOf({ body: '', files: ['a.png', 'b.txt'], poll: null })).toBe('a.png, b.txt')
+  })
 })
 
 describe('list state', () => {
@@ -253,6 +264,8 @@ describe('hosted rows', () => {
       side: 'hosted',
       place: 'c3',
       body: 'later',
+      files: [],
+      poll: null,
       reply: null,
       at: 2_000_000,
       next: 2_000_000,
@@ -299,6 +312,7 @@ describe('send later on a draft', () => {
     expect(laterBlocked(base)).toBeNull()
     expect(laterBlocked({ ...base, rich: true, text: '' })).toBe(BLOCKED.text)
     expect(laterBlocked({ ...base, text: '  ' })).toBe(BLOCKED.empty)
+    expect(laterBlocked({ ...base, text: '  ', files: true })).toBeNull()
     expect(laterBlocked({ ...base, tooLong: true })).toBe(BLOCKED.long)
     expect(laterBlocked({ ...base, on: false })).toBe(BLOCKED.off)
     expect(laterBlocked({ ...base, waiting: 100 })).toBe('You have 100 waiting')

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { ManualTime } from './helpers/test_clock'
-import type { ScheduledQuery, ScheduleReq } from '../api'
+import type { PollReq, ScheduledQuery, ScheduleReq } from '../api'
 import type { AccountSession } from '../client/session'
 import { hostedTarget, scheduledInitial, scheduledSlice } from '../scheduled_store'
 import type { RChatState } from '../store_types'
@@ -38,12 +38,16 @@ const rig = () => {
     listed: ScheduledQuery[]
     created: ScheduleReq[]
     patched: [number, { resume?: boolean }][]
-  } = { listed: [], created: [], patched: [] }
+    uploaded: [string, string | null][]
+  } = { listed: [], created: [], patched: [], uploaded: [] }
   const toasts: [string, string | undefined][] = []
   const pages: ScheduledPage[] = []
   let state = {
     me: { username: 'alice' },
     drafts: { c3: 'see you' } as Record<string, string>,
+    pending: {},
+    instance: null,
+    panel: null,
     replying: {
       c3: { message: { id: 42 } as Message, mention: false },
     } as RChatState['replying'],
@@ -70,7 +74,20 @@ const rig = () => {
     },
     createScheduled: async (req: ScheduleReq) => {
       calls.created.push(req)
-      return row({ id: 9, content: req.content, at: req.at, reply_to: req.reply_to ?? null })
+      return row({
+        id: 9,
+        content: req.content,
+        at: req.at,
+        reply_to: req.reply_to ?? null,
+        media: req.media_id
+          ? { id: req.media_id, filename: 'cat.png', spoiler: !!req.media_spoiler, alt: null }
+          : null,
+        poll: req.poll ?? null,
+      })
+    },
+    uploadMedia: async (file: File, place: string | null) => {
+      calls.uploaded.push([file.name, place])
+      return { id: 'f00d' }
     },
   }
   const acct = {
@@ -88,7 +105,16 @@ const rig = () => {
     toast: (text, name) => toasts.push([text, name]),
     errorText: e => (e instanceof Error ? e.message : String(e)),
   })
-  return { slice, calls, toasts, pages, get: () => state }
+  return {
+    slice,
+    calls,
+    toasts,
+    pages,
+    get: () => state,
+    set: (p: Partial<RChatState>) => {
+      state = { ...state, ...p }
+    },
+  }
 }
 
 describe('hosted scheduled messages', () => {
@@ -111,6 +137,48 @@ describe('hosted scheduled messages', () => {
     expect(r.get().scheduled.pages.c3).toBeNull()
     await r.slice.actions.loadScheduled('c3', true)
     expect(r.calls.listed.length).toBe(2)
+  })
+
+  test('a file being attached is uploaded for its place and goes with the row', async () => {
+    const r = rig()
+    const file = new File(['x'], 'cat.png', { type: 'image/png' })
+    r.set({
+      drafts: { c3: '' },
+      replying: {},
+      pending: { c3: { file, spoiler: true, mode: 'server', scope: 'c3', alt: ' a cat ' } },
+    })
+    expect(await r.slice.actions.scheduleDraft('c3', 2_000_000)).toBeNull()
+    expect(r.calls.uploaded).toEqual([['cat.png', 'c:3']])
+    const { at: _at, reply_to: _reply, mention_reply: _mention, ...sent } = r.calls.created[0]
+    expect(sent).toEqual({
+      channel_id: 3,
+      content: '',
+      media_id: 'f00d',
+      media_spoiler: true,
+      media_alt: 'a cat',
+    })
+    expect(r.get().pending).toEqual({})
+    expect(r.get().scheduled.items['h:9'].files).toEqual(['cat.png'])
+  })
+
+  test('a file this device would serve is not scheduled', async () => {
+    const r = rig()
+    const file = new File(['x'], 'cat.png')
+    r.set({ pending: { c3: { file, spoiler: false, mode: 'p2p', scope: 'c3' } } })
+    expect(await r.slice.actions.scheduleDraft('c3', 2_000_000)).toBe('Not available here')
+    expect(r.calls.uploaded).toEqual([])
+    expect(r.calls.created).toEqual([])
+  })
+
+  test('a poll is scheduled in its place', async () => {
+    const r = rig()
+    const poll = { question: 'Lunch?', options: [{ text: 'Yes' }, { text: 'No' }] } as PollReq
+    expect(
+      await r.slice.actions.schedulePoll({ kind: 'thread', id: 7 }, poll, 2_000_000)
+    ).toBeNull()
+    expect(r.calls.created[0]).toEqual({ thread_root_id: 7, content: '', poll, at: 2000 })
+    expect(r.get().scheduled.items['h:9'].poll).toBe('Lunch?')
+    expect(r.toasts.length).toBe(1)
   })
 
   test('resuming a paused one asks the site and shows it waiting again', async () => {

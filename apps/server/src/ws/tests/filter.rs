@@ -340,6 +340,8 @@ fn scheduled_sample() -> crate::api::scheduled::ScheduledMessage {
         reply_to: None,
         mention_reply: true,
         content: s("later"),
+        media: None,
+        poll: None,
         at: 100,
         next_at: 100,
         status: crate::api::scheduled::ScheduledStatus::Waiting,

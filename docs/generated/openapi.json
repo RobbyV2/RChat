@@ -9148,7 +9148,7 @@
           "Scheduled messages"
         ],
         "summary": "List your scheduled messages",
-        "description": "Your messages waiting to be sent, being sent and failed, soonest first, 50 at a time, with\nhow many wait and how many failed. `place` names each place you can still open, through the\nsame access checks as reading it; it is `null` for the rest. Sent messages are not listed.\nRequires a bearer token. General rate-limit bucket.",
+        "description": "Your messages waiting to be sent, being sent, failed and paused, soonest first, 50 at a time,\nwith how many wait and how many failed or are paused. `place` names each place you can still open, through the\nsame access checks as reading it; it is `null` for the rest. Sent messages are not listed.\nRequires a bearer token. General rate-limit bucket.",
         "operationId": "list_scheduled",
         "parameters": [
           {
@@ -9166,7 +9166,7 @@
           {
             "name": "status",
             "in": "query",
-            "description": "Only `waiting` ones (with those being sent) or only `failed` ones.",
+            "description": "Only `waiting` ones (with those being sent) or only `failed` ones (with the paused).",
             "required": false,
             "schema": {
               "type": [
@@ -9494,7 +9494,7 @@
           "Scheduled messages"
         ],
         "summary": "Edit a scheduled message",
-        "description": "Changes the text or the time of one of your messages that waits or failed, or makes it a\nplain message instead of a reply. A new time makes a failed message wait again, and then it\ncounts against `SCHEDULED_PER_ACCOUNT`. In channels and threads the profanity filter checks\nnew text when it is on. Works while the `scheduled_messages` switch is off. Requires a bearer\ntoken. Emits `scheduled_updated` to your own connections. General rate-limit bucket.",
+        "description": "Changes the text or the time of one of your messages that waits, failed or is paused, or\nmakes it a plain message instead of a reply. A new time makes a failed or paused message\nwait again, and so does `resume` for a paused one; it then counts against\n`SCHEDULED_PER_ACCOUNT`. Messages are paused when every session of the account is ended\n(a password change or reset, signing out everywhere, a temporary password, a suspension):\nnothing is sent until you resume them. In channels and threads the profanity filter checks\nnew text when it is on. Works while the `scheduled_messages` switch is off. Requires a bearer\ntoken. Emits `scheduled_updated` to your own connections. General rate-limit bucket.",
         "operationId": "update_scheduled",
         "parameters": [
           {
@@ -9539,7 +9539,7 @@
             }
           },
           "400": {
-            "description": "With reason `invalid`: a time out of range (field `at`) or `Message is empty` (field `content`). Text over `limits.message_chars` characters or blocked by the profanity filter. `You can have at most 100 scheduled messages waiting` (reason `limit`, control `scheduled_per_account`) for a failed message given a new time. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors; or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
+            "description": "With reason `invalid`: a time out of range (field `at`) or `Message is empty` (field `content`). Text over `limits.message_chars` characters or blocked by the profanity filter. `You can have at most 100 scheduled messages waiting` (reason `limit`, control `scheduled_per_account`) for a failed or paused message that waits again. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors; or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -9697,7 +9697,7 @@
             }
           },
           "409": {
-            "description": "`It is being sent` or `It was already sent` (reason `conflict`)",
+            "description": "`It is being sent`, `It was already sent` or `It is paused. Resume it first` (reason `conflict`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -35963,7 +35963,7 @@
           },
           "content": {
             "type": "string",
-            "description": "Its text: not blank, at most `limits.message_chars` characters.",
+            "description": "Its text, at most `limits.message_chars` characters: not blank, unless it carries a file\nor a poll.",
             "example": "Standup in 5 minutes"
           },
           "dm_id": {
@@ -35974,10 +35974,42 @@
             "format": "int64",
             "description": "A DM conversation to send it in."
           },
+          "media_alt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With `media_id`: a description of the image, as `SendReq.media_alt`."
+          },
+          "media_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A file of yours from `POST /api/v1/media` to send with it, as `SendReq.media_id`. It is\nkept until the message is sent, and its time before it expires starts then."
+          },
+          "media_spoiler": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "With `media_id`: send it behind a spoiler."
+          },
           "mention_reply": {
             "type": "boolean",
             "description": "With `reply_to`: ping the quoted message's author. Defaults to `true`.",
             "default": true
+          },
+          "poll": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PollReq",
+                "description": "A poll to post, as `SendReq.poll`; `content` is ignored then. Not with `media_id`."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "reply_to": {
             "type": [
@@ -35994,6 +36026,36 @@
             ],
             "format": "int64",
             "description": "The root message of a thread to reply in."
+          }
+        }
+      },
+      "ScheduledMedia": {
+        "type": "object",
+        "description": "The uploaded file of a scheduled message.",
+        "required": [
+          "id",
+          "filename",
+          "spoiler"
+        ],
+        "properties": {
+          "alt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The description of the image."
+          },
+          "filename": {
+            "type": "string",
+            "description": "Its name."
+          },
+          "id": {
+            "type": "string",
+            "description": "The file's id, from `POST /api/v1/media`."
+          },
+          "spoiler": {
+            "type": "boolean",
+            "description": "Whether it is sent behind a spoiler."
           }
         }
       },
@@ -36054,6 +36116,17 @@
             "format": "int64",
             "description": "Its id."
           },
+          "media": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ScheduledMedia",
+                "description": "The uploaded file it carries."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "mention_reply": {
             "type": "boolean",
             "description": "With `reply_to`: whether the reply pings the quoted message's author."
@@ -36068,6 +36141,17 @@
               {
                 "$ref": "#/components/schemas/ScheduledPlace",
                 "description": "Names of its place you can open now; `null` when you can't open it, and in events."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "poll": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PollReq",
+                "description": "Its poll, as it was given."
               },
               {
                 "type": "null"
@@ -36118,7 +36202,7 @@
           "failed": {
             "type": "integer",
             "format": "int64",
-            "description": "How many failed, with `scope` only there."
+            "description": "How many failed or are paused, with `scope` only there."
           },
           "items": {
             "type": "array",
@@ -36151,7 +36235,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "A new time (unix seconds), as for scheduling. A failed message waits again."
+            "description": "A new time (unix seconds), as for scheduling. A failed or paused message waits again."
           },
           "content": {
             "type": [
@@ -36163,6 +36247,10 @@
           "remove_reply": {
             "type": "boolean",
             "description": "`true` makes it a plain message instead of a reply."
+          },
+          "resume": {
+            "type": "boolean",
+            "description": "`true` makes a paused message wait for its time again; one whose time passed is sent\nright away. Other messages stay as they are."
           }
         }
       },
@@ -36206,11 +36294,12 @@
       },
       "ScheduledStatus": {
         "type": "string",
-        "description": "Where a scheduled message is: `waiting` for its time (also while slow mode holds it, with\n`error` saying so), `sending` right now, or `failed` with `error` saying why.",
+        "description": "Where a scheduled message is: `waiting` for its time (also while slow mode holds it, with\n`error` saying so), `sending` right now, `failed` with `error` saying why, or `paused`: held\nback since the account's sessions were ended, until its owner resumes it.",
         "enum": [
           "waiting",
           "sending",
-          "failed"
+          "failed",
+          "paused"
         ]
       },
       "SealJob": {

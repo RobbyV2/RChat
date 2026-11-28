@@ -4,7 +4,11 @@ import type { AccountSession } from './client/session'
 // The store's hosted scheduled messages: the list the instance keeps for this account, its
 // actions and the `scheduled_updated` and `scheduled_removed` events, kept apart from store.ts.
 
-import type { ScheduleReq } from './api'
+import { altToSend } from './alt_text'
+import type { PollReq, ScheduleReq } from './api'
+import { uploadPlace } from './attachments'
+import { limitsOf, tooLargeText } from './instance_limits'
+import type { PollTarget } from './polls_store'
 import type { Cancel } from './clock'
 import {
   applyHosted,
@@ -103,6 +107,24 @@ export const scheduledSlice = (d: ScheduledDeps) => {
     })
   }
 
+  // Uploads the file being attached, for the place it will be posted in, and answers the
+  // fields that carry it.
+  const uploaded = async (pending: NonNullable<RChatState['pending'][string]>) => {
+    const max = limitsOf(get().instance).upload_bytes
+    if (pending.file.size > max) throw new Error(tooLargeText(max))
+    const place = uploadPlace(pending.scope, root => {
+      const panel = get().panel
+      return panel?.kind === 'thread' && panel.root.id === root ? panel.root.channel_id : null
+    })
+    const file = await api.uploadMedia(pending.file, place)
+    const media_alt = altToSend(pending.alt)
+    return {
+      media_id: file.id,
+      media_spoiler: pending.spoiler,
+      ...(media_alt ? { media_alt } : {}),
+    }
+  }
+
   const run = async (call: () => Promise<unknown>): Promise<string | null> => {
     try {
       await live(call())
@@ -144,18 +166,26 @@ export const scheduledSlice = (d: ScheduledDeps) => {
       const raw = s.drafts[key] ?? ''
       const content = shape(raw)
       const reply = s.replying[key]
-      if (!place) return 'Not available here'
+      const pending = s.pending[key]
+      if (!place || pending?.mode === 'p2p') return 'Not available here'
       try {
         const row = await live(
-          api.createScheduled({
-            ...place,
-            content,
-            reply_to: reply?.message.id,
-            mention_reply: reply ? reply.mention : undefined,
-            at: Math.ceil(at / 1000),
-          })
+          (async () =>
+            api.createScheduled({
+              ...place,
+              content,
+              ...(pending ? await uploaded(pending) : {}),
+              reply_to: reply?.message.id,
+              mention_reply: reply ? reply.mention : undefined,
+              at: Math.ceil(at / 1000),
+            }))()
         )
         patch(h => ({ ...h, items: { ...h.items, [hostedKey(row.id)]: fromHosted(row) } }))
+        if (pending && get().pending[key] === pending)
+          set(st => {
+            const { [key]: _sent, ...rest } = st.pending
+            return { pending: rest }
+          })
         if ((get().drafts[key] ?? '') === raw) get().setDraft(key, '')
         if (get().replying[key] === reply) get().cancelReply(key)
         d.toast(`Scheduled for ${whenText(at, acct.time.now())}`)
@@ -164,6 +194,24 @@ export const scheduledSlice = (d: ScheduledDeps) => {
         return d.errorText(e)
       }
     },
+    // Schedules a poll for `at` (ms) in `target`.
+    schedulePoll: (target: PollTarget, poll: PollReq, at: number): Promise<string | null> =>
+      run(async () => {
+        const place =
+          target.kind === 'channel'
+            ? { channel_id: target.id }
+            : target.kind === 'dm'
+              ? { dm_id: target.id }
+              : { thread_root_id: target.id }
+        const row = await api.createScheduled({
+          ...place,
+          content: '',
+          poll,
+          at: Math.ceil(at / 1000),
+        })
+        patch(h => ({ ...h, items: { ...h.items, [hostedKey(row.id)]: fromHosted(row) } }))
+        d.toast(`Scheduled for ${whenText(at, acct.time.now())}`)
+      }),
     editScheduled: (key: string, content: string) =>
       run(async () => {
         const row = await api.patchScheduled(idOf(key), { content })

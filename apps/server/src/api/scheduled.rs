@@ -141,6 +141,13 @@ pub struct ScheduledMessage {
     pub mention_reply: bool,
     /// Its text.
     pub content: String,
+    /// The uploaded file it carries.
+    #[serde(default)]
+    pub media: Option<ScheduledMedia>,
+    /// Its poll, as it was given.
+    #[serde(default)]
+    #[schema(value_type = Option<crate::api::polls::PollReq>)]
+    pub poll: Option<serde_json::Value>,
     /// When it is sent (unix seconds), as you picked it.
     pub at: i64,
     /// When the server looks at it next (unix seconds): `at`, or later while slow mode holds it
@@ -156,6 +163,19 @@ pub struct ScheduledMessage {
     pub created_at: i64,
     /// When it last changed.
     pub updated_at: i64,
+}
+
+/// The uploaded file of a scheduled message.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ScheduledMedia {
+    /// The file's id, from `POST /api/v1/media`.
+    pub id: String,
+    /// Its name.
+    pub filename: String,
+    /// Whether it is sent behind a spoiler.
+    pub spoiler: bool,
+    /// The description of the image.
+    pub alt: Option<String>,
 }
 
 /// A message to schedule. Give exactly one of `channel_id`, `dm_id` and `thread_root_id`.
@@ -177,9 +197,24 @@ pub struct ScheduleReq {
     #[serde(default = "yes")]
     #[schema(default = true)]
     pub(crate) mention_reply: bool,
-    /// Its text: not blank, at most `limits.message_chars` characters.
+    /// Its text, at most `limits.message_chars` characters: not blank, unless it carries a file
+    /// or a poll.
     #[schema(example = "Standup in 5 minutes")]
     pub(crate) content: String,
+    /// A file of yours from `POST /api/v1/media` to send with it, as `SendReq.media_id`. It is
+    /// kept until the message is sent, and its time before it expires starts then.
+    #[serde(default)]
+    pub(crate) media_id: Option<String>,
+    /// With `media_id`: send it behind a spoiler.
+    #[serde(default)]
+    pub(crate) media_spoiler: Option<bool>,
+    /// With `media_id`: a description of the image, as `SendReq.media_alt`.
+    #[serde(default)]
+    pub(crate) media_alt: Option<String>,
+    /// A poll to post, as `SendReq.poll`; `content` is ignored then. Not with `media_id`.
+    #[serde(default)]
+    #[schema(value_type = Option<crate::api::polls::PollReq>)]
+    pub(crate) poll: Option<serde_json::Value>,
     /// When to send it (unix seconds): at least 60 seconds and at most 365 days from now.
     pub(crate) at: i64,
 }
@@ -255,10 +290,46 @@ pub(crate) async fn finish_in(
         .execute(&mut **tx)
         .await?
         .rows_affected();
-    match n {
-        0 => Err(being_sent()),
-        _ => Ok(()),
+    if n == 0 {
+        return Err(being_sent());
     }
+    restart_file(tx, *id, message_id, t).await?;
+    Ok(())
+}
+
+/// The time before the file of the scheduled message `id` expires starts when its message is
+/// stored, in that transaction: the file waited with its message, and a send that stores
+/// nothing moves no time.
+async fn restart_file(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    id: i64,
+    message_id: i64,
+    t: i64,
+) -> sqlx::Result<()> {
+    let held = sqlx::query("SELECT m.id, m.uploaded_at FROM media m JOIN scheduled_messages s ON s.media_id = m.id WHERE s.id = $1")
+        .bind(id)
+        .fetch_optional(&mut **tx)
+        .await?;
+    let Some(held) = held else {
+        return Ok(());
+    };
+    let media: String = held.try_get(0)?;
+    let waited = t - held.try_get::<i64, _>(1)?;
+    if waited <= 0 {
+        return Ok(());
+    }
+    sqlx::query("UPDATE media SET uploaded_at = $1 WHERE id = $2")
+        .bind(t)
+        .bind(&media)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("UPDATE messages SET media_expires_at = media_expires_at + $1 WHERE id = $2 AND media_id = $3 AND media_expires_at IS NOT NULL")
+        .bind(waited)
+        .bind(message_id)
+        .bind(&media)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
 }
 
 /// Pauses the messages `username` scheduled that wait for their time or are being sent, inside
@@ -353,7 +424,7 @@ async fn gate(db: &Db, user: &User, to: SendTo) -> Result<Spot, ApiError> {
 
 mod stored;
 
-use stored::{Text, Texts, UNREADABLE};
+use stored::{Draft, Text, Texts, UNREADABLE};
 pub(crate) use stored::{seal_pending, still_sealed, unseal_pending};
 
 fn unreadable() -> ApiError {
@@ -369,6 +440,8 @@ struct Entry {
     reply_to: Option<i64>,
     mention_reply: bool,
     content: Text,
+    media_id: Option<String>,
+    media_spoiler: bool,
     due_at: i64,
     next_at: i64,
     status: Stored,
@@ -378,7 +451,7 @@ struct Entry {
     updated_at: i64,
 }
 
-const ROW_COLS: &str = "id, username, channel_id, dm_id, thread_root_id, reply_to, mention_reply, content, due_at, next_at, status, error, attempts, created_at, updated_at, body";
+const ROW_COLS: &str = "id, username, channel_id, dm_id, thread_root_id, reply_to, mention_reply, content, due_at, next_at, status, error, attempts, created_at, updated_at, body, media_id, media_spoiler, media_name, media_alt, poll";
 const BODY_AT: usize = 15;
 
 /// A stored row; `None` for one whose status this build doesn't know, which is never listed
@@ -392,12 +465,18 @@ fn row_from(r: &AnyRow, texts: &Texts) -> sqlx::Result<Option<Entry>> {
     let channel_id: Option<i64> = r.try_get(2)?;
     let dm_id: Option<i64> = r.try_get(3)?;
     let body: Option<Vec<u8>> = r.try_get(BODY_AT)?;
+    let plain = Draft {
+        content: r.try_get(7)?,
+        media_name: r.try_get(18)?,
+        media_alt: r.try_get(19)?,
+        poll: r.try_get(20)?,
+    };
     let content = texts.open(
         id,
         Scope::of(channel_id, dm_id),
         &username,
         body.as_deref(),
-        r.try_get(7)?,
+        plain,
     );
     Ok(Some(Entry {
         id,
@@ -408,6 +487,8 @@ fn row_from(r: &AnyRow, texts: &Texts) -> sqlx::Result<Option<Entry>> {
         reply_to: r.try_get(5)?,
         mention_reply: r.try_get::<i64, _>(6)? != 0,
         content,
+        media_id: r.try_get(16)?,
+        media_spoiler: r.try_get::<i64, _>(17)? != 0,
         due_at: r.try_get(8)?,
         next_at: r.try_get(9)?,
         status,
@@ -437,7 +518,31 @@ impl Entry {
         }
     }
 
+    /// The request that sends this row, when what it says can be read.
+    fn request(&self) -> Option<SendReq> {
+        let Draft {
+            content,
+            media_name: _,
+            media_alt,
+            poll,
+        } = self.content.read()?.clone();
+        Some(SendReq {
+            mention_reply: self.mention_reply,
+            media_id: self.media_id.clone(),
+            media_spoiler: self.media_id.as_ref().map(|_| self.media_spoiler),
+            media_alt,
+            poll: poll.and_then(|json| serde_json::from_str(&json).ok()),
+            ..SendReq::text(content, self.reply_to)
+        })
+    }
+
     fn shown(&self, place: Option<ScheduledPlace>) -> Option<ScheduledMessage> {
+        let Draft {
+            content,
+            media_name,
+            media_alt,
+            poll,
+        } = self.content.shown();
         Some(ScheduledMessage {
             id: self.id,
             scope: self.scope(),
@@ -446,7 +551,14 @@ impl Entry {
             thread_root_id: self.thread_root_id,
             reply_to: self.reply_to,
             mention_reply: self.mention_reply,
-            content: self.content.shown(),
+            content,
+            media: self.media_id.clone().map(|id| ScheduledMedia {
+                id,
+                filename: media_name.unwrap_or_default(),
+                spoiler: self.media_spoiler,
+                alt: media_alt,
+            }),
+            poll: poll.and_then(|json| serde_json::from_str(&json).ok()),
             at: self.due_at,
             next_at: self.next_at,
             status: self.status.shown()?,
@@ -513,11 +625,58 @@ fn check_at(at: i64, t: i64) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn check_content(state: &AppState, content: &str) -> Result<(), ApiError> {
-    if content.trim().is_empty() {
+/// Checks new text; `carried`: the row has a file or a poll, so the text may be blank.
+fn check_content(state: &AppState, content: &str, carried: bool) -> Result<(), ApiError> {
+    if content.trim().is_empty() && !carried {
         return Err(ApiError::invalid("Message is empty", "content"));
     }
     check_len(content, state.limits.message_max_chars, "Message")
+}
+
+fn bad(text: &str) -> ApiError {
+    ApiError(StatusCode::BAD_REQUEST, text.to_string(), None)
+}
+
+/// The file `id` as a scheduled message of `username` may carry it: their own upload that no
+/// message and no other scheduled message has. Answers its name. Runs in the transaction that
+/// stores the row.
+async fn file_name(
+    db: &Db,
+    conn: &mut sqlx::AnyConnection,
+    id: &str,
+    username: &str,
+) -> Result<String, ApiError> {
+    let row =
+        sqlx::query("SELECT uploader, filename, seal_key, name_sealed FROM media WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&mut *conn)
+            .await?
+            .ok_or_else(|| bad("Unknown media"))?;
+    if row.try_get::<Option<String>, _>(0)?.as_deref() != Some(username) {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            "You can only attach files you uploaded".to_string(),
+            None,
+        ));
+    }
+    let taken: i64 = sqlx::query_scalar("SELECT (SELECT COUNT(*) FROM messages WHERE media_id = $1 AND media_kind = 'server') + (SELECT COUNT(*) FROM scheduled_messages WHERE media_id = $1 AND status <> 'sent')")
+        .bind(id)
+        .fetch_one(&mut *conn)
+        .await?;
+    if taken > 0 {
+        return Err(bad("This file is already attached to a message"));
+    }
+    let record: Option<Vec<u8>> = row.try_get(3)?;
+    let facts = crate::api::media::sealed::facts_on(
+        db,
+        conn,
+        id,
+        row.try_get(1)?,
+        row.try_get(2)?,
+        record.as_deref(),
+    )
+    .await?;
+    Ok(facts.name)
 }
 
 fn cap_text(most: i64) -> String {
@@ -774,10 +933,15 @@ pub(crate) async fn create_at(
         reply_to,
         mention_reply,
         content,
+        media_id,
+        media_spoiler,
+        media_alt,
+        poll,
         at,
     } = req;
     let db = &state.db;
-    if !Settings::cached(db).await.on(Feature::ScheduledMessages) {
+    let settings = Settings::cached(db).await;
+    if !settings.on(Feature::ScheduledMessages) {
         return Err(ApiError::off_site(
             StatusCode::FORBIDDEN,
             TURNED_OFF,
@@ -785,7 +949,7 @@ pub(crate) async fn create_at(
         ));
     }
     check_at(at, t)?;
-    check_content(state, &content)?;
+    check_content(state, &content, media_id.is_some() || poll.is_some())?;
     let to = match (channel_id, dm_id, thread_root_id) {
         (Some(id), None, None) => SendTo::Channel(id),
         (None, Some(id), None) => SendTo::Dm(id),
@@ -797,7 +961,42 @@ pub(crate) async fn create_at(
     if spot.channel_id.is_some() {
         check_profanity(db, ProfanityTarget::Messages, &content).await?;
     }
-    let id = insert(state, user, &spot, reply_to, mention_reply, &content, at, t).await?;
+    let in_channel = spot.channel_id.is_some();
+    let poll = match poll {
+        Some(_) if media_id.is_some() => return Err(bad("Polls cannot have attachments")),
+        Some(given) => {
+            let req = serde_json::from_value(given.clone())
+                .map_err(|_| ApiError::invalid("Invalid poll", "poll"))?;
+            crate::api::polls::validate(req, in_channel.then_some(&settings))?;
+            Some(given.to_string())
+        }
+        None => None,
+    };
+    let media_alt = crate::api::alt_text::alt_to_store(
+        &settings,
+        media_alt.as_deref(),
+        media_id.is_some(),
+        in_channel,
+    )?;
+    let draft = Draft {
+        content,
+        media_name: None,
+        media_alt,
+        poll,
+    };
+    let file = media_id.map(|id| (id, media_spoiler.unwrap_or(false)));
+    let id = insert(
+        state,
+        user,
+        &spot,
+        reply_to,
+        mention_reply,
+        draft,
+        file,
+        at,
+        t,
+    )
+    .await?;
     let row = load(db, id).await?.ok_or_else(not_found)?;
     updated(state, &row);
     answer(db, user, row).await
@@ -810,7 +1009,8 @@ async fn insert(
     spot: &Spot,
     reply_to: Option<i64>,
     mention_reply: bool,
-    content: &str,
+    draft: Draft,
+    file: Option<(String, bool)>,
     at: i64,
     t: i64,
 ) -> Result<i64, ApiError> {
@@ -823,7 +1023,15 @@ async fn insert(
     } = spot;
     let mut tx = write_tx(&state.db).await?;
     room_for(&mut tx, state, &user.username).await?;
-    let id: i64 = sqlx::query("INSERT INTO scheduled_messages(username, server, channel_id, dm_id, thread_root_id, reply_to, mention_reply, content, due_at, next_at, created_at, updated_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, $10) RETURNING id")
+    let media_name = match &file {
+        Some((media, _)) => Some(file_name(&state.db, &mut tx, media, &user.username).await?),
+        None => None,
+    };
+    let draft = Draft {
+        media_name,
+        ..draft
+    };
+    let id: i64 = sqlx::query("INSERT INTO scheduled_messages(username, server, channel_id, dm_id, thread_root_id, reply_to, mention_reply, content, due_at, next_at, created_at, updated_at, media_id, media_spoiler) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, $10, $11, $12) RETURNING id")
         .bind(&user.username)
         .bind(server.as_deref())
         .bind(*channel_id)
@@ -834,11 +1042,13 @@ async fn insert(
         .bind("")
         .bind(at)
         .bind(t)
+        .bind(file.as_ref().map(|(media, _)| media.clone()))
+        .bind(i64::from(file.as_ref().is_some_and(|(_, spoiler)| *spoiler)))
         .fetch_one(&mut *tx)
         .await?
         .try_get(0)?;
     let scope = Scope::of(*channel_id, *dm_id);
-    stored::store(&state.db, &mut tx, id, scope, &user.username, content).await?;
+    stored::store(&state.db, &mut tx, id, scope, &user.username, &draft).await?;
     tx.commit().await?;
     Ok(id)
 }
@@ -891,7 +1101,7 @@ pub(crate) async fn patch_at(
     let row = own_row(db, user, id).await?;
     changeable(&row)?;
     if let Some(content) = &content {
-        check_content(state, content)?;
+        check_content(state, content, row.media_id.is_some())?;
         if row.channel_id.is_some() {
             check_profanity(db, ProfanityTarget::Messages, content).await?;
         }
@@ -941,7 +1151,11 @@ pub(crate) async fn patch_at(
         .rows_affected();
     if let (Some(content), true) = (&content, changed > 0) {
         let scope = Scope::of(row.channel_id, row.dm_id);
-        stored::store(db, &mut tx, id, scope, &user.username, content).await?;
+        let draft = Draft {
+            content: content.clone(),
+            ..row.content.shown()
+        };
+        stored::store(db, &mut tx, id, scope, &user.username, &draft).await?;
     }
     tx.commit().await?;
     let row = own_row(db, user, id).await?;
@@ -1006,7 +1220,7 @@ pub(crate) async fn send_now_at(
         return Err(ApiError::conflict(StatusCode::CONFLICT, PAUSED));
     }
     let to = row.to().ok_or_else(not_found)?;
-    let content = row.content.read().ok_or_else(unreadable)?.to_string();
+    let req = row.request().ok_or_else(unreadable)?;
     let token = crate::identity::random_id();
     let n = sqlx::query("UPDATE scheduled_messages SET status = 'sending', claim = $1, next_at = $2, attempts = attempts + 1, updated_at = $3 WHERE id = $4 AND username = $5 AND status = $6 AND next_at = $7 AND attempts = $8")
         .bind(&token)
@@ -1024,10 +1238,6 @@ pub(crate) async fn send_now_at(
         return Err(being_sent());
     }
     let claim = Claim { id, token };
-    let req = SendReq {
-        mention_reply: row.mention_reply,
-        ..SendReq::text(content, row.reply_to)
-    };
     match send_to(state, user, to, req, Some(&claim)).await {
         Ok(message) => {
             removed(state, &user.username, id, Some(message.id));
@@ -1089,11 +1299,7 @@ pub(crate) async fn delete(
 /// A row this copy claimed to send.
 struct Claimed {
     claim: Claim,
-    username: String,
-    to: Option<SendTo>,
-    reply_to: Option<i64>,
-    mention_reply: bool,
-    content: Text,
+    row: Entry,
     due_at: i64,
     attempts: i64,
 }
@@ -1102,44 +1308,23 @@ struct Claimed {
 /// only one copy wins it.
 async fn claim_due(db: &Db, id: i64, from: Stored, t: i64) -> sqlx::Result<Option<Claimed>> {
     let token = crate::identity::random_id();
-    let rows = sqlx::query("UPDATE scheduled_messages SET status = 'sending', claim = $1, next_at = $2, attempts = attempts + 1, updated_at = $3 WHERE id = $4 AND status = $5 AND next_at <= $3 RETURNING username, channel_id, dm_id, thread_root_id, reply_to, mention_reply, content, due_at, attempts, body")
+    let won = sqlx::query("UPDATE scheduled_messages SET status = 'sending', claim = $1, next_at = $2, attempts = attempts + 1, updated_at = $3 WHERE id = $4 AND status = $5 AND next_at <= $3")
         .bind(&token)
         .bind(t + LEASE_SECS)
         .bind(t)
         .bind(id)
         .bind(from.as_str())
-        .fetch_all(db)
-        .await?;
-    let Some(r) = rows.first() else {
+        .execute(db)
+        .await?
+        .rows_affected();
+    if won == 0 {
         return Ok(None);
-    };
-    let texts = Texts::of_rows(db, &rows, 9).await?;
-    let username: String = r.try_get(0)?;
-    let channel_id: Option<i64> = r.try_get(1)?;
-    let dm_id: Option<i64> = r.try_get(2)?;
-    let body: Option<Vec<u8>> = r.try_get(9)?;
-    let content = texts.open(
-        id,
-        Scope::of(channel_id, dm_id),
-        &username,
-        body.as_deref(),
-        r.try_get(6)?,
-    );
-    let to = match (r.try_get::<Option<i64>, _>(3)?, channel_id, dm_id) {
-        (Some(root), _, _) => Some(SendTo::Thread(root)),
-        (None, Some(id), _) => Some(SendTo::Channel(id)),
-        (None, None, Some(id)) => Some(SendTo::Dm(id)),
-        (None, None, None) => None,
-    };
-    Ok(Some(Claimed {
+    }
+    Ok(load(db, id).await?.map(|row| Claimed {
         claim: Claim { id, token },
-        username,
-        to,
-        reply_to: r.try_get(4)?,
-        mention_reply: r.try_get::<i64, _>(5)? != 0,
-        content,
-        due_at: r.try_get(7)?,
-        attempts: r.try_get(8)?,
+        due_at: row.due_at,
+        attempts: row.attempts,
+        row,
     }))
 }
 
@@ -1228,14 +1413,11 @@ async fn settle(
 async fn run_one(state: &AppState, claimed: Claimed, t: i64) -> sqlx::Result<bool> {
     let Claimed {
         claim,
-        username,
-        to,
-        reply_to,
-        mention_reply,
-        content,
+        row,
         due_at,
         attempts,
     } = claimed;
+    let username = row.username.clone();
     let Some(user) = get_user(&state.db, &username).await? else {
         sqlx::query("DELETE FROM scheduled_messages WHERE id = $1 AND claim = $2")
             .bind(claim.id)
@@ -1248,18 +1430,12 @@ async fn run_one(state: &AppState, claimed: Claimed, t: i64) -> sqlx::Result<boo
         temp: crate::db::temp_password(&state.db, &username).await?,
         ..user
     };
-    let outcome = match (to, user.suspended_at, content.read()) {
+    let outcome = match (row.to(), user.suspended_at, row.request()) {
         (Some(_), None, _) if crate::api::restricted(&state.db, &user).await => {
             Err(crate::api::change_first())
         }
         (Some(_), None, None) => Err(unreadable()),
-        (Some(to), None, Some(content)) => {
-            let req = SendReq {
-                mention_reply,
-                ..SendReq::text(content.to_string(), reply_to)
-            };
-            send_to(state, &user, to, req, Some(&claim)).await
-        }
+        (Some(to), None, Some(req)) => send_to(state, &user, to, req, Some(&claim)).await,
         (_, _, _) => Err(not_found()),
     };
     let result = settle_of(&outcome, due_at, attempts, t);

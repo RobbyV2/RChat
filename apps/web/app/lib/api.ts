@@ -220,6 +220,10 @@ export interface ScheduleReq {
   reply_to?: number
   mention_reply?: boolean
   content: string
+  media_id?: string
+  media_spoiler?: boolean
+  media_alt?: string
+  poll?: PollReq
   at: number
 }
 

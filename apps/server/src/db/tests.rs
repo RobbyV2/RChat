@@ -1526,6 +1526,54 @@ async fn scheduled_messages_get_a_record_column() {
     }).await;
 }
 
+#[tokio::test]
+async fn scheduled_messages_get_file_and_poll_columns() {
+    on_each_database("scheduled_extras_upgrade", |url| async move {
+        let sqlite = !url.starts_with("postgres");
+        let db = super::open(Some(&url)).await.unwrap();
+        for sql in [
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'x', 'text', 'identicon', 1)",
+            "DROP INDEX idx_scheduled_media",
+            "ALTER TABLE scheduled_messages DROP COLUMN media_id",
+            "ALTER TABLE scheduled_messages DROP COLUMN media_spoiler",
+            "ALTER TABLE scheduled_messages DROP COLUMN media_name",
+            "ALTER TABLE scheduled_messages DROP COLUMN media_alt",
+            "ALTER TABLE scheduled_messages DROP COLUMN poll",
+            "INSERT INTO scheduled_messages(username, content, due_at, next_at, created_at, updated_at) VALUES('alice', 'later', 100, 100, 5, 5)",
+            "UPDATE settings SET value='71' WHERE key='schema_version'",
+        ] {
+            sqlx::query(sql).execute(&db).await.expect(sql);
+        }
+        close(&db).await;
+        for round in 0..2 {
+            let db = super::open(Some(&url)).await.unwrap();
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM scheduled_messages WHERE username = 'alice' AND content = 'later' AND due_at = 100 AND body IS NULL AND media_id IS NULL AND media_spoiler = 0 AND media_name IS NULL AND media_alt IS NULL AND poll IS NULL").await,
+                1,
+                "{round}: the old row carries no file and no poll"
+            );
+            let index = match sqlite {
+                true => "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_scheduled_media'",
+                false => "SELECT COUNT(*) FROM pg_indexes WHERE indexname = 'idx_scheduled_media'",
+            };
+            assert_eq!(count(&db, index).await, 1, "{round}");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM scheduled_messages WHERE media_id = 'f00d'").await,
+                round,
+                "{round}"
+            );
+            if round == 0 {
+                sqlx::query("INSERT INTO scheduled_messages(username, content, media_id, media_spoiler, media_name, poll, due_at, next_at, created_at, updated_at) VALUES('alice', '', 'f00d', 1, 'cat.png', NULL, 200, 200, 7, 7)")
+                    .execute(&db)
+                    .await
+                    .unwrap();
+            }
+            close(&db).await;
+        }
+    }).await;
+}
+
 #[test]
 fn column_placeholders_fill_per_database() {
     let filled = |col: &str, sqlite: bool| match sqlite {

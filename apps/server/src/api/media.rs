@@ -2084,17 +2084,19 @@ pub(crate) fn content_disposition(filename: &str) -> String {
 
 const SWEEP_BATCH: i64 = 200;
 
-/// Files past their time: the instance default (`ttl` unset) or their own `ttl`; `ttl` 0 stays.
+/// Files past their time: the instance default (`ttl` unset) or their own `ttl`; `ttl` 0 stays,
+/// and so does a file a scheduled message carries while it waits for its time or is being sent.
+/// A failed or paused message does not hold its file.
 async fn sweep_batch(db: &Db, at: i64) -> sqlx::Result<(Vec<String>, Vec<WsEvent>)> {
     let mut tx = db.begin().await?;
     let mut ids = Vec::new();
     for (sql, by) in [
         (
-            "SELECT id FROM media WHERE ttl IS NULL AND uploaded_at <= $1 LIMIT $2",
+            "SELECT id FROM media WHERE ttl IS NULL AND uploaded_at <= $1 AND NOT EXISTS (SELECT 1 FROM scheduled_messages s WHERE s.media_id = media.id AND s.status IN ('waiting', 'sending')) LIMIT $2",
             at - MEDIA_TTL_SECS,
         ),
         (
-            "SELECT id FROM media WHERE ttl > 0 AND (uploaded_at + ttl) <= $1 LIMIT $2",
+            "SELECT id FROM media WHERE ttl > 0 AND (uploaded_at + ttl) <= $1 AND NOT EXISTS (SELECT 1 FROM scheduled_messages s WHERE s.media_id = media.id AND s.status IN ('waiting', 'sending')) LIMIT $2",
             at,
         ),
     ] {

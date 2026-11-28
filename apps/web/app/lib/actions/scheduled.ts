@@ -153,7 +153,7 @@ export const scheduledActions: Action[] = [
     order: 100,
     available: ctx => {
       const r = rowOf(ctx)
-      return r !== null && r.item.state !== 'sending'
+      return r !== null && r.item.state !== 'sending' && r.item.poll === null
     },
     run: ctx => rowOf(ctx)?.edit(),
   },

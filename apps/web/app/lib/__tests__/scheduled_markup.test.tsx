@@ -22,6 +22,8 @@ const item = (over: Partial<ScheduledItem>): ScheduledItem => ({
   side: 'hosted',
   place: 'c1',
   body: 'see you **soon**',
+  files: [],
+  poll: null,
   reply: null,
   at: Date.now() + 3_600_000,
   next: Date.now() + 3_600_000,

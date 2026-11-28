@@ -1,3 +1,4 @@
+import type { Attachment } from './content'
 import { time } from '../platform/time'
 import { deleteDB, openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction } from 'idb'
 import type { Contact } from './contacts'
@@ -343,6 +344,8 @@ export interface ScheduledRecord {
   body: string
   // An event id.
   reply?: string
+  // Files kept on this device that go with it.
+  att?: Attachment[]
   at: number
   next: number
   created: number
@@ -353,8 +356,8 @@ export interface ScheduledRecord {
 }
 
 // A scheduled message of a room or DM that stores its events sealed, as stored: its body and
-// reply are in the device record `box` (scheduled_rows.ts).
-export type SealedScheduled = Omit<ScheduledRecord, 'body' | 'reply'> & { box: Uint8Array }
+// reply and files are in the device record `box` (scheduled_rows.ts).
+export type SealedScheduled = Omit<ScheduledRecord, 'body' | 'reply' | 'att'> & { box: Uint8Array }
 
 export type StoredScheduled = ScheduledRecord | SealedScheduled
 

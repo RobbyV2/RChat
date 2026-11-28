@@ -18,17 +18,61 @@ const BATCH: i64 = 200;
 /// The states a row is sealed or unsealed in: one being sent is left to its sender.
 const PENDING: &str = "status IN ('waiting', 'failed', 'paused')";
 
-/// The text of a row, opened. Only `Texts::open` makes one.
-pub(super) struct Text(Option<String>);
+/// What a row says: its text, the name and the description of its file, and its poll as the
+/// JSON of a `PollReq`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct Draft {
+    pub content: String,
+    pub media_name: Option<String>,
+    pub media_alt: Option<String>,
+    pub poll: Option<String>,
+}
 
-impl Text {
-    /// The text; `None` when the stored record doesn't open.
-    pub(super) fn read(&self) -> Option<&str> {
-        self.0.as_deref()
+impl Draft {
+    fn parts(&self) -> Parts {
+        let Draft {
+            content,
+            media_name,
+            media_alt,
+            poll,
+        } = self.clone();
+        Parts {
+            content,
+            embeds: poll,
+            filename: media_name,
+            dropped: None,
+            alt: media_alt,
+        }
     }
 
-    /// The text as it is shown: empty when the stored record doesn't open.
-    pub(super) fn shown(&self) -> String {
+    fn of(parts: Parts) -> Draft {
+        let Parts {
+            content,
+            embeds,
+            filename,
+            dropped: _,
+            alt,
+        } = parts;
+        Draft {
+            content,
+            media_name: filename,
+            media_alt: alt,
+            poll: embeds,
+        }
+    }
+}
+
+/// What a row says, opened. Only `Texts::open` makes one.
+pub(super) struct Text(Option<Draft>);
+
+impl Text {
+    /// What it says; `None` when the stored record doesn't open.
+    pub(super) fn read(&self) -> Option<&Draft> {
+        self.0.as_ref()
+    }
+
+    /// What it says as it is shown: empty when the stored record doesn't open.
+    pub(super) fn shown(&self) -> Draft {
         self.0.clone().unwrap_or_default()
     }
 }
@@ -56,18 +100,18 @@ impl Texts {
         scope: Option<Scope>,
         author: &str,
         body: Option<&[u8]>,
-        content: String,
+        plain: Draft,
     ) -> Text {
         let opened = self
             .opener
-            .scheduled(id, scope, author, body, Parts::text(content));
-        Text((!opened.unreadable).then_some(opened.parts.content))
+            .scheduled(id, scope, author, body, plain.parts());
+        Text((!opened.unreadable).then(|| Draft::of(opened.parts)))
     }
 }
 
-/// Stores `content` as the text of row `id` in the form its place has now, inside the caller's
-/// transaction: a record beside a blank column where messages are stored encrypted, the plain
-/// column and no record elsewhere. The place is held against a switch until the transaction
+/// Stores `draft` as what row `id` says in the form its place has now, inside the caller's
+/// transaction: a record beside blank columns where messages are stored encrypted, the plain
+/// columns and no record elsewhere. The place is held against a switch until the transaction
 /// ends.
 pub(super) async fn store(
     db: &Db,
@@ -75,7 +119,7 @@ pub(super) async fn store(
     id: i64,
     scope: Option<Scope>,
     author: &str,
-    content: &str,
+    draft: &Draft,
 ) -> Result<(), ApiError> {
     let writer = match scope {
         Some(scope) => seal::writer_of(db, conn, scope).await?,
@@ -83,18 +127,42 @@ pub(super) async fn store(
     };
     let record = writer
         .as_ref()
-        .map(|w| w.scheduled(id, author, &Parts::text(content)));
+        .map(|w| w.scheduled(id, author, &draft.parts()));
     let plain = match record {
-        Some(_) => "",
-        None => content,
+        Some(_) => Draft::default(),
+        None => draft.clone(),
     };
-    sqlx::query("UPDATE scheduled_messages SET content = $1, body = $2 WHERE id = $3")
-        .bind(plain)
+    write(conn, id, &plain, record).await?;
+    Ok(())
+}
+
+/// Writes the plain columns and the record of row `id`.
+async fn write(
+    conn: &mut AnyConnection,
+    id: i64,
+    plain: &Draft,
+    record: Option<Vec<u8>>,
+) -> sqlx::Result<u64> {
+    sqlx::query("UPDATE scheduled_messages SET content = $1, media_name = $2, media_alt = $3, poll = $4, body = $5 WHERE id = $6")
+        .bind(&plain.content)
+        .bind(&plain.media_name)
+        .bind(&plain.media_alt)
+        .bind(&plain.poll)
         .bind(record)
         .bind(id)
         .execute(&mut *conn)
-        .await?;
-    Ok(())
+        .await
+        .map(|r| r.rows_affected())
+}
+
+/// The plain columns of a row read as `content, media_name, media_alt, poll` from column `at`.
+pub(super) fn plain_at(row: &sqlx::any::AnyRow, at: usize) -> sqlx::Result<Draft> {
+    Ok(Draft {
+        content: row.try_get(at)?,
+        media_name: row.try_get(at + 1)?,
+        media_alt: row.try_get(at + 2)?,
+        poll: row.try_get(at + 3)?,
+    })
 }
 
 async fn write_tx(db: &Db) -> sqlx::Result<sqlx::Transaction<'_, sqlx::Any>> {
@@ -108,8 +176,13 @@ async fn write_tx(db: &Db) -> sqlx::Result<sqlx::Transaction<'_, sqlx::Any>> {
 /// messages encrypted. The row is written only while it holds the text that was read.
 async fn seal_row(db: &Db, id: i64) -> Result<bool, ApiError> {
     let mut tx = write_tx(db).await?;
+    // The row is held from this read to its write, so an edit in between is not lost.
+    let lock = match is_sqlite(db) {
+        true => "",
+        false => " FOR UPDATE",
+    };
     let sql = format!(
-        "SELECT channel_id, dm_id, username, content, body FROM scheduled_messages WHERE id = $1 AND body IS NULL AND {PENDING}"
+        "SELECT channel_id, dm_id, username, content, media_name, media_alt, poll, body FROM scheduled_messages WHERE id = $1 AND body IS NULL AND {PENDING}{lock}"
     );
     let row = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(id)
@@ -125,14 +198,9 @@ async fn seal_row(db: &Db, id: i64) -> Result<bool, ApiError> {
         return Ok(false);
     };
     let author: String = row.try_get(2)?;
-    let content: String = row.try_get(3)?;
-    let written = sqlx::query("UPDATE scheduled_messages SET body = $1, content = '' WHERE id = $2 AND body IS NULL AND content = $3")
-        .bind(writer.scheduled(id, &author, &Parts::text(content.as_str())))
-        .bind(id)
-        .bind(&content)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
+    let draft = plain_at(&row, 3)?;
+    let record = writer.scheduled(id, &author, &draft.parts());
+    let written = write(&mut tx, id, &Draft::default(), Some(record)).await?;
     tx.commit().await?;
     Ok(written > 0)
 }
@@ -194,7 +262,7 @@ pub(crate) async fn still_sealed(db: &Db, target: &Target) -> Result<i64, ApiErr
 /// not open stays.
 async fn unseal_row(db: &Db, id: i64) -> Result<bool, ApiError> {
     let sql = format!(
-        "SELECT id, channel_id, dm_id, username, content, body FROM scheduled_messages WHERE id = $1 AND body IS NOT NULL AND {PENDING}"
+        "SELECT id, channel_id, dm_id, username, content, media_name, media_alt, poll, body FROM scheduled_messages WHERE id = $1 AND body IS NOT NULL AND {PENDING}"
     );
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(id)
@@ -203,28 +271,29 @@ async fn unseal_row(db: &Db, id: i64) -> Result<bool, ApiError> {
     let Some(row) = rows.first() else {
         return Ok(false);
     };
-    let texts = Texts::of_rows(db, &rows, 5).await?;
-    let record: Vec<u8> = row.try_get(5)?;
+    let texts = Texts::of_rows(db, &rows, 8).await?;
+    let record: Vec<u8> = row.try_get(8)?;
     let author: String = row.try_get(3)?;
     let text = texts.open(
         id,
         Scope::of(row.try_get(1)?, row.try_get(2)?),
         &author,
         Some(&record),
-        row.try_get(4)?,
+        plain_at(row, 4)?,
     );
-    let Some(content) = text.read() else {
+    let Some(draft) = text.read() else {
         return Ok(false);
     };
-    let written = sqlx::query(
-        "UPDATE scheduled_messages SET content = $1, body = NULL WHERE id = $2 AND body = $3",
-    )
-    .bind(content)
-    .bind(id)
-    .bind(record)
-    .execute(db)
-    .await?
-    .rows_affected();
+    let written = sqlx::query("UPDATE scheduled_messages SET content = $1, media_name = $2, media_alt = $3, poll = $4, body = NULL WHERE id = $5 AND body = $6")
+        .bind(&draft.content)
+        .bind(&draft.media_name)
+        .bind(&draft.media_alt)
+        .bind(&draft.poll)
+        .bind(id)
+        .bind(record)
+        .execute(db)
+        .await?
+        .rows_affected();
     Ok(written > 0)
 }
 

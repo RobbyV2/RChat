@@ -1,3 +1,4 @@
+import type { PollReq } from './api'
 import type { P2pPic } from './p2p/pictures'
 import type { UploadExpiry } from './upload_expiry'
 import type { TimeoutWire } from './timeouts'
@@ -609,9 +610,19 @@ export interface ScheduledMessage {
   next_at: number
   status: 'waiting' | 'sending' | 'failed' | 'paused'
   error: string | null
+  // The uploaded file it carries, and its poll.
+  media?: ScheduledMedia | null
+  poll?: PollReq | null
   place: ScheduledPlace | null
   created_at: number
   updated_at: number
+}
+
+export interface ScheduledMedia {
+  id: string
+  filename: string
+  spoiler: boolean
+  alt: string | null
 }
 
 export interface ScheduledPage {

@@ -23,6 +23,7 @@ import type { PollKind, ShowResults } from '../lib/types'
 import { EmojiPicker } from './emoji_picker'
 import { Button, IconButton } from './controls'
 import { Row, Stack, Surface } from './layout'
+import { SendLaterDialog } from './scheduled'
 import { Chips, Dialog, FieldError, fieldCls, smallFieldCls } from './ui'
 
 const KINDS: PollKind[] = ['single', 'multiple', 'ranked', 'rating', 'yes_no']
@@ -76,6 +77,9 @@ function Toggle({
 export function CreatePollDialog({ target, onClose }: { target: PollTarget; onClose: () => void }) {
   const { inSession } = useAccount().lifetime
   const createPoll = useStore(s => s.createPoll)
+  const schedulePoll = useStore(s => s.schedulePoll)
+  const canSchedule = useStore(s => s.settings.scheduled_messages)
+  const [later, setLater] = useState(false)
   const [d, setD] = useState<PollDraft>(emptyDraft)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -317,6 +321,16 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
           <Button size="md" onClick={onClose}>
             Cancel
           </Button>
+          {canSchedule && (
+            <Button
+              size="md"
+              data-poll-later
+              disabled={busy}
+              onClick={() => (problem ? setError(problem) : setLater(true))}
+            >
+              Send later
+            </Button>
+          )}
           <Button
             variant="filled"
             size="md"
@@ -328,6 +342,18 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
           </Button>
         </Row>
       </Stack>
+      {later && (
+        <SendLaterDialog
+          side="hosted"
+          onClose={() => setLater(false)}
+          onPick={async at => {
+            const close = inSession(onClose)
+            const e = await schedulePoll(target, draftRequest(draft), at)
+            if (!e) close()
+            return e
+          }}
+        />
+      )}
       {picker !== null && (
         <EmojiPicker
           anchor={anchors.current[picker] ?? null}
