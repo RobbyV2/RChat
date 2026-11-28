@@ -16,8 +16,9 @@ use crate::api::access::perms::{
     perm_columns, perm_row, reflag, row_flags, rule_narrows, update_bits, update_role_bits,
 };
 use crate::api::access::{
-    BANNED, Caller, InviteView, Proof, ResolvedChannel, ServerAccess, Via, acting_on, ranks,
-    resolve_channel, resolve_invite, resolve_join, resolve_reading, resolve_server, seen_among,
+    BANNED, Caller, InviteView, Proof, ResolvedChannel, ServerAccess, Via, acting_on, grants,
+    ranks, resolve_channel, resolve_invite, resolve_join, resolve_reading, resolve_server,
+    seen_among,
 };
 use crate::api::admin::{is_fuzzy, like_pattern, name_hit};
 use crate::api::audit::{self, ChannelRef, Details, Entry, Target, TargetKind};
@@ -4857,24 +4858,16 @@ pub(crate) async fn kick_member(
     let target = req.username.to_lowercase();
     let user = acting_on(&user, &target);
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::Kick).await?;
-    access.require_moderate(&state.db, &target).await?;
-    let key = access.name().to_string();
-    let (db, who) = (&state.db, target.as_str());
-    let bypassed = access
-        .bypassed(|m| async move { m.require_moderate(db, who).await })
-        .await;
-    let actor = access
-        .audit_actor(&state.db, Perm::Kick)
-        .await?
-        .staff_if(bypassed);
+    let granted = access.grant::<grants::Kick>(&state.db).await?;
+    let kick = granted.moderate(&state.db, &target).await?;
+    let (key, target) = (kick.server().to_string(), kick.target().to_string());
     let mut tx = state.db.begin().await?;
     lock_server(&mut tx, &key).await?;
     let ended = end_membership(&mut tx, &key, &target).await?;
     if ended.is_some() {
         audit::record(
             &mut tx,
-            Entry::new(&key, &actor, audit::Action::MemberKick).target(Target::user(&target)),
+            Entry::new(&key, kick.actor(), audit::Action::MemberKick).target(Target::user(&target)),
         )
         .await?;
     }
@@ -4939,8 +4932,7 @@ pub(crate) async fn ban_member(
     } = req;
     let target = username.to_lowercase();
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::Kick).await?;
-    let key = access.name().to_string();
+    let granted = access.grant::<grants::Kick>(&state.db).await?;
     if target == user.username {
         return Err(ApiError::invalid("You can't ban yourself", "username"));
     }
@@ -4957,22 +4949,15 @@ pub(crate) async fn ban_member(
         true => None,
         false => Some(lookup::outside_ban(&state, &user)?),
     };
-    access.require_moderate(&state.db, &target).await?;
-    let (db, who) = (&state.db, target.as_str());
-    let bypassed = access
-        .bypassed(|m| async move { m.require_moderate(db, who).await })
-        .await;
-    let actor = access
-        .audit_actor(&state.db, Perm::Kick)
-        .await?
-        .staff_if(bypassed);
+    let ban = granted.moderate(&state.db, &target).await?;
+    let (key, target, actor) = (ban.server().to_string(), ban.target(), ban.actor());
     let mut tx = state.db.begin().await?;
     lock_server(&mut tx, &key).await?;
     let before = sqlx::query(
         "SELECT expires_at, reason FROM server_bans WHERE server = $1 AND username = $2 AND (expires_at IS NULL OR expires_at > $3)",
     )
     .bind(&key)
-    .bind(&target)
+    .bind(target)
     .bind(t)
     .fetch_optional(&mut *tx)
     .await?
@@ -4984,7 +4969,7 @@ pub(crate) async fn ban_member(
             "INSERT INTO server_bans(server, username, banned_by, created_at, expires_at, reason) VALUES($1, $2, $3, $4, $5, $6) ON CONFLICT(server, username) DO UPDATE SET banned_by = excluded.banned_by, created_at = excluded.created_at, expires_at = excluded.expires_at, reason = excluded.reason",
         )
         .bind(&key)
-        .bind(&target)
+        .bind(target)
         .bind(&user.username)
         .bind(t)
         .bind(expires_at)
@@ -4992,12 +4977,12 @@ pub(crate) async fn ban_member(
         .execute(&mut *tx)
         .await?;
     }
-    let ended = end_membership(&mut tx, &key, &target).await?;
+    let ended = end_membership(&mut tx, &key, target).await?;
     if changed || ended.is_some() {
         audit::record(
             &mut tx,
-            Entry::new(&key, &actor, audit::Action::MemberBan)
-                .target(Target::user(&target))
+            Entry::new(&key, actor, audit::Action::MemberBan)
+                .target(Target::user(target))
                 .details(
                     Details::new()
                         .set("was_member", ended.is_some())
@@ -5012,16 +4997,16 @@ pub(crate) async fn ban_member(
     match ended {
         None => state.hub.broadcast(WsEvent::ServerBanned {
             server: key.clone(),
-            username: target.clone(),
+            username: target.to_string(),
         }),
         Some(Ended { notice }) => {
             announce_system(&state, &key, notice).await;
-            announce_kick(&state.hub, &key, &target, true);
+            announce_kick(&state.hub, &key, target, true);
         }
     }
     for (cid, users) in state.hub.rooms_in(&key, None) {
-        if users.contains(&target) {
-            state.hub.evict_voice(&target, cid);
+        if users.iter().any(|u| u == target) {
+            state.hub.evict_voice(target, cid);
         }
     }
     if let Some(held) = held {
@@ -5029,7 +5014,7 @@ pub(crate) async fn ban_member(
     }
     let purge = match purge_hours {
         0 => bans::Purge::default(),
-        hours => bans::enqueue_purge(&state.db, &user, &key, &target, t - hours * 3600).await?,
+        hours => bans::enqueue_purge(&state.db, &user, &key, target, t - hours * 3600).await?,
     };
     let bans::Purge {
         jobs,

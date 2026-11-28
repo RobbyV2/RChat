@@ -23,6 +23,7 @@ use crate::ws::UserScope;
 
 #[cfg(test)]
 mod bit_gates_tests;
+pub mod grants;
 pub mod members;
 #[cfg(test)]
 mod members_tests;

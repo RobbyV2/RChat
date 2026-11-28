@@ -9,7 +9,8 @@ use utoipa::ToSchema;
 
 use crate::api::access::perms::Perm;
 use crate::api::access::{
-    ProfileRight, Proof, ServerAccess, USER_SCOPE_SMALL, acting_on, not_found, resolve_server,
+    ProfileRight, Proof, ServerAccess, USER_SCOPE_SMALL, acting_on, grants, not_found,
+    resolve_server,
 };
 use crate::api::audit::{self, Details, Entry, Target};
 use crate::api::auth::{check_avatar, check_banner, clean_bio, clean_name_for, present};
@@ -1050,25 +1051,6 @@ pub(crate) async fn delete_profile_avatar(
     )))
 }
 
-/// Who may reset or unlock the server profile of `target` in this server, and how it is logged.
-async fn moderator(db: &Db, access: &ServerAccess, target: &str) -> Result<audit::Actor, ApiError> {
-    access.require_perm(db, Perm::ManageProfiles).await?;
-    if !access.has_member(db, target).await? {
-        return Err(not_found());
-    }
-    access.require_moderate(db, target).await?;
-    let bypassed = access
-        .bypassed(|m| async move {
-            m.require_perm(db, Perm::ManageProfiles).await?;
-            m.require_moderate(db, target).await
-        })
-        .await;
-    Ok(access
-        .audit_actor(db, Perm::ManageProfiles)
-        .await?
-        .staff_if(bypassed))
-}
-
 /// The server a moderator opens to act on the profile of another member, and that member.
 async fn moderated(
     state: &AppState,
@@ -1173,10 +1155,14 @@ pub(crate) async fn reset_member_profile(
         }
         None => None,
     };
-    let key = access.name().to_string();
-    let actor = moderator(&state.db, &access, &target).await?;
+    let granted = access.grant::<grants::ManageProfiles>(&state.db).await?;
+    if !access.has_member(&state.db, &target).await? {
+        return Err(not_found());
+    }
+    let moderated = granted.moderate(&state.db, &target).await?;
+    let (key, target, actor) = (moderated.server(), moderated.target(), moderated.actor());
     let t = state.clock.unix();
-    let Some((mut tx, before)) = open_member(&state.db, &key, &target).await? else {
+    let Some((mut tx, before)) = open_member(&state.db, key, target).await? else {
         return Err(not_found());
     };
     let mut next = fields.iter().fold(before.clone(), |p, f| p.without(*f));
@@ -1190,7 +1176,7 @@ pub(crate) async fn reset_member_profile(
         .filter(|f| fields.contains(f))
         .map(ProfileField::as_str)
         .collect();
-    store(&state.db, &mut tx, &key, &target, &next).await?;
+    store(&state.db, &mut tx, key, target, &next).await?;
     let details = Details::new().set("fields", reset).set(
         "old_name",
         before
@@ -1205,8 +1191,8 @@ pub(crate) async fn reset_member_profile(
     };
     audit::record(
         &mut tx,
-        Entry::new(&key, &actor, audit::Action::MemberProfileReset)
-            .target(Target::user(&target))
+        Entry::new(key, actor, audit::Action::MemberProfileReset)
+            .target(Target::user(target))
             .details(details.set("reason", reason)),
     )
     .await?;
@@ -1215,7 +1201,7 @@ pub(crate) async fn reset_member_profile(
         let bio = before.bio != next.bio || before.banner_color != next.banner_color;
         state
             .hub
-            .broadcast(profile_event(&state.db, &key, &target, bio).await?);
+            .broadcast(profile_event(&state.db, key, target, bio).await?);
     }
     Ok(ok())
 }
@@ -1253,10 +1239,14 @@ pub(crate) async fn unlock_member_profile(
             "username",
         ));
     }
-    let key = access.name().to_string();
-    let actor = moderator(&state.db, &access, &target).await?;
+    let granted = access.grant::<grants::ManageProfiles>(&state.db).await?;
+    if !access.has_member(&state.db, &target).await? {
+        return Err(not_found());
+    }
+    let moderated = granted.moderate(&state.db, &target).await?;
+    let (key, target, actor) = (moderated.server(), moderated.target(), moderated.actor());
     let t = state.clock.unix();
-    let Some((mut tx, before)) = open_member(&state.db, &key, &target).await? else {
+    let Some((mut tx, before)) = open_member(&state.db, key, target).await? else {
         return Err(not_found());
     };
     let next = Stored {
@@ -1264,14 +1254,14 @@ pub(crate) async fn unlock_member_profile(
         ..before.clone()
     };
     if before != next {
-        store(&state.db, &mut tx, &key, &target, &next).await?;
+        store(&state.db, &mut tx, key, target, &next).await?;
     }
     let lifted = before.locked(t);
     if let Some(until) = lifted {
         audit::record(
             &mut tx,
-            Entry::new(&key, &actor, audit::Action::MemberProfileUnlock)
-                .target(Target::user(&target))
+            Entry::new(key, actor, audit::Action::MemberProfileUnlock)
+                .target(Target::user(target))
                 .details(Details::new().change("lock_until", until, None::<i64>)),
         )
         .await?;
@@ -1280,7 +1270,7 @@ pub(crate) async fn unlock_member_profile(
     if lifted.is_some() {
         state
             .hub
-            .broadcast(profile_event(&state.db, &key, &target, false).await?);
+            .broadcast(profile_event(&state.db, key, target, false).await?);
     }
     Ok(ok())
 }

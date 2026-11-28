@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::ToSchema;
 
-use crate::api::access::perms::Perm;
-use crate::api::access::{Proof, ServerAccess, acting_on, resolve_server};
+use crate::api::access::{Proof, acting_on, grants, resolve_server};
 use crate::api::audit::{self, Details, Entry, Target};
 use crate::api::{ApiError, ApiErrorBody, OkResp, ok, placeholders};
 use crate::api::{Authed, check_len};
@@ -151,22 +150,6 @@ async fn lock_member(
     Ok(())
 }
 
-/// Who may set or end a timeout of `target` in this server, and how it is logged.
-async fn moderator(db: &Db, access: &ServerAccess, target: &str) -> Result<audit::Actor, ApiError> {
-    access.require_perm(db, Perm::TimeoutMembers).await?;
-    access.require_moderate(db, target).await?;
-    let bypassed = access
-        .bypassed(|m| async move {
-            m.require_perm(db, Perm::TimeoutMembers).await?;
-            m.require_moderate(db, target).await
-        })
-        .await;
-    Ok(access
-        .audit_actor(db, Perm::TimeoutMembers)
-        .await?
-        .staff_if(bypassed))
-}
-
 pub(crate) fn clean_reason(reason: Option<String>) -> Result<Option<String>, ApiError> {
     match reason
         .map(|r| r.trim().to_string())
@@ -218,7 +201,7 @@ pub(crate) async fn set_timeout(
     let TimeoutReq { seconds, reason } = req;
     let target = username.to_lowercase();
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::TimeoutMembers).await?;
+    let granted = access.grant::<grants::TimeoutMembers>(&state.db).await?;
     if target == user.username {
         return Err(ApiError::invalid("You can't time out yourself", "username"));
     }
@@ -229,7 +212,6 @@ pub(crate) async fn set_timeout(
         ));
     }
     let reason = clean_reason(reason)?;
-    let key = access.name().to_string();
     if !access.member_in(&state.db, &target).await? {
         return Err(ApiError(
             StatusCode::NOT_FOUND,
@@ -237,17 +219,18 @@ pub(crate) async fn set_timeout(
             None,
         ));
     }
-    let actor = moderator(&state.db, &access, &target).await?;
+    let timeout = granted.moderate(&state.db, &target).await?;
+    let (key, target, actor) = (timeout.server(), timeout.target(), timeout.actor());
     let t = state.clock.unix();
     let until = t + seconds;
     let mut tx = state.db.begin().await?;
-    lock_member(&mut tx, &key, &target).await?;
-    let before = stored(&mut tx, &key, &target).await?;
+    lock_member(&mut tx, key, target).await?;
+    let before = stored(&mut tx, key, target).await?;
     sqlx::query(
         "INSERT INTO member_timeouts(server, username, until, reason, set_by, created_at) VALUES($1, $2, $3, $4, $5, $6) ON CONFLICT(server, username) DO UPDATE SET until = excluded.until, reason = excluded.reason, set_by = excluded.set_by, created_at = excluded.created_at",
     )
-    .bind(&key)
-    .bind(&target)
+    .bind(key)
+    .bind(target)
     .bind(until)
     .bind(reason.as_deref())
     .bind(&user.username)
@@ -257,8 +240,8 @@ pub(crate) async fn set_timeout(
     let before_until = before.map(|b| b.until);
     audit::record(
         &mut tx,
-        Entry::new(&key, &actor, audit::Action::MemberTimeout)
-            .target(Target::user(&target))
+        Entry::new(key, actor, audit::Action::MemberTimeout)
+            .target(Target::user(target))
             .details(
                 Details::new()
                     .change("until", before_until, until)
@@ -275,8 +258,8 @@ pub(crate) async fn set_timeout(
     };
     state
         .hub
-        .broadcast(timeout_event(&key, &target, Some(timeout.clone())));
-    announce_voice_mute(&state.hub, &key, &target, true);
+        .broadcast(timeout_event(key, target, Some(timeout.clone())));
+    announce_voice_mute(&state.hub, key, target, true);
     Ok(Json(timeout))
 }
 
@@ -310,23 +293,23 @@ pub(crate) async fn remove_timeout(
     let target = username.to_lowercase();
     let user = acting_on(&user, &target);
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::TimeoutMembers).await?;
+    let granted = access.grant::<grants::TimeoutMembers>(&state.db).await?;
     if target == user.username {
         return Err(ApiError::invalid(
             "You can't remove your own timeout",
             "username",
         ));
     }
-    let key = access.name().to_string();
-    let actor = moderator(&state.db, &access, &target).await?;
+    let untimeout = granted.moderate(&state.db, &target).await?;
+    let (key, target, actor) = (untimeout.server(), untimeout.target(), untimeout.actor());
     let mut tx = state.db.begin().await?;
-    lock_member(&mut tx, &key, &target).await?;
+    lock_member(&mut tx, key, target).await?;
     let t = state.clock.unix();
     let before = match sqlx::query(
         "DELETE FROM member_timeouts WHERE server = $1 AND username = $2 RETURNING until, reason",
     )
-    .bind(&key)
-    .bind(&target)
+    .bind(key)
+    .bind(target)
     .fetch_optional(&mut *tx)
     .await?
     {
@@ -340,8 +323,8 @@ pub(crate) async fn remove_timeout(
     if let Some(Stored { until, reason }) = &before {
         audit::record(
             &mut tx,
-            Entry::new(&key, &actor, audit::Action::MemberUntimeout)
-                .target(Target::user(&target))
+            Entry::new(key, actor, audit::Action::MemberUntimeout)
+                .target(Target::user(target))
                 .details(
                     Details::new()
                         .change("until", *until, None::<i64>)
@@ -353,8 +336,8 @@ pub(crate) async fn remove_timeout(
     }
     tx.commit().await?;
     if before.is_some() {
-        state.hub.broadcast(timeout_event(&key, &target, None));
-        crate::ws::end_voice_mute(&state, &key, &target).await;
+        state.hub.broadcast(timeout_event(key, target, None));
+        crate::ws::end_voice_mute(&state, key, target).await;
     }
     Ok(ok())
 }
