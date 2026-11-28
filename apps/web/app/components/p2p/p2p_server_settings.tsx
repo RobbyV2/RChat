@@ -1,5 +1,5 @@
 'use client'
-import { Name, NameInput, useNameLabels } from '../name'
+import { Name, useNameLabels } from '../name'
 import { p2pName, labelWith } from '../../lib/names'
 import { PeerActorTag } from '../view_actor'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -49,7 +49,7 @@ import {
   upgradeOffered,
 } from '../../lib/p2p_upgrade'
 import { PeerTimeoutBadge } from '../timeout_dialog'
-import { hex, nameColor } from '../../lib/p2p/roles'
+import { nameColor } from '../../lib/p2p/roles'
 import { openActionMenu } from '../../lib/actions/menu'
 import {
   NO_FILTERS,
@@ -59,9 +59,6 @@ import {
   type MemberFilters,
 } from '../../lib/member_filters'
 import { MemberFilterBar, MemberTable, MemberTableRow } from '../member_table'
-import { AboutEditor, ServerIcon } from '../server_about'
-import { P2pServerGlyph } from './p2p_server_glyph'
-import { useP2pPictureMaker } from '../../lib/client/p2p_picture'
 import { logLines } from '../../lib/audit_format'
 import { permItems } from '../../lib/perm_source'
 import { relativeTime } from '../../lib/timestamps'
@@ -71,6 +68,7 @@ import { time } from '../../lib/platform/time'
 import { Button, IconButton } from '../controls'
 import { BanList } from '../ban_list'
 import { DepartureSection } from '../departure_section'
+import { OverviewSection } from '../overview_section'
 import { P2pChannelMemberList, P2pMemberListSettings } from './p2p_member_list'
 
 // Settings of a P2P server. Every change is a signed state event that members check against
@@ -86,81 +84,13 @@ const Note = ({ children }: { children: ReactNode }) => (
 
 function Overview({ v }: { v: ServerView }) {
   const identity = useP2pApp()!
-  const { p2p, p2pServer, memberName } = identity
+  const { memberName } = identity
 
   const me = useP2p(s => s.me)
-  const [name, setName] = useState(v.name)
   const edit = can(v, P.ManageServer)
-  const dirty = name.trim() !== v.name && name.trim() !== ''
-  const maker = useP2pPictureMaker()
-  // The text of what a signed change failed on, or null once it is written.
-  const written = (change: Promise<unknown>) =>
-    change.then(
-      () => null,
-      (e: unknown) => (e instanceof Error ? e.message : String(e))
-    )
   return (
     <Stack gap="md">
-      <Stack as="label" gap="2xs">
-        <span className="text-sm">Server name</span>
-        <NameInput
-          value={name}
-          maxLength={p2p.limits().server.nameMax}
-          disabled={!edit}
-          onChange={e => setName(e.target.value)}
-          aria-label="Server name"
-        />
-      </Stack>
-      {edit ? (
-        <Button
-          variant="filled"
-          size="md"
-          place="self-end"
-          disabled={!dirty}
-          onClick={() => void p2pServer.rename(v.id, name)}
-        >
-          Save
-        </Button>
-      ) : (
-        <Note>Only members with Manage server can rename the server.</Note>
-      )}
-      <AboutEditor
-        seed={v.id}
-        name={v.name}
-        color={hex(v.color) ?? null}
-        about={v.about}
-        editable={edit}
-        own={ownsP2pServer(v, me)}
-        locked="Only members with Manage server can change this."
-        onSave={change => p2pServer.setAbout(v.id, change)}
-        picture={
-          edit
-            ? {
-                glyph: (
-                  <P2pServerGlyph pic={v.about.pic}>
-                    <ServerIcon
-                      seed={v.id}
-                      name={v.name}
-                      kind={v.about.icon}
-                      color={hex(v.color) ?? null}
-                    />
-                  </P2pServerGlyph>
-                ),
-                source: {
-                  off: maker.off,
-                  maxBytes: maker.maxBytes,
-                  has: v.about.pic !== undefined,
-                  upload: async (file, crop) => {
-                    const made = await maker.make(file, crop, `about:${v.id}`)
-                    if (typeof made === 'string') return made
-                    return written(p2pServer.setAbout(v.id, { pic: made }))
-                  },
-                  remove: () => written(p2pServer.setAbout(v.id, { pic: null })),
-                },
-              }
-            : undefined
-        }
-      />
+      <OverviewSection place={P2pRoom.open(identity, v.id)} />
       <Stack gap="2xs">
         <p className="text-sm">Server profiles</p>
         <ServerProfilesMode v={v} />

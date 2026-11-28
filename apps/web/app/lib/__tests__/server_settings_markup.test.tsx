@@ -76,7 +76,7 @@ describe('hosted server settings', () => {
     const html = open(Perm.DeleteMessages)
     expect(entries(html)).toEqual(['invites'])
     expect(html).not.toContain('Delete Server')
-    expect(html).not.toContain('Rename Server')
+    expect(html).not.toContain('aria-label="Server name"')
     expect(html).toContain('data-screen="section"')
     expect(html).not.toContain('title="Back"')
   })
@@ -114,7 +114,7 @@ describe('hosted server settings', () => {
     const members = open('owner', 'garden', 'members')
     expect(members).toContain('>Admins</p>')
     expect(members).toContain('>Members</p>')
-    expect(open('owner', 'garden', 'overview')).toContain('>Rename Server</p>')
+    expect(open('owner', 'garden', 'overview')).toContain('aria-label="Server name"')
   })
 
   test('opening them lands on the list on phones and on Invites on wide screens', () => {
@@ -122,7 +122,7 @@ describe('hosted server settings', () => {
     expect(html).toContain('data-screen="list"')
     expect(html).toContain('data-settings-section="invites" aria-current="page"')
     expect(html).toContain('>Invites</h1>')
-    expect(html).not.toContain('Rename Server')
+    expect(html).not.toContain('aria-label="Server name"')
   })
 
   test('nobody without a permission in the server gets them', () => {

@@ -4,6 +4,7 @@ import { Loaded, useAccountSource } from './loaded'
 
 import { BanList } from './ban_list'
 import { DepartureSection } from './departure_section'
+import { OverviewSection } from './overview_section'
 import { personName, notAName } from '../lib/names'
 import { Name, NameInput } from './name'
 import { ViewActorTag } from './view_actor'
@@ -96,10 +97,6 @@ import { WidgetSettings } from './widget_settings'
 import { HostedRules } from './perm_dialog'
 import { MemberSearchField, useMemberSearch } from './member_search'
 import { ColorField } from './color_field'
-import { AboutEditor } from './server_about'
-import { ServerGlyph } from './server_rail'
-import { limitsOf } from '../lib/instance_limits'
-import { hostedAbout, hostedAboutPatch } from '../lib/server_about'
 import { ServerHeader } from './server_header'
 import { SystemMessagesSection } from './system_messages'
 import { PlaceProvider, useHostedServer } from '../lib/place/react'
@@ -979,41 +976,6 @@ export function ServerAppearance({
 }
 
 // The About section for a hosted server.
-function HostedAbout({ server }: { server: string }) {
-  const account = useAccount()
-  const detail = useStore(s => s.servers[server])
-  const own = useOwnServer(server)
-  const pictures = useStore(s => s.settings.profile_pictures)
-  const maxBytes = useStore(s => limitsOf(s.instance).avatar_upload_bytes)
-  if (!detail) return null
-  const sent = (request: Promise<unknown>) =>
-    request.then(
-      () => null,
-      (e: unknown) => errorText(e)
-    )
-  return (
-    <AboutEditor
-      seed={server}
-      name={detail.display_name}
-      color={detail.banner_color}
-      about={hostedAbout(detail)}
-      editable
-      own={own}
-      locked=""
-      onSave={change => sendTo(account, ask.updateServer(server, hostedAboutPatch(change)))}
-      picture={{
-        glyph: <ServerGlyph name={server} displayName={detail.display_name} />,
-        source: {
-          off: pictures ? null : 'Profile pictures are turned off on this site',
-          maxBytes,
-          has: !!detail.icon_image,
-          upload: (file, crop) => sent(sendTo(account, ask.putServerIcon(server, file, crop))),
-          remove: () => sent(sendTo(account, ask.deleteServerIcon(server))),
-        },
-      }}
-    />
-  )
-}
 
 function StandingInvite({ server, manage }: { server: string; manage: boolean }) {
   const { shareOrigin } = useAccount()
@@ -1389,12 +1351,8 @@ function Settings({ server, section }: { server: string; section: ServerSettings
   const perms = useStore(s => serverAdminPerms(s, server))
   const cache = useStore(s => s.members[server])
   const loadMembers = useStore(s => s.loadMembers)
-  const closeDialog = useStore(s => s.closeDialog)
-  const renameServer = useStore(s => s.renameServer)
   const grantAdmin = useStore(s => s.grantAdmin)
   const openDialog = useStore(s => s.openDialog)
-  const [name, setName] = useState(detail?.display_name ?? '')
-  const [renameError, setRenameError] = useState<string | null>(null)
   const [editingAdmin, setEditingAdmin] = useState<string | null>(null)
   const [q, setQ] = useState('')
   const canSettings = hasPerm(perms, Perm.ManageServer)
@@ -1475,32 +1433,6 @@ function Settings({ server, section }: { server: string; section: ServerSettings
     </Surface>
   )
 
-  const rename = (
-    <>
-      <p className={sectionCls}>Rename Server</p>
-      <Row
-        as="form"
-        gap="sm"
-        align="stretch"
-        onSubmit={e => {
-          e.preventDefault()
-          const trimmed = name.trim()
-          if (!trimmed) return
-          setRenameError(null)
-          renameServer(server, trimmed).then(closeDialog, (err: unknown) =>
-            setRenameError(errorText(err))
-          )
-        }}
-      >
-        <NameInput value={name} onChange={e => setName(e.target.value)} placeholder="Server name" />
-        <Button variant="filled" size="md" type="submit">
-          Rename
-        </Button>
-      </Row>
-      <FieldError message={renameError} />
-    </>
-  )
-
   const body: Record<ServerSettingsSection, () => ReactNode> = {
     invites: () => (
       <>
@@ -1514,12 +1446,7 @@ function Settings({ server, section }: { server: string; section: ServerSettings
     ),
     overview: () => (
       <>
-        {server !== 'rchat' && (
-          <>
-            {rename}
-            <HostedAbout server={server} />
-          </>
-        )}
+        <OverviewSection place={HostedServer.open(acct, server)} />
         <ServerAppearance server={server} />
         <ServerStorage server={server} />
       </>
