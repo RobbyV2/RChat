@@ -1,4 +1,5 @@
 import type { LogEvent } from '../../audit_format'
+import { timeouts } from '../acl/rules'
 import { serverWire, type EventRecord } from '../db'
 import type { ServerCtx } from './context'
 
@@ -8,8 +9,8 @@ import type { ServerCtx } from './context'
 export const LOG_PAGE = 50
 
 // What the log lists: invites, removals and bans, roles and who holds them, channels and their
-// rules, categories, settings, invite codes and moves to a new copy. A member's own joining,
-// leaving, profile and devices are left out.
+// rules, categories, settings, invite codes and moves to a new copy, and timeouts in rooms whose
+// rules read them. A member's own joining, leaving, profile and devices are left out.
 const LOGGED = new Set([
   'add',
   'uninvite',
@@ -99,11 +100,12 @@ export async function moderationLog(
     before !== null
   )
   const events: LogEvent[] = []
+  const timed = timeouts(cx.sumOf(room).rules)
   let next: number | null = null
   let cursor = await cx.db.transaction('events').store.index('room_aseq').openCursor(range, 'prev')
   while (cursor) {
     const r = cursor.value
-    if (LOGGED.has(r.type) && r.aseq !== undefined) {
+    if ((LOGGED.has(r.type) || (timed && r.type === 'timeout')) && r.aseq !== undefined) {
       if (events.length === limit) {
         next = events[events.length - 1].aseq
         break

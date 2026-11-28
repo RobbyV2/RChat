@@ -3,7 +3,7 @@ import {
   authCore,
   P,
   RULES_NEXT,
-  RULES_VERSION,
+  RULES_TEXT_ONLY,
   simpleCtx,
   type AclContent,
   type AclEv,
@@ -61,7 +61,7 @@ const revoke = (a: string, to: string, role: string) => ev('revoke', a, { to, ro
 
 describe('roles under rules 5', () => {
   test('giving a role needs Assign roles, where rules 4 take Manage roles', () => {
-    expect(decide(room(RULES_VERSION, P.ManageRoles), assign('m', 'p', 'mod'))).toBe(true)
+    expect(decide(room(RULES_TEXT_ONLY, P.ManageRoles), assign('m', 'p', 'mod'))).toBe(true)
     expect(decide(room(RULES_NEXT, P.ManageRoles), assign('m', 'p', 'low'))).toBe(false)
     expect(decide(room(RULES_NEXT, ASSIGN), assign('m', 'p', 'low'))).toBe(true)
     expect(decide(room(RULES_NEXT, ASSIGN), revoke('m', 'p', 'low'))).toBe(true)
@@ -84,7 +84,7 @@ describe('roles under rules 5', () => {
     const kicker = room(RULES_NEXT, ASSIGN | P.Kick)
     expect(decide(kicker, assign('m', 'p', 'mod'))).toBe(true)
     expect(decide(room(RULES_NEXT, ASSIGN), assign('m', 'p', 'mod'))).toBe(false)
-    expect(decide(room(RULES_VERSION, P.ManageRoles), assign('m', 'p', 'mod'))).toBe(true)
+    expect(decide(room(RULES_TEXT_ONLY, P.ManageRoles), assign('m', 'p', 'mod'))).toBe(true)
     expect(decide(room(RULES_NEXT, ASSIGN), assign('o', 'p', 'mod'))).toBe(true)
   })
 
@@ -104,13 +104,15 @@ describe('roles under rules 5', () => {
     expect(
       decide(room(RULES_NEXT, ASSIGN | P.ManageChannels, 0, base), assign('m', 'd', 'low'))
     ).toBe(true)
-    expect(decide(room(RULES_VERSION, P.ManageRoles, 0, rows), assign('m', 'd', 'low'))).toBe(true)
+    expect(decide(room(RULES_TEXT_ONLY, P.ManageRoles, 0, rows), assign('m', 'd', 'low'))).toBe(
+      true
+    )
     const gone = room(RULES_NEXT, ASSIGN, 0, rows, { kind: 'text', gone: true })
     expect(decide(gone, assign('m', 'd', 'low'))).toBe(true)
   })
 
   test('managing a role needs Manage roles and a rank above it', () => {
-    for (const rules of [RULES_VERSION, RULES_NEXT]) {
+    for (const rules of [RULES_TEXT_ONLY, RULES_NEXT]) {
       const F = room(rules, P.ManageRoles)
       expect(decide(F, ev('role_del', 'm', { role: 'low' }))).toBe(true)
       expect(decide(F, ev('role_del', 'm', { role: 'mgr' }))).toBe(false)
@@ -127,7 +129,7 @@ describe('roles under rules 5', () => {
   })
 
   test('kicks and bans need the permission and a rank above the member', () => {
-    for (const rules of [RULES_VERSION, RULES_NEXT]) {
+    for (const rules of [RULES_TEXT_ONLY, RULES_NEXT]) {
       const F = room(rules, P.Kick | P.Ban)
       expect(decide(F, ev('kick', 'm', { to: 'd' }))).toBe(true)
       expect(decide(F, ev('ban', 'm', { to: 'p' }))).toBe(true)

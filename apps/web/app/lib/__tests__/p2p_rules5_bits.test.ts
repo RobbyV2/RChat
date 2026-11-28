@@ -10,7 +10,7 @@ import {
   mayPin,
   P,
   RULES_NEXT,
-  RULES_VERSION,
+  RULES_TEXT_ONLY,
   simpleCtx,
   skipsSlowMode,
   type AclContent,
@@ -167,7 +167,7 @@ describe('content under rules 5', () => {
   })
 
   test('up to rules 4 Manage messages pins and deletes, and leaves slow mode out', () => {
-    const F = room(RULES_VERSION, { 'u:d': { deny: P.ManageMessages } })
+    const F = room(RULES_TEXT_ONLY, { 'u:d': { deny: P.ManageMessages } })
     expect(['o', 'm', 'd', 'p'].map(who => mayPin(F, who, 'c'))).toEqual([true, false, true, false])
     expect(['o', 'm', 'd', 'p'].map(who => mayDelete(F, who, 'c'))).toEqual([
       true,
@@ -181,7 +181,7 @@ describe('content under rules 5', () => {
       false,
       false,
     ])
-    expect(skipsSlowMode(room(RULES_VERSION), 'd', 'c')).toBe(true)
+    expect(skipsSlowMode(room(RULES_TEXT_ONLY), 'd', 'c')).toBe(true)
   })
 
   test('the authority of a pin and of a redaction follows the channel', () => {
@@ -189,7 +189,7 @@ describe('content under rules 5', () => {
       ({ id: 'e', t, a, dev: 'x', c: c as unknown as AclContent }) as unknown as AclEv
     const decide = (F: FactsQ & ChanFacts, e: AclEv) => authCore(e, simpleCtx(F, e.a))
     const next = room(RULES_NEXT, { 'r:mod': { deny: wire('DeleteMessages') } })
-    const current = room(RULES_VERSION, { 'r:mod': { deny: P.ManageMessages } })
+    const current = room(RULES_TEXT_ONLY, { 'r:mod': { deny: P.ManageMessages } })
     expect(decide(next, ev(CONTENT_PIN, 'q', { ch: 'c' }))).toBe(true)
     expect(decide(next, ev(CONTENT_PIN, 'd', { ch: 'c' }))).toBe(false)
     expect(decide(current, ev(CONTENT_PIN, 'd', { ch: 'c' }))).toBe(true)
@@ -239,7 +239,7 @@ describe('what the page reads', () => {
       ['SendMessages', 'AddReactions', 'PinMessages', 'DeleteMessages', 'BypassSlowmode'].filter(
         n => hasBit(mask, bit(n))
       )
-    const current = summary(RULES_VERSION)
+    const current = summary(RULES_TEXT_ONLY)
     expect(names(held(current, 'p'))).toEqual(['SendMessages', 'AddReactions'])
     expect(names(held(current, 'd'))).toEqual([
       'SendMessages',
@@ -249,7 +249,7 @@ describe('what the page reads', () => {
       'BypassSlowmode',
     ])
     expect(hasBit(held(current, 'm'), bit('BypassSlowmode'))).toBe(true)
-    const denied = summary(RULES_VERSION, { 'u:d': { deny: P.ManageMessages } })
+    const denied = summary(RULES_TEXT_ONLY, { 'u:d': { deny: P.ManageMessages } })
     expect(names(held(denied, 'd'))).toEqual([
       'SendMessages',
       'AddReactions',
@@ -276,7 +276,7 @@ describe('what the page reads', () => {
     const denied = { 'r:low': { deny: wire('Connect', 'Speak', 'Video') } }
     expect(voiceAllowed(cx(summary(RULES_NEXT, denied)), 'r', 'v', 'p')).toBe(false)
     expect(voiceAllowed(cx(summary(RULES_NEXT)), 'r', 'v', 'p')).toBe(true)
-    expect(voiceAllowed(cx(summary(RULES_VERSION, denied)), 'r', 'v', 'p')).toBe(true)
+    expect(voiceAllowed(cx(summary(RULES_TEXT_ONLY, denied)), 'r', 'v', 'p')).toBe(true)
     expect(voiceRights(cx(summary(RULES_NEXT, denied)), 'r', 'v', 'p')).toEqual({
       speak: false,
       video: false,
@@ -290,7 +290,7 @@ describe('what the page reads', () => {
       speak: true,
       video: true,
     })
-    expect(voiceRights(cx(summary(RULES_VERSION, mute)), 'r', 'v', 'p')).toEqual({
+    expect(voiceRights(cx(summary(RULES_TEXT_ONLY, mute)), 'r', 'v', 'p')).toEqual({
       speak: true,
       video: true,
     })

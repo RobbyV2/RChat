@@ -65,14 +65,21 @@ export const CHANGE_PROFILE = 4194304
 export const ALL = 0x7fffffff
 export const MODBITS = KICK | BAN | ROLES | CHANNELS | SERVER | MESSAGES
 export const EVERYONE = 'everyone'
-export const RULES_VERSION = 4
-// The next rules version: channel permissions follow the hosted semantics from it on.
+export const RULES_VERSION = 5
+// The rules version text-only channels come with.
+export const RULES_TEXT_ONLY = 4
+// The rules version from which channel permissions follow the hosted semantics, and bans,
+// timeouts and profiles have permissions and terms of their own.
 export const RULES_NEXT = 5
+export const knownRules = (rules: unknown) =>
+  rules === 2 || rules === RULES_TEXT_ONLY || rules === RULES_VERSION
 // The rules version permissions are decided under: a room's own, or the current one.
 export const rulesOf = (rules: unknown): number =>
-  rules === 2 || rules === RULES_VERSION || rules === RULES_NEXT ? rules : RULES_VERSION
+  knownRules(rules) ? (rules as number) : RULES_VERSION
 const atNext = (rules: unknown) => typeof rules === 'number' && rules >= RULES_NEXT
-export const knownRules = (rules: unknown) => rules === 2 || rules === RULES_VERSION
+// Whether a room of these rules has text-only channels and checks what a message holds.
+export const textOnlyRules = (rules: unknown) =>
+  typeof rules === 'number' && rules >= RULES_TEXT_ONLY
 // The bit a moderator needs to reset another member's room profile under `rules`.
 export const resetBit = (rules: unknown) =>
   typeof rules === 'number' && rules >= RULES_NEXT ? PROFILES : KICK
@@ -82,10 +89,56 @@ export const changesProfile = (
   F: Pick<FactsQ, 'owners' | 'bits' | 'holds'>,
   a: string
 ) => !atNext(rules) || (permsQ(F, a) & CHANGE_PROFILE) !== 0
-export function textOnlyChannel(rules: unknown, channel: AclContent | undefined) {
-  return (
-    rules === RULES_VERSION && (channel?.kind ?? 'text') === 'text' && channel?.text_only === true
+const wireOf = (...names: string[]) =>
+  toWire(
+    names.map(bit).reduce((a, b) => a | b, 0n),
+    RULES_NEXT
   )
+// What sending covered and what viewing covered before channels had bits of their own, as wire
+// bits of the rules that have them.
+const sendGroup = () => wireOf('AddReactions', 'AttachFiles', 'EmbedLinks', 'StartThreads')
+const viewGroup = () => wireOf('Connect', 'Speak', 'Video')
+
+// The bits a role or @everyone holds in a copy of the current rules made from a room of the
+// rules `from`, so that everyone can do there what they could before. Coming from rules that
+// had no bits for them: Send messages brings reactions, files, links and threads; View
+// channels brings voice and video; Manage messages brings pins; Manage messages or Manage
+// channels brings the slow mode bypass; Manage roles brings giving roles; Kick brings timeouts
+// and profile resets; and @everyone may change their server profile.
+export const carriedBits = (bits: number, everyone: boolean, from: unknown): number => {
+  if (atNext(from)) return bits
+  let out = bits
+  if (everyone) out |= CHANGE_PROFILE
+  if (bits & SEND) out |= sendGroup()
+  if (bits & VIEW) out |= viewGroup()
+  if (bits & MESSAGES) out |= wireOf('PinMessages')
+  if (bits & (MESSAGES | CHANNELS)) out |= wireOf('BypassSlowmode')
+  if (bits & ROLES) out |= wireOf('AssignRoles')
+  if (bits & KICK) out |= TIMEOUT | PROFILES
+  return out >>> 0
+}
+
+// A channel rule carried the same way: what it allowed or denied of sending and viewing, it
+// allows or denies of what they covered.
+export const carriedRule = (
+  o: { allow: number; deny: number },
+  from: unknown
+): { allow: number; deny: number } => {
+  if (atNext(from)) return o
+  const wider = (m: number) =>
+    (m | (m & SEND ? sendGroup() : 0) | (m & VIEW ? viewGroup() : 0)) >>> 0
+  return { allow: wider(o.allow), deny: wider(o.deny) }
+}
+
+// What @everyone may do in a new server: inviting, and viewing and sending with all they cover.
+export const everyoneBits = () => carriedBits(INVITE | VIEW | SEND, true, RULES_TEXT_ONLY)
+
+// What a stored content event keeps of the check it passed when it was admitted (`status` C):
+// the rules version, in rooms that check what a message holds.
+export const checkedUnder = (status: string, rules: number | null): { contentRules?: number } =>
+  status === 'C' && rules !== null && textOnlyRules(rules) ? { contentRules: rules } : {}
+export function textOnlyChannel(rules: unknown, channel: AclContent | undefined) {
+  return textOnlyRules(rules) && (channel?.kind ?? 'text') === 'text' && channel?.text_only === true
 }
 
 export function richMessage(c: Record<string, unknown>) {
@@ -382,7 +435,7 @@ export function authCore(e: AclEv, x: AuthCtx, rules = rulesOf(x.rules)): boolea
       )
     case 'timeout':
       if (!atNext(Fr.rules)) return isMem
-      return isMem && has(TIMEOUT) && !Fr.owners.has(c.to) && outranks(x.rankT(c.to))
+      return isMem && !Fr.owners.has(c.to) && moderates(TIMEOUT, c.to)
     case 'role_create':
       return isMem && manages([c.pos, e.id]) && within(c.bits)
     case 'role_move':
@@ -598,7 +651,8 @@ function maskIn(
   chan: ChanReader,
   P: string,
   ch: string,
-  rules: number
+  rules: number,
+  timedOut = false
 ): bigint {
   const c = chan.channel(ch)
   return maskUnder(
@@ -610,7 +664,8 @@ function maskIn(
       member: chan.overwrite(ch, `u:${P}`),
     },
     { restrictView: c?.restrict_view === true, restrictSend: c?.restrict_send === true },
-    rules
+    rules,
+    timedOut
   )
 }
 
@@ -618,13 +673,15 @@ type WireRow = { allow?: number; deny?: number } | undefined
 
 // What a member holding `bits` (wire; an owner holds every bit) has in a channel or category
 // under its rules for @everyone, the member's roles and the member (wire rows), as admission
-// reads it and as the editors check a rule change before it is made.
+// reads it and as the editors check a rule change before it is made. `timedOut`: the member is
+// timed out, which rules that read timeouts leave with what a timeout keeps.
 export const maskUnder = (
   bits: number,
   owner: boolean,
   rows: { everyone: WireRow; roles: WireRow[]; member: WireRow },
   place: { restrictView: boolean; restrictSend: boolean },
-  rules: number
+  rules: number,
+  timedOut = false
 ): bigint => {
   const row = (o: WireRow) =>
     o && { allow: fromWire(o.allow ?? 0, rules), deny: fromWire(o.deny ?? 0, rules) }
@@ -638,7 +695,8 @@ export const maskUnder = (
       roles: rows.roles.flatMap(o => row(o) ?? []),
       member: row(rows.member),
     },
-    rules
+    rules,
+    timedOut
   )
 }
 
@@ -649,15 +707,21 @@ const heldBy = (
   P: string,
   ch: unknown,
   name: string,
-  rules: number
-) => hasBit(maskIn(F, chan ?? readerOf({}), P, typeof ch === 'string' ? ch : '', rules), bit(name))
+  rules: number,
+  timedOut = false
+) =>
+  hasBit(
+    maskIn(F, chan ?? readerOf({}), P, typeof ch === 'string' ? ch : '', rules, timedOut),
+    bit(name)
+  )
 export const holdsIn = (
   F: ChanFacts,
   P: string,
   ch: string,
   name: string,
-  rules = rulesOf(F.rules)
-) => heldBy(F, readerOf(F), P, ch, name, rules)
+  rules = rulesOf(F.rules),
+  timedOut = false
+) => heldBy(F, readerOf(F), P, ch, name, rules, timedOut)
 
 // What content of P in channel `ch` relies on besides sending. Up to rules 4, Manage messages
 // pins and deletes, and with Manage channels it leaves slow mode out; from rules 5 each has its
@@ -682,16 +746,18 @@ export const skipsSlowMode = (F: ChanFacts, P: string, ch: string, rules = rules
 // to hold in its channel from rules 5 on: a reaction Add reactions (taking one back only View),
 // a deletion View (whose message it may take is authCore's), a pin Pin messages and Send
 // messages, a message with files Attach files with Send messages, anything else Send messages.
-// The answer names the first one missing, or null.
+// The answer names the first one missing, or null. `timedOut`: its author is timed out at its
+// time, and holds only what a timeout keeps.
 export function contentLack(
   F: ChanFacts,
   P: string,
   ch: string,
   t: string,
   c: Record<string, unknown> | null,
-  rules = rulesOf(F.rules)
+  rules = rulesOf(F.rules),
+  timedOut = false
 ): 'send' | 'react' | 'pin' | 'attach' | null {
-  const holds = (name: string) => holdsIn(F, P, ch, name, rules)
+  const holds = (name: string) => holdsIn(F, P, ch, name, rules, timedOut)
   if (t === 'react') {
     if (c !== null && c.on === true) return holds('AddReactions') ? null : 'react'
     return holds('ViewChannels') ? null : 'react'
@@ -713,9 +779,10 @@ export function channelPerms(
   F: ChanFacts,
   P: string,
   ch: string,
-  rules = rulesOf(F.rules)
+  rules = rulesOf(F.rules),
+  timedOut = false
 ): number {
-  const mask = maskIn(F, readerOf(F), P, ch, rules)
+  const mask = maskIn(F, readerOf(F), P, ch, rules, timedOut)
   const every = rules < RULES_NEXT && (F.owners.has(P) || (permsQ(F, P) & CHANNELS) !== 0)
   return every ? ALL : toWire(mask, rules)
 }
@@ -1126,7 +1193,7 @@ export function aclContentOk(t: string, c: unknown, rules?: number | null): c is
   if (!isRecord(c)) return false
   if (
     t === 'channel' &&
-    rules === RULES_VERSION &&
+    textOnlyRules(rules) &&
     c.text_only !== undefined &&
     typeof c.text_only !== 'boolean'
   )

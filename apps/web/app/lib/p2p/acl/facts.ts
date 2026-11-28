@@ -11,7 +11,7 @@ import {
   type ResetFact,
 } from '../../profile_reset'
 import {
-  RULES_VERSION,
+  textOnlyRules,
   ALL,
   BOT,
   changesProfile,
@@ -814,10 +814,7 @@ export abstract class View {
     const out: AclContent = { ...this.ix.ev[r.win].c }
     for (const f of ['restrict_view', 'restrict_send', 'gone', 'sensitive'])
       if (cs.some(c => c[f] === true)) out[f] = true
-    if (
-      this.ix.ev[this.ix.genesis]?.c.rules === RULES_VERSION &&
-      cs.some(c => c.text_only === true)
-    )
+    if (textOnlyRules(this.ix.ev[this.ix.genesis]?.c.rules) && cs.some(c => c.text_only === true))
       out.text_only = true
     const slow = Math.max(
       0,

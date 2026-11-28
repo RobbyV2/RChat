@@ -20,13 +20,7 @@ import { LOCAL, type Local } from '../limits'
 import type { P2pNode } from '../node'
 import type { AclHost } from '../resolve_host'
 import type { Clock } from '../session'
-import {
-  P,
-  type ChannelContent,
-  type HistoryVis,
-  type Membership,
-  type SystemContent,
-} from '../state'
+import type { ChannelContent, HistoryVis, Membership, SystemContent } from '../state'
 import type { SyncLimits } from '../sync'
 import type { VoiceLimits, VoiceUser } from '../voice'
 import type { Dms, P2pMessage } from '../dm'
@@ -151,8 +145,8 @@ export const codeHash = (secret: string) => b64u(sha256(fromB64u(secret)))
 
 export const newShortId = () => b64u(randomBytes(8))
 
-// What @everyone may do in a new server.
-export const EVERYONE_BITS = P.Invite | P.ViewChannel | P.SendMessages
+// What @everyone may do in a new server (`everyoneBits` of the rules, as wire bits).
+export const EVERYONE_BITS = 5206848
 
 export interface ServerArrival {
   room: string

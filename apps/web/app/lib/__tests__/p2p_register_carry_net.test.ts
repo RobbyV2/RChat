@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test'
+import { genesisBundle } from '../p2p/acl/binding'
+import { carriedBits, carriedRule, P, RULES_NEXT, TIMEOUT } from '../p2p/acl/rules'
 import type { Summary } from '../p2p/acl/summary'
+import { b64u, randomBytes } from '../p2p/canonical'
+import { blankRoom } from '../p2p/dag'
+import type { RoomRecord } from '../p2p/db'
+import { buildEvent2, type WireV2 } from '../p2p/event_v2'
+import { keyId } from '../p2p/keys'
 import type { Carried } from '../p2p/acl_room'
 import { CARRY_MEMBER_REGISTERS, CARRY_REGISTERS } from '../p2p/server/transfer'
 import { emptySummary } from '../p2p/acl/summary'
@@ -136,5 +143,118 @@ describe('what a room upgrade carries of the registers', () => {
     expect(s.categories[cat]?.name).toBe('Talk')
     expect(s.chcats[chan]).toMatchObject({ cat, sync: true })
     expect(s.members[c.node.ik]?.reset?.lock?.fields).toContain('bio')
+  }, 300_000)
+  test('a room of rules 4 upgraded by its owner is a rules-5 room where roles and channel rules hold what they covered', async () => {
+    const clock = new ManualClock()
+    const a = await makeMember(new Hub(), 'Alice', clock)
+    const author = a.node.author()!
+    const dk = keyId(author.dk.pk)
+    const bare = {
+      rules: 4,
+      nonce: b64u(randomBytes(16)),
+      owners: [{ ik: a.node.ik, dk }],
+      everyone_bits: P.ViewChannel | P.SendMessages,
+      name: 'Club',
+    }
+    const { id: room, wire } = buildEvent2(
+      author,
+      null,
+      'genesis',
+      'a',
+      { ...bare, owners: [genesisBundle(author.ik, dk, bare)] },
+      { seq: 0 },
+      clock.now()
+    )
+    const inner = a.servers as unknown as {
+      putRoom(r: RoomRecord): Promise<void>
+      take(r: string, id: string, w: WireV2, now: number): Promise<{ status: string }>
+    }
+    await inner.putRoom({
+      ...blankRoom(room, '', clock.now()),
+      kind: 'server',
+      name: 'Club',
+      chans: {},
+      since: clock.now(),
+    })
+    expect((await inner.take(room, room, wire as WireV2, clock.now())).status).toBe('new')
+    expect(sumOf(a, room).rules).toBe(4)
+    const ch = await a.servers.addChannel(room, 'general')
+    const mod = await a.servers.createRole(room, {
+      name: 'Mods',
+      color: null,
+      bits: P.ManageMessages | P.Kick,
+    })
+    await a.servers.setOverwrite(room, ch, 'r:everyone', 0, P.SendMessages)
+    await a.servers.setOverwrite(room, ch, `r:${mod}`, P.SendMessages, 0)
+
+    await a.servers.transfer(room, a.node.ik)
+    await pump(clock, () => !!a.servers.view(room)?.next, 'new copy')
+    const next = a.servers.view(room)!.next!
+    await pump(
+      clock,
+      () => Object.keys(sumOf(a, next).overwrites[ch] ?? {}).length === 2,
+      'rules carried',
+      1_000,
+      120_000
+    )
+    const s = sumOf(a, next)
+    expect(s.rules).toBe(RULES_NEXT)
+    expect(s.everyone).toBe(carriedBits(P.ViewChannel | P.SendMessages, true, 4))
+    const role = Object.values(s.roles)[0]
+    expect(role.bits).toBe(carriedBits(P.ManageMessages | P.Kick, false, 4))
+    expect(role.bits & TIMEOUT).toBe(TIMEOUT)
+    const made = Object.keys(s.roles)[0]
+    expect(s.overwrites[ch]['r:everyone']).toEqual(
+      carriedRule({ allow: 0, deny: P.SendMessages }, 4)
+    )
+    expect(s.overwrites[ch][`r:${made}`]).toEqual(
+      carriedRule({ allow: P.SendMessages, deny: 0 }, 4)
+    )
+    expect(a.servers.view(next)?.timeouts).toBe(true)
+  }, 300_000)
+
+  test('a timeout that runs and a ban that ends are kept, and the old copy lists them', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const c = await makeMember(hub, 'Carol', clock)
+    const d = await makeMember(hub, 'Dave', clock)
+    const room = await a.servers.create('Club')
+    for (const m of [b, c, d]) await joinWithCode(clock, a, room, m)
+    expect(sumOf(a, room).rules).toBe(RULES_NEXT)
+    await a.servers.timeout(room, c.node.ik, 86_400, 'spam')
+    await a.servers.ban(room, d.node.ik, 'ads', false, { seconds: 7 * 86_400 })
+    const was = sumOf(a, room)
+    const [until, banUntil] = [
+      was.members[c.node.ik]?.timeoutUntil,
+      was.members[d.node.ik]?.banUntil,
+    ]
+    expect([typeof until, typeof banUntil]).toEqual(['number', 'number'])
+    const log = await a.servers.moderationLog(room, null)
+    const logged = log.events.map(e => e.t)
+    expect([logged.includes('timeout'), logged.includes('ban')]).toEqual([true, true])
+    await pump(clock, () => sumOf(b, room).members[d.node.ik]?.banUntil === banUntil, 'bob sees it')
+
+    const handed = refusal(a.servers.transfer(room, b.node.ik))
+    await pump(clock, () => b.servers.transferAsks().length === 1, 'bob asked', 500)
+    void b.servers.answerTransfer(b.servers.transferAsks()[0].key, true)
+    expect(await handed).toBeNull()
+    await pump(clock, () => !!a.servers.view(room)?.next, 'new copy', 1_000)
+    const next = a.servers.view(room)!.next!
+    await pump(clock, () => c.servers.myMembership(next) === 'join', 'carol in', 1_000, 120_000)
+    await pump(
+      clock,
+      () => sumOf(a, next).members[c.node.ik]?.timeoutUntil !== undefined,
+      'her timeout in the new copy',
+      1_000,
+      120_000
+    )
+    const s = sumOf(a, next)
+    expect(s.members[c.node.ik]?.timeoutUntil).toBe(until)
+    expect(s.members[c.node.ik]?.timeoutReason).toBe('spam')
+    expect(s.members[d.node.ik]?.m).toBe('ban')
+    expect(s.members[d.node.ik]?.banUntil).toBe(banUntil)
+    expect(s.members[d.node.ik]?.banReason).toBe('ads')
   }, 300_000)
 })

@@ -1,13 +1,12 @@
 import { genesisBundle, signDeviceCert2 } from '../p2p/acl/binding'
 import { CHANNEL_CONTENT } from '../p2p/event_v2'
-import { knownRules, RULES_VERSION, type EvalLimits } from '../p2p/acl/rules'
+import { knownRules, P, RULES_TEXT_ONLY, RULES_VERSION, type EvalLimits } from '../p2p/acl/rules'
 import type { ContentEv } from '../p2p/acl/visibility'
 import { AclRoom, type AclItem, type Plan, type Received } from '../p2p/acl_room'
 import { b64u, randomBytes } from '../p2p/canonical'
 import { buildEvent2, contentEvOf, validate2, type ChainFields, type WireV2 } from '../p2p/event_v2'
 import { keyId, newKeyPair, type KeyPair } from '../p2p/keys'
 import type { Agreed } from '../p2p/limits'
-import { EVERYONE_BITS } from '../p2p/server'
 import { sound } from './helpers/proven'
 
 // Server worlds for the rules tests: real signed v2 events received by the evaluator
@@ -78,10 +77,10 @@ export class ServerWorld {
     w.local = local
     const o = w.who(owner)
     const bare: Record<string, unknown> = {
-      rules: RULES_VERSION,
+      rules: RULES_TEXT_ONLY,
       nonce: b64u(randomBytes(16)),
       owners: [{ ik: o.a, dk: o.dev }],
-      everyone_bits: EVERYONE_BITS,
+      everyone_bits: P.Invite | P.ViewChannel | P.SendMessages,
       name: 'Test',
       ...extra,
     }

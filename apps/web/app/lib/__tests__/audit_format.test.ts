@@ -280,6 +280,37 @@ describe('the P2P moderation log', () => {
     ])
   })
 
+  test('timeouts and bans that end say for how long, where the room reads them', () => {
+    const at = 1_000_000
+    const timed = { ...names, timed: true }
+    const line = (t: string, c: Record<string, unknown>, n: LogNames = timed) => {
+      const [l] = logLines([ev(t, { to: 'IK_B', ...c }, 'IK_A', { at })], n)
+      return [l.act, l.target, l.facts, l.reason]
+    }
+    expect(line('timeout', { until: at + 600_000, reason: 'spam' })).toEqual([
+      'Time out',
+      'bob',
+      [['For', '10 minutes']],
+      'spam',
+    ])
+    expect(line('timeout', { until: at + 99 * 86_400_000 })).toEqual([
+      'Time out',
+      'bob',
+      [['For', '28 days']],
+      null,
+    ])
+    expect(line('timeout', { until: at })).toEqual(['Remove the timeout of', 'bob', [], null])
+    expect(line('ban', { until: at + 3_600_000 })).toEqual([
+      'Ban',
+      'bob',
+      [['For', '1 hour']],
+      null,
+    ])
+    expect(line('ban', {})).toEqual(['Ban', 'bob', [], null])
+    expect(line('ban', { until: 'soon' })).toEqual(['Ban', 'bob', [], null])
+    expect(line('ban', { until: at + 3_600_000 }, names)).toEqual(['Ban', 'bob', [], null])
+  })
+
   test('events out of force say so, and a reason longer than this device shows is cut', () => {
     const [line] = logLines(
       [ev('ban', { to: 'IK_B', reason: 'x'.repeat(50) }, 'IK_A', { undone: true })],

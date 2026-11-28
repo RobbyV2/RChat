@@ -7,7 +7,7 @@ import {
   guards,
   P,
   RULES_NEXT,
-  RULES_VERSION,
+  RULES_TEXT_ONLY,
   TIMEOUT_MAX_MS,
   timeoutEnds,
 } from '../p2p/acl/rules'
@@ -89,8 +89,8 @@ describe('timeout content', () => {
   })
 
   test('earlier rules keep every field unread', () => {
-    expect(ok({}, RULES_VERSION)).toBe(true)
-    expect(ok({ to: 7, until: 'soon', reason: 3 }, RULES_VERSION)).toBe(true)
+    expect(ok({}, RULES_TEXT_ONLY)).toBe(true)
+    expect(ok({ to: 7, until: 'soon', reason: 3 }, RULES_TEXT_ONLY)).toBe(true)
     expect(ok({ to: 7 }, 2)).toBe(true)
   })
 
@@ -338,7 +338,7 @@ describe('the view of a room with timeouts', () => {
     const v = viewOf(summary(w), 'O')
     expect(v.timeouts).toBeUndefined()
     expect(permItems(v.rules).some(i => i.bit === BigInt(P.TimeoutMembers))).toBe(false)
-    expect(viewOf({ ...emptySummary(), rules: RULES_VERSION }, 'O').timeouts).toBeUndefined()
+    expect(viewOf({ ...emptySummary(), rules: RULES_TEXT_ONLY }, 'O').timeouts).toBeUndefined()
   })
 
   test('the permission is offered for roles and @everyone where timeouts are read', () => {
@@ -350,7 +350,7 @@ describe('the view of a room with timeouts', () => {
       hint: 'Stop members from chatting for a while',
     })
     expect(everyoneItems(v.rules).some(i => i.bit === BigInt(P.TimeoutMembers))).toBe(true)
-    expect(everyoneItems(RULES_VERSION).some(i => i.bit === BigInt(P.TimeoutMembers))).toBe(false)
+    expect(everyoneItems(RULES_TEXT_ONLY).some(i => i.bit === BigInt(P.TimeoutMembers))).toBe(false)
   })
 })
 
@@ -498,14 +498,13 @@ describe('signing a timeout', () => {
     ])
   })
 
-  test('a room on earlier rules signs none', async () => {
-    const { cx, made } = ctx(RULES_VERSION, 1_000, 1_000)
+  test('a room on earlier rules signs none, and a new server reads timeouts', async () => {
+    const { cx, made } = ctx(RULES_TEXT_ONLY, 1_000, 1_000)
     expect(() => signTimeout(cx, 'room', 'U', 60)).toThrow(CANT_TEXT)
     expect(made).toEqual([])
     const clock = new ManualClock()
     const a = await makeMember(new Hub(), 'Alice', clock)
     const id = await a.servers.create('Club')
-    expect(() => a.servers.timeout(id, 'someone', 60)).toThrow(CANT_TEXT)
-    expect(a.servers.view(id)?.timeouts).toBeUndefined()
+    expect(a.servers.view(id)?.timeouts).toBe(true)
   })
 })

@@ -1,7 +1,7 @@
 import { withAlts } from '../../alt_text'
 import { atLeast, outranks as above } from '../../perms'
 import {
-  RULES_VERSION,
+  textOnlyRules,
   everyoneSees,
   restricts,
   rulesOf,
@@ -206,7 +206,7 @@ export function serverView(
   const me = readOnly ? null : membershipOf(s, env.me)
   return {
     id: room,
-    textOnlyChannels: s.rules === RULES_VERSION,
+    textOnlyChannels: textOnlyRules(s.rules),
     ...(timedBans(s.rules) ? { timedBans: true as const } : {}),
     ...(timeouts(s.rules) ? { timeouts: true as const } : {}),
     ...(me === 'join' && can(s, env.me, searchBits(s.rules))
@@ -234,7 +234,7 @@ export function serverView(
     store: storeRegister(s.store),
     system: systemOf(s, env.lim.display),
     systemPick: systemPick(s, env.lim.display),
-    channels: readOnly ? [] : channelViews(s, env.me, me, env.lim.display),
+    channels: readOnly ? [] : channelViews(s, env.me, me, env.lim.display, clock),
     categories: readOnly ? [] : categoryViews(s, env.lim.display),
     separators: readOnly ? [] : separatorViews(s),
     roles: readOnly
@@ -285,14 +285,17 @@ export function serverView(
   }
 }
 
-// The channels we may view, with what we may do there.
+// The channels we may view, with what we may do there at `now` (ms): while a timeout of ours
+// runs, what it keeps.
 export function channelViews(
   s: Summary,
   myIk: string,
   me: Membership | null,
-  lim: Pick<Local['display'], 'name' | 'topic'>
+  lim: Pick<Local['display'], 'name' | 'topic'>,
+  now = 0
 ): ChannelView[] {
   const F = chanFactsOf(s)
+  const timedOut = (s.members[myIk]?.timeoutUntil ?? -Infinity) > now
   const out: ChannelView[] = []
   for (const c of channelsOf(s, lim)) {
     const p = channelPermsOf(s, myIk, c.id, F)
@@ -303,7 +306,7 @@ export function channelViews(
       ...c,
       send: me === 'join' && (p & P.SendMessages) !== 0,
       exempt: skipsSlowMode(F, myIk, c.id),
-      perms: channelMaskOf(s, myIk, c.id, F),
+      perms: channelMaskOf(s, myIk, c.id, F, timedOut),
       over: s.overwrites?.[c.id] ?? {},
       everyoneSees: everyoneSees(F, c.id),
       cat,

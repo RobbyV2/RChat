@@ -235,12 +235,19 @@ const buildChanFacts = (s: Summary): ChanFacts => ({
 export const channelPermsOf = (s: Summary, ik: string, ch: string, F = chanFactsOf(s)) =>
   channelPerms(F, ik, ch)
 
-// What `ik` holds in channel `ch` as the shared permission rules read it. Up to rules 4 the
+// What `ik` holds in channel `ch` as the shared permission rules read it (`timedOut`: while a
+// timeout of theirs runs, only what it keeps). Up to rules 4 the
 // room decides deletes, pins and everyone mentions by the member's permissions whatever the
 // channel says, and whoever slow mode leaves out there also holds Bypass slow mode.
-export const channelMaskOf = (s: Summary, ik: string, ch: string, F = chanFactsOf(s)) => {
+export const channelMaskOf = (
+  s: Summary,
+  ik: string,
+  ch: string,
+  F = chanFactsOf(s),
+  timedOut = false
+) => {
   const rules = rulesOf(F.rules)
-  const mask = fromWire(channelPerms(F, ik, ch, rules), rules)
+  const mask = fromWire(channelPerms(F, ik, ch, rules, timedOut), rules)
   if (rules >= RULES_NEXT || !hasBit(mask, bit('ViewChannels'))) return mask
   const roomWide = ['DeleteMessages', 'PinMessages', 'MentionEveryone']
     .map(bit)

@@ -42,6 +42,13 @@ import { P2pRoom } from '../../lib/place/place'
 import { ServerProfilesMode } from './p2p_server_profile'
 import { ChannelAccess, MemberCard, RolesTab } from './p2p_server_roles'
 import { slowTitle } from '../../lib/slowmode'
+import {
+  UPGRADE_CO_OWNERS,
+  UPGRADE_CONFIRM,
+  UPGRADE_KEEPS,
+  upgradeChanges,
+  upgradeOffered,
+} from '../../lib/p2p_upgrade'
 import { banStateText, timedBan } from '../../lib/p2p/ban_expiry'
 import { PeerTimeoutBadge, useNow } from '../timeout_dialog'
 import { hex, nameColor } from '../../lib/p2p/roles'
@@ -181,6 +188,46 @@ function Overview({ v }: { v: ServerView }) {
         <Note>{OWNER_TEXT}</Note>
       </Stack>
       <P2pStorage v={v} />
+      <UpgradeOffer v={v} />
+    </Stack>
+  )
+}
+
+// The upgrade to the current rules, with what it brings: a sole owner makes the new copy from
+// here.
+function UpgradeOffer({ v }: { v: ServerView }) {
+  const ownerAccount = useAccount()
+  const { p2pServer } = useP2pApp()!
+  const me = useP2p(s => s.me)
+  if (!upgradeOffered(v.rules) || v.readOnly || v.upgraded || v.me !== 'join') return null
+  return (
+    <Stack data-p2p-upgrade gap="sm" align="start">
+      <p className="text-sm">Upgrade</p>
+      <Note>A newer version of P2P servers adds:</Note>
+      <Stack as="ul" gap="2xs">
+        {upgradeChanges(v.rules).map(line => (
+          <li key={line} className="text-xs text-on-surface-variant">
+            {line}
+          </li>
+        ))}
+      </Stack>
+      <Note>{UPGRADE_KEEPS}</Note>
+      {me && v.owners.length === 1 && v.owner === me ? (
+        <Button
+          onClick={() =>
+            ownerAccount.store.getState().askConfirm({
+              title: 'Upgrade server?',
+              body: UPGRADE_CONFIRM,
+              confirm: 'Upgrade',
+              action: () => void p2pServer.transfer(v.id, me),
+            })
+          }
+        >
+          Upgrade server
+        </Button>
+      ) : (
+        <Note>{UPGRADE_CO_OWNERS}</Note>
+      )}
     </Stack>
   )
 }
@@ -289,31 +336,7 @@ function Channels({ v }: { v: ServerView }) {
           )
         })}
       {edit && !v.textOnlyChannels && !v.readOnly && (
-        <Stack gap="sm" align="start">
-          <Note>
-            Text-only channels require an upgraded server. Members need an updated app to use the
-            new copy.
-          </Note>
-          {me && v.owners.length === 1 && v.owner === me && !v.upgraded ? (
-            <Button
-              onClick={() =>
-                ownerAccount.store.getState().askConfirm({
-                  title: 'Upgrade server?',
-                  body: 'This creates a new copy with the same owner. The old copy becomes read-only and keeps its message history.',
-                  confirm: 'Upgrade',
-                  action: () => void p2pServer.transfer(v.id, me),
-                })
-              }
-            >
-              Upgrade server
-            </Button>
-          ) : (
-            <Note>
-              An owner can transfer the server to a member with an updated app. Every co-owner must
-              approve.
-            </Note>
-          )}
-        </Stack>
+        <Note>Text-only channels need an upgraded server. An owner upgrades it in Overview.</Note>
       )}
       {shown.map(c => {
         const voice = c.kind === 'voice'
@@ -742,6 +765,7 @@ function ModerationLog({ v }: { v: ServerView }) {
     text: maskRole,
     items: permItems(v.rules),
     reasonMax: p2p.limits().display.reason,
+    timed: v.timeouts === true,
   })
   const now = time().now()
   return (

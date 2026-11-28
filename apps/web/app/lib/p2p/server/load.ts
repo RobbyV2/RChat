@@ -1,4 +1,4 @@
-import { RULES_VERSION } from '../acl/rules'
+import { RULES_VERSION, textOnlyRules } from '../acl/rules'
 import type { ContentEv } from '../acl/visibility'
 import {
   applySummary,
@@ -92,11 +92,11 @@ export async function load(cx: ServerCtx, r: RoomRecord, records = true): Promis
     const w = serverWire(x)
     const content = w.ev.L === 'c'
     const unchecked =
-      x.imp || (rules === RULES_VERSION && (content ? x.contentRules !== rules : !x.acl))
+      x.imp || (textOnlyRules(rules) && (content ? x.contentRules !== rules : !x.acl))
     let sound: CheckedWire2 | null = null
     if (unchecked) {
       imported.push(x.id)
-      if (content && rules === RULES_VERSION) checkedContent.add(x.id)
+      if (content && textOnlyRules(rules)) checkedContent.add(x.id)
       const v = x.id === r.id ? validate2(w, null) : validate2(w, r.id, rules)
       if (!v.ok || v.id !== x.id) {
         bad.push(x.id)

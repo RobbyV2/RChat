@@ -1,6 +1,7 @@
 import {
   contentLack,
   holdsIn,
+  knownRules,
   mayDelete,
   mayMentionEveryone,
   mayPin,
@@ -47,7 +48,8 @@ const LACK_TEXT = {
   attach: NO_FILES_TEXT,
 }
 
-// From rules 5, content the channel would not admit from us is refused before it is signed.
+// From rules 5, content the channel would not admit from us is refused before it is signed. A
+// room of rules this version does not know is read-only, which signing says.
 function requireHeld(
   cx: ServerCtx,
   room: string,
@@ -56,7 +58,7 @@ function requireHeld(
   c: Record<string, unknown>
 ) {
   const F = chanFactsOf(cx.sumOf(room))
-  if (rulesOf(F.rules) < RULES_NEXT) return
+  if (!knownRules(F.rules) || rulesOf(F.rules) < RULES_NEXT) return
   const lack = contentLack(F, cx.me, ch, t, c)
   if (lack !== null) throw new ServerError(LACK_TEXT[lack])
 }

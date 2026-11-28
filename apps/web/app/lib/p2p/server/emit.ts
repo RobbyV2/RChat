@@ -1,7 +1,7 @@
 import { reasonField } from '../../audit_format'
 import { isRecord } from '../../bytes'
 import { deviceCertOk, genesisBundle, genesisSrv } from '../acl/binding'
-import { aclContentOk, knownRules, RULES_VERSION } from '../acl/rules'
+import { aclContentOk, checkedUnder, knownRules, RULES_VERSION, textOnlyRules } from '../acl/rules'
 import type { Judged, Plan } from '../acl_room'
 import type { Summary } from '../acl/summary'
 import { b64u, bytesOf, randomBytes } from '../canonical'
@@ -161,9 +161,7 @@ export async function emitOne(
   try {
     res = await insertServer(cx.db, room, id, sound, now, {
       me: cx.me,
-      ...(out.s === 'C' && cx.sumOf(room).rules === RULES_VERSION
-        ? { contentRules: RULES_VERSION }
-        : {}),
+      ...checkedUnder(out.s, cx.sumOf(room).rules),
       chain,
       verdict: out,
       lim: cx.storeLimits(),
@@ -426,7 +424,7 @@ export function addChannel(
 export function editChannel(cx: ServerCtx, room: string, id: string, patch: ChannelPatch) {
   const cur = channelOf(cx.sumOf(room), id)
   if (!cur) throw new ServerError('Unknown channel')
-  const supports = cx.sumOf(room).rules === RULES_VERSION && (cur.kind ?? 'text') === 'text'
+  const supports = textOnlyRules(cx.sumOf(room).rules) && (cur.kind ?? 'text') === 'text'
   if (patch.text_only !== undefined && !supports)
     throw new ServerError('Text-only mode is unavailable in this channel.')
   const next: Record<string, unknown> = { ...knownChannel(cur), ...patch, id }

@@ -1,3 +1,4 @@
+import { CANT_TEXT } from '../p2p/flows'
 import { describe, expect, test } from 'bun:test'
 import { Hub, ManualClock } from './p2p_net'
 import {
@@ -728,20 +729,19 @@ describe('thread pings in the inbox', () => {
 })
 
 describe('pins', () => {
-  test('a pin signed by a member without Manage messages makes no pin and no line', async () => {
+  test('a pin by a member without Pin messages is refused where it is signed, and makes no pin and no line', async () => {
     const { clock, hub, a, room, ch } = await solo()
     const b = await makeMember(hub, 'Bob', clock)
     await joinWithCode(clock, a, room, b)
     const m = await a.servers.send(room, { ch, body: 'pin me' })
     await pump(clock, async () => (await b.servers.loadThread(room, m)) !== null, 'at b')
-    const ev = { id: await forge(b, room, 'pin', { target: m, on: true, ch }) }
+    expect(await failure(forge(b, room, 'pin', { target: m, on: true, ch }))).toBe(CANT_TEXT)
     await b.servers.send(room, { ch, body: 'after' })
     await pump(
       clock,
       async () => (await a.servers.loadChannel(room, ch)).messages.some(x => x.body === 'after'),
       'after at a'
     )
-    expect(await a.store.event(ev.id)).not.toBeUndefined()
     const rows = (await a.servers.loadChannel(room, ch)).messages
     expect(rows.filter(x => x.system?.kind === 'pin')).toEqual([])
     expect(rows.find(x => x.id === m)?.pinned).toBeNull()

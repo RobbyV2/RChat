@@ -10,7 +10,7 @@ import {
   resetBit,
   ROLES,
   RULES_NEXT,
-  RULES_VERSION,
+  RULES_TEXT_ONLY,
   SERVER,
   type AclEv,
 } from '../p2p/acl/rules'
@@ -94,7 +94,7 @@ describe('Change server profile: who may set a room profile, read at display', (
   test('the bit has its wire value and is asked for from the next rules version on', () => {
     expect(CHANGE_PROFILE).toBe(4194304)
     const none = { owners: new Set<string>(), bits: new Map(), holds: new Map() }
-    expect([2, RULES_VERSION, null, undefined].map(r => changesProfile(r, none, 'A'))).toEqual(
+    expect([2, RULES_TEXT_ONLY, null, undefined].map(r => changesProfile(r, none, 'A'))).toEqual(
       Array(4).fill(true)
     )
     expect(changesProfile(RULES_NEXT, none, 'A')).toBe(false)
@@ -151,7 +151,7 @@ describe('Change server profile: who may set a room profile, read at display', (
     expect(mayChangeProfile(s(RULES_NEXT, 768), 'O')).toBe(true)
     expect(mayChangeProfile(s(RULES_NEXT, 768), 'A')).toBe(false)
     expect(mayChangeProfile(s(RULES_NEXT, 768 | CHANGE_PROFILE), 'A')).toBe(true)
-    expect(mayChangeProfile(s(RULES_VERSION, 768), 'A')).toBe(true)
+    expect(mayChangeProfile(s(RULES_TEXT_ONLY, 768), 'A')).toBe(true)
   })
 })
 
@@ -409,7 +409,7 @@ describe('profile_reset: a moderator clears parts of a room profile, read at dis
   })
 
   test('from the next rules version the bit of its own is asked for, and Kick alone is not enough', () => {
-    expect([2, RULES_VERSION, null, undefined, '5'].map(resetBit)).toEqual(Array(5).fill(KICK))
+    expect([2, RULES_TEXT_ONLY, null, undefined, '5'].map(resetBit)).toEqual(Array(5).fill(KICK))
     expect([RULES_NEXT, RULES_NEXT + 1].map(resetBit)).toEqual([PROFILES, PROFILES])
     expect(PROFILES).toBe(8388608)
     const St = (bits: number): FactsQ =>
@@ -424,10 +424,10 @@ describe('profile_reset: a moderator clears parts of a room profile, read at dis
         holds: new Map([['A', new Set(['R'])]]),
       }) as unknown as FactsQ
     const e = (a: string, to: string) => ({ a, c: { to, fields: ['name'] } }) as unknown as AclEv
-    expect(profileResetOk(e('A', 'C'), St(KICK), resetBit(RULES_VERSION))).toBe(true)
+    expect(profileResetOk(e('A', 'C'), St(KICK), resetBit(RULES_TEXT_ONLY))).toBe(true)
     expect(profileResetOk(e('A', 'C'), St(KICK | ROLES), resetBit(RULES_NEXT))).toBe(false)
     expect(profileResetOk(e('A', 'C'), St(PROFILES), resetBit(RULES_NEXT))).toBe(true)
-    expect(profileResetOk(e('A', 'C'), St(PROFILES), resetBit(RULES_VERSION))).toBe(false)
+    expect(profileResetOk(e('A', 'C'), St(PROFILES), resetBit(RULES_TEXT_ONLY))).toBe(false)
     expect(profileResetOk(e('O', 'C'), St(0), resetBit(RULES_NEXT))).toBe(true)
     expect(profileResetOk(e('A', 'O'), St(PROFILES), resetBit(RULES_NEXT))).toBe(false)
     expect(profileResetOk(e('C', 'A'), St(PROFILES), resetBit(RULES_NEXT))).toBe(false)
@@ -455,17 +455,17 @@ describe('profile_reset: a moderator clears parts of a room profile, read at dis
       },
     })
     const may = (rules: number, by: string, to: string) => mayResetProfile(s(rules), by, to)
-    expect(may(RULES_VERSION, 'A', 'C')).toBe(true)
-    expect(may(RULES_VERSION, 'P', 'C')).toBe(false)
+    expect(may(RULES_TEXT_ONLY, 'A', 'C')).toBe(true)
+    expect(may(RULES_TEXT_ONLY, 'P', 'C')).toBe(false)
     expect(may(RULES_NEXT, 'A', 'C')).toBe(false)
     expect(may(RULES_NEXT, 'P', 'C')).toBe(true)
-    expect(may(RULES_VERSION, 'O', 'A')).toBe(true)
-    expect(may(RULES_VERSION, 'A', 'A')).toBe(false)
-    expect(may(RULES_VERSION, 'A', 'P')).toBe(false)
-    expect(may(RULES_VERSION, 'A', 'O')).toBe(false)
-    expect(may(RULES_VERSION, 'O', 'O')).toBe(false)
-    expect(may(RULES_VERSION, 'O', 'Gone')).toBe(false)
-    expect(may(RULES_VERSION, 'C', 'A')).toBe(false)
+    expect(may(RULES_TEXT_ONLY, 'O', 'A')).toBe(true)
+    expect(may(RULES_TEXT_ONLY, 'A', 'A')).toBe(false)
+    expect(may(RULES_TEXT_ONLY, 'A', 'P')).toBe(false)
+    expect(may(RULES_TEXT_ONLY, 'A', 'O')).toBe(false)
+    expect(may(RULES_TEXT_ONLY, 'O', 'O')).toBe(false)
+    expect(may(RULES_TEXT_ONLY, 'O', 'Gone')).toBe(false)
+    expect(may(RULES_TEXT_ONLY, 'C', 'A')).toBe(false)
   })
 
   test('a reset that stops counting leaves the page summary of its member', () => {
@@ -487,6 +487,6 @@ describe('profile_reset: a moderator clears parts of a room profile, read at dis
   })
 })
 
-test('the next rules version is one past the current', () => {
-  expect(RULES_NEXT).toBe(RULES_VERSION + 1)
+test('the rules that read profile permissions come right after the text-only rules', () => {
+  expect(RULES_NEXT).toBe(RULES_TEXT_ONLY + 1)
 })

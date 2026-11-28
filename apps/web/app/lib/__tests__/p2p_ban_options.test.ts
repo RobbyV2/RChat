@@ -9,7 +9,7 @@ import {
   banWipes,
   knownRules,
   RULES_NEXT,
-  RULES_VERSION,
+  RULES_TEXT_ONLY,
 } from '../p2p/acl/rules'
 import { BanExpiry, banStateText, dueUnbans, unbanWait, UNBAN_WAIT_MAX } from '../p2p/ban_expiry'
 import type { MemberView } from '../p2p/server/types'
@@ -18,21 +18,25 @@ const HOUR = 3_600_000
 const ban = (c: Record<string, unknown>, ts = 1_000_000) => ({ ts, c: { to: 'bob', ...c } })
 
 describe('ban terms', () => {
-  test('the next rules are one past the current ones and not yet joined', () => {
+  test('the rules that read ban terms come after the text-only rules, and servers join them', () => {
     expect(RULES_NEXT).toBe(5)
-    expect(RULES_NEXT).toBeGreaterThan(RULES_VERSION)
-    expect(knownRules(RULES_NEXT)).toBe(false)
+    expect(RULES_NEXT).toBeGreaterThan(RULES_TEXT_ONLY)
+    expect(knownRules(RULES_NEXT)).toBe(true)
   })
 
   test('earlier rules read only the reason', () => {
     const e = ban({ until: 2_000_000, reason: 'spam', purge_h: 1, wipe: true })
-    expect(banTerms(RULES_VERSION, e)).toEqual({ until: null, reason: 'spam', purgeH: null })
-    expect(banWipes(RULES_VERSION, e, 0)).toBe(true)
-    expect(banOver(RULES_VERSION, e.c, 5_000_000)).toBe(false)
-    expect(aclContentOk('ban', { to: 'bob', until: 'soon', purge_h: -4 }, RULES_VERSION)).toBe(true)
-    expect(banTerms(RULES_VERSION, ban({ reason: 7 })).reason).toBeNull()
-    expect(banTerms(RULES_VERSION, ban({ reason: '' })).reason).toBeNull()
-    expect([...banTerms(RULES_VERSION, ban({ reason: '😀'.repeat(400) })).reason!].length).toBe(300)
+    expect(banTerms(RULES_TEXT_ONLY, e)).toEqual({ until: null, reason: 'spam', purgeH: null })
+    expect(banWipes(RULES_TEXT_ONLY, e, 0)).toBe(true)
+    expect(banOver(RULES_TEXT_ONLY, e.c, 5_000_000)).toBe(false)
+    expect(aclContentOk('ban', { to: 'bob', until: 'soon', purge_h: -4 }, RULES_TEXT_ONLY)).toBe(
+      true
+    )
+    expect(banTerms(RULES_TEXT_ONLY, ban({ reason: 7 })).reason).toBeNull()
+    expect(banTerms(RULES_TEXT_ONLY, ban({ reason: '' })).reason).toBeNull()
+    expect([...banTerms(RULES_TEXT_ONLY, ban({ reason: '😀'.repeat(400) })).reason!].length).toBe(
+      300
+    )
   })
 
   test('the next rules read the end, the reason and the window', () => {
@@ -83,9 +87,9 @@ describe('ban terms', () => {
     expect(banWipes(RULES_NEXT, e, undefined, true)).toBe(true)
     expect(banWipes(RULES_NEXT, ban({ wipe: true }, at), at - HOUR, true)).toBe(false)
     expect(banWipes(RULES_NEXT, ban({ wipe: true }, at), undefined, true)).toBe(false)
-    expect(banWipes(RULES_VERSION, e, at - HOUR, true)).toBe(false)
-    expect(banWipes(RULES_VERSION, e, undefined, true)).toBe(false)
-    expect(banWipes(RULES_VERSION, e, undefined)).toBe(true)
+    expect(banWipes(RULES_TEXT_ONLY, e, at - HOUR, true)).toBe(false)
+    expect(banWipes(RULES_TEXT_ONLY, e, undefined, true)).toBe(false)
+    expect(banWipes(RULES_TEXT_ONLY, e, undefined)).toBe(true)
   })
 
   test('standing bans end with the last of them, never while one has no end', () => {

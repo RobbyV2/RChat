@@ -6,7 +6,7 @@ import {
   channelPerms,
   P,
   RULES_NEXT,
-  RULES_VERSION,
+  RULES_TEXT_ONLY,
   rulesOf,
   simpleCtx,
   type AclContent,
@@ -69,14 +69,14 @@ const decide = (F: FactsQ & ChanFacts, e: AclEv) => authCore(e, simpleCtx(F, e.a
 
 describe('channel overwrites under rules 5', () => {
   test('a rules version this app does not decide under reads as the current one', () => {
-    expect([2, 4, 5, 3, 6, null, '5'].map(rulesOf)).toEqual([2, 4, 5, 4, 4, 4, 4])
-    expect(RULES_NEXT).toBe(RULES_VERSION + 1)
+    expect([2, 4, 5, 3, 6, null, '5'].map(rulesOf)).toEqual([2, 4, 5, 5, 5, 5, 5])
+    expect(RULES_NEXT).toBe(RULES_TEXT_ONLY + 1)
   })
 
   test('Manage channels passes base bits only, and owners keep moderation bits', () => {
     const rows = { 'r:everyone': { deny: wire('ViewChannels', 'DeleteMessages') } }
     const next = room(RULES_NEXT, rows, P.ManageChannels | P.ManageMessages)
-    const current = room(RULES_VERSION, rows, P.ManageChannels | P.ManageMessages)
+    const current = room(RULES_TEXT_ONLY, rows, P.ManageChannels | P.ManageMessages)
     const mask = (F: ChanFacts, who: string) => fromWire(channelPerms(F, who, 'c'), RULES_NEXT)
     expect(channelPerms(current, 'm', 'c')).toBe(0x7fffffff)
     expect(mask(next, 'm') & bit('DeleteMessages')).toBe(0n)
@@ -90,12 +90,14 @@ describe('channel overwrites under rules 5', () => {
   test('without View a member holds nothing, where rules 4 keep Send in the mask', () => {
     const rows = { 'u:p': { deny: wire('ViewChannels') } }
     expect(channelPerms(room(RULES_NEXT, rows), 'p', 'c')).toBe(0)
-    expect(channelPerms(room(RULES_VERSION, rows), 'p', 'c') & P.SendMessages).toBe(P.SendMessages)
+    expect(channelPerms(room(RULES_TEXT_ONLY, rows), 'p', 'c') & P.SendMessages).toBe(
+      P.SendMessages
+    )
   })
 
   test('a manager allows only what they hold in the channel', () => {
     const next = room(RULES_NEXT)
-    const current = room(RULES_VERSION)
+    const current = room(RULES_TEXT_ONLY)
     const allowSend = chperm('m', 'r:low', wire('SendMessages'), 0)
     const allowDelete = chperm('m', 'r:low', wire('DeleteMessages'), 0)
     expect(decide(next, allowSend)).toBe(true)
@@ -120,7 +122,7 @@ describe('channel overwrites under rules 5', () => {
     const next = room(RULES_NEXT)
     const deny = chperm('m', 'r:mod', 0, wire('DeleteMessages'))
     expect(decide(next, deny)).toBe(false)
-    expect(decide(room(RULES_VERSION), deny)).toBe(true)
+    expect(decide(room(RULES_TEXT_ONLY), deny)).toBe(true)
     expect(decide(room(RULES_NEXT, {}, P.ManageChannels | P.ManageMessages), deny)).toBe(true)
     expect(decide(next, chperm('m', 'r:mod', 0, wire('SendMessages')))).toBe(true)
   })

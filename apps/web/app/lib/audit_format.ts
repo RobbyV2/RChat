@@ -1,7 +1,9 @@
+import { TIMEOUT_MAX_MS } from './p2p/acl/rules'
 import { actParts } from './p2p/flows'
 import { hasBit, moved } from './perms'
 import type { PermItem } from './perm_source'
 import { REASON_MAX, reasonOf } from './reasons'
+import { durationText } from './timeouts'
 
 export { REASON_MAX, reasonOf }
 
@@ -89,6 +91,8 @@ export interface LogNames {
   items: readonly PermItem[]
   // The longest reason shown.
   reasonMax?: number
+  // The room's rules read timeouts and the end of a ban.
+  timed?: boolean
 }
 
 // Changes of one author closer together than this read as one.
@@ -117,10 +121,19 @@ const placeName = (id: string | null, named: unknown, n: LogNames, hash: boolean
   return was ? `${hash ? '#' : ''}${n.text(was)}` : 'Deleted channel'
 }
 
+// How long a timeout or a timed ban lasts from its own time, in words; null when it has no end
+// after it (a timeout that ends one, a ban with no end).
+const lasts = (e: LogEvent, longest = Infinity) => {
+  const until = e.c.until
+  if (typeof until !== 'number' || !Number.isSafeInteger(until) || until <= e.at) return null
+  return durationText(Math.round((Math.min(until, e.at + longest) - e.at) / 1000))
+}
+
 const lineOf = (e: LogEvent, n: LogNames): LogLine => {
   const to = text(e.c.to)
   const role = text(e.c.role)
-  const { act } = actParts(e.t, to ?? undefined)
+  const span = n.timed ? lasts(e, e.t === 'timeout' ? TIMEOUT_MAX_MS : undefined) : null
+  const { act } = actParts(e.t, to ?? undefined, e.t === 'timeout' && span === null)
   const base = {
     id: e.id,
     a: e.a,
@@ -194,6 +207,9 @@ const lineOf = (e: LogEvent, n: LogNames): LogLine => {
         facts: [['Category', cat ? (n.channel(cat) ?? 'Deleted category') : 'None']],
       }
     }
+    case 'timeout':
+    case 'ban':
+      return { ...base, ...member, facts: span ? [['For', span]] : [] }
     default:
       return { ...base, ...member }
   }

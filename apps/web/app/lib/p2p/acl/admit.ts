@@ -475,8 +475,8 @@ export function decideContent(
   for (const p of m.ap) if (m.ts < ix.ev[ix.at.get(p)!].ts) return { ok: false, why: 'ts' }
   if (F.upgraded.length) return { ok: false, why: 'auth' }
   if (!F.mem.has(m.a) || !(F.devs.get(m.a)?.has(m.dev) ?? false)) return { ok: false, why: 'auth' }
-  if (TIMEOUT_CONTENT.includes(m.t) && (F.timeouts.get(m.a) ?? -Infinity) > m.ts)
-    return { ok: false, why: 'timeout' }
+  const timedOut = (F.timeouts.get(m.a) ?? -Infinity) > m.ts
+  if (TIMEOUT_CONTENT.includes(m.t) && timedOut) return { ok: false, why: 'timeout' }
   // A content event held without its content (redacted where it came from) shows nothing and its
   // channel can't be read: its author must hold what its kind needs in some live channel (up to
   // rules 4, Send messages).
@@ -486,7 +486,7 @@ export function decideContent(
       ? canSend(F, m.a, ch, rules)
         ? null
         : 'send'
-      : contentLack(F, m.a, ch, m.t, m.c, rules)
+      : contentLack(F, m.a, ch, m.t, m.c, rules, timedOut)
   if (CHANNEL_CONTENT.includes(m.t) && m.c === null) {
     for (const [id, c] of F.channels) if (c.gone !== true && lack(id) === null) return ok(m, F)
     return { ok: false, why: 'send' }

@@ -1,5 +1,5 @@
 import { isRecord } from '../../bytes'
-import { richMessage, RULES_VERSION } from '../acl/rules'
+import { checkedUnder, richMessage, RULES_VERSION, textOnlyRules } from '../acl/rules'
 import { applySummary, type SumDelta } from '../acl/summary'
 import type { Judged } from '../acl_room'
 import {
@@ -123,7 +123,7 @@ export async function take(
       // Only while it still shows: what was hidden again stays purged.
       const [ok] = await cx.host.restorable(room, [id], rt.viewed.has(id))
       if (ok) {
-        if (cx.sumOf(room).rules !== RULES_VERSION || w.ev.t !== 'msg' || !richMessage(w.c))
+        if (!textOnlyRules(cx.sumOf(room).rules) || w.ev.t !== 'msg' || !richMessage(w.c))
           return cx.restoreBody(room, id, w)
         const verdict = await cx.host.content(room, id, w, Infinity)
         if (verdict.s === 'C') return cx.restoreBody(room, id, w)
@@ -295,9 +295,7 @@ export async function decide(
   try {
     res = await insertServer(cx.db, room, id, w, now, {
       me: cx.me,
-      ...(out.s === 'C' && cx.sumOf(room).rules === RULES_VERSION
-        ? { contentRules: RULES_VERSION }
-        : {}),
+      ...checkedUnder(out.s, cx.sumOf(room).rules),
       verdict: out,
       lim: cx.storeLimits(),
     })

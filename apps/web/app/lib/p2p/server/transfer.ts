@@ -2,7 +2,15 @@ import { isRecord } from '../../bytes'
 import { parseP2pMemberList } from '../../member_list'
 import { genesisBundle } from '../acl/binding'
 import { lockState, RESET_FIELDS } from '../../profile_reset'
-import { knownRules, RULES_VERSION, timedBans, timeouts, type AclContent } from '../acl/rules'
+import {
+  carriedBits,
+  carriedRule,
+  knownRules,
+  RULES_VERSION,
+  timedBans,
+  timeouts,
+  type AclContent,
+} from '../acl/rules'
 import { emptySummary, type MemberSum, type RoleSum, type Summary } from '../acl/summary'
 import type { Carried } from '../acl_room'
 import { b64u, canonical, randomBytes } from '../canonical'
@@ -37,8 +45,8 @@ import { malformed } from '../strike'
 
 // The `role_create` a new copy makes from a role of the old one: its position, bits, name, color
 // and looks (the fields of its last change this version doesn't know stay behind).
-const carriedRole = (role: RoleSum) => {
-  const out: Record<string, unknown> = { ...role }
+const carriedRole = (role: RoleSum, from: number | null) => {
+  const out: Record<string, unknown> = { ...role, bits: carriedBits(role.bits, false, from) }
   delete out.extra
   return out
 }
@@ -214,7 +222,8 @@ export async function transfer(cx: ServerCtx, room: string, to: string) {
   if (
     !s.owners.includes(cx.me) ||
     membershipOf(s, to) !== 'join' ||
-    (upgrade && (s.rules !== 2 || s.owners.length !== 1))
+    (upgrade && (!knownRules(s.rules) || (s.rules as number) >= RULES_VERSION)) ||
+    (upgrade && s.owners.length !== 1)
   )
     throw new ServerError(CANT_TEXT)
   if (upgrade) {
@@ -286,7 +295,7 @@ export function successorOk(
   if (!v.ok || v.wire.ev.t !== 'genesis') return null
   const c = v.wire.c as { rules?: unknown; from?: { srv?: unknown } } | null
   if (!knownRules(c?.rules) || c?.from?.srv !== room) return null
-  if (cx.sumOf(room).rules === RULES_VERSION && c.rules !== RULES_VERSION) return null
+  if ((c.rules as number) < (cx.sumOf(room).rules ?? 0)) return null
   if (to !== undefined && v.wire.ev.a !== to) return null
   return v.wire
 }
@@ -357,7 +366,7 @@ export async function successorOf(cx: ServerCtx, room: string): Promise<WireV2> 
     rules: RULES_VERSION,
     nonce: b64u(randomBytes(16)),
     owners: [{ ik: cx.me, dk }],
-    everyone_bits: s.everyone,
+    everyone_bits: carriedBits(s.everyone, true, s.rules),
     name: nameOf(s, cx.local.display)?.name ?? 'P2P server',
     cert: cx.deps.node.cert,
     profile: cx.deps.node.profile,
@@ -526,7 +535,9 @@ export async function carryOver(cx: ServerCtx, to: string) {
         `r:${id}`,
         async () => {
           if (carry.roles[id] && cur().roles[carry.roles[id]]) return
-          const made = await cx.emit(to, 'role_create', () => carriedRole(role))
+          const made = await cx.emit(to, 'role_create', () =>
+            carriedRole(role, cx.sumOf(from).rules)
+          )
           await save({ roles: { ...carry.roles, [id]: made } })
         },
       ])
@@ -540,13 +551,9 @@ export async function carryOver(cx: ServerCtx, to: string) {
             if (old !== null && !carry.roles[old]) return
             const target = old !== null ? `r:${carry.roles[old]}` : subj
             const now = cur().overwrites?.[ch]?.[target]
-            if (now?.allow === o.allow && now?.deny === o.deny) return
-            await cx.emit(to, 'chperm', () => ({
-              ch,
-              subj: target,
-              allow: o.allow,
-              deny: o.deny,
-            }))
+            const rule = carriedRule(o, cx.sumOf(from).rules)
+            if (now?.allow === rule.allow && now?.deny === rule.deny) return
+            await cx.emit(to, 'chperm', () => ({ ch, subj: target, ...rule }))
           },
         ])
     for (const reg of CARRY_REGISTERS) if (reg.afterRoles) register(reg)

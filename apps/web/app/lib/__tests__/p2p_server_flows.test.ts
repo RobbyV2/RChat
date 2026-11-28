@@ -13,7 +13,7 @@ import { blankRoom } from '../p2p/dag'
 import type { RoomRecord } from '../p2p/db'
 import type { WireV2 } from '../p2p/event_v2'
 import { genesisBundle, signDeviceCert2 } from '../p2p/acl/binding'
-import { EVERYONE, P } from '../p2p/acl/rules'
+import { carriedBits, EVERYONE, P, RULES_TEXT_ONLY } from '../p2p/acl/rules'
 import { buildEvent2, signUpgrade } from '../p2p/event_v2'
 import { keyId, newKeyPair } from '../p2p/keys'
 import { parseCode, encodeCode, REDEEM_TEXT, Servers } from '../p2p/server'
@@ -65,8 +65,10 @@ const memberOf = (m: Member, room: string, ik: string) =>
 const state = (m: Member, room: string, ik: string) => m.servers.sumOf(room).members[ik]?.m ?? null
 
 // A role with `bits` at position `pos`, given to `to` by `by`; returns the role id.
+// A role with `bits` and what they cover under the current rules (pins, giving roles, timeouts).
 const giveRole = async (by: Member, room: string, to: Member, bits: number, pos = 1) => {
-  const role = await emit(by)(room, 'role_create', () => ({ pos, bits, name: 'mod' }))
+  const held = carriedBits(bits, false, RULES_TEXT_ONLY)
+  const role = await emit(by)(room, 'role_create', () => ({ pos, bits: held, name: 'mod' }))
   await emit(by)(room, 'assign', () => ({ to: to.node.ik, role }))
   return role
 }
@@ -1389,7 +1391,8 @@ describe('transfer', () => {
     const d = await makeMember(hub, 'Dave', clock)
     const room = await a.servers.create('Undone')
     for (const m of [b, c, d]) await joinWithCode(clock, a, room, m)
-    await giveRole(a, room, c, 16, 5)
+    // Carol holds what the role she gives holds.
+    await giveRole(a, room, c, 16 | 4, 5)
     const helper = await giveRole(a, room, d, 4, 1)
     await pump(clock, () => ((c.servers.view(room)?.perms ?? 0) & 16) !== 0, 'carol manages roles')
     await pump(

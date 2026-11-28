@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { fileURLToPath } from 'node:url'
+import { PROFILES } from '../p2p/acl/rules'
 import { P } from '../p2p/state'
 import { publicMembersOf, typeExportsOf } from './api_surface'
 import api from './fixtures/p2p_servers_api.json'
@@ -18,7 +19,11 @@ const world = async () => {
   )
   const room = await a.servers.create('Views')
   for (const m of [b, c, d, e]) await joinWithCode(clock, a, room, m)
-  const mod = await a.servers.createRole(room, { name: 'Moderator', color: 0x2e7d32, bits: P.Kick })
+  const mod = await a.servers.createRole(room, {
+    name: 'Moderator',
+    color: 0x2e7d32,
+    bits: P.Kick | PROFILES,
+  })
   await a.servers.assignRole(room, b.node.ik, mod)
   await pump(clock, () => ((b.servers.view(room)?.perms ?? 0) & P.Kick) !== 0, 'bob may kick')
   await pump(
