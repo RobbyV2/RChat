@@ -1253,7 +1253,7 @@ fn read_only_channels(
     channels
         .iter()
         .filter(|c| c.kind == ChannelKind::Text)
-        .filter(|c| rights.get(&c.id).is_some_and(|a| a.view && !a.send))
+        .filter(|c| rights.get(&c.id).is_some_and(|a| a.view() && !a.send()))
         .map(|c| c.id)
         .collect()
 }
@@ -1331,11 +1331,11 @@ async fn server_detail(
     let mut channels = Vec::new();
     for r in &rows {
         let id: i64 = r.try_get(0)?;
-        if rights.get(&id).is_some_and(|a| !a.view) {
+        if rights.get(&id).is_some_and(|a| !a.view()) {
             continue;
         }
         channels.push(Channel {
-            my_perms: rights.get(&id).map(|a| a.mask & shown),
+            my_perms: rights.get(&id).map(|a| a.mask() & shown),
             ..channel_row(r)?
         });
     }
@@ -6821,13 +6821,13 @@ async fn guard_rule_edit(
 ) -> Result<bool, ApiError> {
     let access = channel.server();
     let member = match access.as_member() {
-        Some(member) => Some((member, channel.member_rights(db).await?.mask)),
+        Some(member) => Some((member, channel.member_rights(db).await?.mask())),
         None => None,
     };
     guard_edit(
         db,
         access,
-        channel.rights().mask,
+        channel.rights().mask(),
         member,
         subject,
         before,

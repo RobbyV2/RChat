@@ -1031,7 +1031,7 @@ pub(crate) async fn list_audit(
                 .channel_rights(db)
                 .await?
                 .into_iter()
-                .filter(|(_, r)| !r.view)
+                .filter(|(_, r)| !r.view())
                 .map(|(id, _)| id)
                 .collect();
             let closed_sql = match closed.is_empty() {

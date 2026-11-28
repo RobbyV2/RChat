@@ -124,23 +124,45 @@ pub mod held {
     pub const CHANGE_PROFILE: Mask = value("ChangeProfile");
 }
 
-/// What a viewer holds in a channel: `mask`, and its View, Send and Read history bits.
+/// What a viewer holds in a channel: its mask, and its View, Send and Read history bits. Only
+/// the gate makes one, from the mask it evaluated.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChannelAccess {
-    pub view: bool,
-    pub send: bool,
-    pub history: bool,
-    pub mask: i64,
+    pub(in crate::api::access) view: bool,
+    pub(in crate::api::access) send: bool,
+    pub(in crate::api::access) history: bool,
+    pub(in crate::api::access) mask: i64,
 }
 
 impl ChannelAccess {
-    pub fn of(mask: Mask) -> ChannelAccess {
+    pub(in crate::api::access) fn of(mask: Mask) -> ChannelAccess {
         ChannelAccess {
             view: mask & masks::VIEW != 0,
             send: mask & masks::SEND != 0,
             history: mask & masks::HISTORY != 0,
             mask: mask as i64,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture(mask: Mask) -> ChannelAccess {
+        ChannelAccess::of(mask)
+    }
+
+    pub fn view(&self) -> bool {
+        self.view
+    }
+
+    pub fn send(&self) -> bool {
+        self.send
+    }
+
+    pub fn history(&self) -> bool {
+        self.history
+    }
+
+    pub fn mask(&self) -> i64 {
+        self.mask
     }
 
     /// Whether the viewer holds every one of `bits` here.

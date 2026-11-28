@@ -212,7 +212,7 @@ pub(super) async fn voice_msg(
                 return Err("Join this server to use voice".into());
             }
             let rights = channel.member_rights(&state.read()).await?;
-            if !rights.view {
+            if !rights.view() {
                 return Err("Channel not found".into());
             }
             if !rights.holds(held::CONNECT) {

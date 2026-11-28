@@ -2816,13 +2816,13 @@ async fn channel_restrictions_are_added_to_an_old_database() {
                     subjects: vec![format!("u:{name}")],
                 };
                 let everyone = rchat_perms::eval::DEFAULT_EVERYONE;
-                ChannelAccess::of(channel_mask(
+                ChannelAccess::fixture(channel_mask(
                     &rows, &member, everyone, restrict, false, false,
                 ))
             };
             let (carol, bob) = (access("carol"), access("bob"));
-            assert!(!carol.view, "the old private channel is still hidden");
-            assert!(bob.view && !bob.send && bob.history);
+            assert!(!carol.view(), "the old private channel is still hidden");
+            assert!(bob.view() && !bob.send() && bob.history());
             sqlx::query("UPDATE channels SET restrict_view = 0 WHERE name = 'private'")
                 .execute(&db)
                 .await

@@ -10,7 +10,7 @@ use sqlx::any::AnyRow;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::overwrite_sql::overwrite_sql;
-use crate::api::access::perms::{ChannelAccess, held};
+use crate::api::access::perms::held;
 use crate::api::access::{
     Proof, ResolvedMessage, ThreadHome, channel_manager_servers, forbidden, granted_servers,
     member_channel_rights, resolve_channel, resolve_dm, resolve_message,
@@ -4625,7 +4625,7 @@ pub(crate) async fn unreads(
     let mut pings_of = |scope: &str| pings.remove(scope).unwrap_or_default();
     let hidden: Vec<i64> = restricted
         .iter()
-        .filter_map(|(id, access)| (!access.view).then_some(*id))
+        .filter_map(|(id, access)| (!access.view()).then_some(*id))
         .collect();
     let mut groups = group_unseen(db, &user.username, &hidden).await?;
     let mut items = Vec::with_capacity(channel_rows.len() + dm_rows.len());
@@ -4635,12 +4635,9 @@ pub(crate) async fn unreads(
         let joined_at: i64 = r.try_get(5)?;
         let readable = match restricted.get(&id) {
             None => true,
-            Some(ChannelAccess {
-                view,
-                send: _,
-                history,
-                mask: _,
-            }) => *view && (*history || latest_at.is_some_and(|t| t >= joined_at)),
+            Some(access) => {
+                access.view() && (access.history() || latest_at.is_some_and(|t| t >= joined_at))
+            }
         };
         let last_read: i64 = r.try_get(4)?;
         let scope = format!("c{id}");
@@ -4655,12 +4652,7 @@ pub(crate) async fn unreads(
             },
             grouped,
         ) = match restricted.get(&id) {
-            Some(ChannelAccess {
-                view: false,
-                send: _,
-                history: _,
-                mask: _,
-            }) => (ScopePings::default(), Vec::new()),
+            Some(access) if !access.view() => (ScopePings::default(), Vec::new()),
             _ => (pinged, grouped),
         };
         let grouped = match latest {
@@ -6320,12 +6312,12 @@ mod tests {
                 let direct = channel_access(db, "rchat", cid, Some(&user))
                     .await
                     .expect("access")
-                    .view;
+                    .view();
                 let unread = member_channel_rights(db, &user)
                     .await
                     .expect("restricted")
                     .get(&cid)
-                    .is_none_or(|a| a.view);
+                    .is_none_or(|a| a.view());
                 let rchat = resolve_server(db, "rchat", Some(&user), &Proof::none())
                     .await
                     .expect("rchat");
@@ -6334,7 +6326,7 @@ mod tests {
                     .await
                     .expect("visible")
                     .get(&cid)
-                    .is_none_or(|a| a.view);
+                    .is_none_or(|a| a.view());
                 let searched = found(&state, Some(user), HeaderMap::new(), query(Some(word)))
                     .await
                     .contains(&msg);
@@ -6657,15 +6649,16 @@ mod tests {
         for name in ["alice", "bob", "mod", "kicker"] {
             let user = mem_user(name, false);
             let restricted = member_channel_rights(db, &user).await.expect("restricted");
-            let open = ChannelAccess::of(masks::BASE & masks::CHANNEL);
+            let open =
+                crate::api::access::perms::ChannelAccess::fixture(masks::BASE & masks::CHANNEL);
             for cid in [general, private, roled, empty, nohist] {
                 let want = channel_access(db, "rchat", cid, Some(&user))
                     .await
                     .expect("access");
                 let got = restricted.get(&cid).unwrap_or(&open);
                 assert_eq!(
-                    (got.view, got.send, got.history),
-                    (want.view, want.send, want.history),
+                    (got.view(), got.send(), got.history()),
+                    (want.view(), want.send(), want.history()),
                     "{name} channel {cid}"
                 );
             }
@@ -11692,7 +11685,7 @@ mod tests {
                     && channel_access(db, "rchat", cid, Some(&user))
                         .await
                         .expect("access")
-                        .view
+                        .view()
                 {
                     expected.push(name.clone());
                 }
@@ -11752,7 +11745,7 @@ mod tests {
                         && channel_access(db, "rchat", cid, Some(&user))
                             .await
                             .expect("access")
-                            .view
+                            .view()
                     {
                         expected.push(name.clone());
                     }

@@ -710,7 +710,7 @@ pub(crate) async fn list_webhooks(
         .into_iter()
         .filter(|r| {
             r.try_get::<i64, _>(2)
-                .is_ok_and(|cid| rights.get(&cid).is_none_or(|a| a.view))
+                .is_ok_and(|cid| rights.get(&cid).is_none_or(|a| a.view()))
         })
         .collect();
     Ok(Json(webhook_rows(db, &rows).await?))

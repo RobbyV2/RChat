@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
-use crate::api::access::perms::ChannelAccess;
 use crate::api::access::{member_channel_rights, not_found};
 use crate::api::pings::{GROUP_PINGS_MAX, GroupKind, announce_counts, excerpt};
 use crate::api::{
@@ -287,13 +286,7 @@ impl Gate {
         let mut hidden = Vec::new();
         let mut no_history = Vec::new();
         for (id, access) in rights {
-            let ChannelAccess {
-                view,
-                send: _,
-                history,
-                mask: _,
-            } = access;
-            match (view, history) {
+            match (access.view(), access.history()) {
                 (false, _) => hidden.push(id),
                 (true, false) => no_history.push(id),
                 (true, true) => {}

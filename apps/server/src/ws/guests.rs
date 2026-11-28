@@ -163,7 +163,7 @@ async fn admit(state: &AppState, access: &Access, channel_id: i64) -> Result<Str
     if channel.kind() != ChannelKind::Voice {
         return Err("Not a voice channel".into());
     }
-    if !channel.member_rights(&state.db).await?.view {
+    if !channel.member_rights(&state.db).await?.view() {
         return Err(gone());
     }
     if !channel.guest_participation(&state.db).await? {
