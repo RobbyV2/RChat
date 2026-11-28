@@ -1,7 +1,8 @@
+import type { ReactNode } from 'react'
 import { Inset } from '../layout'
 // Always shown next to an automation's name, whatever name it posted with. `by`: on a P2P
-// server, whose device ran it or who saved it.
-export function AutomationChip({ by }: { by?: { how: 'run' | 'saved'; name: string } }) {
+// server, whose device ran it or who saved it, with the name as the name component draws it.
+export function AutomationChip({ by }: { by?: { how: 'run' | 'saved'; name: ReactNode } }) {
   return (
     <>
       <Inset
@@ -17,7 +18,7 @@ export function AutomationChip({ by }: { by?: { how: 'run' | 'saved'; name: stri
       {by && (
         <span className="min-w-0 truncate text-xs text-on-surface-variant">
           {by.how === 'run' ? 'run by ' : 'saved by '}
-          <span className="streamer">{by.name}</span>
+          {by.name}
         </span>
       )}
     </>

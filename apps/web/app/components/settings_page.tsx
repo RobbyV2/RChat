@@ -1,5 +1,6 @@
 'use client'
 
+import { Covered } from './covered'
 import {
   Fragment,
   useEffect,
@@ -384,7 +385,7 @@ export function SettingsPage({
     <IconButton icon={X} label={closeTitle} size="lg" data-icon-only onClick={onClose} />
   )
   const results = query.trim() !== '' && <Results hits={hits} onPick={pick} />
-  const named = heading !== undefined && headingName ? 'streamer' : ''
+  const named = heading !== undefined && !!headingName
 
   return (
     <Dialog
@@ -563,9 +564,9 @@ export function SettingsPage({
                   onClick={onBack ?? (() => onSection(null))}
                 />
               )}
-              <span className={`min-w-0 flex-1 truncate font-medium ${named}`}>
+              <Covered what="title" on={named} look="min-w-0 flex-1 truncate font-medium">
                 {heading ?? section?.label}
-              </span>
+              </Covered>
               {actor}
               {searchButton}
               {closeButton}
@@ -590,9 +591,14 @@ export function SettingsPage({
             look="h-16"
             place="hidden shrink-0 md:flex"
           >
-            <h1 className={`min-w-0 flex-1 truncate text-xl font-medium ${named}`}>
+            <Covered
+              as="h1"
+              what="title"
+              on={named}
+              look="min-w-0 flex-1 truncate text-xl font-medium"
+            >
               {heading ?? section?.label}
-            </h1>
+            </Covered>
             {actor}
             {closeButton}
           </Inset>

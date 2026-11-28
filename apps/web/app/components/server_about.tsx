@@ -78,24 +78,32 @@ export function AboutLine({
   text,
   own = false,
   oneLine = false,
-  className = '',
+  center = false,
 }: {
   text: string | null
   own?: boolean
   // One line, cut with an ellipsis (lists).
   oneLine?: boolean
-  className?: string
+  center?: boolean
 }) {
   if (!text) return null
   return (
-    <p
+    <Covered
+      as="p"
+      what="about"
       data-server-about
-      className={`streamer text-xs break-words text-on-surface-variant ${
-        oneLine ? 'truncate' : 'line-clamp-3 whitespace-pre-line'
-      } ${className}`}
+      look={
+        oneLine
+          ? center
+            ? 'text-xs break-words text-on-surface-variant truncate text-center'
+            : 'text-xs break-words text-on-surface-variant truncate'
+          : center
+            ? 'text-xs break-words text-on-surface-variant line-clamp-3 whitespace-pre-line text-center'
+            : 'text-xs break-words text-on-surface-variant line-clamp-3 whitespace-pre-line'
+      }
     >
       <Masked text={oneLine ? text.replace(/\s+/g, ' ') : text} own={own} />
-    </p>
+    </Covered>
   )
 }
 

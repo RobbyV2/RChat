@@ -39,11 +39,11 @@ describe('the automation chip', () => {
     expect(html).not.toContain('button')
   })
 
-  test('names who ran or saved it, as a name', () => {
-    const run = renderToStaticMarkup(<AutomationChip by={{ how: 'run', name: 'alice' }} />)
-    expect(run).toContain('run by <span class="streamer">alice</span>')
+  test('names who ran or saved it, with the name as it is drawn', () => {
+    const run = renderToStaticMarkup(<AutomationChip by={{ how: 'run', name: <b>alice</b> }} />)
+    expect(run).toContain('run by <b>alice</b>')
     const saved = renderToStaticMarkup(<AutomationChip by={{ how: 'saved', name: '<dave>' }} />)
-    expect(saved).toContain('saved by <span class="streamer">&lt;dave&gt;</span>')
+    expect(saved).toContain('saved by &lt;dave&gt;')
   })
 })
 

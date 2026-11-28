@@ -1016,10 +1016,7 @@ export function InviteBody({
       ),
       sub: (
         <Stack gap={big ? '2xs' : '3xs'}>
-          <AboutLine
-            text={aboutText(data.server.description)}
-            className={big ? 'text-center' : ''}
-          />
+          <AboutLine text={aboutText(data.server.description)} center={big} />
           <Counts invite={data} center={big} />
           <TicketNote invite={data} now={now} center={big} />
         </Stack>

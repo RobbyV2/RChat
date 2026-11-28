@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import tseslint from 'typescript-eslint'
 import buttons from './apps/web/eslint/buttons.mjs'
+import nameMark from './apps/web/eslint/name_mark.mjs'
 import overlays from './apps/web/eslint/overlays.mjs'
 import spacing from './apps/web/eslint/spacing.mjs'
 
@@ -41,7 +42,13 @@ const CONTROL_SOURCES = ['apps/web/app/components/{controls,ui}.tsx']
 // The overlay primitives: the only file that pins a box over the window.
 const OVERLAY_SOURCES = ['apps/web/app/components/ui.tsx']
 
-const rchat = { rules: { spacing, buttons, overlays } }
+// The components that put the streamer mark on what they draw.
+const MARK_OWNERS = [
+  'apps/web/app/components/{name,covered,user_avatar}.tsx',
+  'apps/web/app/components/p2p/key_avatar.tsx',
+]
+
+const rchat = { rules: { spacing, buttons, overlays, 'name-mark': nameMark } }
 
 const SINKS = ['TO_REQUEST', 'TO_STORE', 'TO_CRYPTO', 'TO_SCREEN']
 
@@ -186,6 +193,12 @@ export default tseslint.config(
     ignores: [...OVERLAY_SOURCES, ...TEST_FILES],
     plugins: { rchat },
     rules: { 'rchat/overlays': 'error' },
+  },
+  {
+    files: ['apps/web/app/**/*.{ts,tsx}'],
+    ignores: [...MARK_OWNERS, ...TEST_FILES],
+    plugins: { rchat },
+    rules: { 'rchat/name-mark': 'error' },
   },
   {
     files: ['apps/web/app/**/*.{ts,tsx}', 'docs/src/**/*.{ts,tsx}'],

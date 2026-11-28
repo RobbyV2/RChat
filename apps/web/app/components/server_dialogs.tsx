@@ -1,6 +1,7 @@
 'use client'
+import { serverName } from '../lib/names'
 import { ask, sendTo } from '../lib/asks'
-import { NameInput, NameSelect } from './name'
+import { Name, NameInput, NameSelect } from './name'
 import { refusalOf, refusalView } from '../lib/api_errors'
 
 import { PeerCodeDialog } from './p2p/peer_code_dialog'
@@ -24,7 +25,7 @@ import { JOIN_NOTE, runJoinStep, type JoinStep } from '../lib/join_flow'
 import { SHORT_PASSWORD, tooShort } from '../lib/passwords'
 import { Button, ListRow, Tab } from './controls'
 import { Row, Stack, Surface } from './layout'
-import { Dialog, fieldCls, FieldError, Masked, smallFieldCls } from './ui'
+import { Dialog, fieldCls, FieldError, smallFieldCls } from './ui'
 import { ServerGlyph } from './server_rail'
 import { AboutLine } from './server_about'
 import { aboutText } from '../lib/server_about'
@@ -246,8 +247,7 @@ function AddServerDialog({
                           <ServerGlyph name={s.name} displayName={s.display_name} look={s} />
                         </span>
                       }
-                      streamer
-                      label={<Masked text={s.display_name} />}
+                      label={<Name of={serverName(s)} />}
                       description={<AboutLine text={aboutText(s.description)} oneLine />}
                     />
                   ))}

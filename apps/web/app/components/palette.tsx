@@ -1,4 +1,5 @@
 'use client'
+import { Covered } from './covered'
 import { Name } from './name'
 import { accountLabel } from '../lib/names'
 import { client } from '../lib/client/client'
@@ -143,8 +144,10 @@ function Title({ item, hits }: { item: PaletteItem; hits: number[] }) {
   const masked = item.name === true && mask(item.title) !== item.title
   const parts = hits.length && !masked ? fuzzyParts(item.title, hits) : null
   return (
-    <span
-      className={`truncate text-sm ${item.danger ? 'text-error' : 'text-on-surface'} ${item.name ? 'streamer' : ''}`}
+    <Covered
+      what="title"
+      on={!!item.name}
+      look={item.danger ? 'truncate text-sm text-error' : 'truncate text-sm text-on-surface'}
     >
       {item.originalTitle ? (
         <MaskedText key={item.originalTitle} text={item.originalTitle} shown={item.title} />
@@ -163,7 +166,7 @@ function Title({ item, hits }: { item: PaletteItem; hits: number[] }) {
       ) : (
         item.title
       )}
-    </span>
+    </Covered>
   )
 }
 
@@ -206,8 +209,10 @@ function ResultRow({
       <span className="flex min-w-0 flex-1 flex-col">
         <Title item={item} hits={hits} />
         {item.subtitle && (
-          <span
-            className={`truncate text-xs text-on-surface-variant ${item.subtitleName ? 'streamer' : ''}`}
+          <Covered
+            what="title"
+            on={!!item.subtitleName}
+            look="truncate text-xs text-on-surface-variant"
           >
             {item.originalSubtitle ? (
               <MaskedText
@@ -220,7 +225,7 @@ function ResultRow({
             ) : (
               item.subtitle
             )}
-          </span>
+          </Covered>
         )}
       </span>
       {item.hint && (

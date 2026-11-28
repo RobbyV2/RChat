@@ -1,13 +1,11 @@
 'use client'
 
-import { instanceName } from '../lib/names'
-import { Name } from './name'
+import { accountLabel, instanceName } from '../lib/names'
+import { Name, useNameLabel } from './name'
 import { identityPerson, pictured } from '../lib/people'
 import type { ActorTagRow } from '../lib/client/view_actor'
 import { UserAvatar } from './user_avatar'
 import { KeyAvatar } from './p2p/p2p_badge'
-import { useMask, useStore } from '../lib/store'
-import { Masked } from './ui'
 import { Row } from './layout'
 
 // The tag colors of globals.css (`--color-tag-1` to `-6`), one per instance by its origin.
@@ -57,31 +55,27 @@ export function AccountTag({
   name: string
   compactOnPhone?: boolean
 }) {
-  const streamer = useStore(s => s.streamer)
-  const mask = useMask()
+  const title = useNameLabel(
+    accountLabel(
+      (row.local ? row.display + ' · P2P · ' : '') +
+        (row.username ?? 'Guest') +
+        '@' +
+        new URL(row.origin).host +
+        ' · ' +
+        name
+    ),
+    'Account'
+  )
   return (
-    <span
-      title={
-        streamer
-          ? 'Account'
-          : mask(
-              (row.local ? row.display + ' · P2P · ' : '') +
-                (row.username ?? 'Guest') +
-                '@' +
-                new URL(row.origin).host +
-                ' · ' +
-                name
-            )
-      }
-      className="streamer inline-flex min-w-0 text-xs"
-    >
+    <span title={title} className="inline-flex min-w-0 text-xs">
       <Row as="span" gap="xs">
         <ActorAvatar row={row} size={16} />
-        <span className={compactOnPhone ? 'max-md:sr-only truncate' : 'truncate'}>
-          <Masked
-            text={row.local ? row.display + ' · P2P · ' + row.username : (row.username ?? 'Guest')}
-          />
-        </span>
+        <Name
+          of={accountLabel(
+            row.local ? row.display + ' · P2P · ' + row.username : (row.username ?? 'Guest')
+          )}
+          look={compactOnPhone ? 'max-md:sr-only truncate' : 'truncate'}
+        />
         {compactOnPhone ? (
           <span className="hidden md:inline-flex">
             <InstanceTag origin={row.origin} name={name} />

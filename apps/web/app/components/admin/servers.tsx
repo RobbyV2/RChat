@@ -1,7 +1,7 @@
 'use client'
 import { ask, sendTo } from '../../lib/asks'
 import { Name, NameInput } from '../name'
-import { serverCalled } from '../../lib/names'
+import { serverCalled, serverName } from '../../lib/names'
 import { useAccount } from '../../lib/client/react'
 import { useCallback, useEffect, useState } from 'react'
 import { ChevronDown, ChevronUp, X } from 'lucide-react'
@@ -211,10 +211,15 @@ function DefaultServers() {
                   key={sv.name}
                   disabled={pinned || full || list.includes(sv.name)}
                   onClick={() => add(sv.name)}
-                  streamer
                   label={
                     <>
-                      {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
+                      <Name of={serverName(sv)} />{' '}
+                      <Name
+                        of={serverCalled(sv.name)}
+                        before="("
+                        after=")"
+                        look="text-on-surface-variant"
+                      />
                     </>
                   }
                   trailing={<span className="shrink-0 text-primary">Add</span>}
@@ -375,10 +380,15 @@ export function ServersSection() {
                 variant="card"
                 chevron
                 onClick={() => openAdmin('servers', sv.name)}
-                streamer
                 label={
                   <>
-                    {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
+                    <Name of={serverName(sv)} />{' '}
+                    <Name
+                      of={serverCalled(sv.name)}
+                      before="("
+                      after=")"
+                      look="text-on-surface-variant"
+                    />
                   </>
                 }
               />

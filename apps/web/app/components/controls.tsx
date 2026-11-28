@@ -213,7 +213,7 @@ export function IconButton<const S extends string = never>({
 // A row of a menu or a list: leading icon (or `leading`, an avatar), label (and a line under it),
 // trailing slot, and a chevron when it opens a page (`narrow`: only while the screen is narrow).
 // `current` marks the open one (`page`: the page shown beside the list). `wrap` lets a long label
-// wrap instead of cutting it short. A `streamer` label is a name: streamer mode blurs it. `name`
+// wrap instead of cutting it short. `name`
 // is what a screen reader calls it when its label alone does not say.
 export function ListRow<const S extends string = never>({
   icon: Icon,
@@ -227,7 +227,6 @@ export function ListRow<const S extends string = never>({
   current = false,
   pressed,
   wrap = false,
-  streamer = false,
   type = 'button',
   title,
   name,
@@ -248,7 +247,6 @@ export function ListRow<const S extends string = never>({
     variant?: RowVariant
     current?: boolean | 'page'
     wrap?: boolean
-    streamer?: boolean
     title?: string
     ref?: Ref<HTMLButtonElement>
   }) {
@@ -266,9 +264,7 @@ export function ListRow<const S extends string = never>({
       {Icon && <Icon size={18} aria-hidden className="shrink-0 opacity-80" />}
       {leading}
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className={`${streamer ? 'streamer ' : ''}${wrap ? 'break-words' : 'truncate'}`}>
-          {label}
-        </span>
+        <span className={wrap ? 'break-words' : 'truncate'}>{label}</span>
         {description && (
           <span className="break-words text-xs text-on-surface-variant">{description}</span>
         )}

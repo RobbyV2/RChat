@@ -3,7 +3,7 @@
 import { IconButton, CardButton, MediaButton } from './controls'
 import { ask, mediaUrlOf, sendTo } from '../lib/asks'
 import { Name } from './name'
-import { personCalled } from '../lib/names'
+import { handleName, personCalled } from '../lib/names'
 import { PeerCodeButton } from './p2p/peer_code_button'
 import {
   createContext,
@@ -323,22 +323,22 @@ function Mention({ username }: { username: string }) {
   const { user, mine, label, card } = useWatch(() => chat.mention(username), [chat, username])
   // The pill keeps the handle that resolves; the name the server shows is its tooltip.
   const named = useLook(card?.server ?? null, username)?.name ?? null
-  const streamer = useStore(s => s.streamer)
   const mask = useMask(mine)
   return (
-    <span
-      {...(card ? profileTrigger(store, user, card.server) : {})}
-      data-mention={username}
-      title={named === null || streamer ? undefined : mask(named)}
-      className={`md-mark streamer cursor-pointer hover:underline ${
-        mine ? 'bg-primary-container text-on-primary-container' : 'bg-primary/15 text-primary'
-      }`}
-    >
-      @
-      <MaskControl>
-        <Masked text={label} own={mine} />
-      </MaskControl>
-    </span>
+    <MaskControl>
+      <Name
+        {...(card ? profileTrigger(store, user, card.server) : {})}
+        data-mention={username}
+        of={handleName(label, mine)}
+        before="@"
+        titled={named === null ? false : mask(named)}
+        look={
+          mine
+            ? 'md-mark cursor-pointer hover:underline bg-primary-container text-on-primary-container'
+            : 'md-mark cursor-pointer hover:underline bg-primary/15 text-primary'
+        }
+      />
+    </MaskControl>
   )
 }
 

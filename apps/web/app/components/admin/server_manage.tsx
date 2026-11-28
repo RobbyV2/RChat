@@ -33,13 +33,14 @@ function NameForm({
   placeholder,
   submitLabel,
   onSubmit,
-  streamer = false,
+  named = false,
 }: {
   initial?: string
   placeholder: string
   submitLabel: string
   onSubmit: (value: string) => void
-  streamer?: boolean
+  // The field holds a name.
+  named?: boolean
 }) {
   const [value, setValue] = useState(initial ?? '')
   return (
@@ -60,7 +61,7 @@ function NameForm({
         onChange={e => setValue(e.target.value)}
         placeholder={placeholder}
         aria-label={placeholder}
-        named={streamer}
+        named={named}
         className={`${fieldCls} min-w-24`}
       />
       <Button type="submit" place="shrink-0">
@@ -118,7 +119,7 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
         initial={detail.display_name}
         placeholder="Server name"
         submitLabel="Rename"
-        streamer
+        named
         onSubmit={v =>
           renameServer(name, v).then(
             onCollapse,

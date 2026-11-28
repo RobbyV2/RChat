@@ -152,12 +152,6 @@ describe('ListRow, SectionHeading, Badge, Pill', () => {
     expect(renderToStaticMarkup(<ListRow label="x" />)).not.toContain('chevron')
   })
 
-  test('a name row blurs its label in streamer mode, on the element that cuts it short', () => {
-    const html = renderToStaticMarkup(<ListRow streamer label="Dana" />)
-    expect(html).toContain('<span class="streamer truncate">Dana</span>')
-    expect(renderToStaticMarkup(<ListRow label="Dana" />)).not.toContain('streamer')
-  })
-
   test('a section heading is a heading with the shared look', () => {
     expect(renderToStaticMarkup(<SectionHeading>Members</SectionHeading>)).toBe(
       `<h3 class="${sectionHeadingLook}">Members</h3>`

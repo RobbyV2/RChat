@@ -339,17 +339,15 @@ export function ForwardSourcePill({
     const serverName = (
       <>
         <PillGlyph server={server} own={own} />
-        <span className="min-w-0 truncate">
-          <Masked text={server.name} own={own} />
-        </span>
+        <Name of={serverCalled(server.name, own)} look="min-w-0 truncate" />
       </>
     )
     const channelName = channel && (
       <>
         <Hash size={12} aria-hidden className="shrink-0" />
-        <span className="min-w-0 truncate">
+        <Covered what="channel" look="min-w-0 truncate">
           <Masked text={channel.name} own={own} />
-        </span>
+        </Covered>
       </>
     )
     return (
@@ -401,18 +399,16 @@ export function ForwardSourcePill({
       <div data-forward-pill="named" className={PILL}>
         {head}
         <span className={`${PLACE} max-w-9/20`}>
-          <span className="min-w-0 truncate">
-            <Masked text={pill.server} />
-          </span>
+          <Name of={serverCalled(pill.server)} look="min-w-0 truncate" />
         </span>
         {pill.channel !== null && (
           <>
             <ChevronRight size={12} aria-hidden className="shrink-0" />
             <span className={PLACE}>
               <Hash size={12} aria-hidden className="shrink-0" />
-              <span className="min-w-0 truncate">
+              <Covered what="channel" look="min-w-0 truncate">
                 <Masked text={pill.channel} />
-              </span>
+              </Covered>
             </span>
           </>
         )}

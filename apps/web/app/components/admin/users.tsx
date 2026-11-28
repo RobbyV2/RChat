@@ -210,10 +210,15 @@ function AccountRow({ user }: { user: UserRef }) {
         )
       )}
       leading={<UserAvatar person={asAccount(user, 'administration')} size={28} />}
-      streamer
       label={
         <>
-          {user.display_name} <span className="text-on-surface-variant">({user.username})</span>
+          <Name of={personCalled(user.display_name, user.username)} />{' '}
+          <Name
+            of={handleName(user.username)}
+            before="("
+            after=")"
+            look="text-on-surface-variant"
+          />
         </>
       }
     />

@@ -1,7 +1,7 @@
 'use client'
 import { Covered } from './covered'
 import { asAccount } from '../lib/people'
-import { personName } from '../lib/names'
+import { accountLabel, personName } from '../lib/names'
 import { Name, NameSelect } from './name'
 import { useP2pApp, useP2p, P2pProvider } from '../lib/client/p2p_react'
 
@@ -307,7 +307,7 @@ function P2pDms({ peer, label }: { peer?: SwitcherRow; label?: string } = {}) {
               }
               tone="inherit"
             >
-              <span className="streamer truncate text-xs">{label}</span>
+              <Name of={accountLabel(label ?? '')} look="truncate text-xs" />
             </LinkButton>
           )}
           <span aria-hidden className="h-0 flex-1 border-t border-dashed border-tertiary/70" />

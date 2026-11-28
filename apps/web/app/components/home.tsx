@@ -5,8 +5,10 @@ import {
   handleName,
   instanceAddress,
   instanceName,
+  p2pName,
   personCalled,
   roomName,
+  serverCalled,
   serverName,
   type NameValue,
 } from '../lib/names'
@@ -511,7 +513,6 @@ function RecentItem({
   title,
   glyph,
   label,
-  own = false,
   where,
   p2p = false,
   unread,
@@ -522,8 +523,8 @@ function RecentItem({
   id: string
   title: string
   glyph: ReactNode
-  label: string
-  own?: boolean
+  // The name, drawn: a person's or a channel's.
+  label: ReactNode
   where: ReactNode
   p2p?: boolean
   unread: boolean
@@ -554,17 +555,10 @@ function RecentItem({
         )
       )}
       leading={glyph}
-      streamer
-      label={
-        <span className={unread || pings ? 'font-semibold' : undefined}>
-          <Masked text={label} own={own} />
-        </span>
-      }
+      label={<span className={unread || pings ? 'font-semibold' : undefined}>{label}</span>}
       description={
         <Row as="span" gap="xs">
-          <Covered what="place" look="truncate">
-            {where}
-          </Covered>
+          <span className="truncate">{where}</span>
           {p2p && <P2pBadge />}
         </Row>
       }
@@ -627,8 +621,15 @@ function RecentRow({ recent }: { recent: Exclude<Recent, { kind: 'p2p' }> }) {
           </PlaceGlyph>
         )
       }
-      label={label}
-      own={own}
+      label={
+        recent.kind === 'dm' ? (
+          <Name of={personCalled(label, null, own)} />
+        ) : (
+          <Covered what="channel">
+            <Masked text={label} own={own} />
+          </Covered>
+        )
+      }
       where={
         recent.kind === 'dm' ? (
           dm?.is_self ? (
@@ -637,7 +638,7 @@ function RecentRow({ recent }: { recent: Exclude<Recent, { kind: 'p2p' }> }) {
             'Direct message'
           )
         ) : (
-          <Masked text={serverName} own={own} />
+          <Name of={serverCalled(serverName, own)} />
         )
       }
       unread={unread}
@@ -708,9 +709,16 @@ function P2pRecentRow({ recent }: { recent: Extract<Recent, { kind: 'p2p' }> }) 
           </PlaceGlyph>
         )
       }
-      label={label}
-      own={own}
-      where={ch === null ? 'P2P direct message' : <Masked text={server?.name ?? ''} own={own} />}
+      label={
+        ch === null ? (
+          <Name of={p2pName(label, own)} />
+        ) : (
+          <Covered what="channel">
+            <Masked text={label} own={own} />
+          </Covered>
+        )
+      }
+      where={ch === null ? 'P2P direct message' : <Name of={roomName(server?.name ?? '', own)} />}
       p2p={ch !== null}
       unread={unread}
       pings={pings}
@@ -1089,12 +1097,12 @@ function PinnedDmRow({ dm }: { dm: DmSummary }) {
   const pings = useStore(s => scopePingCount(s, key))
   const openDm = useStore(s => s.openDm)
   const placeDm = useStore(s => s.placeDm)
-  const streamer = useStore(s => s.streamer)
-  const mask = useMask(dm.is_self)
+  const called = personCalled(dm.other.display_name, null, dm.is_self)
+  const title = useNameLabel(called, 'Direct message')
   return (
     <ListRow
       data-pinned-dm={dm.id}
-      title={streamer ? 'Direct message' : mask(dm.other.display_name)}
+      title={title}
       onClick={() => {
         showOwner(acct)
         void openDm(dm.id)
@@ -1109,10 +1117,9 @@ function PinnedDmRow({ dm }: { dm: DmSummary }) {
         }
       )}
       leading={<UserAvatar person={asAccount(dm.other, 'dm')} size={32} />}
-      streamer
       label={
         <span className={unread || pings ? 'font-semibold' : undefined}>
-          <Masked text={dm.other.display_name} own={dm.is_self} />
+          <Name of={called} />
         </span>
       }
       description={

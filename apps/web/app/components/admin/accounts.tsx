@@ -3,7 +3,7 @@
 import { Covered } from '../covered'
 import { ask, asked, sendTo } from '../../lib/asks'
 import { Name, NameInput } from '../name'
-import { handleName, serverCalled } from '../../lib/names'
+import { handleName, serverCalled, serverName } from '../../lib/names'
 import { useId, useState } from 'react'
 import { Check, Copy, X } from 'lucide-react'
 import {
@@ -150,10 +150,15 @@ function ServerSearch({
                 setQ('')
                 onPick(sv)
               }}
-              streamer
               label={
                 <>
-                  {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
+                  <Name of={serverName(sv)} />{' '}
+                  <Name
+                    of={serverCalled(sv.name)}
+                    before="("
+                    after=")"
+                    look="text-on-surface-variant"
+                  />
                 </>
               }
             />

@@ -22,8 +22,10 @@ export type CoveredKind =
   | 'address'
   // A value of a setting or of a log line, which may hold a name.
   | 'value'
+  // A heading or a row of mixed results that is a name only for some of its uses.
+  | 'title'
 
-type Tag = 'span' | 'p' | 'div' | 'h2' | 'h3' | 'li' | 'code' | 'strong' | 'dd'
+type Tag = 'span' | 'p' | 'div' | 'h1' | 'h2' | 'h3' | 'li' | 'code' | 'strong' | 'dd'
 
 // Text that streamer mode hides and that is not one name: `what` says which kind it is. With
 // `on` false it is left as it is (a part that needs hiding only sometimes).

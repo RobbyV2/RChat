@@ -1,5 +1,6 @@
 'use client'
 
+import { Covered } from '../covered'
 import { useState } from 'react'
 import {
   CONFIG_FILTERS,
@@ -37,7 +38,7 @@ function Control({ control }: { control: ConfigControl }) {
   const row = adminRow(control.key)
   const options = row?.kind === 'choice' ? row.options : []
   const source = sourceOf(control)
-  const names = NAMES.has(control.key) ? 'streamer' : ''
+  const names = NAMES.has(control.key)
   const where = row?.kind === 'link' ? 'servers' : 'features'
   return (
     <PageRow id={`config-${control.key}`} className="bg-surface-container">
@@ -55,11 +56,18 @@ function Control({ control }: { control: ConfigControl }) {
               </code>
               <Grid as="dl" cols="pair" gap="md" lineGap="3xs" text="xs">
                 <dt className="text-on-surface-variant">Value</dt>
-                <dd className={`break-words ${names}`}>{shownValue(control.value, options)}</dd>
+                <Covered as="dd" what="value" on={names} look="break-words">
+                  {shownValue(control.value, options)}
+                </Covered>
                 <dt className="text-on-surface-variant">Server config</dt>
-                <dd className={`break-words ${control.config === null ? '' : names}`}>
+                <Covered
+                  as="dd"
+                  what="value"
+                  on={names && control.config !== null}
+                  look="break-words"
+                >
                   {control.config === null ? 'Not set' : shownValue(control.config, options)}
-                </dd>
+                </Covered>
               </Grid>
               {control.key === 'upload_expiry_max_days' && (
                 <p className="text-xs text-on-surface-variant">{CAP_NOTE}</p>

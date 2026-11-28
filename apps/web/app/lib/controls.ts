@@ -403,7 +403,7 @@ export const sourcePillLook =
 
 // A place named in that pill.
 export const sourcePlaceLook =
-  'streamer flex min-w-0 items-center gap-1 rounded-sm font-semibold text-on-surface'
+  'flex min-w-0 items-center gap-1 rounded-sm font-semibold text-on-surface'
 
 // A covered or removed embed, in place of its card.
 export const embedNoteLook =
