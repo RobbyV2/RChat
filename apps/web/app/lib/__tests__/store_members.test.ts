@@ -98,7 +98,7 @@ describe('member lookups for authors', () => {
   test('ws events keep cached rows current', async () => {
     await st().ensureMembers('s', ['bob', 'carol', 'zed'])
     dispatch({ type: 'admin_changed', server: 's', username: 'bob', is_admin: true, perms: 4n })
-    dispatch({ type: 'presence_changed', server: 's', username: 'bob', online: true })
+    dispatch({ type: 'presence_changed', server: 's', username: 'bob', online: true } as WsEvent)
     await clock.pass(20)
     expect(memberOf(st(), 's', 'bob')).toEqual({
       ...member('bob', { role_ids: [1] }),
@@ -152,12 +152,13 @@ describe('member lookups for authors', () => {
 })
 
 describe('the online section', () => {
-  const online = (username: string, on = true): WsEvent => ({
-    type: 'presence_changed',
-    server: 's',
-    username,
-    online: on,
-  })
+  const online = (username: string, on = true): WsEvent =>
+    ({
+      type: 'presence_changed',
+      server: 's',
+      username,
+      online: on,
+    }) as WsEvent
   const frame = () => clock.pass(20)
   const shown = () => onlineRows(st().members.s.list, st().memberInfo.s).map(m => m.username)
   const json = (body: unknown, next?: string) =>

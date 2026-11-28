@@ -9,8 +9,11 @@ const voice = (users: string[]) => ({
   server: 's',
   channel_id: 5,
   users,
+  audio: null,
 })
 const call = (over: Partial<Extract<WsEvent, { type: 'call_state' }>>) => ({
+  answered_at: null,
+  call_id: null,
   type: 'call_state' as const,
   dm_id: 3,
   dm_users: ['alice', 'bob'],

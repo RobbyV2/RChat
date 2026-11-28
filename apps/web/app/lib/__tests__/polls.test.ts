@@ -328,7 +328,12 @@ describe('poll store', () => {
       messages: { c1: [pollMsg(poll({ show_results: 'after_vote', mine: [2] }))] },
     })
     const bare = pollMsg(poll({ show_results: 'after_vote', results: null, mine: null }))
-    st().applyWsEvent({ type: 'message_updated', message: { ...bare, pinned_at: 5 } })
+    st().applyWsEvent({
+      type: 'message_updated',
+      message: { ...bare, pinned_at: 5 },
+      channel_id: null,
+      server: null,
+    })
     expect(shown()?.mine).toEqual([2])
     expect(shown()?.results === null).toBe(false)
   })

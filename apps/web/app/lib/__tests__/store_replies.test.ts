@@ -287,6 +287,8 @@ describe('partial quotes in live events', () => {
     dispatch({
       type: 'message_updated',
       message: msg(31, { author: user('carol'), content: 'x', reply_to: ref(3) }),
+      channel_id: null,
+      server: null,
     })
     await tick()
     expect(gets.length).toBe(1)

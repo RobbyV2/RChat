@@ -228,6 +228,8 @@ describe('voice and call mic state', () => {
       from: 'bob',
       kind: 'rtc',
       state: 'ended',
+      answered_at: null,
+      call_id: null,
     })
     expect(st().confirm).toBeNull()
     ringFromBob()
@@ -255,6 +257,8 @@ describe('voice and call mic state', () => {
         from,
         kind: 'rtc',
         state,
+        answered_at: null,
+        call_id: null,
       })
     }
 
@@ -268,6 +272,8 @@ describe('voice and call mic state', () => {
     for (const scoped of [false, true]) {
       const refuse = (request: ReturnType<typeof lastRequest>) =>
         st().applyWsEvent({
+          reason: null,
+          request: null,
           type: 'error',
           message: 'Calling too often, try again in a moment',
           ...(scoped && { request }),
@@ -300,6 +306,8 @@ describe('voice and call mic state', () => {
         const redial = client.calls.current()
         expect(lastRequest()).toEqual(accepted)
         st().applyWsEvent({
+          reason: null,
+          request: null,
           type: 'error',
           message: 'No incoming call',
           ...(scoped && { request: accepted }),
@@ -335,6 +343,8 @@ describe('voice and call mic state', () => {
         await st().acceptCall()
         for (const message of ['No shared voice session', 'Signal too large']) {
           st().applyWsEvent({
+            reason: null,
+            request: null,
             type: 'error',
             message,
             ...(scoped && { request: { type: 'other' as const } }),
@@ -347,6 +357,8 @@ describe('voice and call mic state', () => {
         }
         callState('bob', 'ringing')
         st().applyWsEvent({
+          reason: null,
+          request: null,
           type: 'error',
           message: 'Too many requests, slow down',
           ...(scoped && { request: lastRequest() }),
@@ -382,7 +394,12 @@ describe('voice and call mic state', () => {
           expect(sent.at(-1)).toMatchObject({ type: 'call_start', dm_id: 8 })
           expect(rtc.active()).toBe(true)
           if (oldRefused) {
-            st().applyWsEvent({ type: 'error', message: 'No incoming call' })
+            st().applyWsEvent({
+              type: 'error',
+              message: 'No incoming call',
+              reason: null,
+              request: null,
+            })
             callState('alice', 'ringing', 8)
             expect(st().call?.dmId).toBe(8)
             expect(rtc.active()).toBe(true)
@@ -513,6 +530,8 @@ describe('voice and call mic state', () => {
           kind: 'rtc',
           video: false,
           state,
+          answered_at: null,
+          call_id: null,
         })
       await st().startCall(7, false)
       if (!earlyHangup) phase('ringing')
@@ -573,6 +592,9 @@ describe('voice and call mic state', () => {
         from: 'bob',
         dm_id: 7,
         dm_users: ['bob', 'alice'],
+        video: false,
+        answered_at: null,
+        call_id: null,
       } as const
       const phase = (state: 'ringing' | 'ended') =>
         st().applyWsEvent({ ...ring, dm_users: [...ring.dm_users], state })
@@ -636,7 +658,13 @@ describe('voice and call mic state', () => {
 
   test('a room update from before our join is not a removal', async () => {
     const roomState = (users: string[]) =>
-      st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id: 3, users })
+      st().applyWsEvent({
+        type: 'voice_state',
+        server: 'lounge',
+        channel_id: 3,
+        users,
+        audio: null,
+      })
     await st().joinVoice('lounge', 3)
     // bob's join was applied just before ours, so this state doesn't list us yet
     roomState(['bob'])
@@ -652,7 +680,7 @@ describe('voice and call mic state', () => {
 
   test('switching back to a channel ignores its state from before the rejoin', async () => {
     const roomState = (channel_id: number, users: string[]) =>
-      st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id, users })
+      st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id, users, audio: null })
     await st().joinVoice('lounge', 3)
     roomState(3, ['alice'])
     await switchCall(() => st().joinVoice('lounge', 4))
@@ -665,7 +693,7 @@ describe('voice and call mic state', () => {
 
   test('a quick A -> B -> A before any join is acknowledged keeps the session', async () => {
     const roomState = (channel_id: number, users: string[]) =>
-      st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id, users })
+      st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id, users, audio: null })
     await st().joinVoice('lounge', 13)
     await switchCall(() => st().joinVoice('lounge', 14))
     await switchCall(() => st().joinVoice('lounge', 13))
@@ -751,7 +779,13 @@ describe('timeouts in voice', () => {
     expect(st().error).toBeNull()
     expect(sent.some(m => m.type === 'voice_join' && m.channel_id === 3)).toBe(true)
     const roomState = (users: string[]) =>
-      st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id: 3, users })
+      st().applyWsEvent({
+        type: 'voice_state',
+        server: 'lounge',
+        channel_id: 3,
+        users,
+        audio: null,
+      })
     roomState([name])
     expect(rtc.active()).toBe(true)
     roomState([])
@@ -850,9 +884,21 @@ describe('timeouts in voice', () => {
 
   test('muted users who leave the room are forgotten', () => {
     useStore.setState({ voiceMuted: { 4: ['bob', 'carol'] }, voiceUsers: {} })
-    st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id: 4, users: ['carol'] })
+    st().applyWsEvent({
+      type: 'voice_state',
+      server: 'lounge',
+      channel_id: 4,
+      users: ['carol'],
+      audio: null,
+    })
     expect(st().voiceMuted).toEqual({ 4: ['carol'] })
-    st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id: 4, users: [] })
+    st().applyWsEvent({
+      type: 'voice_state',
+      server: 'lounge',
+      channel_id: 4,
+      users: [],
+      audio: null,
+    })
     expect(st().voiceMuted).toEqual({})
   })
 
@@ -1098,9 +1144,21 @@ describe('guests muted by staff', () => {
     hush(true)
     hush(true, 2)
     expect(st().voiceHushed).toEqual({ 1: [guestName], 2: [guestName] })
-    st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id: 1, users: ['bob'] })
+    st().applyWsEvent({
+      type: 'voice_state',
+      server: 'lounge',
+      channel_id: 1,
+      users: ['bob'],
+      audio: null,
+    })
     expect(st().voiceHushed).toEqual({ 2: [guestName] })
-    st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id: 2, users: [] })
+    st().applyWsEvent({
+      type: 'voice_state',
+      server: 'lounge',
+      channel_id: 2,
+      users: [],
+      audio: null,
+    })
     expect(st().voiceHushed).toEqual({})
   })
 })
@@ -1123,6 +1181,7 @@ describe('what people in voice say about their own audio', () => {
     audio?: { username: string; muted: boolean; deafened: boolean }[]
   ) =>
     st().applyWsEvent({
+      audio: null,
       type: 'voice_state',
       server: 'lounge',
       channel_id,

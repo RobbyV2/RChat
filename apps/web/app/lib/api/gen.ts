@@ -655,14 +655,14 @@ export type ExchangeResp = {
   kind: 'session'
   token: string
   user: Me
-} | {
+} & { provider?: never; reason?: never; suggestion?: never } | {
   kind: 'pick_username'
   reason: string
   suggestion: string | null
-} | {
+} & { confirmation?: never; end_session?: never; provider?: never; token?: never; user?: never } | {
   kind: 'linked'
   provider: string
-}
+} & { confirmation?: never; end_session?: never; reason?: never; suggestion?: never; token?: never; user?: never }
 
 export interface ExecuteReq {
   allowed_mentions?: AllowedMentions | null
@@ -1043,7 +1043,7 @@ export interface LocateBatchReq {
   ids: number[]
 }
 
-export type LocationResult = MessagePlace | MessageLocation
+export type LocationResult = MessagePlace & { author?: never; content?: never; created_at?: never; forward?: never; forwarded?: never; has_media?: never; id?: never; kind?: never } | MessageLocation & { shown?: never }
 
 export interface LoginReq {
   password?: string | null
@@ -2517,9 +2517,9 @@ export interface Unreads {
   more: boolean
 }
 
-export type Updated = EditStub | {
+export type Updated = EditStub & { message?: never } | {
   message: Message
-}
+} & { edited_at?: never; id?: never; stub?: never; thread_root_id?: never }
 
 export interface UploadExpiry {
   mode: ExpiryMode

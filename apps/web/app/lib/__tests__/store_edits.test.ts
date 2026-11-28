@@ -2,7 +2,7 @@ import { flush } from './helpers/test_clock'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore } from '../store'
 import { parseSed } from '../sed'
-import type { EditStub, Message, MessageMedia, ReplyRef, WsEvent } from '../types'
+import type { Message, MessageMedia, ReplyRef, WsEvent } from '../types'
 import { me, memoryStorage, msg, serverDetail, until, user } from './fixtures'
 import { Secret } from '../secret'
 import { writeJson } from '../api/masks'
@@ -105,6 +105,8 @@ describe('message_updated', () => {
     dispatch({
       type: 'message_updated',
       message: { ...mine, content: 'the **plan**', edited_at: 77, reactions: [] },
+      channel_id: null,
+      server: null,
     })
     const list = st().messages.c1
     expect(list[1].content).toBe('the **plan**')
@@ -129,7 +131,12 @@ describe('message_updated', () => {
       message: late,
     })
     expect(st().messages.c1.at(-1)?.reply_to?.content).toBe('teh plan')
-    dispatch({ type: 'message_updated', message: { ...mine, content: 'new plan', edited_at: 5 } })
+    dispatch({
+      type: 'message_updated',
+      message: { ...mine, content: 'new plan', edited_at: 5 },
+      channel_id: null,
+      server: null,
+    })
     expect(st().messages.c1.at(-1)?.reply_to?.content).toBe('new plan')
   })
 })
@@ -296,7 +303,7 @@ describe('s/ edits', () => {
   })
 })
 
-const stub = (id: number, thread_root_id: number | null = null): EditStub => ({
+const stub = (id: number, thread_root_id: number | null = null): WsEvent => ({
   type: 'message_updated',
   stub: true,
   id,

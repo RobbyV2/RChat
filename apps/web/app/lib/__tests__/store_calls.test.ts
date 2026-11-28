@@ -104,6 +104,8 @@ describe('call type on the wire', () => {
         kind: 'rtc',
         state,
         video: true,
+        answered_at: null,
+        call_id: null,
       })
     await st().startP2pCall(5, false)
     expect(sent).toMatchObject([
@@ -115,6 +117,8 @@ describe('call type on the wire', () => {
 
   test('the call state keeps the type and when it went live', () => {
     const state = (phase: 'ringing' | 'active', video?: boolean): WsEvent => ({
+      answered_at: null,
+      call_id: null,
       type: 'call_state',
       dm_id: 5,
       dm_users: ['alice', 'bob'],
@@ -174,6 +178,7 @@ describe('call type on the wire', () => {
       from: 'bob',
       kind: 'rtc',
       answered_at: answered,
+      call_id: null,
     })
     expect(st().call?.since).toBe(answered)
   })

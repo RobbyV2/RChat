@@ -14,6 +14,7 @@ import { actionById, runAction } from '../actions/registry'
 import { api } from './home_instance'
 import { useStore } from '../store'
 import type { ActiveDialog } from '../store_types'
+import type { AdminConfig, AdminOverview } from '../types'
 import { drain, me, user } from './fixtures'
 import { Secret } from '../secret'
 
@@ -60,9 +61,23 @@ test('the users section offers to create an account and to filter by temporary p
 test('the overview counts the temporary passwords nobody changed yet', () => {
   signIn()
   expect(renderToStaticMarkup(<OverviewSection />)).toContain('1 not changed yet')
-  signIn({ adminOverview: { server_count: 2, user_count: 2, temporary_count: 0 } })
+  signIn({
+    adminOverview: {
+      server_count: 2,
+      user_count: 2,
+      temporary_count: 0,
+      relay: { allocations: null, enabled: false, port: null, turn: false },
+    },
+  })
   expect(renderToStaticMarkup(<OverviewSection />)).toContain('None waiting')
-  signIn({ adminOverview: { server_count: 2, user_count: 2 } })
+  // An older server sends no count of temporary passwords.
+  signIn({
+    adminOverview: {
+      server_count: 2,
+      user_count: 2,
+      relay: { allocations: null, enabled: false, port: null, turn: false },
+    } as AdminOverview,
+  })
   expect(renderToStaticMarkup(<OverviewSection />)).not.toContain('Temporary passwords')
 })
 
@@ -75,10 +90,11 @@ test('the create dialog asks for a username and names the default servers', () =
         value: 'lobby,club',
         config: null,
         pinned: false,
+        same: false,
       },
     ],
     limits: [],
-  }
+  } as unknown as AdminConfig
   const html = dialog({ kind: 'admin_create_account' })
   expect(html).toContain('Create Account')
   expect(html).toContain('>Username<')
@@ -109,7 +125,7 @@ test('a temporary password is shown once, with when it stops working', () => {
       username="dana"
       issued={{ temp_password: 'k7mq-x3ta-9fzc-w2hd-pn4e', expires_at: null }}
       servers={[
-        { server: 'club', ok: true },
+        { server: 'club', ok: true, error: null },
         { server: 'nowhere', ok: false, error: 'Server not found or wrong password' },
       ]}
       onDone={() => {}}

@@ -19,16 +19,19 @@ import {
 import { PROFANITY_TARGETS } from '../rules'
 import type { AdminConfig, ConfigControl } from '../types'
 
-const control = (over: Partial<ConfigControl> = {}): ConfigControl => ({
-  key: 'p2p',
-  env: 'FEATURE_P2P',
-  value: 'on',
-  config: null,
-  pinned: false,
-  ...over,
-})
+const control = (over: Partial<ConfigControl> = {}): ConfigControl =>
+  ({
+    key: 'p2p',
+    env: 'FEATURE_P2P',
+    value: 'on',
+    config: null,
+    pinned: false,
+    ...over,
+  }) as ConfigControl
 
-const config = (...controls: ConfigControl[]): AdminConfig => ({ controls, limits: [] })
+// A config view without the database part, which these tests do not read.
+const config = (...controls: ConfigControl[]): AdminConfig =>
+  ({ controls, limits: [] }) as unknown as AdminConfig
 
 test('a control is pinned, the same as the config, different from it, or not in it', () => {
   expect(sourceOf(control())).toBe('none')

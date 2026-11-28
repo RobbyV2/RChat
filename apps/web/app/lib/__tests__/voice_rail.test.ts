@@ -130,7 +130,7 @@ describe('the hosted voice count', () => {
       voiceAudio: {},
     }
     const ev = (users: string[]) =>
-      ({ type: 'voice_state', server: 'club', channel_id: 4, users }) as const
+      ({ type: 'voice_state', server: 'club', channel_id: 4, users, audio: null }) as const
     const on = applyVoiceState(empty as unknown as RChatState, ev(['a']))
     expect([on.voiceUsers, on.voiceServers]).toEqual([{ 4: ['a'] }, { 4: 'club' }])
     const off = applyVoiceState({ ...empty, ...on } as unknown as RChatState, ev([]))

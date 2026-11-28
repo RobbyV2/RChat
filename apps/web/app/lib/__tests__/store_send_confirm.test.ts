@@ -191,7 +191,12 @@ describe('a send the server confirms', () => {
       dm_id: null,
       dm_users: null,
     })
-    dispatch({ type: 'message_updated', message: sent(49, { content: 'fixed', edited_at: 1100 }) })
+    dispatch({
+      type: 'message_updated',
+      message: sent(49, { content: 'fixed', edited_at: 1100 }),
+      channel_id: null,
+      server: null,
+    })
     open()
     await tick()
     expect(st().messages.c77?.map(m => [m.id, m.content])).toEqual([

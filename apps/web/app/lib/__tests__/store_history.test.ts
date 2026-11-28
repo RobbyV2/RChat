@@ -169,10 +169,17 @@ describe('jumping to a message', () => {
     dispatch(live(199, { content: 'v1' }))
     dispatch(live(200, { content: 'v1' }))
     dispatch(live(201, { content: 'v1', media: media() }))
-    dispatch({ type: 'message_updated', message: msg(200, { author: user('bob'), content: 'v2' }) })
+    dispatch({
+      type: 'message_updated',
+      message: msg(200, { author: user('bob'), content: 'v2' }),
+      channel_id: null,
+      server: null,
+    })
     dispatch({
       type: 'message_updated',
       message: msg(201, { author: user('bob'), content: 'v2', media: media() }),
+      channel_id: null,
+      server: null,
     })
     dispatch({
       type: 'media_removed',
@@ -291,7 +298,13 @@ describe('unread anchor', () => {
     await st().openChannel('s', 1, 'none')
     expect(st().unreadAnchor.c1).toBe(10)
     st().markRead('c1', 20)
-    dispatch({ type: 'read_updated', username: 'alice', scope: 'c1', last_read: 20 })
+    dispatch({
+      type: 'read_updated',
+      username: 'alice',
+      scope: 'c1',
+      last_read: 20,
+      pings_until: 0,
+    })
     expect(st().unreadAnchor.c1).toBe(10)
     expect(st().reads.c1.lastRead).toBe(20)
     await st().openChannel('s', 2, 'none')

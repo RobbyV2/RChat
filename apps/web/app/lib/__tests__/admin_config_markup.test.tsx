@@ -18,16 +18,17 @@ afterEach(() => {
   configInitial.trouble = null
 })
 
-const control = (key: string, env: string, over: Partial<ConfigControl> = {}): ConfigControl => ({
-  key,
-  env,
-  value: 'on',
-  config: null,
-  pinned: false,
-  ...over,
-})
+const control = (key: string, env: string, over: Partial<ConfigControl> = {}): ConfigControl =>
+  ({
+    key,
+    env,
+    value: 'on',
+    config: null,
+    pinned: false,
+    ...over,
+  }) as ConfigControl
 
-const config: AdminConfig = {
+const config = {
   controls: [
     control('p2p', 'FEATURE_P2P', { config: 'on', pinned: true }),
     control('guests_enabled', 'GUESTS_ENABLED', { config: 'on' }),
@@ -46,7 +47,7 @@ const config: AdminConfig = {
     { env: 'RARE_REQUESTS_PER_HOUR', value: 20, default: 20, range: '0-10000' },
     { env: 'REPORT_FEEDBACK_PER_WEEK', value: 10, default: 10, range: '0-100000' },
   ],
-}
+} as unknown as AdminConfig
 
 const page = (section: AdminSection, loaded: AdminConfig | null = config) => {
   Object.assign(initial, {

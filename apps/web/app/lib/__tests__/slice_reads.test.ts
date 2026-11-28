@@ -4,12 +4,13 @@ import { applyPingCount, applyReadUpdated } from '../slices/reads'
 import { useStore, type RChatState } from '../store'
 
 const state = (over: Partial<RChatState>): RChatState => ({ ...useStore.getState(), ...over })
+// An older server leaves `pings_until` out.
 const read = (scope: string, last_read: number, pings_until?: number) => ({
   type: 'read_updated' as const,
   username: 'bob',
   scope,
   last_read,
-  pings_until,
+  pings_until: pings_until as number,
 })
 
 describe('reads reducers', () => {
@@ -54,6 +55,7 @@ describe('reads reducers', () => {
       scope: 'c1',
       pings: 4,
       pings_until: 9,
+      thread_pings: [],
     })
     expect(pingCount(out.pings!.c1)).toBe(4)
     expect(out.pings!.c1.server).toBe('s')
@@ -69,6 +71,7 @@ describe('reads reducers', () => {
       scope: 'c3',
       pings: 1,
       pings_until: 2,
+      thread_pings: [],
     })
     expect(out.pings!.c3.server).toBe('x')
   })

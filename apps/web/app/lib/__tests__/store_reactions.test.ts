@@ -25,18 +25,19 @@ const event = (
   username: string,
   message_id = 10,
   count?: number
-): WsEvent => ({
-  type,
-  server: 's',
-  channel_id: 1,
-  dm_id: null,
-  dm_users: null,
-  message_id,
-  thread_root_id: null,
-  emoji,
-  username,
-  ...(count === undefined ? {} : { count }),
-})
+): WsEvent =>
+  ({
+    type,
+    server: 's',
+    channel_id: 1,
+    dm_id: null,
+    dm_users: null,
+    message_id,
+    thread_root_id: null,
+    emoji,
+    username,
+    ...(count === undefined ? {} : { count }),
+  }) as WsEvent
 const shape = (m: Message | undefined) =>
   (m?.reactions ?? []).map((r: Reaction) => `${r.emoji}${r.count}${r.me ? '*' : ''}`)
 const chan = () => st().messages.c1?.find(m => m.id === 10)
@@ -98,7 +99,12 @@ describe('reaction events', () => {
 
   test('message_updated keeps the reactions already shown', () => {
     dispatch(event('reaction_added', '😭', 'alice'))
-    dispatch({ type: 'message_updated', message: msg(10, { content: 'edited', reactions: [] }) })
+    dispatch({
+      type: 'message_updated',
+      message: msg(10, { content: 'edited', reactions: [] }),
+      channel_id: null,
+      server: null,
+    })
     expect(chan()?.content).toBe('edited')
     expect(shape(chan())).toEqual(['😭1'])
   })

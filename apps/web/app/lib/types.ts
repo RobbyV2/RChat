@@ -1,34 +1,18 @@
 import type {
   AuthInfo,
-  BlockedUser,
-  BulkJob,
-  CallKind,
-  CallPhase,
-  Channel,
-  ChannelLayout,
   ChannelPerm,
   DmCreation,
-  Embed,
-  Friend,
-  FriendRequest,
   Me,
-  Member,
-  MemberLook,
-  Message,
-  Ping,
-  Poll,
   ProfanityTargets,
   Registration,
-  Role,
-  ScheduledMessage,
-  SealJob,
   ServerCreation,
   ServerJoining,
-  ServerSummaryLite,
   ThreadPings,
-  UserRef,
 } from './api/gen'
 export type {
+  AdminAccount,
+  AdminConfig,
+  AdminOverview,
   AuditEntry,
   AuditTarget,
   AuthInfo,
@@ -38,16 +22,24 @@ export type {
   BulkJob,
   CallKind,
   CallLog,
+  CallPeer,
   CallPhase,
+  CallRelays,
   Category,
   CategoryStyle,
   Channel,
   ChannelKind,
   ChannelLayout,
   ChannelPerm,
+  ConfigControl,
+  ConfigLimit,
+  CreatedAccount,
   CreatedPassword,
+  DatabasePool,
+  DatabaseStatus,
   DmCreation,
   DmSummary,
+  EditStub,
   Embed,
   EmbedField,
   ForwardRef,
@@ -64,9 +56,11 @@ export type {
   InboxPage,
   InboxSource,
   InboxUntil,
+  InstanceAuditEntry,
   Invite,
   InviteLinkInfo,
   InviteStatus,
+  IssuedPassword,
   JoinMode,
   JoinedVia,
   LinkedProvider,
@@ -96,6 +90,7 @@ export type {
   ReAuthBody,
   Reaction,
   Registration,
+  RelayStatus,
   ReplyRef,
   RichEmbed,
   Role,
@@ -127,8 +122,9 @@ export type {
   ThreadPings,
   Unread,
   UserRef,
+  WsEvent,
 } from './api/gen'
-import type { MediaRef } from './api/gen'
+import type { MediaRef, ServerResult } from './api/gen'
 import type { ProfileChoices, ProfileLevel } from './profile_choice'
 import { hasBit } from './perms'
 
@@ -340,109 +336,8 @@ export interface InstanceSuggestions {
 
 export type BrandAsset = 'logo' | 'mark-32' | 'mark-180' | 'mark-192' | 'mark-512' | 'mark-maskable'
 
-// One row of the instance audit log, which only the site admin's panel lists.
-export interface InstanceAuditEntry {
-  id: number
-  at: number
-  // Null once the account is deleted.
-  actor: string | null
-  action: string
-  target: string | null
-  detail: unknown
-}
-
-export interface RelayStatus {
-  enabled: boolean
-  turn: boolean
-  port: number | null
-  // Null when the relay runs in another process.
-  allocations: number | null
-}
-
-// One control in the site admin's config view: its value, what the server config said at the
-// last start that set it (null when it does not set it), and whether the config pins it. Values
-// are written as the server config writes them.
-export interface ConfigControl {
-  key: string
-  env: string
-  value: string
-  config: string | null
-  // Whether the stored value says what the config says; an older server leaves it out.
-  same?: boolean
-  pinned: boolean
-}
-
-// One limit of the server config; limits change only there, at a start.
-export interface ConfigLimit {
-  env: string
-  value: number | null
-  default: number | null
-  // "low-high", or empty.
-  range: string
-}
-
-export interface DatabasePool {
-  max: number
-  in_use: number
-  idle: number
-}
-
-export interface DatabaseStatus {
-  kind: 'sqlite' | 'postgres'
-  version: string
-  schema_version: number
-  pool: DatabasePool
-  reader: DatabasePool | null
-  connections: { used: number; allowed: number } | null
-  light_commits: 'async' | 'sync' | null
-  statement_timeout_secs: number | null
-  replicas: { host: string; healthy: boolean; lag_ms: number | null }[]
-  online_indexes: { name: string; state: string; percent: number | null; size_mib: number }[]
-}
-
-export interface AdminConfig {
-  database?: DatabaseStatus
-  controls: ConfigControl[]
-  limits: ConfigLimit[]
-}
-
-export interface AdminOverview {
-  server_count: number
-  user_count: number
-  // Accounts whose password is still a temporary one. Absent on older servers.
-  temporary_count?: number
-  relay?: RelayStatus
-}
-
-// A temporary password as the server returns it once.
-export interface IssuedPassword {
-  temp_password: string
-  // Unix seconds; null for never.
-  expires_at: number | null
-}
-
 // What became of one server an account was to join.
-export interface AddedServer {
-  server: string
-  ok: boolean
-  error?: string
-}
-
-export interface CreatedAccount extends IssuedPassword {
-  user: UserRef
-  servers: AddedServer[]
-}
-
-// One account as the site administration page shows it.
-export interface AdminAccount {
-  user: UserRef
-  created_at: number
-  sign_in: 'text' | 'words'
-  temporary: { issued_at: number; expires_at: number | null; expired: boolean } | null
-  phrase: boolean
-  sessions: number
-  servers: number
-}
+export type AddedServer = ServerResult
 
 export type AccountFilter = 'all' | 'temporary' | 'expired'
 
@@ -460,29 +355,11 @@ export interface PingSummary {
   thread_pings?: ThreadPings[]
 }
 
-interface Scoped {
-  server: string | null
-  channel_id: number | null
-  dm_id: number | null
-  dm_users: string[] | null
-}
-
 // Whether a hoster is online and which of their files we can read. Peer ids are never shared
 // this way; a download asks for one with `p2p_peer`.
 export interface P2pAvailability {
   ids: string[]
   online: boolean
-}
-
-export interface CallPeer {
-  user: string
-  peer_id: string
-}
-
-// Relay hosts one side of a P2P call declared.
-export interface CallRelays {
-  user: string
-  hosts: string[]
 }
 
 export interface RtcPayload {
@@ -529,228 +406,6 @@ export type VoiceMsg =
       dm_id: number | null
       payload: RtcPayload
     }
-
-// An edit in a server channel: only which message changed; holders re-read it.
-export interface EditStub {
-  type: 'message_updated'
-  stub: true
-  id: number
-  server: string
-  channel_id: number
-  thread_root_id: number | null
-  edited_at: number | null
-}
-
-export type WsEvent =
-  | ({ type: 'message'; message: Message } & Scoped)
-  | ({
-      type: 'typing'
-      // `c{channel}`, `t{thread root}` or `d{dm}`.
-      scope: string
-      username: string
-      display_name: string
-      // Unix seconds; 0 when they stopped.
-      until: number
-    } & Scoped)
-  | { type: 'message_updated'; message: Message; stub?: false }
-  | EditStub
-  | ({
-      type: 'reaction_added' | 'reaction_removed'
-      message_id: number
-      thread_root_id: number | null
-      emoji: string
-      username: string
-      count?: number
-    } & Scoped)
-  | ({ type: 'message_deleted'; id: number; thread_root_id: number | null } & Scoped)
-  | ({ type: 'messages_deleted'; ids: number[]; thread_root_id: number | null } & Scoped)
-  | { type: 'bulk_delete_progress'; username: string; job: BulkJob }
-  | { type: 'scheduled_updated'; username: string; scheduled: ScheduledMessage }
-  | { type: 'scheduled_removed'; username: string; id: number; sent_message_id: number | null }
-  | { type: 'staff_view_opened'; username: string; channel_id: number }
-  | { type: 'seal_job_progress'; username: string; job: SealJob }
-  | { type: 'poll_voted'; username: string; message_id: number }
-  | ({
-      type: 'poll_updated'
-      message_id: number
-      thread_root_id: number | null
-      created_at: number
-      poll: Poll
-    } & Scoped)
-  | ({
-      type: 'message_pinned'
-      message_id: number
-      pinned_at: number
-      pinned_by: string
-    } & Scoped)
-  | ({ type: 'message_unpinned'; message_id: number } & Scoped)
-  | ({
-      type: 'media_removed'
-      message_id: number
-      removed_by_author: boolean
-    } & Scoped)
-  | ({ type: 'embeds_resolved'; message_id: number; embeds: Embed[] } & Scoped)
-  | ({ type: 'embeds_removed'; message_id: number; ord: number; banner: boolean } & Scoped)
-  | { type: 'channel_created'; server: string; channel: Channel }
-  | { type: 'channel_renamed'; server: string; channel: Channel }
-  | { type: 'channel_updated'; server: string; channel: Channel }
-  | { type: 'channel_deleted'; server: string; channel_id: number }
-  | { type: 'server_created'; server: ServerSummaryLite }
-  | { type: 'server_renamed'; old_name: string; server: ServerSummaryLite }
-  | { type: 'server_updated'; server: ServerSummaryLite }
-  | { type: 'server_deleted'; name: string }
-  | { type: 'member_joined'; server: string; member: Member }
-  | { type: 'member_left'; server: string; username: string }
-  | { type: 'member_kicked'; server: string; username: string; banned: boolean }
-  | { type: 'admin_changed'; server: string; username: string; is_admin: boolean; perms: bigint }
-  | { type: 'roles_changed'; server: string }
-  | { type: 'role_updated'; server: string; role: Role }
-  | {
-      type: 'roles_reordered'
-      server: string
-      order: number[]
-      display: (number | null)[]
-      version: number
-    }
-  | { type: 'member_roles_changed'; server: string; username: string; role_ids: number[] }
-  | { type: 'upload_expiry_changed'; server: string }
-  | { type: 'channel_perms_changed'; server: string; channel_id: number }
-  | { type: 'channels_perms_changed'; server: string; channel_ids: number[] }
-  | { type: 'layout_changed'; server: string; layout: ChannelLayout }
-  | { type: 'user_updated'; user: UserRef }
-  | {
-      type: 'member_profile'
-      server: string
-      username: string
-      profile: MemberLook | null
-      bio: boolean
-    }
-  | { type: 'user_registered'; user: UserRef }
-  | {
-      type: 'presence_changed'
-      server: string
-      username: string
-      online: boolean
-      online_count?: number
-    }
-  | { type: 'presence_snapshot'; server: string; online: string[]; online_count: number }
-  | { type: 'server_banned'; server: string; username: string }
-  | { type: 'presence_mode'; username: string; appear_offline: boolean }
-  | {
-      type: 'read_updated'
-      username: string
-      scope: string
-      last_read: number
-      pings_until?: number
-    }
-  | { type: 'ping'; username: string; ping: Ping }
-  | ({ type: 'ping_count'; username: string; scope: string } & PingSummary)
-  | { type: 'group_pings_seen'; username: string; scope: string; message_ids: number[] }
-  | {
-      type: 'voice_state'
-      server: string
-      channel_id: number
-      users: string[]
-      // In a snapshot: what each of them not at the default says about their own mic and sound.
-      audio?: { username: string; muted: boolean; deafened: boolean }[]
-    }
-  | {
-      type: 'voice_muted'
-      server: string
-      channel_id: number
-      username: string
-      muted: boolean
-      // A guest staff muted for everyone, not a timeout.
-      staff?: boolean
-    }
-  | {
-      // What someone in a voice channel says about their own mic and sound.
-      type: 'voice_audio'
-      server: string
-      channel_id: number
-      username: string
-      muted: boolean
-      deafened: boolean
-    }
-  | {
-      type: 'member_timeout'
-      server: string
-      username: string
-      until: number | null
-      remaining: number
-      reason: string | null
-    }
-  | {
-      type: 'call_state'
-      dm_id: number
-      dm_users: string[]
-      state: CallPhase
-      from: string
-      kind: CallKind
-      // Older servers leave it out.
-      video?: boolean
-      // Active calls only; older servers leave it out.
-      answered_at?: number
-      // Active P2P calls only.
-      call_id?: string
-      peers?: CallPeer[]
-      // P2P calls only: the caller's while ringing, both sides once active.
-      relays?: CallRelays[]
-    }
-  | ({ type: 'p2p_availability'; hoster: string; peer_id: string | null } & P2pAvailability)
-  | {
-      type: 'rtc_signal'
-      to: string
-      from: string
-      channel_id: number | null
-      dm_id: number | null
-      payload: RtcPayload
-    }
-  | ({ type: 'voice_ended'; reason: string } & Scoped)
-  | {
-      type: 'error'
-      message: string
-      request?:
-        | { type: 'call'; attempt_id: number }
-        | { type: 'voice_join'; channel_id: number }
-        | { type: 'other' }
-    }
-  | { type: 'guest_name'; name: string }
-  | { type: 'dm_created'; dm_id: number; dm_users: string[] }
-  | { type: 'dm_updated'; dm_id: number; dm_users: string[]; seal: StoredSeal }
-  | { type: 'dm_closed'; username: string; dm_id: number }
-  | { type: 'dm_reopened'; username: string; dm_id: number }
-  | { type: 'user_blocked'; username: string; blocked: BlockedUser }
-  | { type: 'user_unblocked'; username: string; blocked: string }
-  | { type: 'friend_request_added'; username: string; request: FriendRequest }
-  | { type: 'friend_request_removed'; username: string; other: string }
-  | { type: 'friend_added'; username: string; friend: Friend }
-  | { type: 'friend_removed'; username: string; friend: string }
-  | { type: 'friend_presence'; username: string; friend: string; online: boolean }
-  | { type: 'privacy_changed'; username: string; privacy: unknown }
-  | { type: 'banned'; username: string }
-  | { type: 'settings_changed'; settings: SiteSettings }
-  | { type: 'brand_changed'; brand: unknown }
-  | {
-      type: 'p2p_hosted'
-      live: string[]
-      checked: string[]
-      // Older servers send none of these.
-      key?: string
-      peer_id?: string
-      now?: number
-    }
-  | {
-      type: 'p2p_peer'
-      message_id: number
-      peer_id: string | null
-      token: string | null
-      expires_at: number | null
-      error: string | null
-      // Relay hosts the hoster declared for this file; older servers leave it out.
-      relays?: string[]
-    }
-  | { type: 'resync' }
 
 export type WsStatus = 'green' | 'yellow' | 'red'
 

@@ -17,6 +17,7 @@ afterEach(() => {
 })
 
 const control = (key: string, env: string, over: Partial<ConfigControl> = {}): ConfigControl => ({
+  same: false,
   key,
   env,
   value: 'on',
@@ -39,6 +40,18 @@ const config = (over: Partial<Record<string, Partial<ConfigControl>>> = {}): Adm
     control('p2p', 'FEATURE_P2P', over.p2p),
   ],
   limits: [],
+  database: {
+    connections: null,
+    kind: '',
+    light_commits: null,
+    online_indexes: [],
+    pool: { idle: 0, in_use: 0, max: 0 },
+    reader: null,
+    replicas: [],
+    schema_version: 0,
+    statement_timeout_secs: null,
+    version: '',
+  },
 })
 
 const page = (
@@ -85,6 +98,18 @@ test('what the server config says about a list of names is marked for streamer m
   const sign = page('features', {
     controls: [control('registration', 'AUTH_REGISTRATION', { value: 'open', config: 'closed' })],
     limits: [],
+    database: {
+      connections: null,
+      kind: '',
+      light_commits: null,
+      online_indexes: [],
+      pool: { idle: 0, in_use: 0, max: 0 },
+      reader: null,
+      replicas: [],
+      schema_version: 0,
+      statement_timeout_secs: null,
+      version: '',
+    },
   })
   expect(row(sign, 'registration')).toContain('Server config says Closed.')
 })

@@ -151,7 +151,13 @@ describe('unread dots for lists that are not loaded', () => {
     expect(st().reads.c40).toEqual({ lastRead: 59, latest: 60, server: 'far' })
     expect(serverUnread(st(), 'far')).toBe(true)
     expect(serverUnread(st(), 'near')).toBe(false)
-    dispatch({ type: 'read_updated', username: 'alice', scope: 'c40', last_read: 60 })
+    dispatch({
+      type: 'read_updated',
+      username: 'alice',
+      scope: 'c40',
+      last_read: 60,
+      pings_until: 0,
+    })
     expect(st().reads.c40.server).toBe('far')
     expect(serverUnread(st(), 'far')).toBe(false)
   })

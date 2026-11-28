@@ -40,7 +40,7 @@ describe('event router', () => {
       { resync: ev => void seen.push(ev) },
       { error: ev => void seen.push(ev) },
     ]
-    const ev: WsEvent = { type: 'error', message: 'x' }
+    const ev: WsEvent = { type: 'error', message: 'x', reason: null, request: null }
     expect(routeEvent(ev, tables)).toBe(true)
     expect(seen).toEqual([ev])
   })

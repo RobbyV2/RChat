@@ -395,7 +395,7 @@ export function createPaletteIndexer(acct: AccountSession) {
       case 'message_updated': {
         // The new text replaces the old one, also for conversations that are not loaded. A stub
         // carries no text: the old one goes, and the loaded list adds the new one when it reloads.
-        if (ev.stub) {
+        if (!ev.message) {
           index.remove([messageDocId(ev.id)])
           n = 1
           break

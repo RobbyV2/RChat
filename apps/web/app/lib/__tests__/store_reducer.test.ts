@@ -1,7 +1,7 @@
 import { testClock, type ManualTime } from './helpers/test_clock'
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
-import type { WsEvent } from '../types'
+import type { AdminOverview, WsEvent } from '../types'
 import { embed, me, media, member, msg, paged, serverDetail, user } from './fixtures'
 
 let clock: ManualTime
@@ -162,11 +162,11 @@ describe('presence_changed', () => {
       servers: { s: serverDetail('s', { online_count: 0 }) },
       members: { s: paged([member('bob', { online: false })]) },
     })
-    dispatch({ type: 'presence_changed', server: 's', username: 'bob', online: true })
+    dispatch({ type: 'presence_changed', server: 's', username: 'bob', online: true } as WsEvent)
     await frame()
     expect(st().servers.s.online_count).toBe(1)
     expect(st().members.s.list[0].online).toBe(true)
-    dispatch({ type: 'presence_changed', server: 's', username: 'bob', online: false })
+    dispatch({ type: 'presence_changed', server: 's', username: 'bob', online: false } as WsEvent)
     await frame()
     expect(st().servers.s.online_count).toBe(0)
     expect(st().members.s.list[0].online).toBe(false)
@@ -188,7 +188,7 @@ describe('site-wide presence', () => {
       username: 'bob',
       online: true,
       online_count: 2,
-    })
+    } as WsEvent)
     await frame()
     expect(st().servers.s.online_count).toBe(2)
     expect(st().members.s.list.find(m => m.username === 'bob')?.online).toBe(true)
@@ -199,7 +199,7 @@ describe('site-wide presence', () => {
       username: 'bob',
       online: false,
       online_count: 1,
-    })
+    } as WsEvent)
     await frame()
     expect(st().servers.s.member_count).toBe(1)
     expect(st().servers.s.online_count).toBe(1)
@@ -344,7 +344,7 @@ describe('membership count math', () => {
         },
       ],
       messages: { c1: [msg(1, { author: user('bob') }), msg(2, { author: user('alice') })] },
-      adminOverview: { user_count: 5, server_count: 2 },
+      adminOverview: { user_count: 5, server_count: 2 } as AdminOverview,
     })
     dispatch({ type: 'banned', username: 'bob' })
     const s = st()

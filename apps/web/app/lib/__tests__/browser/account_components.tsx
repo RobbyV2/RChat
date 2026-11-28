@@ -145,6 +145,7 @@ for (const account of [shown, owner]) {
       server: 'club',
       channel_id: 2,
       users: ['singer'],
+      audio: null,
     })
   account.store.setState({
     me: reader,
@@ -213,9 +214,22 @@ function Pane({ account }: { account: AccountSession }) {
                       env: 'owner.test',
                       pinned: false,
                       config: null,
+                      same: false,
                     },
                   ],
                   limits: [],
+                  database: {
+                    connections: null,
+                    kind: '',
+                    light_commits: null,
+                    online_indexes: [],
+                    pool: { idle: 0, in_use: 0, max: 0 },
+                    reader: null,
+                    replicas: [],
+                    schema_version: 0,
+                    statement_timeout_secs: null,
+                    version: '',
+                  },
                 },
               })
             }

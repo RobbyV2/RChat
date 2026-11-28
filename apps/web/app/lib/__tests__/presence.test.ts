@@ -29,12 +29,13 @@ beforeEach(() => {
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
 const frame = () => clock.pass(20)
-const presence = (username: string, online: boolean): WsEvent => ({
-  type: 'presence_changed',
-  server: 's',
-  username,
-  online,
-})
+const presence = (username: string, online: boolean): WsEvent =>
+  ({
+    type: 'presence_changed',
+    server: 's',
+    username,
+    online,
+  }) as WsEvent
 const realFetch = globalThis.fetch
 
 describe('presence helpers', () => {
@@ -297,13 +298,14 @@ describe('presence events in the store', () => {
     })
     const names = Array.from({ length: 50 }, (_, i) => `u${String(i).padStart(2, '0')}`)
     dispatch({ type: 'presence_snapshot', server: 's', online: names, online_count: 80 })
-    const counted = (username: string, online: boolean, online_count: number): WsEvent => ({
-      type: 'presence_changed',
-      server: 's',
-      username,
-      online,
-      online_count,
-    })
+    const counted = (username: string, online: boolean, online_count: number): WsEvent =>
+      ({
+        type: 'presence_changed',
+        server: 's',
+        username,
+        online,
+        online_count,
+      }) as WsEvent
     dispatch(counted('zoe', true, 80))
     dispatch(counted('zoe', true, 80))
     await frame()

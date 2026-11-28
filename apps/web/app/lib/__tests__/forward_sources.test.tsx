@@ -208,8 +208,20 @@ test('a closed voice room keeps its people out of the client until it opens', as
   ws.resubscribe = () => refreshed++
   try {
     const st = () => useStore.getState()
-    st().applyWsEvent({ type: 'voice_state', server: 'club', channel_id: 4, users: ['writer'] })
-    st().applyWsEvent({ type: 'voice_state', server: 'club', channel_id: 3, users: ['writer'] })
+    st().applyWsEvent({
+      type: 'voice_state',
+      server: 'club',
+      channel_id: 4,
+      users: ['writer'],
+      audio: null,
+    })
+    st().applyWsEvent({
+      type: 'voice_state',
+      server: 'club',
+      channel_id: 3,
+      users: ['writer'],
+      audio: null,
+    })
     st().applyWsEvent({
       type: 'voice_muted',
       server: 'club',
@@ -226,7 +238,13 @@ test('a closed voice room keeps its people out of the client until it opens', as
     answerPrompt(defaultViewing, true, false)
     await opening
     expect(refreshed).toBe(1)
-    st().applyWsEvent({ type: 'voice_state', server: 'club', channel_id: 4, users: ['writer'] })
+    st().applyWsEvent({
+      type: 'voice_state',
+      server: 'club',
+      channel_id: 4,
+      users: ['writer'],
+      audio: null,
+    })
     expect(st().voiceUsers).toEqual({ 4: ['writer'] })
   } finally {
     ws.resubscribe = real

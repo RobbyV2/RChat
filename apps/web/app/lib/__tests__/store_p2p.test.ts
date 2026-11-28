@@ -158,7 +158,7 @@ describe('removals reach files and copies of messages not loaded here', () => {
   })
 
   test("the server's hosting answer is reconciled", () => {
-    dispatch({ type: 'p2p_hosted', live: ['a'], checked: ['a', 'b'] })
+    dispatch({ type: 'p2p_hosted', live: ['a'], checked: ['a', 'b'], key: '', now: 0, peer_id: '' })
     expect(checked).toEqual([[['a'], ['a', 'b']]])
   })
 })
@@ -354,6 +354,8 @@ describe('P2P call binding', () => {
     relays?: CallRelays[]
   ) =>
     dispatch({
+      answered_at: null,
+      call_id: null,
       type: 'call_state',
       dm_id: 5,
       dm_users: ['alice', 'bob'],

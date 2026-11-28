@@ -619,19 +619,25 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
   // An edit in a server channel arrives as a stub without content: whoever shows the message
   // (or a quote of it) re-reads it through the list, which applies the read-history rules.
   const rereads = new Map<number, boolean>()
-  const rereadEdited = (ev: EditStub) => {
+  const rereadEdited = (ev: EditStub & { channel_id: number | null }) => {
     const { id, channel_id } = ev
     const root = ev.thread_root_id ?? null
     if (!held(id) && !quoted(id)) return
+    const page = { around: id, limit: 1 }
+    const load =
+      root !== null
+        ? () => api.threadMessages(root, page)
+        : channel_id !== null
+          ? () => api.channelMessages(channel_id, page)
+          : null
+    if (!load) return
     if (rereads.has(id)) {
       rereads.set(id, true)
       return
     }
     rereads.set(id, false)
     const gen = quoteGen
-    const page = { around: id, limit: 1 }
-    const read =
-      root !== null ? api.threadMessages(root, page) : api.channelMessages(channel_id, page)
+    const read = load()
     read
       .then(list => {
         if (gen !== quoteGen) return
@@ -2527,10 +2533,11 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       })
     },
     message_updated: ev => {
-      dropLinkCards(ev.stub ? ev.id : ev.message.id)
-      if (ev.stub) rereadEdited(ev)
-      else applyUpdated(ev.message)
-      refreshPins(ev.stub ? ev.id : ev.message.id)
+      const id = ev.message ? ev.message.id : ev.id
+      dropLinkCards(id)
+      if (ev.message) applyUpdated(ev.message)
+      else rereadEdited(ev)
+      refreshPins(id)
     },
     message_pinned: ev => {
       setPinned(ev.message_id, ev.pinned_at)

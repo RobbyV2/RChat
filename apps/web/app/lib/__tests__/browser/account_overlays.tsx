@@ -91,6 +91,8 @@ for (const account of [shown, owner]) {
           kind: 'rtc',
           video: false,
           state: message.type === 'call_accept' ? 'active' : 'ended',
+          answered_at: null,
+          call_id: null,
         })
       )
     return true

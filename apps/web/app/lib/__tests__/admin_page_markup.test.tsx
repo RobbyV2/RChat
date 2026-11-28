@@ -14,6 +14,7 @@ import { actionById } from '../actions/registry'
 import { rowAnchor } from '../settings_page'
 import { useStore } from '../store'
 import type { AdminPlace } from '../store_types'
+import type { AdminOverview } from '../types'
 import { ADMIN_SECTIONS } from '../view'
 import { me, user } from './fixtures'
 import { pagesOf } from './helpers/loads'
@@ -112,7 +113,7 @@ const small = (page: string) => {
 
 test('the controls of every section are 44 px high on touch screens', () => {
   const part = {
-    adminOverview: { user_count: 2, server_count: 1 },
+    adminOverview: { user_count: 2, server_count: 1 } as AdminOverview,
   }
   for (const section of ADMIN_SECTIONS) expect(small(page(place(section), true, part))).toEqual([])
   expect(small(page(place('users', 'bob'), true, part))).toEqual([])
@@ -132,7 +133,12 @@ test('the rail button that opens the page has a name', () => {
 
 test('the overview shows sign-up and the counts', () => {
   const html = page(place('overview'), true, {
-    adminOverview: { user_count: 128, server_count: 1 },
+    adminOverview: {
+      user_count: 128,
+      server_count: 1,
+      relay: { allocations: null, enabled: false, port: null, turn: false },
+      temporary_count: 0,
+    },
     settings: { ...initial.settings, registration: 'closed' },
   })
   expect(html).toContain('Closed')

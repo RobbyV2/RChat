@@ -1,4 +1,5 @@
 import { parseProfileChoices, parseProfileLevel } from './profile_choice'
+import type { PublicSettings } from './api/gen'
 import type { DmCreation, Registration, ServerCreation, ServerJoining, SiteSettings } from './types'
 
 // The site-wide feature switches (`GET /api/settings`), each a plain on or off.
@@ -96,7 +97,8 @@ const profileSettings = (sent: Record<string, unknown>) => {
 
 // The settings as clients use them: missing or malformed switches read as an older instance's.
 // A server that sends no p2p_attachments has P2P attachments on.
-export const siteSettings = (s: SiteSettings): SiteSettings => {
+export const siteSettings = (wire: PublicSettings | SiteSettings): SiteSettings => {
+  const s = wire as SiteSettings
   const sent = s as unknown as Record<string, unknown>
   const switches = Object.fromEntries(
     FEATURE_KEYS.map(key => [

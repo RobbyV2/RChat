@@ -19,35 +19,37 @@ afterEach(() => {
   configInitial.config = null
 })
 
-const control = (key: string, value: string, over: Partial<ConfigControl> = {}): ConfigControl => ({
-  key,
-  env: BRAND_ROWS.find(r => r.key === key)?.env ?? key.toUpperCase(),
-  value,
-  config: null,
-  pinned: false,
-  ...over,
-})
+const control = (key: string, value: string, over: Partial<ConfigControl> = {}): ConfigControl =>
+  ({
+    key,
+    env: BRAND_ROWS.find(r => r.key === key)?.env ?? key.toUpperCase(),
+    value,
+    config: null,
+    pinned: false,
+    ...over,
+  }) as ConfigControl
 
-const config = (over: Partial<Record<string, Partial<ConfigControl>>> = {}): AdminConfig => ({
-  controls: [
-    control('instance_name', 'Example Chat', over.instance_name),
-    control('app_name', '', over.app_name),
-    control('app_short_name', 'Example', over.app_short_name),
-    control('brand_about', 'Run by us.\nBe kind.', over.brand_about),
-    control(
-      'brand_links',
-      '[{"label":"Help","url":"https://help.example.com/"}]',
-      over.brand_links
-    ),
-    control('login_note', '', over.login_note),
-    control(
-      'instance_suggestions',
-      '{"mode":"replace","list":[{"url":"https://other.example.com","label":"Other"}]}',
-      over.instance_suggestions
-    ),
-  ],
-  limits: [],
-})
+const config = (over: Partial<Record<string, Partial<ConfigControl>>> = {}): AdminConfig =>
+  ({
+    controls: [
+      control('instance_name', 'Example Chat', over.instance_name),
+      control('app_name', '', over.app_name),
+      control('app_short_name', 'Example', over.app_short_name),
+      control('brand_about', 'Run by us.\nBe kind.', over.brand_about),
+      control(
+        'brand_links',
+        '[{"label":"Help","url":"https://help.example.com/"}]',
+        over.brand_links
+      ),
+      control('login_note', '', over.login_note),
+      control(
+        'instance_suggestions',
+        '{"mode":"replace","list":[{"url":"https://other.example.com","label":"Other"}]}',
+        over.instance_suggestions
+      ),
+    ],
+    limits: [],
+  }) as unknown as AdminConfig
 
 const brand = (over: Partial<Brand> = {}): Brand => ({
   instance_name: 'Example Chat',
@@ -154,11 +156,15 @@ test('a brand change from the instance reaches the app', () => {
   expect(useStore.getState().brand).toBeNull()
   useStore.getState().applyWsEvent({
     type: 'brand_changed',
-    brand: { instance_name: 'Example Chat', app_name: 'Example App', assets: { logo: 'x' } },
+    brand: {
+      instance_name: 'Example Chat',
+      app_name: 'Example App',
+      assets: { logo: 'x' },
+    } as unknown as Brand,
   })
   expect(useStore.getState().brand).toEqual(
     brand({ app_name: 'Example App', short_name: 'Example App' })
   )
-  useStore.getState().applyWsEvent({ type: 'brand_changed', brand: 'nonsense' })
+  useStore.getState().applyWsEvent({ type: 'brand_changed', brand: 'nonsense' as never })
   expect(useStore.getState().brand).toBeNull()
 })
