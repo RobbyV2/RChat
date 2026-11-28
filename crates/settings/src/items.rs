@@ -1,6 +1,7 @@
 use crate::{
-    Choice, Form, Item, Number, OptNumber, Setting, Switch, Text, choice, forms, links, names,
-    number, p2p_numbers, picked, pins, servers, suggestions, switch, targets, text,
+    Choice, Form, Item, Number, OptNumber, Secret, Setting, Switch, Text, Value, choice, forms,
+    links, names, number, p2p_numbers, picked, pins, secret, servers, suggestions, switch, targets,
+    text, value, value_or, value_picked,
 };
 
 macro_rules! settings {
@@ -14,6 +15,14 @@ macro_rules! settings {
 
 settings! {
     SETTINGS_PINNED: Item = pins();
+    APP_MODE: Choice = choice(&["full", "api-only"], "full");
+    HOST: Value = value_or("127.0.0.1");
+    SERVER_PORT: Number<u16> = number(3000, 0, 65_535);
+    PORT: Number<u16> = number(3001, 0, 65_535);
+    FRONTEND_HOST: Value = value_or("127.0.0.1").build();
+    SERVER_PROXY_URL: Value = value_picked("http://127.0.0.1:${PORT}");
+    NEXT_PUBLIC_API_URL: Value = value().build();
+    NEXT_PUBLIC_WS_URL: Value = value().build();
     INSTANCE_NAME: Text = text(1, 64, false, "RChat").live("instance_name").private();
     BRAND_APP_NAME: Text = text(0, 64, false, "").live("app_name").private();
     BRAND_SHORT_NAME: Text = text(0, 16, false, "").live("app_short_name").private();
@@ -21,14 +30,43 @@ settings! {
     BRAND_LINKS: Form = links().live("brand_links").private();
     BRAND_LOGIN_NOTE: Text = text(0, 300, true, "").live("login_note").private();
     INSTANCE_SUGGESTIONS: Form = suggestions(r#"{"mode":"add","list":[]}"#).live("instance_suggestions").private();
+    PUBLIC_URL: Value = value();
+    ALLOWED_HOSTS: Value = value();
+    PUBLIC_API_URL: Value = value();
+    PUBLIC_WS_URL: Value = value();
+    PUBLIC_PEERJS_URL: Value = value();
+    INSTANCE_SIGNING_KEY: Secret = secret();
+    OTHER_INSTANCE_PORTS: Value = value();
+    DATABASE_URL: Secret = secret();
     DATABASE_MAX_CONNECTIONS: OptNumber<u32> = picked(1, 1000, "two per core, from 8 to 32");
     DATABASE_MIN_CONNECTIONS: OptNumber<u32> = picked(0, 1000, "none");
     DATABASE_ACQUIRE_TIMEOUT_SECS: OptNumber<u64> = picked(1, 3600, "10");
     DATABASE_STATEMENT_TIMEOUT_SECS: Number<u64> = number(60, 0, 3600);
+    DATABASE_REPLICA_URLS: Secret = secret();
     DATABASE_REPLICA_MAX_CONNECTIONS: Number<u32> = number(8, 1, 1000);
     DATABASE_REPLICA_MAX_LAG_MS: Number<u64> = number(2000, 100, 600_000);
     DATABASE_READ_CONNECTIONS: OptNumber<u32> = picked(0, 64, "the CPU count, at least 2 and at most 8");
+    DATABASE_LIGHT_COMMITS: Choice = choice(&["async", "sync"], "async");
     DATABASE_INDEX_BUILD_MIB: Number<u32> = number(256, 16, 16_384);
+    PASSWORD_PEPPER: Secret = secret();
+    PASSWORD_PEPPER_FILE: Value = value();
+    RELAY_SECRET: Secret = secret();
+    P2P_SECRET: Secret = secret();
+    ENCRYPTION_KEYS: Secret = secret();
+    ENCRYPTION_KEYS_FILE: Value = value();
+    ENCRYPTION_KMS_URL: Value = value();
+    ENCRYPTION_KMS_KEY: Value = value();
+    ENCRYPTION_KMS_TOKEN_FILE: Value = value();
+    ACCOUNT_SECRETS_KEY: Secret = secret();
+    ENCRYPTION_ALLOW_LOST: Choice = choice(&["off", "on"], "off");
+    ENCRYPTION_REQUIRED: Choice = choice(&["off", "on"], "off");
+    SEARCH_SEALED: Choice = choice(&["keyed", "scan"], "keyed");
+    BACKUP_RECIPIENTS: Value = value();
+    S3_ENDPOINT: Value = value();
+    S3_BUCKET: Value = value();
+    S3_ACCESS_KEY: Secret = secret();
+    S3_SECRET_KEY: Secret = secret();
+    S3_REGION: Value = value();
     UPLOAD_MAX_MIB: Number<u64> = number(25, 1, 512);
     UPLOAD_BUDGET_MIB: Number<u64> = number(2048, 0, 1_048_576);
     UPLOAD_SERVER_KEPT_MIB: Number<u64> = number(8192, 0, 1_048_576);
@@ -45,7 +83,13 @@ settings! {
     MESSAGE_ROLE_MENTIONS_MAX: Number<usize> = number(20, 1, 1000);
     HERE_RECIPIENTS_MAX: Number<usize> = number(500, 1, 10_000);
     PING_KEEP_DAYS: Number<i64> = number(30, 1, 3650);
+    RCHAT_ROLES: Value = value_picked("from APP_MODE");
+    REDIS_URL: Secret = secret();
+    REDIS_PREFIX: Value = value_or("rchat");
     REDIS_HUB_MAXLEN: Number<u64> = number(100_000, 1000, 100_000_000);
+    TRUSTED_PROXIES: Value = value();
+    TRUST_PROXY: Switch = switch(false);
+    RCHAT_PEERJS: Value = value_picked("on when the separate PeerJS server is needed").build();
     RATE_LIMIT_PER_SECOND: Number<u64> = number(10, 1, 1000);
     RATE_LIMIT_BURST: Number<u32> = number(60, 1, 1_000_000);
     RATE_LIMIT_STRICT_PER_SECOND: Number<u64> = number(2, 1, 1000);
@@ -99,6 +143,25 @@ settings! {
     GUEST_GRANTS_PER_PASSWORD: Number<u32> = number(2000, 1, 1_000_000);
     GUEST_GRANTS_PER_NETWORK: Number<u32> = number(50, 1, 1_000_000);
     GUEST_GRANT_MINTS_PER_NETWORK: Number<u32> = number(60, 1, 1_000_000);
+    OIDC_PROVIDERS: Value = value();
+    OIDC_ID_ISSUER: Value = value().provider();
+    OIDC_ID_CLIENT_ID: Value = value().provider();
+    OIDC_ID_CLIENT_SECRET: Secret = secret().provider();
+    OIDC_ID_CLIENT_SECRET_FILE: Value = value().provider();
+    OIDC_ID_NAME: Value = value_picked("the id").provider();
+    OIDC_ID_SCOPES: Value = value_or("openid profile").provider();
+    OIDC_ID_USERNAME_CLAIM: Value = value_or("preferred_username").provider();
+    OIDC_ID_DISPLAY_CLAIM: Value = value_or("name").provider();
+    OIDC_ID_GROUPS_CLAIM: Value = value_or("groups").provider();
+    OIDC_ID_ALLOWED_GROUPS: Value = value_picked("everyone").provider();
+    OIDC_ID_AUTO_CREATE: Switch = switch(true).provider();
+    OIDC_ID_SYNC_PROFILE: Switch = switch(true).provider();
+    OIDC_ID_END_SESSION: Switch = switch(false).provider();
+    OIDC_ID_TOKEN_AUTH: Choice = choice(&["basic", "post"], "basic").provider();
+    SCIM_TOKEN: Secret = secret();
+    SCIM_DELETE: Choice = choice(&["deactivate", "delete"], "deactivate");
+    SCIM_PROVIDER: Value = value();
+    SSO_GROUP_MAP: Value = value();
     FEATURE_FILE_UPLOADS: Switch = switch(true).live("asset_uploads");
     P2P_ATTACHMENTS: Switch = switch(true).live("p2p_attachments");
     SERVER_CREATION: Choice = choice(&["everyone", "nobody", "some"], "everyone").live("server_creation");
@@ -143,6 +206,8 @@ settings! {
     AVATAR_ANIMATION_MAX_MEGAPIXELS: Number<u64> = number(400, 1, 4000);
     FEATURE_DOCS: Switch = switch(true).live("docs");
     FEATURE_INTERACTIVE_DOCS: Switch = switch(true).live("interactive_docs");
+    DOCS_DIR: Value = value_or("docs/dist");
+    DOCS_BUILD: Switch = switch(true).build();
     FEATURE_MEMBER_LISTS: Switch = switch(true).live("member_lists");
     PROFANITY_FILTER: Switch = switch(false).live("profanity_filter");
     PROFANITY_TARGETS: Form = targets("all").live("profanity_targets");
@@ -166,6 +231,8 @@ settings! {
     WEBHOOK_ATTEMPTS: Number<i64> = number(6, 1, 100);
     WEBHOOK_LOG_DAYS: Number<i64> = number(7, 1, 3650);
     WEBHOOK_LOG_KEPT: Number<i64> = number(100, 1, 100_000);
+    WEBHOOK_ALLOWED_HOSTS: Value = value();
+    WEBHOOK_ALLOW_HTTP: Switch = switch(false);
     VOICE_IDLE_SECS: Number<i64> = number(60, 5, 86_400);
     VOICE_ROOM_MAX: Number<usize> = number(25, 0, 10_000);
     FEATURE_CALLS: Switch = switch(true).live("calls");
@@ -175,12 +242,28 @@ settings! {
     SFU_MAX_STREAMS: Number<u32> = number(2000, 1, 1_000_000);
     SFU_USER_KIB_PER_SEC: Number<u32> = number(4096, 1, 1_048_576);
     PEERJS_BUILTIN: Switch = switch(true);
+    PEERJS_PORT: OptNumber<u16> = picked(0, 65_535, "/peerjs on the public port");
     PEERJS_PEERS_PER_IP: Number<usize> = number(50, 0, 1_000_000);
     PEERJS_CONCURRENT_LIMIT: Number<usize> = number(5000, 1, 1_000_000);
+    PEERJS_SETTINGS_URL: Value = value().build();
+    NEXT_PUBLIC_PEERJS_PORT: Value = value_picked("the address the instance gives").build();
+    NEXT_PUBLIC_PEERJS_HOST: Value = value_picked("the address the instance gives").build();
+    PUBLIC_STUN: Switch = switch(false);
+    PUBLIC_STUN_COUNT: Number<u8> = number(3, 0, 255);
+    RELAY_ENABLED: Switch = switch(false);
+    RELAY_TURN: Switch = switch(true);
+    RELAY_HOST: Value = value_picked("the instance host");
+    RELAY_PORT: Number<u16> = number(3478, 0, 65_535);
+    RELAY_PUBLIC_IP: Value = value();
+    RELAY_MIN_PORT: Number<u16> = number(49_160, 0, 65_535);
+    RELAY_MAX_PORT: Number<u16> = number(49_415, 0, 65_535);
     RELAY_MAX_ALLOCATIONS: OptNumber<u32> = picked(1, 65_535, "the size of the port range");
     RELAY_USER_ALLOCATIONS: Number<u32> = number(64, 1, 65_535);
     RELAY_USER_KIB_PER_SEC: Number<u64> = number(1024, 1, 10_485_760);
     RELAY_MAX_KIB_PER_SEC: Number<u64> = number(65_536, 1, 10_485_760);
+    RELAY_DENIED_PEERS: Value = value();
+    RELAY_ALLOW_PRIVATE: Switch = switch(false);
+    ICE_SERVERS: Secret = secret();
     FEATURE_SERVER_REPORTS: Switch = switch(true).live("server_reports");
     FEATURE_INSTANCE_REPORTS: Switch = switch(true).live("instance_reports");
     REPORT_FORMS_FILE: Form = forms("the report forms the server comes with").live("report_forms").private();
@@ -203,4 +286,6 @@ settings! {
     WIDGET_VIEWERS_MAX: Number<u32> = number(5000, 0, 1_000_000);
     WIDGET_BRIDGE: Switch = switch(false).live("widget_bridge");
     WIDGET_BRIDGE_SERVERS_MAX: Number<u32> = number(50, 1, 10_000);
+    SWAGGER_UI: Value = value();
+    RUST_LOG: Value = value_or("info");
 }

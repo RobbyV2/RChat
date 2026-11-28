@@ -32,7 +32,6 @@ futures-util = { version = "0.3", default-features = false, features = [
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dotenvy = "0.15"
-config = "0.15"
 clap = { version = "4", features = ["derive"] }
 sqlx = { version = "0.9", features = [
   "any",

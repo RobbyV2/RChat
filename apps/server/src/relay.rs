@@ -36,9 +36,9 @@ pub use crate::net_guard::blocked;
 use crate::net_guard::embedded_v4;
 pub use crate::server::client_ip::Cidr;
 
-pub const DEFAULT_PORT: u16 = 3478;
-pub const DEFAULT_MIN_PORT: u16 = 49160;
-pub const DEFAULT_MAX_PORT: u16 = 49415;
+pub const DEFAULT_PORT: u16 = rchat_settings::items::RELAY_PORT.default() as u16;
+pub const DEFAULT_MIN_PORT: u16 = rchat_settings::items::RELAY_MIN_PORT.default() as u16;
+pub const DEFAULT_MAX_PORT: u16 = rchat_settings::items::RELAY_MAX_PORT.default() as u16;
 // Each relayed peer connection of an account takes one. A relay-only member of a full P2P voice
 // mesh (10 people) holds a session and a media connection with each of the other 9, next to
 // its P2P server links, a call and file transfers.

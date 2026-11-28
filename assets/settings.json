@@ -7,6 +7,57 @@
       "scope": "start"
     },
     {
+      "default": "full",
+      "env": "APP_MODE",
+      "kind": "choice",
+      "scope": "start",
+      "words": ["full", "api-only"]
+    },
+    {
+      "default": "127.0.0.1",
+      "env": "HOST",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "default": 3000,
+      "env": "SERVER_PORT",
+      "kind": "number",
+      "max": 65535,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 3001,
+      "env": "PORT",
+      "kind": "number",
+      "max": 65535,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": "127.0.0.1",
+      "env": "FRONTEND_HOST",
+      "kind": "value",
+      "scope": "build"
+    },
+    {
+      "env": "SERVER_PROXY_URL",
+      "kind": "value",
+      "picked": "http://127.0.0.1:${PORT}",
+      "scope": "start"
+    },
+    {
+      "env": "NEXT_PUBLIC_API_URL",
+      "kind": "value",
+      "scope": "build"
+    },
+    {
+      "env": "NEXT_PUBLIC_WS_URL",
+      "kind": "value",
+      "scope": "build"
+    },
+    {
       "default": "RChat",
       "env": "INSTANCE_NAME",
       "key": "instance_name",
@@ -78,6 +129,46 @@
       "scope": "live"
     },
     {
+      "env": "PUBLIC_URL",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "env": "ALLOWED_HOSTS",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "env": "PUBLIC_API_URL",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "env": "PUBLIC_WS_URL",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "env": "PUBLIC_PEERJS_URL",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "env": "INSTANCE_SIGNING_KEY",
+      "kind": "secret",
+      "scope": "start"
+    },
+    {
+      "env": "OTHER_INSTANCE_PORTS",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "env": "DATABASE_URL",
+      "kind": "secret",
+      "scope": "start"
+    },
+    {
       "env": "DATABASE_MAX_CONNECTIONS",
       "kind": "number",
       "max": 1000,
@@ -110,6 +201,11 @@
       "scope": "start"
     },
     {
+      "env": "DATABASE_REPLICA_URLS",
+      "kind": "secret",
+      "scope": "start"
+    },
+    {
       "default": 8,
       "env": "DATABASE_REPLICA_MAX_CONNECTIONS",
       "kind": "number",
@@ -134,11 +230,119 @@
       "scope": "start"
     },
     {
+      "default": "async",
+      "env": "DATABASE_LIGHT_COMMITS",
+      "kind": "choice",
+      "scope": "start",
+      "words": ["async", "sync"]
+    },
+    {
       "default": 256,
       "env": "DATABASE_INDEX_BUILD_MIB",
       "kind": "number",
       "max": 16384,
       "min": 16,
+      "scope": "start"
+    },
+    {
+      "env": "PASSWORD_PEPPER",
+      "kind": "secret",
+      "scope": "start"
+    },
+    {
+      "env": "PASSWORD_PEPPER_FILE",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "env": "RELAY_SECRET",
+      "kind": "secret",
+      "scope": "start"
+    },
+    {
+      "env": "P2P_SECRET",
+      "kind": "secret",
+      "scope": "start"
+    },
+    {
+      "env": "ENCRYPTION_KEYS",
+      "kind": "secret",
+      "scope": "start"
+    },
+    {
+      "env": "ENCRYPTION_KEYS_FILE",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "env": "ENCRYPTION_KMS_URL",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "env": "ENCRYPTION_KMS_KEY",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "env": "ENCRYPTION_KMS_TOKEN_FILE",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "env": "ACCOUNT_SECRETS_KEY",
+      "kind": "secret",
+      "scope": "start"
+    },
+    {
+      "default": "off",
+      "env": "ENCRYPTION_ALLOW_LOST",
+      "kind": "choice",
+      "scope": "start",
+      "words": ["off", "on"]
+    },
+    {
+      "default": "off",
+      "env": "ENCRYPTION_REQUIRED",
+      "kind": "choice",
+      "scope": "start",
+      "words": ["off", "on"]
+    },
+    {
+      "default": "keyed",
+      "env": "SEARCH_SEALED",
+      "kind": "choice",
+      "scope": "start",
+      "words": ["keyed", "scan"]
+    },
+    {
+      "env": "BACKUP_RECIPIENTS",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "env": "S3_ENDPOINT",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "env": "S3_BUCKET",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "env": "S3_ACCESS_KEY",
+      "kind": "secret",
+      "scope": "start"
+    },
+    {
+      "env": "S3_SECRET_KEY",
+      "kind": "secret",
+      "scope": "start"
+    },
+    {
+      "env": "S3_REGION",
+      "kind": "value",
       "scope": "start"
     },
     {
@@ -272,12 +476,46 @@
       "scope": "start"
     },
     {
+      "env": "RCHAT_ROLES",
+      "kind": "value",
+      "picked": "from APP_MODE",
+      "scope": "start"
+    },
+    {
+      "env": "REDIS_URL",
+      "kind": "secret",
+      "scope": "start"
+    },
+    {
+      "default": "rchat",
+      "env": "REDIS_PREFIX",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
       "default": 100000,
       "env": "REDIS_HUB_MAXLEN",
       "kind": "number",
       "max": 100000000,
       "min": 1000,
       "scope": "start"
+    },
+    {
+      "env": "TRUSTED_PROXIES",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "default": "off",
+      "env": "TRUST_PROXY",
+      "kind": "switch",
+      "scope": "start"
+    },
+    {
+      "env": "RCHAT_PEERJS",
+      "kind": "value",
+      "picked": "on when the separate PeerJS server is needed",
+      "scope": "build"
     },
     {
       "default": 10,
@@ -704,6 +942,114 @@
       "scope": "start"
     },
     {
+      "env": "OIDC_PROVIDERS",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "env": "OIDC_ID_ISSUER",
+      "kind": "value",
+      "scope": "provider"
+    },
+    {
+      "env": "OIDC_ID_CLIENT_ID",
+      "kind": "value",
+      "scope": "provider"
+    },
+    {
+      "env": "OIDC_ID_CLIENT_SECRET",
+      "kind": "secret",
+      "scope": "provider"
+    },
+    {
+      "env": "OIDC_ID_CLIENT_SECRET_FILE",
+      "kind": "value",
+      "scope": "provider"
+    },
+    {
+      "env": "OIDC_ID_NAME",
+      "kind": "value",
+      "picked": "the id",
+      "scope": "provider"
+    },
+    {
+      "default": "openid profile",
+      "env": "OIDC_ID_SCOPES",
+      "kind": "value",
+      "scope": "provider"
+    },
+    {
+      "default": "preferred_username",
+      "env": "OIDC_ID_USERNAME_CLAIM",
+      "kind": "value",
+      "scope": "provider"
+    },
+    {
+      "default": "name",
+      "env": "OIDC_ID_DISPLAY_CLAIM",
+      "kind": "value",
+      "scope": "provider"
+    },
+    {
+      "default": "groups",
+      "env": "OIDC_ID_GROUPS_CLAIM",
+      "kind": "value",
+      "scope": "provider"
+    },
+    {
+      "env": "OIDC_ID_ALLOWED_GROUPS",
+      "kind": "value",
+      "picked": "everyone",
+      "scope": "provider"
+    },
+    {
+      "default": "on",
+      "env": "OIDC_ID_AUTO_CREATE",
+      "kind": "switch",
+      "scope": "provider"
+    },
+    {
+      "default": "on",
+      "env": "OIDC_ID_SYNC_PROFILE",
+      "kind": "switch",
+      "scope": "provider"
+    },
+    {
+      "default": "off",
+      "env": "OIDC_ID_END_SESSION",
+      "kind": "switch",
+      "scope": "provider"
+    },
+    {
+      "default": "basic",
+      "env": "OIDC_ID_TOKEN_AUTH",
+      "kind": "choice",
+      "scope": "provider",
+      "words": ["basic", "post"]
+    },
+    {
+      "env": "SCIM_TOKEN",
+      "kind": "secret",
+      "scope": "start"
+    },
+    {
+      "default": "deactivate",
+      "env": "SCIM_DELETE",
+      "kind": "choice",
+      "scope": "start",
+      "words": ["deactivate", "delete"]
+    },
+    {
+      "env": "SCIM_PROVIDER",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "env": "SSO_GROUP_MAP",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
       "default": "on",
       "env": "FEATURE_FILE_UPLOADS",
       "key": "asset_uploads",
@@ -1063,6 +1409,18 @@
       "scope": "live"
     },
     {
+      "default": "docs/dist",
+      "env": "DOCS_DIR",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "default": "on",
+      "env": "DOCS_BUILD",
+      "kind": "switch",
+      "scope": "build"
+    },
+    {
       "default": "on",
       "env": "FEATURE_MEMBER_LISTS",
       "key": "member_lists",
@@ -1247,6 +1605,17 @@
       "scope": "start"
     },
     {
+      "env": "WEBHOOK_ALLOWED_HOSTS",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "default": "off",
+      "env": "WEBHOOK_ALLOW_HTTP",
+      "kind": "switch",
+      "scope": "start"
+    },
+    {
       "default": 60,
       "env": "VOICE_IDLE_SECS",
       "kind": "number",
@@ -1315,6 +1684,14 @@
       "scope": "start"
     },
     {
+      "env": "PEERJS_PORT",
+      "kind": "number",
+      "max": 65535,
+      "min": 0,
+      "picked": "/peerjs on the public port",
+      "scope": "start"
+    },
+    {
       "default": 50,
       "env": "PEERJS_PEERS_PER_IP",
       "kind": "number",
@@ -1328,6 +1705,84 @@
       "kind": "number",
       "max": 1000000,
       "min": 1,
+      "scope": "start"
+    },
+    {
+      "env": "PEERJS_SETTINGS_URL",
+      "kind": "value",
+      "scope": "build"
+    },
+    {
+      "env": "NEXT_PUBLIC_PEERJS_PORT",
+      "kind": "value",
+      "picked": "the address the instance gives",
+      "scope": "build"
+    },
+    {
+      "env": "NEXT_PUBLIC_PEERJS_HOST",
+      "kind": "value",
+      "picked": "the address the instance gives",
+      "scope": "build"
+    },
+    {
+      "default": "off",
+      "env": "PUBLIC_STUN",
+      "kind": "switch",
+      "scope": "start"
+    },
+    {
+      "default": 3,
+      "env": "PUBLIC_STUN_COUNT",
+      "kind": "number",
+      "max": 255,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": "off",
+      "env": "RELAY_ENABLED",
+      "kind": "switch",
+      "scope": "start"
+    },
+    {
+      "default": "on",
+      "env": "RELAY_TURN",
+      "kind": "switch",
+      "scope": "start"
+    },
+    {
+      "env": "RELAY_HOST",
+      "kind": "value",
+      "picked": "the instance host",
+      "scope": "start"
+    },
+    {
+      "default": 3478,
+      "env": "RELAY_PORT",
+      "kind": "number",
+      "max": 65535,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "env": "RELAY_PUBLIC_IP",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "default": 49160,
+      "env": "RELAY_MIN_PORT",
+      "kind": "number",
+      "max": 65535,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 49415,
+      "env": "RELAY_MAX_PORT",
+      "kind": "number",
+      "max": 65535,
+      "min": 0,
       "scope": "start"
     },
     {
@@ -1360,6 +1815,22 @@
       "kind": "number",
       "max": 10485760,
       "min": 1,
+      "scope": "start"
+    },
+    {
+      "env": "RELAY_DENIED_PEERS",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "default": "off",
+      "env": "RELAY_ALLOW_PRIVATE",
+      "kind": "switch",
+      "scope": "start"
+    },
+    {
+      "env": "ICE_SERVERS",
+      "kind": "secret",
       "scope": "start"
     },
     {
@@ -1536,6 +2007,17 @@
       "kind": "number",
       "max": 10000,
       "min": 1,
+      "scope": "start"
+    },
+    {
+      "env": "SWAGGER_UI",
+      "kind": "value",
+      "scope": "start"
+    },
+    {
+      "default": "info",
+      "env": "RUST_LOG",
+      "kind": "value",
       "scope": "start"
     }
   ],

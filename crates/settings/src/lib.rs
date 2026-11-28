@@ -36,6 +36,11 @@ pub enum Kind {
     Numbers,
     /// Env names of settings, comma separated, or `all`.
     Pins,
+    /// A value of its own form (an address, a list, a path, JSON), checked where it is read.
+    Value,
+    /// A value never shown or logged. Where it is read as a secret, `NAME_FILE` may name a file
+    /// that holds it.
+    Secret,
 }
 
 /// A setting's value when nothing sets it.
@@ -47,6 +52,8 @@ pub enum Preset {
     Text(&'static str),
     /// The process picks the value; the text is its rule.
     Picked(&'static str),
+    /// Unset unless the operator sets it.
+    Unset,
 }
 
 /// Where a setting can be set.
@@ -58,6 +65,12 @@ pub enum Scope {
     Live,
     /// The environment; the instance sends it to the devices that use P2P.
     P2p,
+    /// The environment, read at start once per sign-in provider: `ID` in the name stands for the
+    /// provider id in capitals.
+    Provider,
+    /// Read by the web build, the build commands, the container or the separate PeerJS server,
+    /// not by the server process.
+    Build,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,6 +153,16 @@ pub struct Form {
 
 /// A setting with a form of its own that only the environment sets.
 pub struct Item {
+    pub setting: Setting,
+}
+
+/// A value of its own form, read as given and checked where it is read.
+pub struct Value {
+    pub setting: Setting,
+}
+
+/// A value never shown or logged.
+pub struct Secret {
     pub setting: Setting,
 }
 
@@ -228,6 +251,33 @@ pub const fn pins() -> Item {
     item(Kind::Pins, Preset::Text(""))
 }
 
+/// A value of its own form, unset by default.
+pub const fn value() -> Value {
+    Value {
+        setting: Setting::new(Kind::Value, Preset::Unset),
+    }
+}
+
+/// A value of its own form with a value when nothing sets it.
+pub const fn value_or(default: &'static str) -> Value {
+    Value {
+        setting: Setting::new(Kind::Value, Preset::Text(default)),
+    }
+}
+
+/// A value of its own form the process picks when nothing sets it; `rule` says how.
+pub const fn value_picked(rule: &'static str) -> Value {
+    Value {
+        setting: Setting::new(Kind::Value, Preset::Picked(rule)),
+    }
+}
+
+pub const fn secret() -> Secret {
+    Secret {
+        setting: Setting::new(Kind::Secret, Preset::Unset),
+    }
+}
+
 const fn item(kind: Kind, default: Preset) -> Item {
     Item {
         setting: Setting::new(kind, default),
@@ -248,7 +298,36 @@ macro_rules! handle {
         }
     )*};
 }
-handle!(Number<T>, OptNumber<T>, Switch, Choice, Text, Form, Item);
+handle!(
+    Number<T>,
+    OptNumber<T>,
+    Switch,
+    Choice,
+    Text,
+    Form,
+    Item,
+    Value,
+    Secret
+);
+
+macro_rules! scoped {
+    ($($name:ident$(<$t:ident>)?),*) => {$(
+        impl$(<$t>)? $name$(<$t>)? {
+            /// Read once per sign-in provider.
+            pub const fn provider(mut self) -> Self {
+                self.setting.scope = Scope::Provider;
+                self
+            }
+
+            /// Read outside the server process.
+            pub const fn build(mut self) -> Self {
+                self.setting.scope = Scope::Build;
+                self
+            }
+        }
+    )*};
+}
+scoped!(Number<T>, Switch, Choice, Value, Secret);
 
 macro_rules! live {
     ($($name:ident$(<$t:ident>)?),*) => {$(
@@ -332,9 +411,18 @@ impl Text {
     }
 }
 
-/// The setting whose env name is `env`.
+/// The setting whose env name is `env`. A per-provider name (`OIDC_ID_ISSUER`) is found only
+/// by that name.
 pub fn by_env(env: &str) -> Option<&'static Setting> {
     ALL.iter().copied().find(|s| s.env == env)
+}
+
+/// The env name of a per-provider setting for the provider `id`.
+pub fn provider_env(setting: &Setting, id: &str) -> String {
+    debug_assert_eq!(setting.scope, Scope::Provider);
+    setting
+        .env
+        .replacen("_ID_", &format!("_{}_", id.to_ascii_uppercase()), 1)
 }
 
 /// The registry as data, the source of the generated files.
@@ -372,6 +460,8 @@ pub fn json() -> String {
                 Kind::Suggestions => "suggestions",
                 Kind::Numbers => "numbers",
                 Kind::Pins => "pins",
+                Kind::Value => "value",
+                Kind::Secret => "secret",
             });
             match kind {
                 Kind::Choice(words) => row["words"] = json!(words),
@@ -392,7 +482,9 @@ pub fn json() -> String {
                 | Kind::Links
                 | Kind::Suggestions
                 | Kind::Numbers
-                | Kind::Pins => {}
+                | Kind::Pins
+                | Kind::Value
+                | Kind::Secret => {}
             }
             match default {
                 Preset::On => row["default"] = json!("on"),
@@ -400,11 +492,14 @@ pub fn json() -> String {
                 Preset::Number(n) => row["default"] = json!(n),
                 Preset::Text(text) => row["default"] = json!(text),
                 Preset::Picked(rule) => row["picked"] = json!(rule),
+                Preset::Unset => {}
             }
             row["scope"] = json!(match scope {
                 Scope::Start => "start",
                 Scope::Live => "live",
                 Scope::P2p => "p2p",
+                Scope::Provider => "provider",
+                Scope::Build => "build",
             });
             if scope == Scope::Live {
                 row["public"] = json!(public);

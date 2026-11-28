@@ -18,6 +18,3 @@ disallowed-methods = [
   { path = "tracing_subscriber::fmt::init", reason = "the log filter is built in bin/server.rs" },
   { path = "tracing_subscriber::fmt::try_init", reason = "the log filter is built in bin/server.rs" },
 ]
-disallowed-types = [
-  { path = "config::Environment", reason = "settings come from AppConfig (src/config.rs)" },
-]

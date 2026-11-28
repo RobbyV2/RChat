@@ -93,17 +93,15 @@ impl KeyConfig {
     /// settings. An unreadable file or a malformed value is an error naming the variable.
     /// `ENCRYPTION_KEYS_FILE` may name a file that does not exist yet.
     pub fn load(get: &dyn Fn(&str) -> Option<String>) -> anyhow::Result<KeyConfig> {
-        let set = |name: &str| {
-            get(name)
-                .map(|v| v.trim().to_owned())
-                .filter(|v| !v.is_empty())
-        };
-        let keys_file = set("ENCRYPTION_KEYS_FILE").map(PathBuf::from);
-        let keys_from_file = set("ENCRYPTION_KEYS").is_none();
-        let keys = match (set("ENCRYPTION_KEYS"), &keys_file) {
+        use rchat_settings::items as st;
+        let e = rchat_settings::Env::new(get);
+        let set = |item: &rchat_settings::Setting| e.raw(item);
+        let keys_file = set(&st::ENCRYPTION_KEYS_FILE.setting).map(PathBuf::from);
+        let keys_from_file = set(&st::ENCRYPTION_KEYS.setting).is_none();
+        let keys = match (set(&st::ENCRYPTION_KEYS.setting), &keys_file) {
             (Some(keys), _) => Some(keys),
             (None, Some(path)) if !path.exists() => None,
-            (None, _) => crate::config::read_required_secret(get, "ENCRYPTION_KEYS")?,
+            (None, _) => e.required_secret(&st::ENCRYPTION_KEYS)?,
         };
         if let Some(keys) = &keys {
             let name = match keys_from_file {
@@ -112,27 +110,27 @@ impl KeyConfig {
             };
             parse_keys(keys).map_err(|e| anyhow::anyhow!("{name} is malformed: {e}"))?;
         }
-        let account_secrets_key = crate::config::read_required_secret(get, "ACCOUNT_SECRETS_KEY")?;
+        let account_secrets_key = e.required_secret(&st::ACCOUNT_SECRETS_KEY)?;
         if let Some(keys) = &account_secrets_key {
             parse_keys(keys)
                 .map_err(|e| anyhow::anyhow!("ACCOUNT_SECRETS_KEY is malformed: {e}"))?;
         }
-        let allow_lost = match set("ENCRYPTION_ALLOW_LOST").as_deref() {
+        let allow_lost = match set(&st::ENCRYPTION_ALLOW_LOST.setting).as_deref() {
             None | Some("off") => false,
             Some("on") => true,
             Some(_) => anyhow::bail!("ENCRYPTION_ALLOW_LOST is on or off"),
         };
-        let required = match set("ENCRYPTION_REQUIRED").as_deref() {
+        let required = match set(&st::ENCRYPTION_REQUIRED.setting).as_deref() {
             None | Some("off") => false,
             Some("on") => true,
             Some(_) => anyhow::bail!("ENCRYPTION_REQUIRED is on or off"),
         };
-        let search_scan = match set("SEARCH_SEALED").as_deref() {
+        let search_scan = match set(&st::SEARCH_SEALED.setting).as_deref() {
             None | Some("keyed") => false,
             Some("scan") => true,
             Some(_) => anyhow::bail!("SEARCH_SEALED is keyed or scan"),
         };
-        let kms = KmsConfig::load(&set)?;
+        let kms = KmsConfig::load(get)?;
         Ok(KeyConfig {
             keys_from_file: keys_from_file && keys.is_some(),
             keys: keys.map(Zeroizing::new),

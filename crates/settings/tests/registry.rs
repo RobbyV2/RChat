@@ -39,6 +39,9 @@ fn names_and_keys_are_unique() {
             assert!(keys.insert(key), "{key}");
         }
         assert_eq!(by_env(s.env), Some(*s));
+        if s.scope == Scope::Provider {
+            assert!(s.env.starts_with("OIDC_ID_"), "{}", s.env);
+        }
     }
     assert_eq!(by_env("NOT_A_SETTING"), None);
 }
@@ -56,7 +59,7 @@ fn only_live_settings_have_a_key_and_can_be_public() {
         } = **s;
         match scope {
             Scope::Live => assert!(key.is_some(), "{env} has a key"),
-            Scope::Start | Scope::P2p => {
+            Scope::Start | Scope::P2p | Scope::Provider | Scope::Build => {
                 assert!(key.is_none() && !public, "{env} is set only in the env")
             }
         }
@@ -90,6 +93,8 @@ fn every_default_is_a_value_its_kind_takes() {
                 Preset::Text(_),
             ) => {}
             (Kind::Numbers, Preset::Text("{}")) | (Kind::Pins, Preset::Text("")) => {}
+            (Kind::Value, Preset::Unset | Preset::Text(_) | Preset::Picked(_)) => {}
+            (Kind::Secret, Preset::Unset) => {}
             (kind, default) => panic!("{env}: {kind:?} with {default:?}"),
         }
     }

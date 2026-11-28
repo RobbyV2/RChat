@@ -22,10 +22,10 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT: Duration = Duration::from_secs(5);
 /// How long a wrapped key that could not be sent is not sent again.
 const RETRY_AFTER: Duration = Duration::from_secs(30);
-const KMS_URL: &str = "ENCRYPTION_KMS_URL";
+const KMS_URL: &str = rchat_settings::items::ENCRYPTION_KMS_URL.env();
 /// The setting that names the key service key.
-pub const KMS_KEY: &str = "ENCRYPTION_KMS_KEY";
-const KMS_TOKEN_FILE: &str = "ENCRYPTION_KMS_TOKEN_FILE";
+pub const KMS_KEY: &str = rchat_settings::items::ENCRYPTION_KMS_KEY.env();
+const KMS_TOKEN_FILE: &str = rchat_settings::items::ENCRYPTION_KMS_TOKEN_FILE.env();
 
 /// `ENCRYPTION_KMS_URL`, `ENCRYPTION_KMS_KEY` and `ENCRYPTION_KMS_TOKEN_FILE`.
 #[derive(Clone, PartialEq, Eq)]
@@ -57,8 +57,14 @@ fn loopback(host: &url::Host<&str>) -> bool {
 impl KmsConfig {
     /// The three settings, all set or none. A malformed value, a missing one or an unreadable
     /// token file is an error naming the variable.
-    pub fn load(set: &dyn Fn(&str) -> Option<String>) -> anyhow::Result<Option<KmsConfig>> {
-        let (url, key, token_file) = match (set(KMS_URL), set(KMS_KEY), set(KMS_TOKEN_FILE)) {
+    pub fn load(get: &dyn Fn(&str) -> Option<String>) -> anyhow::Result<Option<KmsConfig>> {
+        use rchat_settings::items as st;
+        let e = rchat_settings::Env::new(get);
+        let (url, key, token_file) = match (
+            e.raw(&st::ENCRYPTION_KMS_URL.setting),
+            e.raw(&st::ENCRYPTION_KMS_KEY.setting),
+            e.raw(&st::ENCRYPTION_KMS_TOKEN_FILE.setting),
+        ) {
             (None, None, None) => return Ok(None),
             (Some(url), Some(key), Some(file)) => (url, key, PathBuf::from(file)),
             (url, key, file) => {

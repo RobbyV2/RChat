@@ -1,5 +1,6 @@
-use crate::config::{Secret, read_secret};
+use crate::config::Secret;
 use anyhow::{Context, Result, bail, ensure};
+use rchat_settings::{Env, Setting, items as st};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
@@ -63,15 +64,12 @@ fn list(s: &str) -> Vec<String> {
 }
 impl ProviderConfig {
     fn load(id: String, get: Lookup<'_>) -> Result<Self> {
-        let key = |suffix: &str| format!("OIDC_{}_{suffix}", id.to_ascii_uppercase());
-        let value = |suffix: &str| {
-            get(&key(suffix))
-                .map(|s| s.trim().to_owned())
-                .filter(|s| !s.is_empty())
-        };
+        let e = Env::new(get);
+        let key = |item: &Setting| rchat_settings::provider_env(item, &id);
+        let value = |item: &Setting| e.provider(item, &id);
         let required =
-            |suffix: &str| value(suffix).with_context(|| format!("{} is required", key(suffix)));
-        let flag = |suffix: &str, default: bool| match value(suffix)
+            |item: &Setting| value(item).with_context(|| format!("{} is required", key(item)));
+        let flag = |item: &Setting, default: bool| match value(item)
             .as_deref()
             .map(str::to_ascii_lowercase)
             .as_deref()
@@ -79,11 +77,15 @@ impl ProviderConfig {
             None => Ok(default),
             Some("true" | "on") => Ok(true),
             Some("false" | "off") => Ok(false),
-            _ => bail!("{}: expected on or off", key(suffix)),
+            _ => bail!("{}: expected on or off", key(item)),
         };
-        let issuer = required("ISSUER")?;
-        let url = Url::parse(&issuer)
-            .with_context(|| format!("{}: expected an https URL", key("ISSUER")))?;
+        let issuer = required(&st::OIDC_ID_ISSUER.setting)?;
+        let url = Url::parse(&issuer).with_context(|| {
+            format!(
+                "{}: expected an https URL",
+                key(&st::OIDC_ID_ISSUER.setting)
+            )
+        })?;
         let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
         ensure!(
             url.has_host()
@@ -93,9 +95,9 @@ impl ProviderConfig {
                 && url.fragment().is_none()
                 && url.query().is_none(),
             "{}: expected an https URL or http on loopback, without credentials, query or fragment",
-            key("ISSUER")
+            key(&st::OIDC_ID_ISSUER.setting)
         );
-        let scope = value("SCOPES").unwrap_or_else(|| "openid profile".into());
+        let scope = value(&st::OIDC_ID_SCOPES.setting).unwrap_or_else(|| "openid profile".into());
         let mut scopes: Vec<_> = scope
             .split(|c: char| c == ',' || c.is_whitespace())
             .filter(|s| !s.is_empty())
@@ -104,28 +106,36 @@ impl ProviderConfig {
         if !scopes.iter().any(|s| s == "openid") {
             scopes.insert(0, "openid".into());
         }
-        let token_auth = match value("TOKEN_AUTH")
+        let token_auth = match value(&st::OIDC_ID_TOKEN_AUTH.setting)
             .as_deref()
             .map(str::to_ascii_lowercase)
             .as_deref()
         {
             None | Some("basic") => TokenAuth::Basic,
             Some("post") => TokenAuth::Post,
-            _ => bail!("{}: expected basic or post", key("TOKEN_AUTH")),
+            _ => bail!(
+                "{}: expected basic or post",
+                key(&st::OIDC_ID_TOKEN_AUTH.setting)
+            ),
         };
         Ok(Self {
             issuer,
-            client_id: required("CLIENT_ID")?,
-            client_secret: read_secret(get, &key("CLIENT_SECRET"))?.map(Secret),
+            client_id: required(&st::OIDC_ID_CLIENT_ID.setting)?,
+            client_secret: e
+                .provider_secret(&st::OIDC_ID_CLIENT_SECRET, &id)?
+                .map(Secret),
             scopes,
-            name: value("NAME").unwrap_or_else(|| id.clone()),
-            username_claim: value("USERNAME_CLAIM").unwrap_or_else(|| "preferred_username".into()),
-            display_claim: value("DISPLAY_CLAIM").unwrap_or_else(|| "name".into()),
-            groups_claim: value("GROUPS_CLAIM").unwrap_or_else(|| "groups".into()),
-            allowed_groups: list(&value("ALLOWED_GROUPS").unwrap_or_default()),
-            auto_create: flag("AUTO_CREATE", true)?,
-            sync_profile: flag("SYNC_PROFILE", true)?,
-            end_session: flag("END_SESSION", false)?,
+            name: value(&st::OIDC_ID_NAME.setting).unwrap_or_else(|| id.clone()),
+            username_claim: value(&st::OIDC_ID_USERNAME_CLAIM.setting)
+                .unwrap_or_else(|| "preferred_username".into()),
+            display_claim: value(&st::OIDC_ID_DISPLAY_CLAIM.setting)
+                .unwrap_or_else(|| "name".into()),
+            groups_claim: value(&st::OIDC_ID_GROUPS_CLAIM.setting)
+                .unwrap_or_else(|| "groups".into()),
+            allowed_groups: list(&value(&st::OIDC_ID_ALLOWED_GROUPS.setting).unwrap_or_default()),
+            auto_create: flag(&st::OIDC_ID_AUTO_CREATE.setting, true)?,
+            sync_profile: flag(&st::OIDC_ID_SYNC_PROFILE.setting, true)?,
+            end_session: flag(&st::OIDC_ID_END_SESSION.setting, false)?,
             token_auth,
             id,
         })
@@ -136,8 +146,9 @@ impl SsoConfig {
         Self::load(&|key| env.get(key).cloned(), public_url)
     }
     pub(crate) fn load(get: Lookup<'_>, public_url: Option<&str>) -> Result<Self> {
+        let e = Env::new(get);
         let mut providers = Vec::new();
-        for raw in list(&get("OIDC_PROVIDERS").unwrap_or_default()) {
+        for raw in list(&e.value(&st::OIDC_PROVIDERS).unwrap_or_default()) {
             let id = raw.to_ascii_lowercase();
             ensure!(
                 id.len() <= 32
@@ -156,12 +167,8 @@ impl SsoConfig {
             providers.is_empty() || public_url.is_some_and(|url| !url.trim().is_empty()),
             "PUBLIC_URL is required with OIDC_PROVIDERS"
         );
-        let value = |key: &str| {
-            get(key)
-                .map(|s| s.trim().to_owned())
-                .filter(|s| !s.is_empty())
-        };
-        let delete = match value("SCIM_DELETE")
+        let value = |item: &Setting| e.raw(item);
+        let delete = match value(&st::SCIM_DELETE.setting)
             .as_deref()
             .map(str::to_ascii_lowercase)
             .as_deref()
@@ -170,14 +177,14 @@ impl SsoConfig {
             Some("delete") => ScimDelete::Delete,
             _ => bail!("SCIM_DELETE: expected deactivate or delete"),
         };
-        let provider = value("SCIM_PROVIDER").map(|s| s.to_ascii_lowercase());
+        let provider = value(&st::SCIM_PROVIDER.setting).map(|s| s.to_ascii_lowercase());
         if let Some(id) = &provider {
             ensure!(
                 providers.iter().any(|p| &p.id == id),
                 "SCIM_PROVIDER must name a configured provider"
             );
         }
-        let scim = if let Some(token) = read_secret(get, "SCIM_TOKEN")? {
+        let scim = if let Some(token) = e.secret(&st::SCIM_TOKEN)? {
             ensure!(
                 token.chars().count() >= 32,
                 "SCIM_TOKEN must have at least 32 characters"
@@ -190,7 +197,8 @@ impl SsoConfig {
         } else {
             None
         };
-        let mut groups: BTreeMap<String, Vec<GroupGrant>> = match value("SSO_GROUP_MAP") {
+        let mut groups: BTreeMap<String, Vec<GroupGrant>> = match value(&st::SSO_GROUP_MAP.setting)
+        {
             Some(json) => serde_json::from_str(&json)
                 .context("SSO_GROUP_MAP: expected a group to server and role map")?,
             None => BTreeMap::new(),

@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(
-            process_env("RUST_LOG")
+            process_env(rchat_settings::items::RUST_LOG.env())
                 .and_then(|filter| tracing_subscriber::EnvFilter::try_new(filter).ok())
                 .unwrap_or_else(|| "info".into()),
         )

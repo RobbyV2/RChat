@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
+use rchat_settings::{Env, items as st};
 use s3::creds::Credentials;
 use s3::{Bucket, Region};
-use serde::Deserialize;
 
 use crate::api::controls::ControlSeeds;
 use crate::db::DbOptions;
@@ -13,8 +13,7 @@ use crate::limits::Limits;
 use crate::relay::{Capacity, Cidr, IceConfig, Limits as RelayLimits, RelayAdvert, RelaySettings};
 use crate::server::client_ip::ProxyTrust;
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AppMode {
     Full,
     ApiOnly,
@@ -134,8 +133,7 @@ impl Roles {
     }
 }
 
-#[derive(Clone, Deserialize)]
-#[serde(transparent)]
+#[derive(Clone)]
 pub struct Secret(pub String);
 
 impl std::fmt::Debug for Secret {
@@ -144,7 +142,7 @@ impl std::fmt::Debug for Secret {
     }
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone)]
 pub struct AppConfig {
     pub app_mode: AppMode,
     pub host: String,
@@ -186,33 +184,22 @@ pub struct AppConfig {
     pub ice_servers: Option<String>,
     pub webhook_allowed_hosts: Option<String>,
     pub webhook_allow_http: bool,
-    #[serde(skip)]
     pub roles: Roles,
-    #[serde(skip)]
     pub proxy_trust: ProxyTrust,
-    #[serde(skip)]
     pub limits: Limits,
-    #[serde(skip)]
     pub secrets: Secrets,
-    #[serde(skip)]
     pub encryption: crate::crypt::ring::KeyConfig,
     /// `BACKUP_RECIPIENTS`: the age recipients `server db backup` encrypts to.
-    #[serde(skip)]
     pub backup_recipients: Vec<String>,
-    #[serde(skip)]
     pub controls: ControlSeeds,
-    #[serde(skip)]
     pub sso: crate::sso::config::SsoConfig,
     /// `DATABASE_LIGHT_COMMITS`.
-    #[serde(skip)]
     pub light_commits: crate::db::LightCommits,
-    #[serde(skip)]
     pub swagger_ui: Option<String>,
     /// `DOCS_DIR`.
     pub docs_dir: Option<String>,
     /// The PeerJS port the web build dials on the page's host (`NEXT_PUBLIC_PEERJS_PORT` without
     /// `NEXT_PUBLIC_PEERJS_HOST`), when this process is told.
-    #[serde(skip)]
     pub web_peerjs_port: Option<u16>,
 }
 
@@ -248,52 +235,12 @@ pub(crate) fn test_env(name: &str) -> Option<String> {
     process_env(name)
 }
 
-fn secret(env: &Option<HashMap<String, String>>, name: &str) -> Option<String> {
-    secret_from(&|key| lookup(env, key), name)
-}
-
-fn secret_from(get: &dyn Fn(&str) -> Option<String>, name: &str) -> Option<String> {
-    read_secret(get, name).unwrap_or_else(|error| {
+/// A secret, `None` (with the reason logged) when its file can't be read.
+fn secret(e: &Env, item: &rchat_settings::Secret) -> Option<String> {
+    e.secret(item).unwrap_or_else(|error| {
         tracing::error!("{error}");
         None
     })
-}
-
-pub(crate) fn read_secret(
-    get: &dyn Fn(&str) -> Option<String>,
-    name: &str,
-) -> anyhow::Result<Option<String>> {
-    if let Some(value) = get(name).filter(|s| !s.trim().is_empty()) {
-        return Ok(Some(value.trim().to_owned()));
-    }
-    let key = format!("{name}_FILE");
-    let Some(path) = get(&key).filter(|s| !s.trim().is_empty()) else {
-        return Ok(None);
-    };
-    let contents = std::fs::read_to_string(path.trim())
-        .map_err(|error| anyhow::anyhow!("{key} cannot be read: {error}"))?;
-    let value = contents.trim();
-    Ok((!value.is_empty()).then(|| value.to_owned()))
-}
-
-/// `read_secret` for a secret the start cannot do without knowing: an unreadable file or an empty
-/// one is an error naming the variable, never an unset secret.
-pub(crate) fn read_required_secret(
-    get: &dyn Fn(&str) -> Option<String>,
-    name: &str,
-) -> anyhow::Result<Option<String>> {
-    let named = |key: &str| get(key).is_some_and(|v| !v.trim().is_empty());
-    match read_secret(get, name)? {
-        Some(value) => Ok(Some(value)),
-        None if named(&format!("{name}_FILE")) => anyhow::bail!("{name}_FILE names an empty file"),
-        None => Ok(None),
-    }
-}
-
-/// A secret from an explicit environment map: `NAME`, or the contents of the file named by
-/// `NAME_FILE`.
-pub fn env_secret_in(env: &HashMap<String, String>, name: &str) -> Option<String> {
-    secret_from(&|key| env.get(key).cloned(), name)
 }
 
 /// Prints no secrets: the S3 key, database and Redis URLs (passwords) and fixed ICE servers
@@ -351,64 +298,104 @@ impl AppConfig {
         Self::load_from(&cli, Some(env.into_env()))
     }
 
-    #[allow(clippy::disallowed_types)]
     fn load_from(cli: &CliOverrides, env: Option<HashMap<String, String>>) -> anyhow::Result<Self> {
-        let mut builder = config::Config::builder()
-            .set_default("app_mode", "full")?
-            .set_default("host", "127.0.0.1")?
-            .set_default("server_port", 3000_i64)?
-            .set_default("port", 3001_i64)?
-            .set_default("redis_prefix", "rchat")?
-            .set_default("trust_proxy", false)?
-            .set_default("public_stun", false)?
-            .set_default("public_stun_count", 3_i64)?
-            .set_default("relay_enabled", false)?
-            .set_default("relay_turn", true)?
-            .set_default("relay_port", i64::from(crate::relay::DEFAULT_PORT))?
-            .set_default("relay_min_port", i64::from(crate::relay::DEFAULT_MIN_PORT))?
-            .set_default("relay_max_port", i64::from(crate::relay::DEFAULT_MAX_PORT))?
-            .set_default("relay_allow_private", false)?
-            .set_default("webhook_allow_http", false)?
-            .add_source(config::Environment::default().source(env.clone()));
+        Self::load_with(cli, &|name| lookup(&env, name))
+    }
 
-        if let Some(ref host) = cli.host {
-            builder = builder.set_override("host", host.as_str())?;
-        }
-        if let Some(port) = cli.port {
-            builder = builder.set_override("server_port", port as i64)?;
-        }
-        if let Some(ref mode) = cli.mode {
-            builder = builder.set_override("app_mode", mode.as_str())?;
-        }
-        if let Some(ref roles) = cli.roles {
-            builder = builder.set_override("rchat_roles", roles.as_str())?;
-        }
-
-        let mut config: AppConfig = builder.build()?.try_deserialize()?;
-        config.limits = Limits::load(&|name| lookup(&env, name))?;
-        config.secrets = Secrets {
-            password_pepper: secret(&env, "PASSWORD_PEPPER"),
-            relay_secret: secret(&env, "RELAY_SECRET"),
-            p2p_secret: secret(&env, "P2P_SECRET"),
+    /// The configuration from `lookup`, which gives the value of an env name. Every name is
+    /// asked for through a registry item.
+    fn load_with(
+        cli: &CliOverrides,
+        lookup: &dyn Fn(&str) -> Option<String>,
+    ) -> anyhow::Result<Self> {
+        let e = Env::new(lookup);
+        let app_mode = match cli.mode.as_deref() {
+            Some(mode) => mode.to_string(),
+            None => e.choice(&st::APP_MODE)?.to_string(),
         };
-        config.encryption = crate::crypt::ring::KeyConfig::load(&|name| lookup(&env, name))?;
-        config.backup_recipients = lookup(&env, "BACKUP_RECIPIENTS")
-            .map(|v| vec![v])
-            .unwrap_or_default();
-        config.controls = ControlSeeds::load(&|name| lookup(&env, name))?;
-        config.sso = crate::sso::config::SsoConfig::load(
-            &|name| lookup(&env, name),
-            config.public_url.as_deref(),
-        )?;
-        config.swagger_ui = lookup(&env, "SWAGGER_UI");
-        config.light_commits =
-            crate::db::LightCommits::parse(lookup(&env, "DATABASE_LIGHT_COMMITS").as_deref())?;
-        let set = |name: &str| lookup(&env, name).filter(|v| !v.trim().is_empty());
-        config.web_peerjs_port = match set("NEXT_PUBLIC_PEERJS_HOST") {
-            Some(_) => None,
-            None => set("NEXT_PUBLIC_PEERJS_PORT")
-                .and_then(|port| port.trim().parse::<u16>().ok())
-                .filter(|port| *port != 0),
+        let app_mode = match app_mode.as_str() {
+            "full" => AppMode::Full,
+            "api-only" => AppMode::ApiOnly,
+            other => anyhow::bail!("APP_MODE: expected full or api-only, got {other}"),
+        };
+        let or = |item: &rchat_settings::Value| {
+            e.value(item).unwrap_or_else(|| match item.setting.default {
+                rchat_settings::Preset::Text(text) => text.to_string(),
+                _ => String::new(),
+            })
+        };
+        let given = |item: &rchat_settings::Secret| e.given(&item.setting);
+        let mut config = AppConfig {
+            app_mode,
+            host: cli.host.clone().unwrap_or_else(|| or(&st::HOST)),
+            server_port: match cli.port {
+                Some(port) => port,
+                None => e.get(&st::SERVER_PORT)?,
+            },
+            port: e.get(&st::PORT)?,
+            server_proxy_url: e.value(&st::SERVER_PROXY_URL),
+            database_url: given(&st::DATABASE_URL),
+            database_replica_urls: given(&st::DATABASE_REPLICA_URLS).map(Secret),
+            s3_endpoint: e.value(&st::S3_ENDPOINT),
+            s3_bucket: e.value(&st::S3_BUCKET),
+            s3_access_key: given(&st::S3_ACCESS_KEY),
+            s3_secret_key: given(&st::S3_SECRET_KEY),
+            s3_region: e.value(&st::S3_REGION),
+            rchat_roles: cli.roles.clone().or_else(|| e.value(&st::RCHAT_ROLES)),
+            redis_url: given(&st::REDIS_URL),
+            redis_prefix: or(&st::REDIS_PREFIX),
+            trust_proxy: e.switch(&st::TRUST_PROXY)?,
+            trusted_proxies: e.value(&st::TRUSTED_PROXIES),
+            instance_name: e.given(&st::INSTANCE_NAME.setting),
+            public_url: e.value(&st::PUBLIC_URL),
+            public_api_url: e.value(&st::PUBLIC_API_URL),
+            public_ws_url: e.value(&st::PUBLIC_WS_URL),
+            public_peerjs_url: e.value(&st::PUBLIC_PEERJS_URL),
+            instance_signing_key: given(&st::INSTANCE_SIGNING_KEY).map(Secret),
+            allowed_hosts: e.value(&st::ALLOWED_HOSTS),
+            other_instance_ports: e.value(&st::OTHER_INSTANCE_PORTS),
+            peerjs_port: e.opt(&st::PEERJS_PORT)?,
+            public_stun: e.switch(&st::PUBLIC_STUN)?,
+            public_stun_count: e.get(&st::PUBLIC_STUN_COUNT)?,
+            relay_enabled: e.switch(&st::RELAY_ENABLED)?,
+            relay_turn: e.switch(&st::RELAY_TURN)?,
+            relay_host: e.value(&st::RELAY_HOST),
+            relay_port: e.get(&st::RELAY_PORT)?,
+            relay_public_ip: e.value(&st::RELAY_PUBLIC_IP),
+            relay_min_port: e.get(&st::RELAY_MIN_PORT)?,
+            relay_max_port: e.get(&st::RELAY_MAX_PORT)?,
+            relay_allow_private: e.switch(&st::RELAY_ALLOW_PRIVATE)?,
+            relay_denied_peers: e.value(&st::RELAY_DENIED_PEERS),
+            ice_servers: given(&st::ICE_SERVERS),
+            webhook_allowed_hosts: e.value(&st::WEBHOOK_ALLOWED_HOSTS),
+            webhook_allow_http: e.switch(&st::WEBHOOK_ALLOW_HTTP)?,
+            roles: Roles::default(),
+            proxy_trust: ProxyTrust::default(),
+            limits: Limits::load(lookup)?,
+            secrets: Secrets {
+                password_pepper: secret(&e, &st::PASSWORD_PEPPER),
+                relay_secret: secret(&e, &st::RELAY_SECRET),
+                p2p_secret: secret(&e, &st::P2P_SECRET),
+            },
+            encryption: crate::crypt::ring::KeyConfig::load(lookup)?,
+            backup_recipients: e
+                .value(&st::BACKUP_RECIPIENTS)
+                .map(|v| vec![v])
+                .unwrap_or_default(),
+            controls: ControlSeeds::load(lookup)?,
+            sso: crate::sso::config::SsoConfig::load(&lookup, e.value(&st::PUBLIC_URL).as_deref())?,
+            light_commits: crate::db::LightCommits::parse(
+                e.raw(&st::DATABASE_LIGHT_COMMITS.setting).as_deref(),
+            )?,
+            swagger_ui: e.value(&st::SWAGGER_UI),
+            docs_dir: e.value(&st::DOCS_DIR),
+            web_peerjs_port: match e.raw(&st::NEXT_PUBLIC_PEERJS_HOST.setting) {
+                Some(_) => None,
+                None => e
+                    .raw(&st::NEXT_PUBLIC_PEERJS_PORT.setting)
+                    .and_then(|port| port.parse::<u16>().ok())
+                    .filter(|port| *port != 0),
+            },
         };
         config.roles = config.resolve_roles()?;
         config.check_shared_state()?;
@@ -1815,27 +1802,84 @@ mod tests {
     }
 
     #[test]
+    fn every_name_the_config_reads_is_a_registry_setting() {
+        let given: HashMap<&str, &str> = [
+            ("PUBLIC_URL", "https://chat.example.com"),
+            ("OIDC_PROVIDERS", "okta"),
+            ("OIDC_OKTA_ISSUER", "https://okta.example.com"),
+            ("OIDC_OKTA_CLIENT_ID", "id"),
+        ]
+        .into_iter()
+        .collect();
+        let asked = std::cell::RefCell::new(std::collections::BTreeSet::new());
+        let lookup = |name: &str| {
+            asked.borrow_mut().insert(name.to_string());
+            given.get(name).map(|v| v.to_string())
+        };
+        AppConfig::load_with(&cli(None, None), &lookup).expect("config");
+        let asked = asked.into_inner();
+        let known = |name: &str| {
+            let plain = name.strip_suffix("_FILE").unwrap_or(name);
+            let provider = plain
+                .strip_prefix("OIDC_OKTA_")
+                .map(|rest| format!("OIDC_ID_{rest}"));
+            [name, plain]
+                .into_iter()
+                .chain(provider.as_deref())
+                .any(|n| rchat_settings::by_env(n).is_some())
+        };
+        let unknown: Vec<&String> = asked.iter().filter(|n| !known(n)).collect();
+        assert_eq!(unknown, Vec::<&String>::new());
+        let read: std::collections::BTreeSet<&str> = rchat_settings::ALL
+            .iter()
+            .filter(|s| {
+                !matches!(
+                    s.scope,
+                    rchat_settings::Scope::Build | rchat_settings::Scope::Provider
+                )
+            })
+            .map(|s| s.env)
+            .filter(|env| !asked.contains(*env))
+            .collect();
+        assert_eq!(
+            read,
+            ["RUST_LOG"].into_iter().collect(),
+            "every server setting is read at start"
+        );
+    }
+
+    #[test]
     fn env_secrets_come_from_the_variable_or_a_file() {
-        let name = format!("RCHAT_TEST_SECRET_{}", std::process::id());
-        assert_eq!(secret(&None, &name), None);
         let file = std::env::temp_dir().join(format!("rchat_secret_{}", std::process::id()));
         std::fs::write(&file, "from-file\n").expect("write");
-        unsafe {
-            std::env::set_var(format!("{name}_FILE"), &file);
-        }
-        assert_eq!(secret(&None, &name).as_deref(), Some("from-file"));
-        unsafe {
-            std::env::set_var(&name, "  direct ");
-        }
-        assert_eq!(secret(&None, &name).as_deref(), Some("direct"));
-        unsafe {
-            std::env::set_var(&name, " ");
-            std::env::remove_var(format!("{name}_FILE"));
-        }
-        assert_eq!(secret(&None, &name), None, "blank counts as unset");
-        unsafe {
-            std::env::remove_var(&name);
-        }
+        let path = file.to_str().expect("path");
+        let read = |pairs: &[(&str, &str)]| {
+            let map: HashMap<String, String> = pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            let lookup = |name: &str| map.get(name).cloned();
+            secret(&Env::new(&lookup), &st::RELAY_SECRET)
+        };
+        assert_eq!(read(&[]), None);
+        assert_eq!(
+            read(&[("RELAY_SECRET_FILE", path)]).as_deref(),
+            Some("from-file")
+        );
+        assert_eq!(
+            read(&[("RELAY_SECRET", "  direct "), ("RELAY_SECRET_FILE", path)]).as_deref(),
+            Some("direct")
+        );
+        assert_eq!(
+            read(&[("RELAY_SECRET", " ")]),
+            None,
+            "blank counts as unset"
+        );
+        assert_eq!(
+            read(&[("RELAY_SECRET_FILE", "/nonexistent/rchat")]),
+            None,
+            "an unreadable file is logged"
+        );
         let _ = std::fs::remove_file(file);
     }
 }

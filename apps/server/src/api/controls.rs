@@ -102,7 +102,10 @@ impl Control {
             rchat_settings::Kind::Text { min, max, lines } => Kind::Text { min, max, lines },
             rchat_settings::Kind::Links => Kind::Links,
             rchat_settings::Kind::Suggestions => Kind::Suggestions,
-            rchat_settings::Kind::Numbers | rchat_settings::Kind::Pins => {
+            rchat_settings::Kind::Numbers
+            | rchat_settings::Kind::Pins
+            | rchat_settings::Kind::Value
+            | rchat_settings::Kind::Secret => {
                 unreachable!("{env} is set only in the env")
             }
         };
@@ -111,6 +114,7 @@ impl Control {
             Preset::Off => "0",
             Preset::Number(n) => Box::leak(n.to_string().into_boxed_str()),
             Preset::Text(text) => text,
+            Preset::Unset => "",
             Preset::Picked(_) => Box::leak(ReportForms::defaults().stored().into_boxed_str()),
         };
         Control {
