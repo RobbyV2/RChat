@@ -12,14 +12,13 @@ use crate::api::{
     ApiError, ApiErrorBody, Authed, MaybeAuthed, Message, OkResp, bad, now_ms, ok, require_guest_ok,
 };
 use crate::db::{Db, User, is_sqlite};
-use crate::limits::Limits;
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
 /// The most pins a list returns: every pin, also those kept from before `CHANNEL_PINS_MAX` was
 /// lowered.
 fn pins_listed() -> i64 {
-    Limits::most("CHANNEL_PINS_MAX")
+    rchat_settings::items::CHANNEL_PINS_MAX.max()
 }
 
 /// A message pinned again within this many seconds of its last pin notice gets no new notice.
@@ -329,6 +328,7 @@ mod tests {
     use crate::api::messages::{send_thread_message, thread_messages};
     use crate::api::test_util::{add_member, done, mem_user, temp_state};
     use crate::db::now;
+    use crate::limits::Limits;
     use axum::extract::Query;
 
     async fn exec(db: &Db, sql: &str) {

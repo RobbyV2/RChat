@@ -16,7 +16,7 @@ use crate::server::client_ip::ProxyTrust;
 
 pub const SOFTWARE: &str = "rchat";
 pub const API_VERSION: &str = "1.1";
-pub const DEFAULT_NAME: &str = "RChat";
+pub const DEFAULT_NAME: &str = rchat_settings::items::INSTANCE_NAME.default();
 
 #[derive(Clone, Default)]
 pub struct InstanceConfig {

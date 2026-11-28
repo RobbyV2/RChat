@@ -81,10 +81,10 @@ pub const PAYLOAD_MAX: usize = 64 * 1024;
 /// Most response bytes read (then discarded).
 pub const RESPONSE_CAP: usize = 16 * 1024;
 /// Executions per webhook in `HOOK_WINDOW`.
-pub const HOOK_BURST: u32 = 5;
+pub const HOOK_BURST: u32 = rchat_settings::items::WEBHOOK_HOOK_BURST.default() as u32;
 const HOOK_WINDOW: Duration = Duration::from_secs(2);
 /// Webhook messages per channel per minute, all of its webhooks together.
-pub const CHANNEL_BUDGET: u32 = 30;
+pub const CHANNEL_BUDGET: u32 = rchat_settings::items::WEBHOOK_CHANNEL_PER_MINUTE.default() as u32;
 /// Most bytes of JSON in a webhook message: the body, or the `payload_json` part.
 const EXECUTE_JSON_MAX: usize = 2 * 1024 * 1024;
 /// Most bytes of a multipart body of a webhook that can not upload, or whose owner has no room

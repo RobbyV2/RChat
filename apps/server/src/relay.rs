@@ -42,9 +42,12 @@ pub const DEFAULT_MAX_PORT: u16 = 49415;
 // Each relayed peer connection of an account takes one. A relay-only member of a full P2P voice
 // mesh (10 people) holds a session and a media connection with each of the other 9, next to
 // its P2P server links, a call and file transfers.
-pub const DEFAULT_USER_ALLOCATIONS: usize = 64;
-pub const DEFAULT_USER_KIB_PER_SEC: u64 = 1024;
-pub const DEFAULT_TOTAL_KIB_PER_SEC: u64 = 64 * 1024;
+pub const DEFAULT_USER_ALLOCATIONS: usize =
+    rchat_settings::items::RELAY_USER_ALLOCATIONS.default() as usize;
+pub const DEFAULT_USER_KIB_PER_SEC: u64 =
+    rchat_settings::items::RELAY_USER_KIB_PER_SEC.default() as u64;
+pub const DEFAULT_TOTAL_KIB_PER_SEC: u64 =
+    rchat_settings::items::RELAY_MAX_KIB_PER_SEC.default() as u64;
 pub const CREDENTIAL_TTL_SECS: i64 = 3600;
 pub const IDLE: Duration = Duration::from_secs(600);
 pub const SESSION_MAX_SECS: u64 = 12 * 3600;

@@ -1360,7 +1360,7 @@ impl ProfanitySwitch {
 }
 
 /// The `settings` row of `Settings::profanity_strict_file_names`.
-pub(crate) const STRICT_FILE_NAMES: &str = "profanity_strict_file_names";
+pub(crate) const STRICT_FILE_NAMES: &str = rchat_settings::items::PROFANITY_STRICT_FILE_NAMES.key();
 
 pub(crate) const DEPRECATED_DISPLAY_NAMES: &str = "display_names";
 

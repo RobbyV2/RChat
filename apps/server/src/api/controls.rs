@@ -1,21 +1,13 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+use rchat_settings::{Env, Preset, Scope, Setting, items as st};
 use sqlx::Row;
 
-use crate::api::access::subjects::{Level, ProfileChoices};
-use crate::api::features::{Feature, Registration};
-use crate::api::policy::{
-    CALLS, Creator, DEFAULT_SERVERS, DmCreation, FRIEND_REQUESTS, INCOMING_WEBHOOKS,
-    PUBLIC_READING, SERVER_CREATORS, SERVER_SEARCH, ServerCreation, ServerJoining,
-    TEMP_PASSWORD_HOURS, TEMP_PASSWORD_HOURS_MAX, TempChange,
-};
-use crate::api::reports::forms::{self, ReportForms};
-use crate::api::{
-    ProfanitySwitch, ProfanityTargets, PublicSettings, STRICT_FILE_NAMES, brand, upload_expiry,
-};
+use crate::api::policy::Creator;
+use crate::api::reports::forms::ReportForms;
+use crate::api::{ProfanitySwitch, ProfanityTargets, PublicSettings, brand, upload_expiry};
 use crate::db::{ConfigStart, Db};
-use crate::limits::Env;
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -50,6 +42,8 @@ pub enum Kind {
 /// `settings` table, with one env name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Control {
+    /// Its registry item.
+    pub setting: &'static Setting,
     /// The name in `Settings` and in the `settings` table.
     pub key: &'static str,
     pub env: &'static str,
@@ -61,200 +55,14 @@ pub struct Control {
 }
 
 /// The env name that pins controls to the server config.
-pub const PINNED_ENV: &str = "SETTINGS_PINNED";
-
-const fn switch(key: &'static str, env: &'static str, on: bool) -> Control {
-    Control {
-        key,
-        env,
-        kind: Kind::Switch,
-        default: match on {
-            true => "1",
-            false => "0",
-        },
-        public: true,
-    }
-}
+pub const PINNED_ENV: &str = st::SETTINGS_PINNED.env();
 
 static CONTROLS: LazyLock<Vec<Control>> = LazyLock::new(|| {
-    let mut all = vec![
-        switch("profanity_filter", "PROFANITY_FILTER", false),
-        Control {
-            key: "profanity_targets",
-            env: "PROFANITY_TARGETS",
-            kind: Kind::Targets,
-            default: "all",
-            public: true,
-        },
-        switch(STRICT_FILE_NAMES, "PROFANITY_STRICT_FILE_NAMES", false),
-        switch("asset_previews", "FEATURE_LINK_PREVIEWS", true),
-        switch("asset_uploads", "FEATURE_FILE_UPLOADS", true),
-        switch("p2p_attachments", "P2P_ATTACHMENTS", true),
-        switch("guests_enabled", "GUESTS_ENABLED", true),
-        switch("outgoing_webhooks", "OUTGOING_WEBHOOKS", false),
-    ];
-    all.extend(
-        Feature::ALL
-            .into_iter()
-            .map(|f| switch(f.key(), f.env(), f.default_on())),
-    );
-    all.push(Control {
-        key: Registration::KEY,
-        env: Registration::ENV,
-        kind: Kind::Choice(&["open", "sso", "closed"]),
-        default: "open",
-        public: true,
-    });
-    all.push(Control {
-        key: upload_expiry::CAP_KEY,
-        env: "UPLOAD_EXPIRY_MAX_DAYS",
-        kind: Kind::Number {
-            min: 0,
-            max: upload_expiry::CAP_DAYS_MAX,
-        },
-        default: "0",
-        public: true,
-    });
-    all.push(Control {
-        key: ServerCreation::KEY,
-        env: ServerCreation::ENV,
-        kind: Kind::Choice(&ServerCreation::WORDS),
-        default: "everyone",
-        public: true,
-    });
-    all.push(Control {
-        key: SERVER_CREATORS,
-        env: "SERVER_CREATORS",
-        kind: Kind::Names,
-        default: "",
-        public: false,
-    });
-    all.push(Control {
-        key: ServerJoining::KEY,
-        env: ServerJoining::ENV,
-        kind: Kind::Choice(&ServerJoining::WORDS),
-        default: "everyone",
-        public: true,
-    });
-    all.push(switch(SERVER_SEARCH, "SERVER_SEARCH", true));
-    all.push(Control {
-        key: DmCreation::KEY,
-        env: DmCreation::ENV,
-        kind: Kind::Choice(&DmCreation::WORDS),
-        default: "everyone",
-        public: true,
-    });
-    all.push(switch(FRIEND_REQUESTS, "FEATURE_FRIEND_REQUESTS", true));
-    all.push(switch(PUBLIC_READING, "PUBLIC_READING", true));
-    all.push(Control {
-        key: DEFAULT_SERVERS,
-        env: "DEFAULT_SERVERS",
-        kind: Kind::Servers,
-        default: crate::db::BUILTIN_SERVER,
-        public: false,
-    });
-    all.push(switch(CALLS, "FEATURE_CALLS", true));
-    all.push(switch(INCOMING_WEBHOOKS, "FEATURE_INCOMING_WEBHOOKS", true));
-    all.push(Control {
-        key: Level::KEY,
-        env: Level::ENV,
-        kind: Kind::Choice(&Level::WORDS),
-        default: "shared",
-        public: true,
-    });
-    all.push(Control {
-        key: ProfileChoices::KEY,
-        env: ProfileChoices::ENV,
-        kind: Kind::Choice(&ProfileChoices::WORDS),
-        default: "any",
-        public: true,
-    });
-    all.push(Control {
-        key: TempChange::KEY,
-        env: TempChange::ENV,
-        kind: Kind::Choice(&TempChange::WORDS),
-        default: "required",
-        public: true,
-    });
-    all.push(Control {
-        key: TEMP_PASSWORD_HOURS,
-        env: "TEMP_PASSWORD_HOURS",
-        kind: Kind::Number {
-            min: 0,
-            max: TEMP_PASSWORD_HOURS_MAX,
-        },
-        default: "72",
-        public: true,
-    });
-    let text = |key, env, min, max, lines, default| Control {
-        key,
-        env,
-        kind: Kind::Text { min, max, lines },
-        default,
-        public: false,
-    };
-    all.push(text(
-        brand::INSTANCE_NAME,
-        "INSTANCE_NAME",
-        1,
-        brand::NAME_MAX,
-        false,
-        crate::instance::DEFAULT_NAME,
-    ));
-    all.push(text(
-        brand::APP_NAME,
-        "BRAND_APP_NAME",
-        0,
-        brand::NAME_MAX,
-        false,
-        "",
-    ));
-    all.push(text(
-        brand::SHORT_NAME,
-        "BRAND_SHORT_NAME",
-        0,
-        brand::SHORT_NAME_MAX,
-        false,
-        "",
-    ));
-    all.push(text(
-        brand::ABOUT,
-        "BRAND_ABOUT",
-        0,
-        brand::ABOUT_MAX,
-        true,
-        "",
-    ));
-    all.push(Control {
-        key: brand::LINKS,
-        env: "BRAND_LINKS",
-        kind: Kind::Links,
-        default: "[]",
-        public: false,
-    });
-    all.push(text(
-        brand::LOGIN_NOTE,
-        "BRAND_LOGIN_NOTE",
-        0,
-        brand::LOGIN_NOTE_MAX,
-        true,
-        "",
-    ));
-    all.push(Control {
-        key: brand::SUGGESTIONS,
-        env: "INSTANCE_SUGGESTIONS",
-        kind: Kind::Suggestions,
-        default: r#"{"mode":"add","list":[]}"#,
-        public: false,
-    });
-    all.push(Control {
-        key: forms::KEY,
-        env: forms::ENV,
-        kind: Kind::Forms,
-        default: Box::leak(ReportForms::defaults().stored().into_boxed_str()),
-        public: false,
-    });
-    all
+    rchat_settings::ALL
+        .iter()
+        .filter(|setting| setting.scope == Scope::Live)
+        .map(|setting| Control::of(setting))
+        .collect()
 });
 
 /// Reads the `settings` rows of every control, the retired `profanity_display_names` that
@@ -273,7 +81,49 @@ pub(crate) static ROWS_SQL: LazyLock<String> = LazyLock::new(|| {
 });
 
 impl Control {
-    /// Every control, in the order the admin page's config list shows them.
+    /// The control of a setting the admin page changes.
+    fn of(setting: &'static Setting) -> Control {
+        let Setting {
+            env,
+            key,
+            kind,
+            default,
+            scope: _,
+            public,
+        } = *setting;
+        let kind = match kind {
+            rchat_settings::Kind::Switch => Kind::Switch,
+            rchat_settings::Kind::Choice(words) => Kind::Choice(words),
+            rchat_settings::Kind::Targets => Kind::Targets,
+            rchat_settings::Kind::Number { min, max } => Kind::Number { min, max },
+            rchat_settings::Kind::Names => Kind::Names,
+            rchat_settings::Kind::Forms => Kind::Forms,
+            rchat_settings::Kind::Servers => Kind::Servers,
+            rchat_settings::Kind::Text { min, max, lines } => Kind::Text { min, max, lines },
+            rchat_settings::Kind::Links => Kind::Links,
+            rchat_settings::Kind::Suggestions => Kind::Suggestions,
+            rchat_settings::Kind::Numbers | rchat_settings::Kind::Pins => {
+                unreachable!("{env} is set only in the env")
+            }
+        };
+        let default = match default {
+            Preset::On => "1",
+            Preset::Off => "0",
+            Preset::Number(n) => Box::leak(n.to_string().into_boxed_str()),
+            Preset::Text(text) => text,
+            Preset::Picked(_) => Box::leak(ReportForms::defaults().stored().into_boxed_str()),
+        };
+        Control {
+            setting,
+            key: key.expect("a live setting has a key"),
+            env,
+            kind,
+            default,
+            public,
+        }
+    }
+
+    /// Every control, in the order of `.env.local.example`.
     pub fn all() -> &'static [Control] {
         &CONTROLS
     }
@@ -616,10 +466,10 @@ pub struct ControlSeeds {
 
 impl ControlSeeds {
     pub fn load(env: &dyn Fn(&str) -> Option<String>) -> anyhow::Result<ControlSeeds> {
-        let e = Env(env);
+        let e = Env::new(env);
         let mut set = Vec::new();
         for c in Control::all() {
-            let Some(raw) = e.raw(c.env) else {
+            let Some(raw) = e.raw(c.setting) else {
                 continue;
             };
             let stored = match c.kind {
@@ -649,7 +499,7 @@ impl ControlSeeds {
             set.push((c.key, stored));
         }
         let names: Vec<String> = e
-            .raw(PINNED_ENV)
+            .raw(&st::SETTINGS_PINNED.setting)
             .unwrap_or_default()
             .split(',')
             .map(|n| n.trim().to_ascii_uppercase())
@@ -786,59 +636,57 @@ mod tests {
             .iter()
             .map(|c| (c.key, c.env, c.default))
             .collect();
-        assert_eq!(
-            table[..8],
-            [
-                ("profanity_filter", "PROFANITY_FILTER", "0"),
-                ("profanity_targets", "PROFANITY_TARGETS", "all"),
-                (
-                    "profanity_strict_file_names",
-                    "PROFANITY_STRICT_FILE_NAMES",
-                    "0"
-                ),
-                ("asset_previews", "FEATURE_LINK_PREVIEWS", "1"),
-                ("asset_uploads", "FEATURE_FILE_UPLOADS", "1"),
-                ("p2p_attachments", "P2P_ATTACHMENTS", "1"),
-                ("guests_enabled", "GUESTS_ENABLED", "1"),
-                ("outgoing_webhooks", "OUTGOING_WEBHOOKS", "0"),
-            ]
-        );
+        for row in [
+            ("profanity_filter", "PROFANITY_FILTER", "0"),
+            ("profanity_targets", "PROFANITY_TARGETS", "all"),
+            (
+                "profanity_strict_file_names",
+                "PROFANITY_STRICT_FILE_NAMES",
+                "0",
+            ),
+            ("asset_previews", "FEATURE_LINK_PREVIEWS", "1"),
+            ("asset_uploads", "FEATURE_FILE_UPLOADS", "1"),
+            ("p2p_attachments", "P2P_ATTACHMENTS", "1"),
+            ("guests_enabled", "GUESTS_ENABLED", "1"),
+            ("outgoing_webhooks", "OUTGOING_WEBHOOKS", "0"),
+        ] {
+            assert!(table.contains(&row), "{row:?}");
+        }
         for f in Feature::ALL {
             let c = control(f.key());
             assert_eq!((c.env, c.kind), (f.env(), Kind::Switch), "{f:?}");
             assert_eq!(c.default == "1", f.default_on(), "{f:?}");
         }
-        assert_eq!(
-            table[table.len() - 23..table.len() - 1],
-            [
-                ("upload_expiry_max_days", "UPLOAD_EXPIRY_MAX_DAYS", "0"),
-                ("server_creation", "SERVER_CREATION", "everyone"),
-                ("server_creators", "SERVER_CREATORS", ""),
-                ("server_joining", "SERVER_JOINING", "everyone"),
-                ("server_search", "SERVER_SEARCH", "1"),
-                ("dm_creation", "DM_CREATION", "everyone"),
-                ("friend_requests", "FEATURE_FRIEND_REQUESTS", "1"),
-                ("public_reading", "PUBLIC_READING", "1"),
-                ("default_servers", "DEFAULT_SERVERS", "rchat"),
-                ("calls", "FEATURE_CALLS", "1"),
-                ("incoming_webhooks", "FEATURE_INCOMING_WEBHOOKS", "1"),
-                ("profile_visibility", "PROFILE_VISIBILITY", "shared"),
-                ("profile_choices", "PROFILE_CHOICES", "any"),
-                ("password_change", "TEMP_PASSWORD_CHANGE", "required"),
-                ("temp_password_hours", "TEMP_PASSWORD_HOURS", "72"),
-                ("instance_name", "INSTANCE_NAME", "RChat"),
-                ("app_name", "BRAND_APP_NAME", ""),
-                ("app_short_name", "BRAND_SHORT_NAME", ""),
-                ("brand_about", "BRAND_ABOUT", ""),
-                ("brand_links", "BRAND_LINKS", "[]"),
-                ("login_note", "BRAND_LOGIN_NOTE", ""),
-                (
-                    "instance_suggestions",
-                    "INSTANCE_SUGGESTIONS",
-                    r#"{"mode":"add","list":[]}"#
-                ),
-            ]
-        );
+        for row in [
+            ("upload_expiry_max_days", "UPLOAD_EXPIRY_MAX_DAYS", "0"),
+            ("server_creation", "SERVER_CREATION", "everyone"),
+            ("server_creators", "SERVER_CREATORS", ""),
+            ("server_joining", "SERVER_JOINING", "everyone"),
+            ("server_search", "SERVER_SEARCH", "1"),
+            ("dm_creation", "DM_CREATION", "everyone"),
+            ("friend_requests", "FEATURE_FRIEND_REQUESTS", "1"),
+            ("public_reading", "PUBLIC_READING", "1"),
+            ("default_servers", "DEFAULT_SERVERS", "rchat"),
+            ("calls", "FEATURE_CALLS", "1"),
+            ("incoming_webhooks", "FEATURE_INCOMING_WEBHOOKS", "1"),
+            ("profile_visibility", "PROFILE_VISIBILITY", "shared"),
+            ("profile_choices", "PROFILE_CHOICES", "any"),
+            ("password_change", "TEMP_PASSWORD_CHANGE", "required"),
+            ("temp_password_hours", "TEMP_PASSWORD_HOURS", "72"),
+            ("instance_name", "INSTANCE_NAME", "RChat"),
+            ("app_name", "BRAND_APP_NAME", ""),
+            ("app_short_name", "BRAND_SHORT_NAME", ""),
+            ("brand_about", "BRAND_ABOUT", ""),
+            ("brand_links", "BRAND_LINKS", "[]"),
+            ("login_note", "BRAND_LOGIN_NOTE", ""),
+            (
+                "instance_suggestions",
+                "INSTANCE_SUGGESTIONS",
+                r#"{"mode":"add","list":[]}"#,
+            ),
+        ] {
+            assert!(table.contains(&row), "{row:?}");
+        }
         assert_eq!(
             control("instance_name").kind,
             Kind::Text {
@@ -890,10 +738,7 @@ mod tests {
             Kind::Choice(&["everyone", "friends", "nobody"])
         );
         assert_eq!(control("friend_requests").kind, Kind::Switch);
-        assert_eq!(
-            table.last().map(|(key, env, _)| (*key, *env)),
-            Some(("report_forms", "REPORT_FORMS_FILE"))
-        );
+        assert_eq!(control("report_forms").env, "REPORT_FORMS_FILE");
         assert_eq!(
             control("server_joining").kind,
             Kind::Choice(&["everyone", "invites", "nobody"])
@@ -1244,7 +1089,7 @@ mod tests {
         assert_eq!(some.pinned, ["p2p", "registration"]);
         assert!(some.pins("p2p") && some.pins("registration") && !some.pins("e2ee"));
         let all = with("ALL").expect("all");
-        assert_eq!(all.pinned, ["e2ee", "p2p", "registration"]);
+        assert_eq!(all.pinned, ["registration", "p2p", "e2ee"]);
         assert_eq!(with("  ").expect("blank").pinned, Vec::<&str>::new());
         assert_eq!(
             ControlSeeds::of(&[(PINNED_ENV, "all")])

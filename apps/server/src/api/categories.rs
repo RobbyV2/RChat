@@ -17,7 +17,6 @@ use crate::api::{
     ProfanityTarget, Separator, SeparatorStyle, bad, ok,
 };
 use crate::db::Db;
-use crate::limits::Limits;
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -875,10 +874,10 @@ pub(crate) async fn reorder_layout(
             .iter()
             .map(|c| c.channels.len())
             .sum::<usize>();
-    if listed as i64 > Limits::most("SERVER_CHANNELS_MAX")
-        || req.categories.len() as i64 > Limits::most("SERVER_CATEGORIES_MAX")
+    if listed as i64 > rchat_settings::items::SERVER_CHANNELS_MAX.max()
+        || req.categories.len() as i64 > rchat_settings::items::SERVER_CATEGORIES_MAX.max()
         || req.separators.as_ref().map_or(0, Vec::len) as i64
-            > Limits::most("SERVER_SEPARATORS_MAX")
+            > rchat_settings::items::SERVER_SEPARATORS_MAX.max()
     {
         return Err(bad(
             "The order must list every channel and category exactly once",
@@ -975,6 +974,7 @@ pub(crate) async fn reorder_layout(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::limits::Limits;
 
     #[tokio::test]
     async fn the_category_cap_is_configurable() {

@@ -20,8 +20,10 @@ use crate::server::client_ip::ClientIp;
 
 /// The key every client uses (the PeerJS default).
 pub const KEY: &str = "peerjs";
-pub const DEFAULT_PEERS_PER_IP: usize = 50;
-pub const DEFAULT_CONCURRENT_LIMIT: usize = 5000;
+pub const DEFAULT_PEERS_PER_IP: usize =
+    rchat_settings::items::PEERJS_PEERS_PER_IP.default() as usize;
+pub const DEFAULT_CONCURRENT_LIMIT: usize =
+    rchat_settings::items::PEERJS_CONCURRENT_LIMIT.default() as usize;
 
 const FRAME_MAX: usize = 64 * 1024;
 /// Most frames and bytes queued for one connection that reads slowly.

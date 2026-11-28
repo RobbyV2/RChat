@@ -16,7 +16,6 @@ use crate::api::{
     encode_cursor, ok,
 };
 use crate::db::{AvatarKind, Db, User, get_user};
-use crate::limits::Limits;
 use crate::limits::bucket::{Keyed, Policy};
 use crate::limits::shared::Rate;
 use crate::state::AppState;
@@ -28,11 +27,11 @@ pub const OUTGOING_MAX: i64 = 100;
 /// setting: the bound of reads that list them, so rows kept from before a cap was lowered still
 /// count.
 fn friends_listed() -> i64 {
-    Limits::most("FRIENDS_MAX")
+    rchat_settings::items::FRIENDS_MAX.max()
 }
 
 fn incoming_listed() -> i64 {
-    Limits::most("FRIEND_REQUESTS_IN_MAX")
+    rchat_settings::items::FRIEND_REQUESTS_IN_MAX.max()
 }
 /// Friend requests one account may send per window.
 pub const REQUESTS_PER_WINDOW: u32 = 20;
@@ -1406,6 +1405,7 @@ pub(crate) async fn patch_privacy(
 #[cfg(test)]
 mod tests {
     use crate::db::now;
+    use crate::limits::Limits;
     use std::collections::HashSet;
 
     use axum::extract::{Path, Query, State};

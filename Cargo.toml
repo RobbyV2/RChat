@@ -15,6 +15,7 @@ members = [
   "crates/pow",
   "crates/pow-wasm",
   "crates/profanity",
+  "crates/settings",
   "crates/wasm",
 ]
 default-members = ["apps/server", "apps/desktop/core"]

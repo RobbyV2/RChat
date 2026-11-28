@@ -19,9 +19,9 @@ pub const CUSTOM_MIN: i64 = 3600;
 /// Longest custom time, in seconds (365 days).
 pub const CUSTOM_MAX: i64 = 365 * DAY;
 /// Most days an operator can cap server choices at; 0 is no cap.
-pub const CAP_DAYS_MAX: i64 = 365;
+pub const CAP_DAYS_MAX: i64 = rchat_settings::items::UPLOAD_EXPIRY_MAX_DAYS.max();
 /// The `settings` key of the cap.
-pub const CAP_KEY: &str = "upload_expiry_max_days";
+pub const CAP_KEY: &str = rchat_settings::items::UPLOAD_EXPIRY_MAX_DAYS.key();
 const DAY: i64 = 86400;
 
 /// How a server keeps uploaded files.

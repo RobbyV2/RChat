@@ -21,19 +21,19 @@ use crate::state::AppState;
 use crate::ws::WsEvent;
 
 /// The control that names the instance.
-pub const INSTANCE_NAME: &str = "instance_name";
+pub const INSTANCE_NAME: &str = rchat_settings::items::INSTANCE_NAME.key();
 /// The control that names the app this instance serves.
-pub const APP_NAME: &str = "app_name";
+pub const APP_NAME: &str = rchat_settings::items::BRAND_APP_NAME.key();
 /// The control that holds the app's short name, for home screens.
-pub const SHORT_NAME: &str = "app_short_name";
+pub const SHORT_NAME: &str = rchat_settings::items::BRAND_SHORT_NAME.key();
 /// The control that holds the text about the app.
-pub const ABOUT: &str = "brand_about";
+pub const ABOUT: &str = rchat_settings::items::BRAND_ABOUT.key();
 /// The control that holds the app's links.
-pub const LINKS: &str = "brand_links";
+pub const LINKS: &str = rchat_settings::items::BRAND_LINKS.key();
 /// The control that holds the note under the sign-in form.
-pub const LOGIN_NOTE: &str = "login_note";
+pub const LOGIN_NOTE: &str = rchat_settings::items::BRAND_LOGIN_NOTE.key();
 /// The control that lists the instances the app suggests.
-pub const SUGGESTIONS: &str = "instance_suggestions";
+pub const SUGGESTIONS: &str = rchat_settings::items::INSTANCE_SUGGESTIONS.key();
 
 /// Every brand control, in the order the admin page shows them.
 pub const KEYS: [&str; 7] = [
@@ -46,10 +46,10 @@ pub const KEYS: [&str; 7] = [
     SUGGESTIONS,
 ];
 
-pub const NAME_MAX: usize = 64;
-pub const SHORT_NAME_MAX: usize = 16;
-pub const ABOUT_MAX: usize = 1000;
-pub const LOGIN_NOTE_MAX: usize = 300;
+pub const NAME_MAX: usize = rchat_settings::items::INSTANCE_NAME.max();
+pub const SHORT_NAME_MAX: usize = rchat_settings::items::BRAND_SHORT_NAME.max();
+pub const ABOUT_MAX: usize = rchat_settings::items::BRAND_ABOUT.max();
+pub const LOGIN_NOTE_MAX: usize = rchat_settings::items::BRAND_LOGIN_NOTE.max();
 pub const LINKS_MAX: usize = 4;
 pub const LABEL_MAX: usize = 32;
 pub const SUGGESTIONS_MAX: usize = 20;

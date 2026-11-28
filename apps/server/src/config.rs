@@ -1484,7 +1484,7 @@ mod tests {
         let limits: Vec<_> = pairs
             .iter()
             .filter_map(|(name, value)| {
-                let (_, read) = rows.iter().find(|(row, _)| row == name)?;
+                let (_, read) = rows.iter().find(|(row, _)| row.env == *name)?;
                 Some((*name, *read, value.parse().ok()))
             })
             .collect();
@@ -1759,11 +1759,11 @@ mod tests {
             config.controls,
             ControlSeeds {
                 set: vec![
-                    ("profanity_targets", "usernames".into()),
                     ("guests_enabled", "0".into()),
-                    ("outgoing_webhooks", "1".into()),
-                    ("p2p", "0".into()),
                     ("registration", "closed".into()),
+                    ("p2p", "0".into()),
+                    ("profanity_targets", "usernames".into()),
+                    ("outgoing_webhooks", "1".into()),
                 ],
                 pinned: vec!["registration"],
             }

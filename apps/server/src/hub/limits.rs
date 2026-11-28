@@ -32,14 +32,14 @@ pub struct Limits {
     pub sockets_max: usize,
 }
 
-pub const CONNS_PER_USER: usize = 20;
-pub const CONNECT_BURST: u32 = 20;
-pub const CONNECTS_PER_MINUTE: u32 = 30;
-pub const SOCKETS_PER_IP: usize = 200;
+pub const CONNS_PER_USER: usize = rchat_settings::items::WS_CONNECTIONS_PER_USER.default() as usize;
+pub const CONNECT_BURST: u32 = rchat_settings::items::WS_CONNECT_BURST.default() as u32;
+pub const CONNECTS_PER_MINUTE: u32 = rchat_settings::items::WS_CONNECTS_PER_MINUTE.default() as u32;
+pub const SOCKETS_PER_IP: usize = rchat_settings::items::WS_SOCKETS_PER_IP.default() as usize;
 /// How long a new realtime socket has to send its `auth` frame.
 pub const AUTH_WAIT: Duration = Duration::from_secs(10);
-pub const GUESTS_PER_IP: usize = 50;
-pub const GUESTS_MAX: usize = 2000;
+pub const GUESTS_PER_IP: usize = rchat_settings::items::WS_GUEST_SOCKETS_PER_IP.default() as usize;
+pub const GUESTS_MAX: usize = rchat_settings::items::WS_GUEST_SOCKETS_MAX.default() as usize;
 /// Accounts each pacing map keeps by default; past it the one paced longest ago makes room.
 pub const PACED_USERS_MAX: usize = 10_000;
 

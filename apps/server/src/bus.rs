@@ -42,7 +42,7 @@ static UNDECIDED: LogGate = LogGate::new(SKIP_LOG_EVERY, |n| {
     )
 });
 
-pub const DEFAULT_HUB_MAXLEN: u64 = 100_000;
+pub const DEFAULT_HUB_MAXLEN: u64 = rchat_settings::items::REDIS_HUB_MAXLEN.default() as u64;
 /// The field of a stream entry that holds a sealed frame.
 const SEALED: &str = "sealed";
 const JOBS_MAXLEN: u64 = 10_000;

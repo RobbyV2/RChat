@@ -384,7 +384,10 @@ mod tests {
             ]
         );
         for env in envs {
-            assert!(Limits::range(env).is_some(), "{env} is a limit");
+            assert!(
+                rchat_settings::by_env(env).is_some_and(|s| s.range().is_some()),
+                "{env} is a limit"
+            );
         }
     }
 

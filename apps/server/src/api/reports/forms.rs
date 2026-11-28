@@ -11,9 +11,9 @@ use crate::api::{ApiError, Authed, NAME_MAX, Settings};
 use crate::state::AppState;
 
 /// The `settings` row that holds the forms, and the control's key.
-pub const KEY: &str = "report_forms";
+pub const KEY: &str = rchat_settings::items::REPORT_FORMS_FILE.key();
 /// The env name of the file that sets the forms.
-pub const ENV: &str = "REPORT_FORMS_FILE";
+pub const ENV: &str = rchat_settings::items::REPORT_FORMS_FILE.env();
 
 pub const FORMS_MAX: usize = 12;
 pub const FIELDS_MAX: usize = 12;

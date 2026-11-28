@@ -1,0 +1,1543 @@
+{
+  "settings": [
+    {
+      "default": "",
+      "env": "SETTINGS_PINNED",
+      "kind": "pins",
+      "scope": "start"
+    },
+    {
+      "default": "RChat",
+      "env": "INSTANCE_NAME",
+      "key": "instance_name",
+      "kind": "text",
+      "lines": false,
+      "max": 64,
+      "min": 1,
+      "public": false,
+      "scope": "live"
+    },
+    {
+      "default": "",
+      "env": "BRAND_APP_NAME",
+      "key": "app_name",
+      "kind": "text",
+      "lines": false,
+      "max": 64,
+      "min": 0,
+      "public": false,
+      "scope": "live"
+    },
+    {
+      "default": "",
+      "env": "BRAND_SHORT_NAME",
+      "key": "app_short_name",
+      "kind": "text",
+      "lines": false,
+      "max": 16,
+      "min": 0,
+      "public": false,
+      "scope": "live"
+    },
+    {
+      "default": "",
+      "env": "BRAND_ABOUT",
+      "key": "brand_about",
+      "kind": "text",
+      "lines": true,
+      "max": 1000,
+      "min": 0,
+      "public": false,
+      "scope": "live"
+    },
+    {
+      "default": "[]",
+      "env": "BRAND_LINKS",
+      "key": "brand_links",
+      "kind": "links",
+      "public": false,
+      "scope": "live"
+    },
+    {
+      "default": "",
+      "env": "BRAND_LOGIN_NOTE",
+      "key": "login_note",
+      "kind": "text",
+      "lines": true,
+      "max": 300,
+      "min": 0,
+      "public": false,
+      "scope": "live"
+    },
+    {
+      "default": "{\"mode\":\"add\",\"list\":[]}",
+      "env": "INSTANCE_SUGGESTIONS",
+      "key": "instance_suggestions",
+      "kind": "suggestions",
+      "public": false,
+      "scope": "live"
+    },
+    {
+      "env": "DATABASE_MAX_CONNECTIONS",
+      "kind": "number",
+      "max": 1000,
+      "min": 1,
+      "picked": "two per core, from 8 to 32",
+      "scope": "start"
+    },
+    {
+      "env": "DATABASE_MIN_CONNECTIONS",
+      "kind": "number",
+      "max": 1000,
+      "min": 0,
+      "picked": "none",
+      "scope": "start"
+    },
+    {
+      "env": "DATABASE_ACQUIRE_TIMEOUT_SECS",
+      "kind": "number",
+      "max": 3600,
+      "min": 1,
+      "picked": "10",
+      "scope": "start"
+    },
+    {
+      "default": 60,
+      "env": "DATABASE_STATEMENT_TIMEOUT_SECS",
+      "kind": "number",
+      "max": 3600,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 8,
+      "env": "DATABASE_REPLICA_MAX_CONNECTIONS",
+      "kind": "number",
+      "max": 1000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 2000,
+      "env": "DATABASE_REPLICA_MAX_LAG_MS",
+      "kind": "number",
+      "max": 600000,
+      "min": 100,
+      "scope": "start"
+    },
+    {
+      "env": "DATABASE_READ_CONNECTIONS",
+      "kind": "number",
+      "max": 64,
+      "min": 0,
+      "picked": "the CPU count, at least 2 and at most 8",
+      "scope": "start"
+    },
+    {
+      "default": 256,
+      "env": "DATABASE_INDEX_BUILD_MIB",
+      "kind": "number",
+      "max": 16384,
+      "min": 16,
+      "scope": "start"
+    },
+    {
+      "default": 25,
+      "env": "UPLOAD_MAX_MIB",
+      "kind": "number",
+      "max": 512,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 2048,
+      "env": "UPLOAD_BUDGET_MIB",
+      "kind": "number",
+      "max": 1048576,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 8192,
+      "env": "UPLOAD_SERVER_KEPT_MIB",
+      "kind": "number",
+      "max": 1048576,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 16384,
+      "env": "UPLOAD_OWNER_KEPT_MIB",
+      "kind": "number",
+      "max": 1048576,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 256,
+      "env": "UPLOAD_BUFFER_MIB",
+      "kind": "number",
+      "max": 1048576,
+      "min": 32,
+      "scope": "start"
+    },
+    {
+      "default": 0,
+      "env": "UPLOAD_EXPIRY_MAX_DAYS",
+      "key": "upload_expiry_max_days",
+      "kind": "number",
+      "max": 365,
+      "min": 0,
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": 4000,
+      "env": "MESSAGE_MAX_CHARS",
+      "kind": "number",
+      "max": 100000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 2400,
+      "env": "MESSAGE_RATE_PER_MINUTE",
+      "kind": "number",
+      "max": 100000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 100,
+      "env": "MESSAGE_RATE_BURST",
+      "kind": "number",
+      "max": 100000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_SCHEDULED_MESSAGES",
+      "key": "scheduled_messages",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": 100,
+      "env": "SCHEDULED_PER_ACCOUNT",
+      "kind": "number",
+      "max": 10000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 100,
+      "env": "CHANNEL_PINS_MAX",
+      "kind": "number",
+      "max": 1000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 20,
+      "env": "MESSAGE_USER_MENTIONS_MAX",
+      "kind": "number",
+      "max": 400,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 20,
+      "env": "MESSAGE_ROLE_MENTIONS_MAX",
+      "kind": "number",
+      "max": 1000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 500,
+      "env": "HERE_RECIPIENTS_MAX",
+      "kind": "number",
+      "max": 10000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 30,
+      "env": "PING_KEEP_DAYS",
+      "kind": "number",
+      "max": 3650,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 100000,
+      "env": "REDIS_HUB_MAXLEN",
+      "kind": "number",
+      "max": 100000000,
+      "min": 1000,
+      "scope": "start"
+    },
+    {
+      "default": 10,
+      "env": "RATE_LIMIT_PER_SECOND",
+      "kind": "number",
+      "max": 1000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 60,
+      "env": "RATE_LIMIT_BURST",
+      "kind": "number",
+      "max": 1000000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 2,
+      "env": "RATE_LIMIT_STRICT_PER_SECOND",
+      "kind": "number",
+      "max": 1000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 30,
+      "env": "RATE_LIMIT_STRICT_BURST",
+      "kind": "number",
+      "max": 1000000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 2,
+      "env": "RATE_LIMIT_INVITE_PER_SECOND",
+      "kind": "number",
+      "max": 1000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 30,
+      "env": "RATE_LIMIT_INVITE_BURST",
+      "kind": "number",
+      "max": 1000000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 0,
+      "env": "ARGON2_PERMITS",
+      "kind": "number",
+      "max": 1024,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 19456,
+      "env": "ARGON2_MEMORY_KIB",
+      "kind": "number",
+      "max": 1048576,
+      "min": 4096,
+      "scope": "start"
+    },
+    {
+      "default": 2,
+      "env": "ARGON2_ITERATIONS",
+      "kind": "number",
+      "max": 64,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 1,
+      "env": "ARGON2_PARALLELISM",
+      "kind": "number",
+      "max": 16,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 64,
+      "env": "SERVER_PASSWORD_QUEUE_MAX",
+      "kind": "number",
+      "max": 100000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 16,
+      "env": "SERVER_PASSWORD_QUEUE_PER_ADDRESS",
+      "kind": "number",
+      "max": 100000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 32,
+      "env": "SERVER_PASSWORD_QUEUE_PER_NETWORK",
+      "kind": "number",
+      "max": 100000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 20,
+      "env": "WS_CONNECTIONS_PER_USER",
+      "kind": "number",
+      "max": 10000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 20,
+      "env": "WS_CONNECT_BURST",
+      "kind": "number",
+      "max": 10000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 30,
+      "env": "WS_CONNECTS_PER_MINUTE",
+      "kind": "number",
+      "max": 60000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 200,
+      "env": "WS_SOCKETS_PER_IP",
+      "kind": "number",
+      "max": 1000000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 50,
+      "env": "WS_GUEST_SOCKETS_PER_IP",
+      "kind": "number",
+      "max": 1000000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 2000,
+      "env": "WS_GUEST_SOCKETS_MAX",
+      "kind": "number",
+      "max": 1000000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 0,
+      "env": "WS_SOCKETS_MAX",
+      "kind": "number",
+      "max": 10000000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 512,
+      "env": "WS_INBOX_FRAMES",
+      "kind": "number",
+      "max": 65536,
+      "min": 16,
+      "scope": "start"
+    },
+    {
+      "default": 256,
+      "env": "WS_OUT_FRAMES",
+      "kind": "number",
+      "max": 65536,
+      "min": 16,
+      "scope": "start"
+    },
+    {
+      "default": 10,
+      "env": "WS_SEND_TIMEOUT_SECS",
+      "kind": "number",
+      "max": 600,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 128,
+      "env": "WS_READ_BUFFER_KIB",
+      "kind": "number",
+      "max": 65536,
+      "min": 4,
+      "scope": "start"
+    },
+    {
+      "default": 128,
+      "env": "WS_WRITE_BUFFER_KIB",
+      "kind": "number",
+      "max": 65536,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 0,
+      "env": "WS_MAX_WRITE_BUFFER_KIB",
+      "kind": "number",
+      "max": 1048576,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 10000,
+      "env": "WS_PACED_USERS_MAX",
+      "kind": "number",
+      "max": 10000000,
+      "min": 100,
+      "scope": "start"
+    },
+    {
+      "default": 100000,
+      "env": "WS_CHANNEL_SLOTS",
+      "kind": "number",
+      "max": 10000000,
+      "min": 1000,
+      "scope": "start"
+    },
+    {
+      "default": 0,
+      "env": "HUB_AFTERMATH_MAX",
+      "kind": "number",
+      "max": 1000000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 0,
+      "env": "HUB_SHOWN_MAX",
+      "kind": "number",
+      "max": 1000000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 1000,
+      "env": "RECONNECT_BASE_MS",
+      "kind": "number",
+      "max": 60000,
+      "min": 100,
+      "scope": "start"
+    },
+    {
+      "default": 30000,
+      "env": "RECONNECT_CAP_MS",
+      "kind": "number",
+      "max": 3600000,
+      "min": 1000,
+      "scope": "start"
+    },
+    {
+      "default": 250,
+      "env": "RECONNECT_FLOOR_MS",
+      "kind": "number",
+      "max": 60000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 10000,
+      "env": "RESYNC_JITTER_MS",
+      "kind": "number",
+      "max": 600000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 5000,
+      "env": "CATCH_UP_DELAY_MS",
+      "kind": "number",
+      "max": 600000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 120,
+      "env": "LOOKUP_LIST_PER_MINUTE",
+      "kind": "number",
+      "max": 10000,
+      "min": 10,
+      "scope": "start"
+    },
+    {
+      "default": 300,
+      "env": "LOOKUP_TYPEAHEAD_PER_MINUTE",
+      "kind": "number",
+      "max": 10000,
+      "min": 10,
+      "scope": "start"
+    },
+    {
+      "default": 30,
+      "env": "LOOKUP_SEARCH_PER_MINUTE",
+      "kind": "number",
+      "max": 1000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 120,
+      "env": "LOOKUP_PROFILE_PER_MINUTE",
+      "kind": "number",
+      "max": 10000,
+      "min": 10,
+      "scope": "start"
+    },
+    {
+      "default": 30,
+      "env": "LOOKUP_MEMBER_SEARCH_PER_MINUTE",
+      "kind": "number",
+      "max": 1000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 200,
+      "env": "LOOKUP_MISSES_PER_HOUR",
+      "kind": "number",
+      "max": 100000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 30,
+      "env": "MESSAGE_SEARCH_PER_MINUTE",
+      "kind": "number",
+      "max": 1000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 1,
+      "env": "MESSAGE_SEARCH_AT_ONCE",
+      "kind": "number",
+      "max": 100,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "env": "MESSAGE_SEARCH_CONCURRENT_LIMIT",
+      "kind": "number",
+      "max": 1000,
+      "min": 1,
+      "picked": "half the read connections, at least 1",
+      "scope": "start"
+    },
+    {
+      "default": 20,
+      "env": "RARE_REQUESTS_PER_HOUR",
+      "kind": "number",
+      "max": 10000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 100,
+      "env": "RARE_REQUESTS_PER_DAY",
+      "kind": "number",
+      "max": 100000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": "on",
+      "env": "GUESTS_ENABLED",
+      "key": "guests_enabled",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "off",
+      "env": "GUEST_CHAT_ENABLED",
+      "key": "guest_chat_enabled",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "off",
+      "env": "GUEST_VOICE_ENABLED",
+      "key": "guest_voice_enabled",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": 30,
+      "env": "GUEST_GRANT_DAYS",
+      "kind": "number",
+      "max": 3650,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 2000,
+      "env": "GUEST_GRANTS_PER_PASSWORD",
+      "kind": "number",
+      "max": 1000000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 50,
+      "env": "GUEST_GRANTS_PER_NETWORK",
+      "kind": "number",
+      "max": 1000000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 60,
+      "env": "GUEST_GRANT_MINTS_PER_NETWORK",
+      "kind": "number",
+      "max": 1000000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_FILE_UPLOADS",
+      "key": "asset_uploads",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "on",
+      "env": "P2P_ATTACHMENTS",
+      "key": "p2p_attachments",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "everyone",
+      "env": "SERVER_CREATION",
+      "key": "server_creation",
+      "kind": "choice",
+      "public": true,
+      "scope": "live",
+      "words": ["everyone", "nobody", "some"]
+    },
+    {
+      "default": "",
+      "env": "SERVER_CREATORS",
+      "key": "server_creators",
+      "kind": "names",
+      "public": false,
+      "scope": "live"
+    },
+    {
+      "default": "everyone",
+      "env": "SERVER_JOINING",
+      "key": "server_joining",
+      "kind": "choice",
+      "public": true,
+      "scope": "live",
+      "words": ["everyone", "invites", "nobody"]
+    },
+    {
+      "default": "on",
+      "env": "SERVER_SEARCH",
+      "key": "server_search",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "on",
+      "env": "PUBLIC_READING",
+      "key": "public_reading",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "rchat",
+      "env": "DEFAULT_SERVERS",
+      "key": "default_servers",
+      "kind": "servers",
+      "public": false,
+      "scope": "live"
+    },
+    {
+      "default": 1000,
+      "env": "SERVERS_PER_ACCOUNT",
+      "kind": "number",
+      "max": 1000000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 0,
+      "env": "SERVER_MEMBERS_MAX",
+      "kind": "number",
+      "max": 100000000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 0,
+      "env": "SERVERS_PER_NETWORK_PER_DAY",
+      "kind": "number",
+      "max": 1000000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 500,
+      "env": "SERVER_CHANNELS_MAX",
+      "kind": "number",
+      "max": 10000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 100,
+      "env": "SERVER_CATEGORIES_MAX",
+      "kind": "number",
+      "max": 1000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 50,
+      "env": "SERVER_SEPARATORS_MAX",
+      "kind": "number",
+      "max": 1000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 250,
+      "env": "SERVER_ROLES_MAX",
+      "kind": "number",
+      "max": 10000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 90,
+      "env": "AUDIT_KEEP_DAYS",
+      "kind": "number",
+      "max": 36500,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": "everyone",
+      "env": "DM_CREATION",
+      "key": "dm_creation",
+      "kind": "choice",
+      "public": true,
+      "scope": "live",
+      "words": ["everyone", "friends", "nobody"]
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_FRIEND_REQUESTS",
+      "key": "friend_requests",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": 1000,
+      "env": "FRIENDS_MAX",
+      "kind": "number",
+      "max": 10000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 1000,
+      "env": "FRIEND_REQUESTS_IN_MAX",
+      "kind": "number",
+      "max": 10000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": "shared",
+      "env": "PROFILE_VISIBILITY",
+      "key": "profile_visibility",
+      "kind": "choice",
+      "public": true,
+      "scope": "live",
+      "words": ["everyone", "public_servers", "shared"]
+    },
+    {
+      "default": "any",
+      "env": "PROFILE_CHOICES",
+      "key": "profile_choices",
+      "kind": "choice",
+      "public": true,
+      "scope": "live",
+      "words": ["any", "narrower", "site"]
+    },
+    {
+      "default": "open",
+      "env": "AUTH_REGISTRATION",
+      "key": "registration",
+      "kind": "choice",
+      "public": true,
+      "scope": "live",
+      "words": ["open", "sso", "closed"]
+    },
+    {
+      "default": "on",
+      "env": "AUTH_PASSWORD_LOGIN",
+      "key": "password_login",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "required",
+      "env": "TEMP_PASSWORD_CHANGE",
+      "key": "password_change",
+      "kind": "choice",
+      "public": true,
+      "scope": "live",
+      "words": ["required", "encouraged"]
+    },
+    {
+      "default": 72,
+      "env": "TEMP_PASSWORD_HOURS",
+      "key": "temp_password_hours",
+      "kind": "number",
+      "max": 720,
+      "min": 0,
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": 0,
+      "env": "SIGNUPS_PER_NETWORK_PER_DAY",
+      "kind": "number",
+      "max": 1000000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 0,
+      "env": "SESSION_MAX_AGE_SECS",
+      "kind": "number",
+      "max": 315360000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 0,
+      "env": "SESSION_IDLE_SECS",
+      "kind": "number",
+      "max": 315360000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_DISPLAY_NAMES",
+      "key": "display_names",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_ONBOARDING",
+      "key": "onboarding",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_BACKUP_PHRASE",
+      "key": "backup_phrase",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_P2P",
+      "key": "p2p",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "{}",
+      "env": "P2P_LIMITS",
+      "kind": "numbers",
+      "scope": "p2p"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_CLIENT_OTHER_INSTANCES",
+      "key": "client_other_instances",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_SERVER_PROFILES",
+      "key": "server_profiles",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_PROFILE_PICTURES",
+      "key": "profile_pictures",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": 8,
+      "env": "AVATAR_UPLOAD_MAX_MIB",
+      "kind": "number",
+      "max": 64,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_ANIMATED_PROFILE_PICTURES",
+      "key": "animated_profile_pictures",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": 250,
+      "env": "AVATAR_ANIMATION_MAX_FRAMES",
+      "kind": "number",
+      "max": 2000,
+      "min": 2,
+      "scope": "start"
+    },
+    {
+      "default": 20,
+      "env": "AVATAR_ANIMATION_MAX_SECS",
+      "kind": "number",
+      "max": 120,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 400,
+      "env": "AVATAR_ANIMATION_MAX_MEGAPIXELS",
+      "kind": "number",
+      "max": 4000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_DOCS",
+      "key": "docs",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_INTERACTIVE_DOCS",
+      "key": "interactive_docs",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_MEMBER_LISTS",
+      "key": "member_lists",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "off",
+      "env": "PROFANITY_FILTER",
+      "key": "profanity_filter",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "all",
+      "env": "PROFANITY_TARGETS",
+      "key": "profanity_targets",
+      "kind": "targets",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "off",
+      "env": "PROFANITY_STRICT_FILE_NAMES",
+      "key": "profanity_strict_file_names",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_LINK_PREVIEWS",
+      "key": "asset_previews",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": 30,
+      "env": "EMBED_CACHE_DAYS",
+      "kind": "number",
+      "max": 3650,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 16,
+      "env": "EMBED_FETCHES",
+      "kind": "number",
+      "max": 1024,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 256,
+      "env": "EMBED_QUEUE",
+      "kind": "number",
+      "max": 100000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 128,
+      "env": "PREVIEW_CACHE_MIB",
+      "kind": "number",
+      "max": 1048576,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 20000,
+      "env": "PREVIEW_CACHE_ROWS",
+      "kind": "number",
+      "max": 10000000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 7,
+      "env": "PREVIEW_CACHE_DAYS",
+      "kind": "number",
+      "max": 3650,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": "off",
+      "env": "OUTGOING_WEBHOOKS",
+      "key": "outgoing_webhooks",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_INCOMING_WEBHOOKS",
+      "key": "incoming_webhooks",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": 5,
+      "env": "WEBHOOK_HOOK_BURST",
+      "kind": "number",
+      "max": 10000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 30,
+      "env": "WEBHOOK_CHANNEL_PER_MINUTE",
+      "kind": "number",
+      "max": 100000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 15,
+      "env": "CHANNEL_WEBHOOKS_MAX",
+      "kind": "number",
+      "max": 1000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 100,
+      "env": "SERVER_WEBHOOKS_MAX",
+      "kind": "number",
+      "max": 10000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 10,
+      "env": "SERVER_OUTGOING_WEBHOOKS_MAX",
+      "kind": "number",
+      "max": 1000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 1000,
+      "env": "WEBHOOK_QUEUE_MAX",
+      "kind": "number",
+      "max": 1000000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 16,
+      "env": "WEBHOOK_WORKERS",
+      "kind": "number",
+      "max": 1024,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 6,
+      "env": "WEBHOOK_ATTEMPTS",
+      "kind": "number",
+      "max": 100,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 7,
+      "env": "WEBHOOK_LOG_DAYS",
+      "kind": "number",
+      "max": 3650,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 100,
+      "env": "WEBHOOK_LOG_KEPT",
+      "kind": "number",
+      "max": 100000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 60,
+      "env": "VOICE_IDLE_SECS",
+      "kind": "number",
+      "max": 86400,
+      "min": 5,
+      "scope": "start"
+    },
+    {
+      "default": 25,
+      "env": "VOICE_ROOM_MAX",
+      "kind": "number",
+      "max": 10000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_CALLS",
+      "key": "calls",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "off",
+      "env": "SFU_ENABLED",
+      "kind": "switch",
+      "scope": "start"
+    },
+    {
+      "default": "off",
+      "env": "FEATURE_SFU",
+      "key": "sfu",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": 100,
+      "env": "SFU_MAX_PARTICIPANTS",
+      "kind": "number",
+      "max": 10000,
+      "min": 2,
+      "scope": "start"
+    },
+    {
+      "default": 2000,
+      "env": "SFU_MAX_STREAMS",
+      "kind": "number",
+      "max": 1000000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 4096,
+      "env": "SFU_USER_KIB_PER_SEC",
+      "kind": "number",
+      "max": 1048576,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": "on",
+      "env": "PEERJS_BUILTIN",
+      "kind": "switch",
+      "scope": "start"
+    },
+    {
+      "default": 50,
+      "env": "PEERJS_PEERS_PER_IP",
+      "kind": "number",
+      "max": 1000000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 5000,
+      "env": "PEERJS_CONCURRENT_LIMIT",
+      "kind": "number",
+      "max": 1000000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "env": "RELAY_MAX_ALLOCATIONS",
+      "kind": "number",
+      "max": 65535,
+      "min": 1,
+      "picked": "the size of the port range",
+      "scope": "start"
+    },
+    {
+      "default": 64,
+      "env": "RELAY_USER_ALLOCATIONS",
+      "kind": "number",
+      "max": 65535,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 1024,
+      "env": "RELAY_USER_KIB_PER_SEC",
+      "kind": "number",
+      "max": 10485760,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 65536,
+      "env": "RELAY_MAX_KIB_PER_SEC",
+      "kind": "number",
+      "max": 10485760,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_SERVER_REPORTS",
+      "key": "server_reports",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_INSTANCE_REPORTS",
+      "key": "instance_reports",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "env": "REPORT_FORMS_FILE",
+      "key": "report_forms",
+      "kind": "forms",
+      "picked": "the report forms the server comes with",
+      "public": false,
+      "scope": "live"
+    },
+    {
+      "default": 72,
+      "env": "REPORT_SAME_TARGET_HOURS",
+      "kind": "number",
+      "max": 8760,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 3,
+      "env": "REPORT_TARGETS_PER_DAY",
+      "kind": "number",
+      "max": 10000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 10,
+      "env": "REPORT_MAX_PER_WEEK",
+      "kind": "number",
+      "max": 100000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 10,
+      "env": "REPORT_FEEDBACK_PER_WEEK",
+      "kind": "number",
+      "max": 100000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 180,
+      "env": "REPORT_RETENTION_DAYS",
+      "kind": "number",
+      "max": 3650,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": "off",
+      "env": "E2EE",
+      "key": "e2ee",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": 500,
+      "env": "E2EE_GUESTS_PER_GROUP",
+      "kind": "number",
+      "max": 5000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 30,
+      "env": "E2EE_KEY_RETENTION_DAYS",
+      "kind": "number",
+      "max": 69,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": "off",
+      "env": "E2EE_COMPLIANCE",
+      "key": "e2ee_compliance",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": 64,
+      "env": "P2P_BACKUP_MAX_MIB",
+      "kind": "number",
+      "max": 512,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": 256,
+      "env": "P2P_BACKUP_TOTAL_MIB",
+      "kind": "number",
+      "max": 1048576,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_P2P_BACKUP",
+      "key": "p2p_backup",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "on",
+      "env": "WIDGETS",
+      "key": "widgets",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_WIDGET_CHAT",
+      "key": "widget_chat",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": "on",
+      "env": "FEATURE_WIDGET_READ_LINKS",
+      "key": "widget_read_links",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": 10,
+      "env": "WIDGET_QUICK_JOINS_PER_HOUR",
+      "kind": "number",
+      "max": 10000,
+      "min": 1,
+      "scope": "start"
+    },
+    {
+      "default": 5000,
+      "env": "WIDGET_VIEWERS_MAX",
+      "kind": "number",
+      "max": 1000000,
+      "min": 0,
+      "scope": "start"
+    },
+    {
+      "default": "off",
+      "env": "WIDGET_BRIDGE",
+      "key": "widget_bridge",
+      "kind": "switch",
+      "public": true,
+      "scope": "live"
+    },
+    {
+      "default": 50,
+      "env": "WIDGET_BRIDGE_SERVERS_MAX",
+      "kind": "number",
+      "max": 10000,
+      "min": 1,
+      "scope": "start"
+    }
+  ],
+  "v": 1
+}

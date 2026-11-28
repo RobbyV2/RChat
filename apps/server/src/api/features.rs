@@ -1,3 +1,4 @@
+use rchat_settings::items as st;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -61,97 +62,50 @@ impl Feature {
         Feature::AnimatedProfilePictures,
     ];
 
+    /// Its registry item: the env name, the key and the value when nothing sets it.
+    pub fn item(self) -> &'static rchat_settings::Switch {
+        match self {
+            Feature::ServerReports => &st::FEATURE_SERVER_REPORTS,
+            Feature::InstanceReports => &st::FEATURE_INSTANCE_REPORTS,
+            Feature::Widgets => &st::WIDGETS,
+            Feature::WidgetChat => &st::FEATURE_WIDGET_CHAT,
+            Feature::GuestChat => &st::GUEST_CHAT_ENABLED,
+            Feature::GuestVoice => &st::GUEST_VOICE_ENABLED,
+            Feature::WidgetReadLinks => &st::FEATURE_WIDGET_READ_LINKS,
+            Feature::WidgetBridge => &st::WIDGET_BRIDGE,
+            Feature::E2ee => &st::E2EE,
+            Feature::E2eeCompliance => &st::E2EE_COMPLIANCE,
+            Feature::BackupPhrase => &st::FEATURE_BACKUP_PHRASE,
+            Feature::P2pBackup => &st::FEATURE_P2P_BACKUP,
+            Feature::DisplayNames => &st::FEATURE_DISPLAY_NAMES,
+            Feature::Onboarding => &st::FEATURE_ONBOARDING,
+            Feature::PasswordLogin => &st::AUTH_PASSWORD_LOGIN,
+            Feature::Sfu => &st::FEATURE_SFU,
+            Feature::P2p => &st::FEATURE_P2P,
+            Feature::ClientOtherInstances => &st::FEATURE_CLIENT_OTHER_INSTANCES,
+            Feature::ServerProfiles => &st::FEATURE_SERVER_PROFILES,
+            Feature::Docs => &st::FEATURE_DOCS,
+            Feature::ScheduledMessages => &st::FEATURE_SCHEDULED_MESSAGES,
+            Feature::InteractiveDocs => &st::FEATURE_INTERACTIVE_DOCS,
+            Feature::MemberLists => &st::FEATURE_MEMBER_LISTS,
+            Feature::ProfilePictures => &st::FEATURE_PROFILE_PICTURES,
+            Feature::AnimatedProfilePictures => &st::FEATURE_ANIMATED_PROFILE_PICTURES,
+        }
+    }
+
     /// The `Settings` field and the key in the `settings` table.
     pub fn key(self) -> &'static str {
-        match self {
-            Feature::ServerReports => "server_reports",
-            Feature::InstanceReports => "instance_reports",
-            Feature::Widgets => "widgets",
-            Feature::WidgetChat => "widget_chat",
-            Feature::GuestChat => "guest_chat_enabled",
-            Feature::GuestVoice => "guest_voice_enabled",
-            Feature::WidgetReadLinks => "widget_read_links",
-            Feature::WidgetBridge => "widget_bridge",
-            Feature::E2ee => "e2ee",
-            Feature::E2eeCompliance => "e2ee_compliance",
-            Feature::BackupPhrase => "backup_phrase",
-            Feature::P2pBackup => "p2p_backup",
-            Feature::DisplayNames => "display_names",
-            Feature::Onboarding => "onboarding",
-            Feature::PasswordLogin => "password_login",
-            Feature::Sfu => "sfu",
-            Feature::P2p => "p2p",
-            Feature::ClientOtherInstances => "client_other_instances",
-            Feature::ServerProfiles => "server_profiles",
-            Feature::Docs => "docs",
-            Feature::ScheduledMessages => "scheduled_messages",
-            Feature::InteractiveDocs => "interactive_docs",
-            Feature::MemberLists => "member_lists",
-            Feature::ProfilePictures => "profile_pictures",
-            Feature::AnimatedProfilePictures => "animated_profile_pictures",
-        }
+        self.item().key()
     }
 
     /// Its env name.
     pub fn env(self) -> &'static str {
-        match self {
-            Feature::ServerReports => "FEATURE_SERVER_REPORTS",
-            Feature::InstanceReports => "FEATURE_INSTANCE_REPORTS",
-            Feature::Widgets => "WIDGETS",
-            Feature::WidgetChat => "FEATURE_WIDGET_CHAT",
-            Feature::GuestChat => "GUEST_CHAT_ENABLED",
-            Feature::GuestVoice => "GUEST_VOICE_ENABLED",
-            Feature::WidgetReadLinks => "FEATURE_WIDGET_READ_LINKS",
-            Feature::WidgetBridge => "WIDGET_BRIDGE",
-            Feature::E2ee => "E2EE",
-            Feature::E2eeCompliance => "E2EE_COMPLIANCE",
-            Feature::BackupPhrase => "FEATURE_BACKUP_PHRASE",
-            Feature::P2pBackup => "FEATURE_P2P_BACKUP",
-            Feature::DisplayNames => "FEATURE_DISPLAY_NAMES",
-            Feature::Onboarding => "FEATURE_ONBOARDING",
-            Feature::PasswordLogin => "AUTH_PASSWORD_LOGIN",
-            Feature::Sfu => "FEATURE_SFU",
-            Feature::P2p => "FEATURE_P2P",
-            Feature::ClientOtherInstances => "FEATURE_CLIENT_OTHER_INSTANCES",
-            Feature::ServerProfiles => "FEATURE_SERVER_PROFILES",
-            Feature::Docs => "FEATURE_DOCS",
-            Feature::ScheduledMessages => "FEATURE_SCHEDULED_MESSAGES",
-            Feature::InteractiveDocs => "FEATURE_INTERACTIVE_DOCS",
-            Feature::MemberLists => "FEATURE_MEMBER_LISTS",
-            Feature::ProfilePictures => "FEATURE_PROFILE_PICTURES",
-            Feature::AnimatedProfilePictures => "FEATURE_ANIMATED_PROFILE_PICTURES",
-        }
+        self.item().env()
     }
 
     /// Its value when the env leaves it unset.
     pub fn default_on(self) -> bool {
-        match self {
-            Feature::GuestChat
-            | Feature::GuestVoice
-            | Feature::WidgetBridge
-            | Feature::E2ee
-            | Feature::E2eeCompliance
-            | Feature::Sfu => false,
-            Feature::ServerReports
-            | Feature::InstanceReports
-            | Feature::Widgets
-            | Feature::WidgetChat
-            | Feature::WidgetReadLinks
-            | Feature::BackupPhrase
-            | Feature::P2pBackup
-            | Feature::DisplayNames
-            | Feature::Onboarding
-            | Feature::PasswordLogin
-            | Feature::P2p
-            | Feature::ClientOtherInstances
-            | Feature::ServerProfiles
-            | Feature::Docs
-            | Feature::ScheduledMessages
-            | Feature::InteractiveDocs
-            | Feature::MemberLists
-            | Feature::ProfilePictures
-            | Feature::AnimatedProfilePictures => true,
-        }
+        self.item().default()
     }
 }
 

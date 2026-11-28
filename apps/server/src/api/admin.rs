@@ -694,11 +694,12 @@ pub(crate) async fn get_config(
         .rows()
         .into_iter()
         .zip(defaults)
-        .map(|((env, value), (_, default))| LimitRow {
-            env,
+        .map(|((setting, value), (_, default))| LimitRow {
+            env: setting.env,
             value,
             default,
-            range: crate::limits::Limits::range(env)
+            range: setting
+                .range()
                 .map_or(String::new(), |(lo, hi)| format!("{lo}-{hi}")),
         })
         .collect();
@@ -3419,13 +3420,13 @@ mod tests {
         assert_eq!(
             audit().await,
             [
+                row("registration", "open", "closed"),
+                row("p2p", "on", "off"),
                 row(
                     "profanity_targets",
                     "all",
                     "messages,links,usernames,server_names,channel_names,role_names,file_names,channel_topics,category_names"
                 ),
-                row("p2p", "on", "off"),
-                row("registration", "open", "closed"),
             ],
             "one row per control that changed, none for e2ee, which stayed off"
         );
@@ -4465,7 +4466,7 @@ mod tests {
 
     #[tokio::test]
     async fn only_a_site_admin_turns_other_instances_off_and_clients_hear_it() {
-        const KEY: &str = "client_other_instances";
+        const KEY: &str = rchat_settings::items::FEATURE_CLIENT_OTHER_INSTANCES.key();
         let (state, path) = temp_state("other_instances_switch").await;
         let mut rx = state.hub.subscribe();
         let root = || Authed(crate::api::test_util::mem_user("root", true));

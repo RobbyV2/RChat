@@ -109,8 +109,8 @@ impl Default for UploadLimits {
     }
 }
 
-pub const DEFAULT_BUDGET_MIB: u64 = 2048;
-pub const DEFAULT_BUFFER_MIB: u64 = 256;
+pub const DEFAULT_BUDGET_MIB: u64 = rchat_settings::items::UPLOAD_BUDGET_MIB.default() as u64;
+pub const DEFAULT_BUFFER_MIB: u64 = rchat_settings::items::UPLOAD_BUFFER_MIB.default() as u64;
 
 /// The upload limits in effect and the upload buffer sized from them.
 struct Upload {

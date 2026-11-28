@@ -5508,6 +5508,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rchat-settings"
+version = "0.3.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "redis"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5824,6 +5831,7 @@ dependencies = [
  "rchat-avatar",
  "rchat-perms",
  "rchat-profanity",
+ "rchat-settings",
  "redis",
  "regex",
  "reqwest 0.13.5",

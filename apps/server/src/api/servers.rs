@@ -2781,11 +2781,12 @@ fn network_mints(limit: u32) -> crate::limits::bucket::Policy {
     }
 }
 
-pub(crate) const GRANT_NETWORK_MINTS_MAX: u32 = 60;
+pub(crate) const GRANT_NETWORK_MINTS_MAX: u32 =
+    rchat_settings::items::GUEST_GRANT_MINTS_PER_NETWORK.default() as u32;
 
 /// Most live guest grants per wider network and server password, so one network can not use up
 /// a password's share for everyone else.
-pub const GRANTS_PER_NETWORK: i64 = 50;
+pub const GRANTS_PER_NETWORK: i64 = rchat_settings::items::GUEST_GRANTS_PER_NETWORK.default();
 
 /// Takes the mint budgets of the client's network, then of its address, and returns the stored
 /// network marker: an HMAC of the IPv4 /24 or IPv6 /48 under the instance pepper.
@@ -2823,7 +2824,7 @@ async fn grant_network(db: &Db, limits: &crate::limits::Limits) -> Result<String
 
 /// Most live guest grants per server password (the permanent password counts as one). Past it,
 /// no new grants are given until older ones expire; live grants of others never end for it.
-pub const GRANTS_PER_PASSWORD: i64 = 2000;
+pub const GRANTS_PER_PASSWORD: i64 = rchat_settings::items::GUEST_GRANTS_PER_PASSWORD.default();
 
 pub const TOO_MANY_GUESTS: &str = "Too many guests use this password. Try again later";
 

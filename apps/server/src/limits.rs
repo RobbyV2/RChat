@@ -2,12 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use crate::api::media::{DEFAULT_BUDGET_MIB, DEFAULT_BUFFER_MIB};
-use crate::bus::DEFAULT_HUB_MAXLEN;
-use crate::hub::{
-    CONNECT_BURST, CONNECTS_PER_MINUTE, CONNS_PER_USER, GUESTS_MAX, GUESTS_PER_IP, SOCKETS_PER_IP,
-};
-use crate::relay::{DEFAULT_TOTAL_KIB_PER_SEC, DEFAULT_USER_ALLOCATIONS, DEFAULT_USER_KIB_PER_SEC};
+use rchat_settings::{Env, items as st};
 
 pub mod bucket;
 pub mod http;
@@ -20,139 +15,6 @@ pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 
 /// The shortest idle timeout: sessions are marked used once a minute.
 pub const SESSION_IDLE_MIN: i64 = 300;
-
-/// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 129] = [
-    ("RATE_LIMIT_PER_SECOND", 1, 1_000),
-    ("RATE_LIMIT_BURST", 1, 1_000_000),
-    ("RATE_LIMIT_STRICT_PER_SECOND", 1, 1_000),
-    ("RATE_LIMIT_STRICT_BURST", 1, 1_000_000),
-    ("RATE_LIMIT_INVITE_PER_SECOND", 1, 1_000),
-    ("RATE_LIMIT_INVITE_BURST", 1, 1_000_000),
-    ("ARGON2_PERMITS", 0, 1_024),
-    ("ARGON2_MEMORY_KIB", 4_096, 1_048_576),
-    ("ARGON2_ITERATIONS", 1, 64),
-    ("ARGON2_PARALLELISM", 1, 16),
-    ("SERVER_PASSWORD_QUEUE_MAX", 1, 100_000),
-    ("SERVER_PASSWORD_QUEUE_PER_ADDRESS", 1, 100_000),
-    ("SERVER_PASSWORD_QUEUE_PER_NETWORK", 1, 100_000),
-    ("WS_CONNECTIONS_PER_USER", 1, 10_000),
-    ("WS_CONNECT_BURST", 1, 10_000),
-    ("WS_CONNECTS_PER_MINUTE", 1, 60_000),
-    ("WS_SOCKETS_PER_IP", 1, 1_000_000),
-    ("WS_GUEST_SOCKETS_PER_IP", 0, 1_000_000),
-    ("WS_GUEST_SOCKETS_MAX", 0, 1_000_000),
-    ("REDIS_HUB_MAXLEN", 1_000, 100_000_000),
-    ("DATABASE_MAX_CONNECTIONS", 1, 1_000),
-    ("DATABASE_REPLICA_MAX_CONNECTIONS", 1, 1_000),
-    ("DATABASE_REPLICA_MAX_LAG_MS", 100, 600_000),
-    ("DATABASE_MIN_CONNECTIONS", 0, 1_000),
-    ("DATABASE_ACQUIRE_TIMEOUT_SECS", 1, 3_600),
-    ("DATABASE_READ_CONNECTIONS", 0, 64),
-    ("DATABASE_INDEX_BUILD_MIB", 16, 16_384),
-    ("DATABASE_STATEMENT_TIMEOUT_SECS", 0, 3_600),
-    ("UPLOAD_MAX_MIB", 1, 512),
-    ("UPLOAD_BUDGET_MIB", 0, 1_048_576),
-    ("UPLOAD_BUFFER_MIB", 32, 1_048_576),
-    ("UPLOAD_SERVER_KEPT_MIB", 0, 1_048_576),
-    ("UPLOAD_OWNER_KEPT_MIB", 0, 1_048_576),
-    ("AVATAR_UPLOAD_MAX_MIB", 1, 64),
-    ("AVATAR_ANIMATION_MAX_FRAMES", 2, 2_000),
-    ("AVATAR_ANIMATION_MAX_SECS", 1, 120),
-    ("AVATAR_ANIMATION_MAX_MEGAPIXELS", 1, 4_000),
-    ("MESSAGE_MAX_CHARS", 1, 100_000),
-    ("MESSAGE_RATE_PER_MINUTE", 0, 100_000),
-    ("MESSAGE_RATE_BURST", 0, 100_000),
-    ("GUEST_GRANT_DAYS", 1, 3_650),
-    ("GUEST_GRANTS_PER_PASSWORD", 1, 1_000_000),
-    ("GUEST_GRANTS_PER_NETWORK", 1, 1_000_000),
-    ("GUEST_GRANT_MINTS_PER_NETWORK", 1, 1_000_000),
-    ("WEBHOOK_HOOK_BURST", 1, 10_000),
-    ("WEBHOOK_CHANNEL_PER_MINUTE", 1, 100_000),
-    ("EMBED_CACHE_DAYS", 1, 3_650),
-    ("VOICE_IDLE_SECS", 5, 86_400),
-    ("VOICE_ROOM_MAX", 0, 10_000),
-    ("RELAY_USER_ALLOCATIONS", 1, 65_535),
-    ("RELAY_MAX_ALLOCATIONS", 1, 65_535),
-    ("RELAY_USER_KIB_PER_SEC", 1, 10_485_760),
-    ("RELAY_MAX_KIB_PER_SEC", 1, 10_485_760),
-    ("REPORT_SAME_TARGET_HOURS", 0, 8_760),
-    ("REPORT_TARGETS_PER_DAY", 0, 10_000),
-    ("REPORT_MAX_PER_WEEK", 0, 100_000),
-    ("REPORT_FEEDBACK_PER_WEEK", 0, 100_000),
-    ("REPORT_RETENTION_DAYS", 0, 3_650),
-    ("E2EE_GUESTS_PER_GROUP", 0, 5_000),
-    ("E2EE_KEY_RETENTION_DAYS", 1, 69),
-    ("SFU_MAX_PARTICIPANTS", 2, 10_000),
-    ("SFU_MAX_STREAMS", 1, 1_000_000),
-    ("SFU_USER_KIB_PER_SEC", 1, 1_048_576),
-    ("P2P_BACKUP_MAX_MIB", 0, 512),
-    ("P2P_BACKUP_TOTAL_MIB", 0, 1_048_576),
-    ("WIDGET_QUICK_JOINS_PER_HOUR", 1, 10_000),
-    ("WIDGET_VIEWERS_MAX", 0, 1_000_000),
-    ("WIDGET_BRIDGE_SERVERS_MAX", 1, 10_000),
-    ("PEERJS_PEERS_PER_IP", 0, 1_000_000),
-    ("PEERJS_CONCURRENT_LIMIT", 1, 1_000_000),
-    ("LOOKUP_LIST_PER_MINUTE", 10, 10_000),
-    ("LOOKUP_TYPEAHEAD_PER_MINUTE", 10, 10_000),
-    ("LOOKUP_SEARCH_PER_MINUTE", 1, 1_000),
-    ("LOOKUP_PROFILE_PER_MINUTE", 10, 10_000),
-    ("LOOKUP_MEMBER_SEARCH_PER_MINUTE", 1, 1_000),
-    ("LOOKUP_MISSES_PER_HOUR", 0, 100_000),
-    ("MESSAGE_SEARCH_PER_MINUTE", 1, 1_000),
-    ("MESSAGE_SEARCH_AT_ONCE", 1, 100),
-    ("MESSAGE_SEARCH_CONCURRENT_LIMIT", 1, 1_000),
-    ("RARE_REQUESTS_PER_HOUR", 0, 10_000),
-    ("RARE_REQUESTS_PER_DAY", 0, 100_000),
-    ("SERVER_CHANNELS_MAX", 1, 10_000),
-    ("SERVER_CATEGORIES_MAX", 1, 1_000),
-    ("SERVER_SEPARATORS_MAX", 1, 1_000),
-    ("SERVER_ROLES_MAX", 1, 10_000),
-    ("CHANNEL_PINS_MAX", 1, 1_000),
-    ("MESSAGE_USER_MENTIONS_MAX", 1, 400),
-    ("MESSAGE_ROLE_MENTIONS_MAX", 1, 1_000),
-    ("HERE_RECIPIENTS_MAX", 1, 10_000),
-    ("FRIENDS_MAX", 1, 10_000),
-    ("FRIEND_REQUESTS_IN_MAX", 1, 10_000),
-    ("CHANNEL_WEBHOOKS_MAX", 1, 1_000),
-    ("SERVER_WEBHOOKS_MAX", 1, 10_000),
-    ("SERVER_OUTGOING_WEBHOOKS_MAX", 1, 1_000),
-    ("WEBHOOK_QUEUE_MAX", 1, 1_000_000),
-    ("WEBHOOK_WORKERS", 1, 1_024),
-    ("WEBHOOK_ATTEMPTS", 1, 100),
-    ("WEBHOOK_LOG_DAYS", 1, 3_650),
-    ("WEBHOOK_LOG_KEPT", 1, 100_000),
-    ("AUDIT_KEEP_DAYS", 1, 36_500),
-    ("PING_KEEP_DAYS", 1, 3_650),
-    ("PREVIEW_CACHE_MIB", 1, 1_048_576),
-    ("PREVIEW_CACHE_ROWS", 1, 10_000_000),
-    ("PREVIEW_CACHE_DAYS", 1, 3_650),
-    ("EMBED_FETCHES", 1, 1_024),
-    ("EMBED_QUEUE", 1, 100_000),
-    ("WS_INBOX_FRAMES", 16, 65_536),
-    ("WS_OUT_FRAMES", 16, 65_536),
-    ("WS_SEND_TIMEOUT_SECS", 1, 600),
-    ("WS_READ_BUFFER_KIB", 4, 65_536),
-    ("WS_WRITE_BUFFER_KIB", 0, 65_536),
-    ("WS_MAX_WRITE_BUFFER_KIB", 0, 1_048_576),
-    ("WS_PACED_USERS_MAX", 100, 10_000_000),
-    ("WS_CHANNEL_SLOTS", 1_000, 10_000_000),
-    ("HUB_AFTERMATH_MAX", 0, 1_000_000),
-    ("HUB_SHOWN_MAX", 0, 1_000_000),
-    ("RECONNECT_BASE_MS", 100, 60_000),
-    ("RECONNECT_CAP_MS", 1_000, 3_600_000),
-    ("RECONNECT_FLOOR_MS", 0, 60_000),
-    ("RESYNC_JITTER_MS", 0, 600_000),
-    ("CATCH_UP_DELAY_MS", 0, 600_000),
-    ("SERVERS_PER_ACCOUNT", 0, 1_000_000),
-    ("SCHEDULED_PER_ACCOUNT", 0, 10_000),
-    ("SERVER_MEMBERS_MAX", 0, 100_000_000),
-    ("SIGNUPS_PER_NETWORK_PER_DAY", 0, 1_000_000),
-    ("SERVERS_PER_NETWORK_PER_DAY", 0, 1_000_000),
-    ("WS_SOCKETS_MAX", 0, 10_000_000),
-    ("SESSION_MAX_AGE_SECS", 0, 315_360_000),
-    ("SESSION_IDLE_SECS", 0, 315_360_000),
-];
 
 /// The P2P limits registry, generated from the web app's `p2p/limits.ts`: each device-local name
 /// (`section.key`) with its default, smallest and largest value.
@@ -397,459 +259,233 @@ pub struct Limits {
 
 impl Default for Limits {
     fn default() -> Limits {
-        Limits {
-            rate_limit_per_second: 10,
-            rate_limit_burst: 60,
-            rate_limit_strict_per_second: 2,
-            rate_limit_strict_burst: 30,
-            rate_limit_invite_per_second: 2,
-            rate_limit_invite_burst: 30,
-            argon2_permits: 0,
-            argon2_memory_kib: argon2::Params::DEFAULT_M_COST,
-            argon2_iterations: argon2::Params::DEFAULT_T_COST,
-            argon2_parallelism: argon2::Params::DEFAULT_P_COST,
-            server_password_queue_max: crate::api::auth::SERVER_QUEUE_MAX,
-            server_password_queue_per_address: crate::api::auth::SERVER_ADDRESS_MAX,
-            server_password_queue_per_network: crate::api::auth::SERVER_NETWORK_MAX,
-            ws_connections_per_user: CONNS_PER_USER,
-            ws_connect_burst: CONNECT_BURST,
-            ws_connects_per_minute: CONNECTS_PER_MINUTE,
-            ws_sockets_per_ip: SOCKETS_PER_IP,
-            ws_guest_sockets_per_ip: GUESTS_PER_IP,
-            ws_guest_sockets_max: GUESTS_MAX,
-            redis_hub_maxlen: DEFAULT_HUB_MAXLEN,
-            database_max_connections: None,
-            database_min_connections: None,
-            database_acquire_timeout_secs: None,
-            database_read_connections: None,
-            database_index_build_mib: 256,
-            database_statement_timeout_secs: 60,
-            database_replica_max_connections: 8,
-            database_replica_max_lag_ms: 2000,
-            upload_max_mib: 25,
-            upload_budget_mib: DEFAULT_BUDGET_MIB,
-            upload_buffer_mib: DEFAULT_BUFFER_MIB,
-            upload_server_kept_mib: 8192,
-            upload_owner_kept_mib: 16384,
-            avatar_upload_max_mib: 8,
-            avatar_animation_max_frames: 250,
-            avatar_animation_max_secs: 20,
-            avatar_animation_max_megapixels: 400,
-            message_max_chars: 4000,
-            message_rate_per_minute: 2400,
-            message_rate_burst: 100,
-            guest_grant_days: 30,
-            guest_grants_per_password: crate::api::servers::GRANTS_PER_PASSWORD as u32,
-            guest_grants_per_network: crate::api::servers::GRANTS_PER_NETWORK as u32,
-            guest_grant_mints_per_network: crate::api::servers::GRANT_NETWORK_MINTS_MAX,
-            webhook_hook_burst: crate::api::webhooks::HOOK_BURST,
-            webhook_channel_per_minute: crate::api::webhooks::CHANNEL_BUDGET,
-            embed_cache_days: 30,
-            voice_idle_secs: 60,
-            voice_room_max: crate::ws::VOICE_ROOM_MAX,
-            relay_user_allocations: DEFAULT_USER_ALLOCATIONS as u32,
-            relay_max_allocations: None,
-            relay_user_kib_per_sec: DEFAULT_USER_KIB_PER_SEC,
-            relay_max_kib_per_sec: DEFAULT_TOTAL_KIB_PER_SEC,
-            report_same_target_hours: 72,
-            report_targets_per_day: 3,
-            report_max_per_week: 10,
-            report_feedback_per_week: 10,
-            report_retention_days: 180,
-            e2ee_guests_per_group: 500,
-            e2ee_key_retention_days: 30,
-            sfu_enabled: false,
-            sfu_max_participants: 100,
-            sfu_max_streams: 2000,
-            sfu_user_kib_per_sec: 4096,
-            p2p_backup_max_mib: 64,
-            p2p_backup_total_mib: 256,
-            widget_quick_joins_per_hour: 10,
-            widget_viewers_max: 5000,
-            widget_bridge_servers_max: 50,
-            peerjs_builtin: true,
-            peerjs_peers_per_ip: crate::peerjs::DEFAULT_PEERS_PER_IP,
-            peerjs_concurrent_limit: crate::peerjs::DEFAULT_CONCURRENT_LIMIT,
-            lookup_list_per_minute: 120,
-            lookup_typeahead_per_minute: 300,
-            lookup_search_per_minute: 30,
-            lookup_profile_per_minute: 120,
-            lookup_member_search_per_minute: 30,
-            lookup_misses_per_hour: 200,
-            message_search_per_minute: 30,
-            message_search_at_once: 1,
-            message_search_concurrent_limit: None,
-            rare_requests_per_hour: 20,
-            rare_requests_per_day: 100,
-            server_channels_max: 500,
-            server_categories_max: 100,
-            server_separators_max: 50,
-            server_roles_max: 250,
-            channel_pins_max: 100,
-            message_user_mentions_max: 20,
-            message_role_mentions_max: 20,
-            here_recipients_max: 500,
-            friends_max: 1000,
-            friend_requests_in_max: 1000,
-            channel_webhooks_max: 15,
-            server_webhooks_max: 100,
-            server_outgoing_webhooks_max: 10,
-            webhook_queue_max: 1000,
-            webhook_workers: 16,
-            webhook_attempts: 6,
-            webhook_log_days: 7,
-            webhook_log_kept: 100,
-            audit_keep_days: 90,
-            ping_keep_days: 30,
-            preview_cache_mib: 128,
-            preview_cache_rows: 20000,
-            preview_cache_days: 7,
-            embed_fetches: 16,
-            embed_queue: 256,
-            ws_inbox_frames: 512,
-            ws_out_frames: 256,
-            ws_send_timeout_secs: 10,
-            ws_read_buffer_kib: 128,
-            ws_write_buffer_kib: 128,
-            ws_max_write_buffer_kib: 0,
-            ws_paced_users_max: 10000,
-            ws_channel_slots: 100000,
-            hub_aftermath_max: 0,
-            hub_shown_max: 0,
-            reconnect_base_ms: 1000,
-            reconnect_cap_ms: 30000,
-            reconnect_floor_ms: 250,
-            resync_jitter_ms: 10000,
-            catch_up_delay_ms: 5000,
-            servers_per_account: 1000,
-            scheduled_per_account: 100,
-            server_members_max: 0,
-            signups_per_network_per_day: 0,
-            servers_per_network_per_day: 0,
-            ws_sockets_max: 0,
-            session_max_age_secs: 0,
-            session_idle_secs: 0,
-            p2p: BTreeMap::new(),
-            p2p_unknown: Vec::new(),
-        }
+        Limits::load(&|_| None).expect("the defaults load")
     }
 }
 
-/// The values the operator set, by env name. Blank values count as unset.
-pub(crate) struct Env<'a>(pub(crate) &'a dyn Fn(&str) -> Option<String>);
-
-impl Env<'_> {
-    pub(crate) fn raw(&self, name: &str) -> Option<String> {
-        (self.0)(name)
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
-    }
-
-    fn opt<T: TryFrom<i64>>(&self, name: &str) -> anyhow::Result<Option<T>> {
-        let Some((_, lo, hi)) = RANGES.iter().find(|(n, _, _)| *n == name) else {
-            anyhow::bail!("{name} has no range");
+/// `P2P_LIMITS`: a JSON object of P2P limit names to numbers, each in its registry range and
+/// whole where the name takes whole numbers. Names the registry doesn't have come back apart,
+/// in order.
+fn p2p(e: &Env) -> anyhow::Result<(BTreeMap<String, f64>, Vec<String>)> {
+    const NAME: &str = st::P2P_LIMITS.env();
+    let Some(raw) = e.raw(&st::P2P_LIMITS.setting) else {
+        return Ok((BTreeMap::new(), Vec::new()));
+    };
+    let given = match serde_json::from_str(&raw) {
+        Ok(serde_json::Value::Object(given)) => given,
+        Ok(_) => anyhow::bail!("{NAME}: expected a JSON object of names to numbers"),
+        Err(e) => anyhow::bail!("{NAME}: expected a JSON object of names to numbers ({e})"),
+    };
+    let ranges = p2p_ranges()?;
+    let (mut values, mut unknown) = (BTreeMap::new(), Vec::new());
+    for (name, value) in given {
+        let Some(&P2pRange {
+            default: _,
+            lo,
+            hi,
+            whole,
+        }) = ranges.get(&name)
+        else {
+            unknown.push(name);
+            continue;
         };
-        let Some(raw) = self.raw(name) else {
-            return Ok(None);
-        };
-        raw.parse::<i64>()
-            .ok()
-            .filter(|v| (lo..=hi).contains(&v))
-            .and_then(|v| T::try_from(v).ok())
-            .map(Some)
-            .ok_or_else(|| anyhow::anyhow!("{name}: expected {lo} to {hi}, got {raw}"))
-    }
-
-    fn num<T: TryFrom<i64>>(&self, name: &str, default: T) -> anyhow::Result<T> {
-        Ok(self.opt(name)?.unwrap_or(default))
-    }
-
-    /// `P2P_LIMITS`: a JSON object of P2P limit names to numbers, each in its registry range and
-    /// whole where the name takes whole numbers. Names the registry doesn't have come back apart,
-    /// in order.
-    fn p2p(&self) -> anyhow::Result<(BTreeMap<String, f64>, Vec<String>)> {
-        const NAME: &str = "P2P_LIMITS";
-        let Some(raw) = self.raw(NAME) else {
-            return Ok((BTreeMap::new(), Vec::new()));
-        };
-        let given = match serde_json::from_str(&raw) {
-            Ok(serde_json::Value::Object(given)) => given,
-            Ok(_) => anyhow::bail!("{NAME}: expected a JSON object of names to numbers"),
-            Err(e) => anyhow::bail!("{NAME}: expected a JSON object of names to numbers ({e})"),
-        };
-        let ranges = p2p_ranges()?;
-        let (mut values, mut unknown) = (BTreeMap::new(), Vec::new());
-        for (name, value) in given {
-            let Some(&P2pRange {
-                default: _,
-                lo,
-                hi,
-                whole,
-            }) = ranges.get(&name)
-            else {
-                unknown.push(name);
-                continue;
-            };
-            let fits = |v: &f64| (lo..=hi).contains(v) && (!whole || v.fract() == 0.0);
-            let got = || ascii(&value.to_string());
-            match (value.as_f64().filter(fits), whole) {
-                (Some(v), _) => values.insert(name, v),
-                (None, true) => anyhow::bail!(
-                    "{NAME}: {name}: expected a whole number from {lo} to {hi}, got {}",
-                    got()
-                ),
-                (None, false) => {
-                    anyhow::bail!("{NAME}: {name}: expected {lo} to {hi}, got {}", got())
-                }
-            };
-        }
-        for P2pRefresh {
-            refresh,
-            expiry,
-            times,
-            below,
-        } in p2p_refresh()?
-        {
-            let at = |name: &str| match (values.get(name), ranges.get(name)) {
-                (Some(&v), _) => Ok((v, format!("{v}"))),
-                (
-                    None,
-                    Some(&P2pRange {
-                        default,
-                        lo: _,
-                        hi: _,
-                        whole: _,
-                    }),
-                ) => Ok((default, format!("{default}, the default"))),
-                (None, None) => Err(anyhow::anyhow!("{NAME}: {name} is not in the registry")),
-            };
-            let (mut sum, mut parts) = (0.0, Vec::new());
-            for name in &refresh {
-                let (v, shown) = at(name)?;
-                sum += v;
-                parts.push(format!("{name} ({shown})"));
+        let fits = |v: &f64| (lo..=hi).contains(v) && (!whole || v.fract() == 0.0);
+        let got = || ascii(&value.to_string());
+        match (value.as_f64().filter(fits), whole) {
+            (Some(v), _) => values.insert(name, v),
+            (None, true) => anyhow::bail!(
+                "{NAME}: {name}: expected a whole number from {lo} to {hi}, got {}",
+                got()
+            ),
+            (None, false) => {
+                anyhow::bail!("{NAME}: {name}: expected {lo} to {hi}, got {}", got())
             }
-            let (e, e_shown) = at(&expiry)?;
-            let (fits, minimum, maximum) = match (times, below) {
-                (1, true) => (sum < e, "greater than", "less than"),
-                (1, false) => (sum <= e, "at least", "at most"),
-                (2, false) if refresh.len() == 1 => {
-                    (2.0 * sum <= e, "at least twice", "at most half of")
-                }
-                _ => anyhow::bail!("unsupported refresh rule for {expiry} in the P2P registry"),
-            };
-            if !fits {
-                let parts = parts.join(" plus ");
-                if values.contains_key(&expiry) && !refresh.iter().any(|n| values.contains_key(n)) {
-                    anyhow::bail!("{NAME}: {expiry} ({e_shown}) must be {minimum} {parts}");
-                }
-                anyhow::bail!("{NAME}: {parts} must be {maximum} {expiry} ({e_shown})");
-            }
-        }
-        Ok((values, unknown))
-    }
-
-    pub(crate) fn switch(&self, name: &str, default: bool) -> anyhow::Result<bool> {
-        let Some(raw) = self.raw(name) else {
-            return Ok(default);
         };
-        match raw.to_ascii_lowercase().as_str() {
-            "on" | "true" | "yes" | "1" => Ok(true),
-            "off" | "false" | "no" | "0" => Ok(false),
-            _ => anyhow::bail!("{name}: expected on or off, got {raw}"),
+    }
+    for P2pRefresh {
+        refresh,
+        expiry,
+        times,
+        below,
+    } in p2p_refresh()?
+    {
+        let at = |name: &str| match (values.get(name), ranges.get(name)) {
+            (Some(&v), _) => Ok((v, format!("{v}"))),
+            (
+                None,
+                Some(&P2pRange {
+                    default,
+                    lo: _,
+                    hi: _,
+                    whole: _,
+                }),
+            ) => Ok((default, format!("{default}, the default"))),
+            (None, None) => Err(anyhow::anyhow!("{NAME}: {name} is not in the registry")),
+        };
+        let (mut sum, mut parts) = (0.0, Vec::new());
+        for name in &refresh {
+            let (v, shown) = at(name)?;
+            sum += v;
+            parts.push(format!("{name} ({shown})"));
+        }
+        let (e, e_shown) = at(&expiry)?;
+        let (fits, minimum, maximum) = match (times, below) {
+            (1, true) => (sum < e, "greater than", "less than"),
+            (1, false) => (sum <= e, "at least", "at most"),
+            (2, false) if refresh.len() == 1 => {
+                (2.0 * sum <= e, "at least twice", "at most half of")
+            }
+            _ => anyhow::bail!("unsupported refresh rule for {expiry} in the P2P registry"),
+        };
+        if !fits {
+            let parts = parts.join(" plus ");
+            if values.contains_key(&expiry) && !refresh.iter().any(|n| values.contains_key(n)) {
+                anyhow::bail!("{NAME}: {expiry} ({e_shown}) must be {minimum} {parts}");
+            }
+            anyhow::bail!("{NAME}: {parts} must be {maximum} {expiry} ({e_shown})");
         }
     }
+    Ok((values, unknown))
 }
 
 impl Limits {
     /// Every limit from `env` (the value of an env name, if set). A value that is not a number
     /// in its range, or not on or off, is an error naming the variable and the range.
     pub fn load(env: &dyn Fn(&str) -> Option<String>) -> anyhow::Result<Limits> {
-        let d = Limits::default();
-        let e = Env(env);
-        let (p2p, p2p_unknown) = e.p2p()?;
+        let e = Env::new(env);
+        let (p2p, p2p_unknown) = p2p(&e)?;
         let limits = Limits {
-            rate_limit_per_second: e.num("RATE_LIMIT_PER_SECOND", d.rate_limit_per_second)?,
-            rate_limit_burst: e.num("RATE_LIMIT_BURST", d.rate_limit_burst)?,
-            rate_limit_strict_per_second: e.num(
-                "RATE_LIMIT_STRICT_PER_SECOND",
-                d.rate_limit_strict_per_second,
-            )?,
-            rate_limit_strict_burst: e.num("RATE_LIMIT_STRICT_BURST", d.rate_limit_strict_burst)?,
-            rate_limit_invite_per_second: e.num(
-                "RATE_LIMIT_INVITE_PER_SECOND",
-                d.rate_limit_invite_per_second,
-            )?,
-            rate_limit_invite_burst: e.num("RATE_LIMIT_INVITE_BURST", d.rate_limit_invite_burst)?,
-            argon2_permits: e.num("ARGON2_PERMITS", d.argon2_permits)?,
-            argon2_memory_kib: e.num("ARGON2_MEMORY_KIB", d.argon2_memory_kib)?,
-            argon2_iterations: e.num("ARGON2_ITERATIONS", d.argon2_iterations)?,
-            argon2_parallelism: e.num("ARGON2_PARALLELISM", d.argon2_parallelism)?,
-            server_password_queue_max: e
-                .num("SERVER_PASSWORD_QUEUE_MAX", d.server_password_queue_max)?,
-            server_password_queue_per_address: e.num(
-                "SERVER_PASSWORD_QUEUE_PER_ADDRESS",
-                d.server_password_queue_per_address,
-            )?,
-            server_password_queue_per_network: e.num(
-                "SERVER_PASSWORD_QUEUE_PER_NETWORK",
-                d.server_password_queue_per_network,
-            )?,
-            ws_connections_per_user: e.num("WS_CONNECTIONS_PER_USER", d.ws_connections_per_user)?,
-            ws_connect_burst: e.num("WS_CONNECT_BURST", d.ws_connect_burst)?,
-            ws_connects_per_minute: e.num("WS_CONNECTS_PER_MINUTE", d.ws_connects_per_minute)?,
-            ws_sockets_per_ip: e.num("WS_SOCKETS_PER_IP", d.ws_sockets_per_ip)?,
-            ws_guest_sockets_per_ip: e.num("WS_GUEST_SOCKETS_PER_IP", d.ws_guest_sockets_per_ip)?,
-            ws_guest_sockets_max: e.num("WS_GUEST_SOCKETS_MAX", d.ws_guest_sockets_max)?,
-            redis_hub_maxlen: e.num("REDIS_HUB_MAXLEN", d.redis_hub_maxlen)?,
-            database_max_connections: e.opt("DATABASE_MAX_CONNECTIONS")?,
-            database_replica_max_connections: e.num(
-                "DATABASE_REPLICA_MAX_CONNECTIONS",
-                d.database_replica_max_connections,
-            )?,
-            database_replica_max_lag_ms: e
-                .num("DATABASE_REPLICA_MAX_LAG_MS", d.database_replica_max_lag_ms)?,
-            database_min_connections: e.opt("DATABASE_MIN_CONNECTIONS")?,
-            database_acquire_timeout_secs: e.opt("DATABASE_ACQUIRE_TIMEOUT_SECS")?,
-            database_read_connections: e.opt("DATABASE_READ_CONNECTIONS")?,
-            database_index_build_mib: e
-                .num("DATABASE_INDEX_BUILD_MIB", d.database_index_build_mib)?,
-            database_statement_timeout_secs: e.num(
-                "DATABASE_STATEMENT_TIMEOUT_SECS",
-                d.database_statement_timeout_secs,
-            )?,
-            upload_max_mib: e.num("UPLOAD_MAX_MIB", d.upload_max_mib)?,
-            upload_budget_mib: e.num("UPLOAD_BUDGET_MIB", d.upload_budget_mib)?,
-            upload_buffer_mib: e.num("UPLOAD_BUFFER_MIB", d.upload_buffer_mib)?,
-            upload_server_kept_mib: e.num("UPLOAD_SERVER_KEPT_MIB", d.upload_server_kept_mib)?,
-            upload_owner_kept_mib: e.num("UPLOAD_OWNER_KEPT_MIB", d.upload_owner_kept_mib)?,
-            avatar_upload_max_mib: e.num("AVATAR_UPLOAD_MAX_MIB", d.avatar_upload_max_mib)?,
-            avatar_animation_max_frames: e
-                .num("AVATAR_ANIMATION_MAX_FRAMES", d.avatar_animation_max_frames)?,
-            avatar_animation_max_secs: e
-                .num("AVATAR_ANIMATION_MAX_SECS", d.avatar_animation_max_secs)?,
-            avatar_animation_max_megapixels: e.num(
-                "AVATAR_ANIMATION_MAX_MEGAPIXELS",
-                d.avatar_animation_max_megapixels,
-            )?,
-            message_max_chars: e.num("MESSAGE_MAX_CHARS", d.message_max_chars)?,
-            message_rate_per_minute: e.num("MESSAGE_RATE_PER_MINUTE", d.message_rate_per_minute)?,
-            message_rate_burst: e.num("MESSAGE_RATE_BURST", d.message_rate_burst)?,
-            guest_grant_days: e.num("GUEST_GRANT_DAYS", d.guest_grant_days)?,
-            guest_grants_per_password: e
-                .num("GUEST_GRANTS_PER_PASSWORD", d.guest_grants_per_password)?,
-            guest_grants_per_network: e
-                .num("GUEST_GRANTS_PER_NETWORK", d.guest_grants_per_network)?,
-            guest_grant_mints_per_network: e.num(
-                "GUEST_GRANT_MINTS_PER_NETWORK",
-                d.guest_grant_mints_per_network,
-            )?,
-            webhook_hook_burst: e.num("WEBHOOK_HOOK_BURST", d.webhook_hook_burst)?,
-            webhook_channel_per_minute: e
-                .num("WEBHOOK_CHANNEL_PER_MINUTE", d.webhook_channel_per_minute)?,
-            embed_cache_days: e.num("EMBED_CACHE_DAYS", d.embed_cache_days)?,
-            voice_idle_secs: e.num("VOICE_IDLE_SECS", d.voice_idle_secs)?,
-            voice_room_max: e.num("VOICE_ROOM_MAX", d.voice_room_max)?,
-            relay_user_allocations: e.num("RELAY_USER_ALLOCATIONS", d.relay_user_allocations)?,
-            relay_max_allocations: e.opt("RELAY_MAX_ALLOCATIONS")?,
-            relay_user_kib_per_sec: e.num("RELAY_USER_KIB_PER_SEC", d.relay_user_kib_per_sec)?,
-            relay_max_kib_per_sec: e.num("RELAY_MAX_KIB_PER_SEC", d.relay_max_kib_per_sec)?,
-            report_same_target_hours: e
-                .num("REPORT_SAME_TARGET_HOURS", d.report_same_target_hours)?,
-            report_targets_per_day: e.num("REPORT_TARGETS_PER_DAY", d.report_targets_per_day)?,
-            report_max_per_week: e.num("REPORT_MAX_PER_WEEK", d.report_max_per_week)?,
-            report_feedback_per_week: e
-                .num("REPORT_FEEDBACK_PER_WEEK", d.report_feedback_per_week)?,
-            report_retention_days: e.num("REPORT_RETENTION_DAYS", d.report_retention_days)?,
-            e2ee_guests_per_group: e.num("E2EE_GUESTS_PER_GROUP", d.e2ee_guests_per_group)?,
-            e2ee_key_retention_days: e.num("E2EE_KEY_RETENTION_DAYS", d.e2ee_key_retention_days)?,
-            sfu_enabled: e.switch("SFU_ENABLED", d.sfu_enabled)?,
-            sfu_max_participants: e.num("SFU_MAX_PARTICIPANTS", d.sfu_max_participants)?,
-            sfu_max_streams: e.num("SFU_MAX_STREAMS", d.sfu_max_streams)?,
-            sfu_user_kib_per_sec: e.num("SFU_USER_KIB_PER_SEC", d.sfu_user_kib_per_sec)?,
-            p2p_backup_max_mib: e.num("P2P_BACKUP_MAX_MIB", d.p2p_backup_max_mib)?,
-            p2p_backup_total_mib: e.num("P2P_BACKUP_TOTAL_MIB", d.p2p_backup_total_mib)?,
-            widget_quick_joins_per_hour: e
-                .num("WIDGET_QUICK_JOINS_PER_HOUR", d.widget_quick_joins_per_hour)?,
-            widget_viewers_max: e.num("WIDGET_VIEWERS_MAX", d.widget_viewers_max)?,
-            widget_bridge_servers_max: e
-                .num("WIDGET_BRIDGE_SERVERS_MAX", d.widget_bridge_servers_max)?,
-            peerjs_builtin: e.switch("PEERJS_BUILTIN", d.peerjs_builtin)?,
-            peerjs_peers_per_ip: e.num("PEERJS_PEERS_PER_IP", d.peerjs_peers_per_ip)?,
-            peerjs_concurrent_limit: e.num("PEERJS_CONCURRENT_LIMIT", d.peerjs_concurrent_limit)?,
-            lookup_list_per_minute: e.num("LOOKUP_LIST_PER_MINUTE", d.lookup_list_per_minute)?,
-            lookup_typeahead_per_minute: e
-                .num("LOOKUP_TYPEAHEAD_PER_MINUTE", d.lookup_typeahead_per_minute)?,
-            lookup_search_per_minute: e
-                .num("LOOKUP_SEARCH_PER_MINUTE", d.lookup_search_per_minute)?,
-            lookup_profile_per_minute: e
-                .num("LOOKUP_PROFILE_PER_MINUTE", d.lookup_profile_per_minute)?,
-            lookup_member_search_per_minute: e.num(
-                "LOOKUP_MEMBER_SEARCH_PER_MINUTE",
-                d.lookup_member_search_per_minute,
-            )?,
-            lookup_misses_per_hour: e.num("LOOKUP_MISSES_PER_HOUR", d.lookup_misses_per_hour)?,
-            message_search_per_minute: e
-                .num("MESSAGE_SEARCH_PER_MINUTE", d.message_search_per_minute)?,
-            message_search_at_once: e.num("MESSAGE_SEARCH_AT_ONCE", d.message_search_at_once)?,
-            message_search_concurrent_limit: e.opt("MESSAGE_SEARCH_CONCURRENT_LIMIT")?,
-            rare_requests_per_hour: e.num("RARE_REQUESTS_PER_HOUR", d.rare_requests_per_hour)?,
-            rare_requests_per_day: e.num("RARE_REQUESTS_PER_DAY", d.rare_requests_per_day)?,
-            server_channels_max: e.num("SERVER_CHANNELS_MAX", d.server_channels_max)?,
-            server_categories_max: e.num("SERVER_CATEGORIES_MAX", d.server_categories_max)?,
-            server_separators_max: e.num("SERVER_SEPARATORS_MAX", d.server_separators_max)?,
-            server_roles_max: e.num("SERVER_ROLES_MAX", d.server_roles_max)?,
-            channel_pins_max: e.num("CHANNEL_PINS_MAX", d.channel_pins_max)?,
-            message_user_mentions_max: e
-                .num("MESSAGE_USER_MENTIONS_MAX", d.message_user_mentions_max)?,
-            message_role_mentions_max: e
-                .num("MESSAGE_ROLE_MENTIONS_MAX", d.message_role_mentions_max)?,
-            here_recipients_max: e.num("HERE_RECIPIENTS_MAX", d.here_recipients_max)?,
-            friends_max: e.num("FRIENDS_MAX", d.friends_max)?,
-            friend_requests_in_max: e.num("FRIEND_REQUESTS_IN_MAX", d.friend_requests_in_max)?,
-            channel_webhooks_max: e.num("CHANNEL_WEBHOOKS_MAX", d.channel_webhooks_max)?,
-            server_webhooks_max: e.num("SERVER_WEBHOOKS_MAX", d.server_webhooks_max)?,
-            server_outgoing_webhooks_max: e.num(
-                "SERVER_OUTGOING_WEBHOOKS_MAX",
-                d.server_outgoing_webhooks_max,
-            )?,
-            webhook_queue_max: e.num("WEBHOOK_QUEUE_MAX", d.webhook_queue_max)?,
-            webhook_workers: e.num("WEBHOOK_WORKERS", d.webhook_workers)?,
-            webhook_attempts: e.num("WEBHOOK_ATTEMPTS", d.webhook_attempts)?,
-            webhook_log_days: e.num("WEBHOOK_LOG_DAYS", d.webhook_log_days)?,
-            webhook_log_kept: e.num("WEBHOOK_LOG_KEPT", d.webhook_log_kept)?,
-            audit_keep_days: e.num("AUDIT_KEEP_DAYS", d.audit_keep_days)?,
-            ping_keep_days: e.num("PING_KEEP_DAYS", d.ping_keep_days)?,
-            preview_cache_mib: e.num("PREVIEW_CACHE_MIB", d.preview_cache_mib)?,
-            preview_cache_rows: e.num("PREVIEW_CACHE_ROWS", d.preview_cache_rows)?,
-            preview_cache_days: e.num("PREVIEW_CACHE_DAYS", d.preview_cache_days)?,
-            embed_fetches: e.num("EMBED_FETCHES", d.embed_fetches)?,
-            embed_queue: e.num("EMBED_QUEUE", d.embed_queue)?,
-            ws_inbox_frames: e.num("WS_INBOX_FRAMES", d.ws_inbox_frames)?,
-            ws_out_frames: e.num("WS_OUT_FRAMES", d.ws_out_frames)?,
-            ws_send_timeout_secs: e.num("WS_SEND_TIMEOUT_SECS", d.ws_send_timeout_secs)?,
-            ws_read_buffer_kib: e.num("WS_READ_BUFFER_KIB", d.ws_read_buffer_kib)?,
-            ws_write_buffer_kib: e.num("WS_WRITE_BUFFER_KIB", d.ws_write_buffer_kib)?,
-            ws_max_write_buffer_kib: e.num("WS_MAX_WRITE_BUFFER_KIB", d.ws_max_write_buffer_kib)?,
-            ws_paced_users_max: e.num("WS_PACED_USERS_MAX", d.ws_paced_users_max)?,
-            ws_channel_slots: e.num("WS_CHANNEL_SLOTS", d.ws_channel_slots)?,
-            hub_aftermath_max: e.num("HUB_AFTERMATH_MAX", d.hub_aftermath_max)?,
-            hub_shown_max: e.num("HUB_SHOWN_MAX", d.hub_shown_max)?,
-            reconnect_base_ms: e.num("RECONNECT_BASE_MS", d.reconnect_base_ms)?,
-            reconnect_cap_ms: e.num("RECONNECT_CAP_MS", d.reconnect_cap_ms)?,
-            reconnect_floor_ms: e.num("RECONNECT_FLOOR_MS", d.reconnect_floor_ms)?,
-            resync_jitter_ms: e.num("RESYNC_JITTER_MS", d.resync_jitter_ms)?,
-            catch_up_delay_ms: e.num("CATCH_UP_DELAY_MS", d.catch_up_delay_ms)?,
-            servers_per_account: e.num("SERVERS_PER_ACCOUNT", d.servers_per_account)?,
-            scheduled_per_account: e.num("SCHEDULED_PER_ACCOUNT", d.scheduled_per_account)?,
-            server_members_max: e.num("SERVER_MEMBERS_MAX", d.server_members_max)?,
-            signups_per_network_per_day: e
-                .num("SIGNUPS_PER_NETWORK_PER_DAY", d.signups_per_network_per_day)?,
-            servers_per_network_per_day: e
-                .num("SERVERS_PER_NETWORK_PER_DAY", d.servers_per_network_per_day)?,
-            ws_sockets_max: e.num("WS_SOCKETS_MAX", d.ws_sockets_max)?,
-            session_max_age_secs: e.num("SESSION_MAX_AGE_SECS", d.session_max_age_secs)?,
-            session_idle_secs: e.num("SESSION_IDLE_SECS", d.session_idle_secs)?,
+            rate_limit_per_second: e.get(&st::RATE_LIMIT_PER_SECOND)?,
+            rate_limit_burst: e.get(&st::RATE_LIMIT_BURST)?,
+            rate_limit_strict_per_second: e.get(&st::RATE_LIMIT_STRICT_PER_SECOND)?,
+            rate_limit_strict_burst: e.get(&st::RATE_LIMIT_STRICT_BURST)?,
+            rate_limit_invite_per_second: e.get(&st::RATE_LIMIT_INVITE_PER_SECOND)?,
+            rate_limit_invite_burst: e.get(&st::RATE_LIMIT_INVITE_BURST)?,
+            argon2_permits: e.get(&st::ARGON2_PERMITS)?,
+            argon2_memory_kib: e.get(&st::ARGON2_MEMORY_KIB)?,
+            argon2_iterations: e.get(&st::ARGON2_ITERATIONS)?,
+            argon2_parallelism: e.get(&st::ARGON2_PARALLELISM)?,
+            server_password_queue_max: e.get(&st::SERVER_PASSWORD_QUEUE_MAX)?,
+            server_password_queue_per_address: e.get(&st::SERVER_PASSWORD_QUEUE_PER_ADDRESS)?,
+            server_password_queue_per_network: e.get(&st::SERVER_PASSWORD_QUEUE_PER_NETWORK)?,
+            ws_connections_per_user: e.get(&st::WS_CONNECTIONS_PER_USER)?,
+            ws_connect_burst: e.get(&st::WS_CONNECT_BURST)?,
+            ws_connects_per_minute: e.get(&st::WS_CONNECTS_PER_MINUTE)?,
+            ws_sockets_per_ip: e.get(&st::WS_SOCKETS_PER_IP)?,
+            ws_guest_sockets_per_ip: e.get(&st::WS_GUEST_SOCKETS_PER_IP)?,
+            ws_guest_sockets_max: e.get(&st::WS_GUEST_SOCKETS_MAX)?,
+            redis_hub_maxlen: e.get(&st::REDIS_HUB_MAXLEN)?,
+            database_max_connections: e.opt(&st::DATABASE_MAX_CONNECTIONS)?,
+            database_replica_max_connections: e.get(&st::DATABASE_REPLICA_MAX_CONNECTIONS)?,
+            database_replica_max_lag_ms: e.get(&st::DATABASE_REPLICA_MAX_LAG_MS)?,
+            database_min_connections: e.opt(&st::DATABASE_MIN_CONNECTIONS)?,
+            database_acquire_timeout_secs: e.opt(&st::DATABASE_ACQUIRE_TIMEOUT_SECS)?,
+            database_read_connections: e.opt(&st::DATABASE_READ_CONNECTIONS)?,
+            database_index_build_mib: e.get(&st::DATABASE_INDEX_BUILD_MIB)?,
+            database_statement_timeout_secs: e.get(&st::DATABASE_STATEMENT_TIMEOUT_SECS)?,
+            upload_max_mib: e.get(&st::UPLOAD_MAX_MIB)?,
+            upload_budget_mib: e.get(&st::UPLOAD_BUDGET_MIB)?,
+            upload_buffer_mib: e.get(&st::UPLOAD_BUFFER_MIB)?,
+            upload_server_kept_mib: e.get(&st::UPLOAD_SERVER_KEPT_MIB)?,
+            upload_owner_kept_mib: e.get(&st::UPLOAD_OWNER_KEPT_MIB)?,
+            avatar_upload_max_mib: e.get(&st::AVATAR_UPLOAD_MAX_MIB)?,
+            avatar_animation_max_frames: e.get(&st::AVATAR_ANIMATION_MAX_FRAMES)?,
+            avatar_animation_max_secs: e.get(&st::AVATAR_ANIMATION_MAX_SECS)?,
+            avatar_animation_max_megapixels: e.get(&st::AVATAR_ANIMATION_MAX_MEGAPIXELS)?,
+            message_max_chars: e.get(&st::MESSAGE_MAX_CHARS)?,
+            message_rate_per_minute: e.get(&st::MESSAGE_RATE_PER_MINUTE)?,
+            message_rate_burst: e.get(&st::MESSAGE_RATE_BURST)?,
+            guest_grant_days: e.get(&st::GUEST_GRANT_DAYS)?,
+            guest_grants_per_password: e.get(&st::GUEST_GRANTS_PER_PASSWORD)?,
+            guest_grants_per_network: e.get(&st::GUEST_GRANTS_PER_NETWORK)?,
+            guest_grant_mints_per_network: e.get(&st::GUEST_GRANT_MINTS_PER_NETWORK)?,
+            webhook_hook_burst: e.get(&st::WEBHOOK_HOOK_BURST)?,
+            webhook_channel_per_minute: e.get(&st::WEBHOOK_CHANNEL_PER_MINUTE)?,
+            embed_cache_days: e.get(&st::EMBED_CACHE_DAYS)?,
+            voice_idle_secs: e.get(&st::VOICE_IDLE_SECS)?,
+            voice_room_max: e.get(&st::VOICE_ROOM_MAX)?,
+            relay_user_allocations: e.get(&st::RELAY_USER_ALLOCATIONS)?,
+            relay_max_allocations: e.opt(&st::RELAY_MAX_ALLOCATIONS)?,
+            relay_user_kib_per_sec: e.get(&st::RELAY_USER_KIB_PER_SEC)?,
+            relay_max_kib_per_sec: e.get(&st::RELAY_MAX_KIB_PER_SEC)?,
+            report_same_target_hours: e.get(&st::REPORT_SAME_TARGET_HOURS)?,
+            report_targets_per_day: e.get(&st::REPORT_TARGETS_PER_DAY)?,
+            report_max_per_week: e.get(&st::REPORT_MAX_PER_WEEK)?,
+            report_feedback_per_week: e.get(&st::REPORT_FEEDBACK_PER_WEEK)?,
+            report_retention_days: e.get(&st::REPORT_RETENTION_DAYS)?,
+            e2ee_guests_per_group: e.get(&st::E2EE_GUESTS_PER_GROUP)?,
+            e2ee_key_retention_days: e.get(&st::E2EE_KEY_RETENTION_DAYS)?,
+            sfu_enabled: e.switch(&st::SFU_ENABLED)?,
+            sfu_max_participants: e.get(&st::SFU_MAX_PARTICIPANTS)?,
+            sfu_max_streams: e.get(&st::SFU_MAX_STREAMS)?,
+            sfu_user_kib_per_sec: e.get(&st::SFU_USER_KIB_PER_SEC)?,
+            p2p_backup_max_mib: e.get(&st::P2P_BACKUP_MAX_MIB)?,
+            p2p_backup_total_mib: e.get(&st::P2P_BACKUP_TOTAL_MIB)?,
+            widget_quick_joins_per_hour: e.get(&st::WIDGET_QUICK_JOINS_PER_HOUR)?,
+            widget_viewers_max: e.get(&st::WIDGET_VIEWERS_MAX)?,
+            widget_bridge_servers_max: e.get(&st::WIDGET_BRIDGE_SERVERS_MAX)?,
+            peerjs_builtin: e.switch(&st::PEERJS_BUILTIN)?,
+            peerjs_peers_per_ip: e.get(&st::PEERJS_PEERS_PER_IP)?,
+            peerjs_concurrent_limit: e.get(&st::PEERJS_CONCURRENT_LIMIT)?,
+            lookup_list_per_minute: e.get(&st::LOOKUP_LIST_PER_MINUTE)?,
+            lookup_typeahead_per_minute: e.get(&st::LOOKUP_TYPEAHEAD_PER_MINUTE)?,
+            lookup_search_per_minute: e.get(&st::LOOKUP_SEARCH_PER_MINUTE)?,
+            lookup_profile_per_minute: e.get(&st::LOOKUP_PROFILE_PER_MINUTE)?,
+            lookup_member_search_per_minute: e.get(&st::LOOKUP_MEMBER_SEARCH_PER_MINUTE)?,
+            lookup_misses_per_hour: e.get(&st::LOOKUP_MISSES_PER_HOUR)?,
+            message_search_per_minute: e.get(&st::MESSAGE_SEARCH_PER_MINUTE)?,
+            message_search_at_once: e.get(&st::MESSAGE_SEARCH_AT_ONCE)?,
+            message_search_concurrent_limit: e.opt(&st::MESSAGE_SEARCH_CONCURRENT_LIMIT)?,
+            rare_requests_per_hour: e.get(&st::RARE_REQUESTS_PER_HOUR)?,
+            rare_requests_per_day: e.get(&st::RARE_REQUESTS_PER_DAY)?,
+            server_channels_max: e.get(&st::SERVER_CHANNELS_MAX)?,
+            server_categories_max: e.get(&st::SERVER_CATEGORIES_MAX)?,
+            server_separators_max: e.get(&st::SERVER_SEPARATORS_MAX)?,
+            server_roles_max: e.get(&st::SERVER_ROLES_MAX)?,
+            channel_pins_max: e.get(&st::CHANNEL_PINS_MAX)?,
+            message_user_mentions_max: e.get(&st::MESSAGE_USER_MENTIONS_MAX)?,
+            message_role_mentions_max: e.get(&st::MESSAGE_ROLE_MENTIONS_MAX)?,
+            here_recipients_max: e.get(&st::HERE_RECIPIENTS_MAX)?,
+            friends_max: e.get(&st::FRIENDS_MAX)?,
+            friend_requests_in_max: e.get(&st::FRIEND_REQUESTS_IN_MAX)?,
+            channel_webhooks_max: e.get(&st::CHANNEL_WEBHOOKS_MAX)?,
+            server_webhooks_max: e.get(&st::SERVER_WEBHOOKS_MAX)?,
+            server_outgoing_webhooks_max: e.get(&st::SERVER_OUTGOING_WEBHOOKS_MAX)?,
+            webhook_queue_max: e.get(&st::WEBHOOK_QUEUE_MAX)?,
+            webhook_workers: e.get(&st::WEBHOOK_WORKERS)?,
+            webhook_attempts: e.get(&st::WEBHOOK_ATTEMPTS)?,
+            webhook_log_days: e.get(&st::WEBHOOK_LOG_DAYS)?,
+            webhook_log_kept: e.get(&st::WEBHOOK_LOG_KEPT)?,
+            audit_keep_days: e.get(&st::AUDIT_KEEP_DAYS)?,
+            ping_keep_days: e.get(&st::PING_KEEP_DAYS)?,
+            preview_cache_mib: e.get(&st::PREVIEW_CACHE_MIB)?,
+            preview_cache_rows: e.get(&st::PREVIEW_CACHE_ROWS)?,
+            preview_cache_days: e.get(&st::PREVIEW_CACHE_DAYS)?,
+            embed_fetches: e.get(&st::EMBED_FETCHES)?,
+            embed_queue: e.get(&st::EMBED_QUEUE)?,
+            ws_inbox_frames: e.get(&st::WS_INBOX_FRAMES)?,
+            ws_out_frames: e.get(&st::WS_OUT_FRAMES)?,
+            ws_send_timeout_secs: e.get(&st::WS_SEND_TIMEOUT_SECS)?,
+            ws_read_buffer_kib: e.get(&st::WS_READ_BUFFER_KIB)?,
+            ws_write_buffer_kib: e.get(&st::WS_WRITE_BUFFER_KIB)?,
+            ws_max_write_buffer_kib: e.get(&st::WS_MAX_WRITE_BUFFER_KIB)?,
+            ws_paced_users_max: e.get(&st::WS_PACED_USERS_MAX)?,
+            ws_channel_slots: e.get(&st::WS_CHANNEL_SLOTS)?,
+            hub_aftermath_max: e.get(&st::HUB_AFTERMATH_MAX)?,
+            hub_shown_max: e.get(&st::HUB_SHOWN_MAX)?,
+            reconnect_base_ms: e.get(&st::RECONNECT_BASE_MS)?,
+            reconnect_cap_ms: e.get(&st::RECONNECT_CAP_MS)?,
+            reconnect_floor_ms: e.get(&st::RECONNECT_FLOOR_MS)?,
+            resync_jitter_ms: e.get(&st::RESYNC_JITTER_MS)?,
+            catch_up_delay_ms: e.get(&st::CATCH_UP_DELAY_MS)?,
+            servers_per_account: e.get(&st::SERVERS_PER_ACCOUNT)?,
+            scheduled_per_account: e.get(&st::SCHEDULED_PER_ACCOUNT)?,
+            server_members_max: e.get(&st::SERVER_MEMBERS_MAX)?,
+            signups_per_network_per_day: e.get(&st::SIGNUPS_PER_NETWORK_PER_DAY)?,
+            servers_per_network_per_day: e.get(&st::SERVERS_PER_NETWORK_PER_DAY)?,
+            ws_sockets_max: e.get(&st::WS_SOCKETS_MAX)?,
+            session_max_age_secs: e.get(&st::SESSION_MAX_AGE_SECS)?,
+            session_idle_secs: e.get(&st::SESSION_IDLE_SECS)?,
             p2p,
             p2p_unknown,
         };
@@ -857,9 +493,9 @@ impl Limits {
         Ok(limits)
     }
 
-    /// Every numeric limit by env name, in the order of `RANGES`. `None`: unset, and the
-    /// process picks its own value.
-    pub fn rows(&self) -> Vec<(&'static str, Option<i64>)> {
+    /// Every numeric limit with its value, in the order the admin page lists them. `None`: unset,
+    /// and the process picks its own value.
+    pub fn rows(&self) -> Vec<(&'static rchat_settings::Setting, Option<i64>)> {
         let Limits {
             rate_limit_per_second,
             rate_limit_burst,
@@ -1002,207 +638,328 @@ impl Limits {
             value.and_then(set)
         }
         vec![
-            ("RATE_LIMIT_PER_SECOND", set(rate_limit_per_second)),
-            ("RATE_LIMIT_BURST", set(rate_limit_burst)),
             (
-                "RATE_LIMIT_STRICT_PER_SECOND",
+                &st::RATE_LIMIT_PER_SECOND.setting,
+                set(rate_limit_per_second),
+            ),
+            (&st::RATE_LIMIT_BURST.setting, set(rate_limit_burst)),
+            (
+                &st::RATE_LIMIT_STRICT_PER_SECOND.setting,
                 set(rate_limit_strict_per_second),
             ),
-            ("RATE_LIMIT_STRICT_BURST", set(rate_limit_strict_burst)),
             (
-                "RATE_LIMIT_INVITE_PER_SECOND",
+                &st::RATE_LIMIT_STRICT_BURST.setting,
+                set(rate_limit_strict_burst),
+            ),
+            (
+                &st::RATE_LIMIT_INVITE_PER_SECOND.setting,
                 set(rate_limit_invite_per_second),
             ),
-            ("RATE_LIMIT_INVITE_BURST", set(rate_limit_invite_burst)),
-            ("ARGON2_PERMITS", set(argon2_permits)),
-            ("ARGON2_MEMORY_KIB", set(argon2_memory_kib)),
-            ("ARGON2_ITERATIONS", set(argon2_iterations)),
-            ("ARGON2_PARALLELISM", set(argon2_parallelism)),
-            ("SERVER_PASSWORD_QUEUE_MAX", set(server_password_queue_max)),
             (
-                "SERVER_PASSWORD_QUEUE_PER_ADDRESS",
+                &st::RATE_LIMIT_INVITE_BURST.setting,
+                set(rate_limit_invite_burst),
+            ),
+            (&st::ARGON2_PERMITS.setting, set(argon2_permits)),
+            (&st::ARGON2_MEMORY_KIB.setting, set(argon2_memory_kib)),
+            (&st::ARGON2_ITERATIONS.setting, set(argon2_iterations)),
+            (&st::ARGON2_PARALLELISM.setting, set(argon2_parallelism)),
+            (
+                &st::SERVER_PASSWORD_QUEUE_MAX.setting,
+                set(server_password_queue_max),
+            ),
+            (
+                &st::SERVER_PASSWORD_QUEUE_PER_ADDRESS.setting,
                 set(server_password_queue_per_address),
             ),
             (
-                "SERVER_PASSWORD_QUEUE_PER_NETWORK",
+                &st::SERVER_PASSWORD_QUEUE_PER_NETWORK.setting,
                 set(server_password_queue_per_network),
             ),
-            ("WS_CONNECTIONS_PER_USER", set(ws_connections_per_user)),
-            ("WS_CONNECT_BURST", set(ws_connect_burst)),
-            ("WS_CONNECTS_PER_MINUTE", set(ws_connects_per_minute)),
-            ("WS_SOCKETS_PER_IP", set(ws_sockets_per_ip)),
-            ("WS_GUEST_SOCKETS_PER_IP", set(ws_guest_sockets_per_ip)),
-            ("WS_GUEST_SOCKETS_MAX", set(ws_guest_sockets_max)),
-            ("REDIS_HUB_MAXLEN", set(redis_hub_maxlen)),
-            ("DATABASE_MAX_CONNECTIONS", opt(database_max_connections)),
             (
-                "DATABASE_REPLICA_MAX_CONNECTIONS",
+                &st::WS_CONNECTIONS_PER_USER.setting,
+                set(ws_connections_per_user),
+            ),
+            (&st::WS_CONNECT_BURST.setting, set(ws_connect_burst)),
+            (
+                &st::WS_CONNECTS_PER_MINUTE.setting,
+                set(ws_connects_per_minute),
+            ),
+            (&st::WS_SOCKETS_PER_IP.setting, set(ws_sockets_per_ip)),
+            (
+                &st::WS_GUEST_SOCKETS_PER_IP.setting,
+                set(ws_guest_sockets_per_ip),
+            ),
+            (&st::WS_GUEST_SOCKETS_MAX.setting, set(ws_guest_sockets_max)),
+            (&st::REDIS_HUB_MAXLEN.setting, set(redis_hub_maxlen)),
+            (
+                &st::DATABASE_MAX_CONNECTIONS.setting,
+                opt(database_max_connections),
+            ),
+            (
+                &st::DATABASE_REPLICA_MAX_CONNECTIONS.setting,
                 set(database_replica_max_connections),
             ),
             (
-                "DATABASE_REPLICA_MAX_LAG_MS",
+                &st::DATABASE_REPLICA_MAX_LAG_MS.setting,
                 set(database_replica_max_lag_ms),
             ),
-            ("DATABASE_MIN_CONNECTIONS", opt(database_min_connections)),
             (
-                "DATABASE_ACQUIRE_TIMEOUT_SECS",
+                &st::DATABASE_MIN_CONNECTIONS.setting,
+                opt(database_min_connections),
+            ),
+            (
+                &st::DATABASE_ACQUIRE_TIMEOUT_SECS.setting,
                 opt(database_acquire_timeout_secs),
             ),
-            ("DATABASE_READ_CONNECTIONS", opt(database_read_connections)),
-            ("DATABASE_INDEX_BUILD_MIB", set(database_index_build_mib)),
             (
-                "DATABASE_STATEMENT_TIMEOUT_SECS",
+                &st::DATABASE_READ_CONNECTIONS.setting,
+                opt(database_read_connections),
+            ),
+            (
+                &st::DATABASE_INDEX_BUILD_MIB.setting,
+                set(database_index_build_mib),
+            ),
+            (
+                &st::DATABASE_STATEMENT_TIMEOUT_SECS.setting,
                 set(database_statement_timeout_secs),
             ),
-            ("UPLOAD_MAX_MIB", set(upload_max_mib)),
-            ("UPLOAD_BUDGET_MIB", set(upload_budget_mib)),
-            ("UPLOAD_BUFFER_MIB", set(upload_buffer_mib)),
-            ("UPLOAD_SERVER_KEPT_MIB", set(upload_server_kept_mib)),
-            ("UPLOAD_OWNER_KEPT_MIB", set(upload_owner_kept_mib)),
-            ("AVATAR_UPLOAD_MAX_MIB", set(avatar_upload_max_mib)),
+            (&st::UPLOAD_MAX_MIB.setting, set(upload_max_mib)),
+            (&st::UPLOAD_BUDGET_MIB.setting, set(upload_budget_mib)),
+            (&st::UPLOAD_BUFFER_MIB.setting, set(upload_buffer_mib)),
             (
-                "AVATAR_ANIMATION_MAX_FRAMES",
+                &st::UPLOAD_SERVER_KEPT_MIB.setting,
+                set(upload_server_kept_mib),
+            ),
+            (
+                &st::UPLOAD_OWNER_KEPT_MIB.setting,
+                set(upload_owner_kept_mib),
+            ),
+            (
+                &st::AVATAR_UPLOAD_MAX_MIB.setting,
+                set(avatar_upload_max_mib),
+            ),
+            (
+                &st::AVATAR_ANIMATION_MAX_FRAMES.setting,
                 set(avatar_animation_max_frames),
             ),
-            ("AVATAR_ANIMATION_MAX_SECS", set(avatar_animation_max_secs)),
             (
-                "AVATAR_ANIMATION_MAX_MEGAPIXELS",
+                &st::AVATAR_ANIMATION_MAX_SECS.setting,
+                set(avatar_animation_max_secs),
+            ),
+            (
+                &st::AVATAR_ANIMATION_MAX_MEGAPIXELS.setting,
                 set(avatar_animation_max_megapixels),
             ),
-            ("MESSAGE_MAX_CHARS", set(message_max_chars)),
-            ("MESSAGE_RATE_PER_MINUTE", set(message_rate_per_minute)),
-            ("MESSAGE_RATE_BURST", set(message_rate_burst)),
-            ("GUEST_GRANT_DAYS", set(guest_grant_days)),
-            ("GUEST_GRANTS_PER_PASSWORD", set(guest_grants_per_password)),
-            ("GUEST_GRANTS_PER_NETWORK", set(guest_grants_per_network)),
+            (&st::MESSAGE_MAX_CHARS.setting, set(message_max_chars)),
             (
-                "GUEST_GRANT_MINTS_PER_NETWORK",
+                &st::MESSAGE_RATE_PER_MINUTE.setting,
+                set(message_rate_per_minute),
+            ),
+            (&st::MESSAGE_RATE_BURST.setting, set(message_rate_burst)),
+            (&st::GUEST_GRANT_DAYS.setting, set(guest_grant_days)),
+            (
+                &st::GUEST_GRANTS_PER_PASSWORD.setting,
+                set(guest_grants_per_password),
+            ),
+            (
+                &st::GUEST_GRANTS_PER_NETWORK.setting,
+                set(guest_grants_per_network),
+            ),
+            (
+                &st::GUEST_GRANT_MINTS_PER_NETWORK.setting,
                 set(guest_grant_mints_per_network),
             ),
-            ("WEBHOOK_HOOK_BURST", set(webhook_hook_burst)),
+            (&st::WEBHOOK_HOOK_BURST.setting, set(webhook_hook_burst)),
             (
-                "WEBHOOK_CHANNEL_PER_MINUTE",
+                &st::WEBHOOK_CHANNEL_PER_MINUTE.setting,
                 set(webhook_channel_per_minute),
             ),
-            ("EMBED_CACHE_DAYS", set(embed_cache_days)),
-            ("VOICE_IDLE_SECS", set(voice_idle_secs)),
-            ("VOICE_ROOM_MAX", set(voice_room_max)),
-            ("RELAY_USER_ALLOCATIONS", set(relay_user_allocations)),
-            ("RELAY_MAX_ALLOCATIONS", opt(relay_max_allocations)),
-            ("RELAY_USER_KIB_PER_SEC", set(relay_user_kib_per_sec)),
-            ("RELAY_MAX_KIB_PER_SEC", set(relay_max_kib_per_sec)),
-            ("REPORT_SAME_TARGET_HOURS", set(report_same_target_hours)),
-            ("REPORT_TARGETS_PER_DAY", set(report_targets_per_day)),
-            ("REPORT_MAX_PER_WEEK", set(report_max_per_week)),
-            ("REPORT_FEEDBACK_PER_WEEK", set(report_feedback_per_week)),
-            ("REPORT_RETENTION_DAYS", set(report_retention_days)),
-            ("E2EE_GUESTS_PER_GROUP", set(e2ee_guests_per_group)),
-            ("E2EE_KEY_RETENTION_DAYS", set(e2ee_key_retention_days)),
-            ("SFU_MAX_PARTICIPANTS", set(sfu_max_participants)),
-            ("SFU_MAX_STREAMS", set(sfu_max_streams)),
-            ("SFU_USER_KIB_PER_SEC", set(sfu_user_kib_per_sec)),
-            ("P2P_BACKUP_MAX_MIB", set(p2p_backup_max_mib)),
-            ("P2P_BACKUP_TOTAL_MIB", set(p2p_backup_total_mib)),
+            (&st::EMBED_CACHE_DAYS.setting, set(embed_cache_days)),
+            (&st::VOICE_IDLE_SECS.setting, set(voice_idle_secs)),
+            (&st::VOICE_ROOM_MAX.setting, set(voice_room_max)),
             (
-                "WIDGET_QUICK_JOINS_PER_HOUR",
+                &st::RELAY_USER_ALLOCATIONS.setting,
+                set(relay_user_allocations),
+            ),
+            (
+                &st::RELAY_MAX_ALLOCATIONS.setting,
+                opt(relay_max_allocations),
+            ),
+            (
+                &st::RELAY_USER_KIB_PER_SEC.setting,
+                set(relay_user_kib_per_sec),
+            ),
+            (
+                &st::RELAY_MAX_KIB_PER_SEC.setting,
+                set(relay_max_kib_per_sec),
+            ),
+            (
+                &st::REPORT_SAME_TARGET_HOURS.setting,
+                set(report_same_target_hours),
+            ),
+            (
+                &st::REPORT_TARGETS_PER_DAY.setting,
+                set(report_targets_per_day),
+            ),
+            (&st::REPORT_MAX_PER_WEEK.setting, set(report_max_per_week)),
+            (
+                &st::REPORT_FEEDBACK_PER_WEEK.setting,
+                set(report_feedback_per_week),
+            ),
+            (
+                &st::REPORT_RETENTION_DAYS.setting,
+                set(report_retention_days),
+            ),
+            (
+                &st::E2EE_GUESTS_PER_GROUP.setting,
+                set(e2ee_guests_per_group),
+            ),
+            (
+                &st::E2EE_KEY_RETENTION_DAYS.setting,
+                set(e2ee_key_retention_days),
+            ),
+            (&st::SFU_MAX_PARTICIPANTS.setting, set(sfu_max_participants)),
+            (&st::SFU_MAX_STREAMS.setting, set(sfu_max_streams)),
+            (&st::SFU_USER_KIB_PER_SEC.setting, set(sfu_user_kib_per_sec)),
+            (&st::P2P_BACKUP_MAX_MIB.setting, set(p2p_backup_max_mib)),
+            (&st::P2P_BACKUP_TOTAL_MIB.setting, set(p2p_backup_total_mib)),
+            (
+                &st::WIDGET_QUICK_JOINS_PER_HOUR.setting,
                 set(widget_quick_joins_per_hour),
             ),
-            ("WIDGET_VIEWERS_MAX", set(widget_viewers_max)),
-            ("WIDGET_BRIDGE_SERVERS_MAX", set(widget_bridge_servers_max)),
-            ("PEERJS_PEERS_PER_IP", set(peerjs_peers_per_ip)),
-            ("PEERJS_CONCURRENT_LIMIT", set(peerjs_concurrent_limit)),
-            ("LOOKUP_LIST_PER_MINUTE", set(lookup_list_per_minute)),
+            (&st::WIDGET_VIEWERS_MAX.setting, set(widget_viewers_max)),
             (
-                "LOOKUP_TYPEAHEAD_PER_MINUTE",
+                &st::WIDGET_BRIDGE_SERVERS_MAX.setting,
+                set(widget_bridge_servers_max),
+            ),
+            (&st::PEERJS_PEERS_PER_IP.setting, set(peerjs_peers_per_ip)),
+            (
+                &st::PEERJS_CONCURRENT_LIMIT.setting,
+                set(peerjs_concurrent_limit),
+            ),
+            (
+                &st::LOOKUP_LIST_PER_MINUTE.setting,
+                set(lookup_list_per_minute),
+            ),
+            (
+                &st::LOOKUP_TYPEAHEAD_PER_MINUTE.setting,
                 set(lookup_typeahead_per_minute),
             ),
-            ("LOOKUP_SEARCH_PER_MINUTE", set(lookup_search_per_minute)),
-            ("LOOKUP_PROFILE_PER_MINUTE", set(lookup_profile_per_minute)),
             (
-                "LOOKUP_MEMBER_SEARCH_PER_MINUTE",
+                &st::LOOKUP_SEARCH_PER_MINUTE.setting,
+                set(lookup_search_per_minute),
+            ),
+            (
+                &st::LOOKUP_PROFILE_PER_MINUTE.setting,
+                set(lookup_profile_per_minute),
+            ),
+            (
+                &st::LOOKUP_MEMBER_SEARCH_PER_MINUTE.setting,
                 set(lookup_member_search_per_minute),
             ),
-            ("LOOKUP_MISSES_PER_HOUR", set(lookup_misses_per_hour)),
-            ("MESSAGE_SEARCH_PER_MINUTE", set(message_search_per_minute)),
-            ("MESSAGE_SEARCH_AT_ONCE", set(message_search_at_once)),
             (
-                "MESSAGE_SEARCH_CONCURRENT_LIMIT",
+                &st::LOOKUP_MISSES_PER_HOUR.setting,
+                set(lookup_misses_per_hour),
+            ),
+            (
+                &st::MESSAGE_SEARCH_PER_MINUTE.setting,
+                set(message_search_per_minute),
+            ),
+            (
+                &st::MESSAGE_SEARCH_AT_ONCE.setting,
+                set(message_search_at_once),
+            ),
+            (
+                &st::MESSAGE_SEARCH_CONCURRENT_LIMIT.setting,
                 opt(message_search_concurrent_limit),
             ),
-            ("RARE_REQUESTS_PER_HOUR", set(rare_requests_per_hour)),
-            ("RARE_REQUESTS_PER_DAY", set(rare_requests_per_day)),
-            ("SERVER_CHANNELS_MAX", set(server_channels_max)),
-            ("SERVER_CATEGORIES_MAX", set(server_categories_max)),
-            ("SERVER_SEPARATORS_MAX", set(server_separators_max)),
-            ("SERVER_ROLES_MAX", set(server_roles_max)),
-            ("CHANNEL_PINS_MAX", set(channel_pins_max)),
-            ("MESSAGE_USER_MENTIONS_MAX", set(message_user_mentions_max)),
-            ("MESSAGE_ROLE_MENTIONS_MAX", set(message_role_mentions_max)),
-            ("HERE_RECIPIENTS_MAX", set(here_recipients_max)),
-            ("FRIENDS_MAX", set(friends_max)),
-            ("FRIEND_REQUESTS_IN_MAX", set(friend_requests_in_max)),
-            ("CHANNEL_WEBHOOKS_MAX", set(channel_webhooks_max)),
-            ("SERVER_WEBHOOKS_MAX", set(server_webhooks_max)),
             (
-                "SERVER_OUTGOING_WEBHOOKS_MAX",
+                &st::RARE_REQUESTS_PER_HOUR.setting,
+                set(rare_requests_per_hour),
+            ),
+            (
+                &st::RARE_REQUESTS_PER_DAY.setting,
+                set(rare_requests_per_day),
+            ),
+            (&st::SERVER_CHANNELS_MAX.setting, set(server_channels_max)),
+            (
+                &st::SERVER_CATEGORIES_MAX.setting,
+                set(server_categories_max),
+            ),
+            (
+                &st::SERVER_SEPARATORS_MAX.setting,
+                set(server_separators_max),
+            ),
+            (&st::SERVER_ROLES_MAX.setting, set(server_roles_max)),
+            (&st::CHANNEL_PINS_MAX.setting, set(channel_pins_max)),
+            (
+                &st::MESSAGE_USER_MENTIONS_MAX.setting,
+                set(message_user_mentions_max),
+            ),
+            (
+                &st::MESSAGE_ROLE_MENTIONS_MAX.setting,
+                set(message_role_mentions_max),
+            ),
+            (&st::HERE_RECIPIENTS_MAX.setting, set(here_recipients_max)),
+            (&st::FRIENDS_MAX.setting, set(friends_max)),
+            (
+                &st::FRIEND_REQUESTS_IN_MAX.setting,
+                set(friend_requests_in_max),
+            ),
+            (&st::CHANNEL_WEBHOOKS_MAX.setting, set(channel_webhooks_max)),
+            (&st::SERVER_WEBHOOKS_MAX.setting, set(server_webhooks_max)),
+            (
+                &st::SERVER_OUTGOING_WEBHOOKS_MAX.setting,
                 set(server_outgoing_webhooks_max),
             ),
-            ("WEBHOOK_QUEUE_MAX", set(webhook_queue_max)),
-            ("WEBHOOK_WORKERS", set(webhook_workers)),
-            ("WEBHOOK_ATTEMPTS", set(webhook_attempts)),
-            ("WEBHOOK_LOG_DAYS", set(webhook_log_days)),
-            ("WEBHOOK_LOG_KEPT", set(webhook_log_kept)),
-            ("AUDIT_KEEP_DAYS", set(audit_keep_days)),
-            ("PING_KEEP_DAYS", set(ping_keep_days)),
-            ("PREVIEW_CACHE_MIB", set(preview_cache_mib)),
-            ("PREVIEW_CACHE_ROWS", set(preview_cache_rows)),
-            ("PREVIEW_CACHE_DAYS", set(preview_cache_days)),
-            ("EMBED_FETCHES", set(embed_fetches)),
-            ("EMBED_QUEUE", set(embed_queue)),
-            ("WS_INBOX_FRAMES", set(ws_inbox_frames)),
-            ("WS_OUT_FRAMES", set(ws_out_frames)),
-            ("WS_SEND_TIMEOUT_SECS", set(ws_send_timeout_secs)),
-            ("WS_READ_BUFFER_KIB", set(ws_read_buffer_kib)),
-            ("WS_WRITE_BUFFER_KIB", set(ws_write_buffer_kib)),
-            ("WS_MAX_WRITE_BUFFER_KIB", set(ws_max_write_buffer_kib)),
-            ("WS_PACED_USERS_MAX", set(ws_paced_users_max)),
-            ("WS_CHANNEL_SLOTS", set(ws_channel_slots)),
-            ("HUB_AFTERMATH_MAX", set(hub_aftermath_max)),
-            ("HUB_SHOWN_MAX", set(hub_shown_max)),
-            ("RECONNECT_BASE_MS", set(reconnect_base_ms)),
-            ("RECONNECT_CAP_MS", set(reconnect_cap_ms)),
-            ("RECONNECT_FLOOR_MS", set(reconnect_floor_ms)),
-            ("RESYNC_JITTER_MS", set(resync_jitter_ms)),
-            ("CATCH_UP_DELAY_MS", set(catch_up_delay_ms)),
-            ("SERVERS_PER_ACCOUNT", set(servers_per_account)),
-            ("SCHEDULED_PER_ACCOUNT", set(scheduled_per_account)),
-            ("SERVER_MEMBERS_MAX", set(server_members_max)),
+            (&st::WEBHOOK_QUEUE_MAX.setting, set(webhook_queue_max)),
+            (&st::WEBHOOK_WORKERS.setting, set(webhook_workers)),
+            (&st::WEBHOOK_ATTEMPTS.setting, set(webhook_attempts)),
+            (&st::WEBHOOK_LOG_DAYS.setting, set(webhook_log_days)),
+            (&st::WEBHOOK_LOG_KEPT.setting, set(webhook_log_kept)),
+            (&st::AUDIT_KEEP_DAYS.setting, set(audit_keep_days)),
+            (&st::PING_KEEP_DAYS.setting, set(ping_keep_days)),
+            (&st::PREVIEW_CACHE_MIB.setting, set(preview_cache_mib)),
+            (&st::PREVIEW_CACHE_ROWS.setting, set(preview_cache_rows)),
+            (&st::PREVIEW_CACHE_DAYS.setting, set(preview_cache_days)),
+            (&st::EMBED_FETCHES.setting, set(embed_fetches)),
+            (&st::EMBED_QUEUE.setting, set(embed_queue)),
+            (&st::WS_INBOX_FRAMES.setting, set(ws_inbox_frames)),
+            (&st::WS_OUT_FRAMES.setting, set(ws_out_frames)),
+            (&st::WS_SEND_TIMEOUT_SECS.setting, set(ws_send_timeout_secs)),
+            (&st::WS_READ_BUFFER_KIB.setting, set(ws_read_buffer_kib)),
+            (&st::WS_WRITE_BUFFER_KIB.setting, set(ws_write_buffer_kib)),
             (
-                "SIGNUPS_PER_NETWORK_PER_DAY",
+                &st::WS_MAX_WRITE_BUFFER_KIB.setting,
+                set(ws_max_write_buffer_kib),
+            ),
+            (&st::WS_PACED_USERS_MAX.setting, set(ws_paced_users_max)),
+            (&st::WS_CHANNEL_SLOTS.setting, set(ws_channel_slots)),
+            (&st::HUB_AFTERMATH_MAX.setting, set(hub_aftermath_max)),
+            (&st::HUB_SHOWN_MAX.setting, set(hub_shown_max)),
+            (&st::RECONNECT_BASE_MS.setting, set(reconnect_base_ms)),
+            (&st::RECONNECT_CAP_MS.setting, set(reconnect_cap_ms)),
+            (&st::RECONNECT_FLOOR_MS.setting, set(reconnect_floor_ms)),
+            (&st::RESYNC_JITTER_MS.setting, set(resync_jitter_ms)),
+            (&st::CATCH_UP_DELAY_MS.setting, set(catch_up_delay_ms)),
+            (&st::SERVERS_PER_ACCOUNT.setting, set(servers_per_account)),
+            (
+                &st::SCHEDULED_PER_ACCOUNT.setting,
+                set(scheduled_per_account),
+            ),
+            (&st::SERVER_MEMBERS_MAX.setting, set(server_members_max)),
+            (
+                &st::SIGNUPS_PER_NETWORK_PER_DAY.setting,
                 set(signups_per_network_per_day),
             ),
             (
-                "SERVERS_PER_NETWORK_PER_DAY",
+                &st::SERVERS_PER_NETWORK_PER_DAY.setting,
                 set(servers_per_network_per_day),
             ),
-            ("WS_SOCKETS_MAX", set(ws_sockets_max)),
-            ("SESSION_MAX_AGE_SECS", set(session_max_age_secs)),
-            ("SESSION_IDLE_SECS", set(session_idle_secs)),
+            (&st::WS_SOCKETS_MAX.setting, set(ws_sockets_max)),
+            (&st::SESSION_MAX_AGE_SECS.setting, set(session_max_age_secs)),
+            (&st::SESSION_IDLE_SECS.setting, set(session_idle_secs)),
         ]
-    }
-
-    /// The smallest and largest value of the numeric limit `env`.
-    pub fn range(env: &str) -> Option<(i64, i64)> {
-        RANGES
-            .iter()
-            .find(|(name, _, _)| *name == env)
-            .map(|(_, lo, hi)| (*lo, *hi))
-    }
-
-    /// The largest value the numeric limit `env` takes, the bound for reads of what it caps, so
-    /// rows kept from before a cap was lowered still count. `i64::MAX` for a name without a range.
-    pub fn most(env: &str) -> i64 {
-        Limits::range(env).map_or(i64::MAX, |(_, hi)| hi)
     }
 
     /// The checks between limits.
@@ -1438,7 +1195,7 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::{BTreeSet, HashMap};
 
-    use super::{Limits, P2pRange, P2pRefresh, RANGES, p2p_ranges, p2p_refresh};
+    use super::{Limits, P2pRange, P2pRefresh, p2p_ranges, p2p_refresh};
 
     fn load(pairs: &[(&str, String)]) -> anyhow::Result<Limits> {
         let set: HashMap<String, String> = pairs
@@ -1476,11 +1233,23 @@ mod tests {
         asked.into_inner()
     }
 
+    /// The numeric limits `Limits::load` reads: the env name, smallest and largest value.
+    fn ranges() -> Vec<(&'static str, i64, i64)> {
+        names()
+            .iter()
+            .filter_map(|name| {
+                let setting = rchat_settings::by_env(name).expect("a setting");
+                let (lo, hi) = setting.range()?;
+                Some((setting.env, lo, hi))
+            })
+            .collect()
+    }
+
     #[test]
     fn every_range_loads_at_its_edges_and_refuses_past_them() {
         let read = names();
-        for (name, lo, hi) in RANGES {
-            assert!(read.iter().any(|n| n == name), "{name} is read");
+        assert_eq!(ranges().len(), 129);
+        for (name, lo, hi) in ranges() {
             let with = |v: i64| {
                 let mut pairs = vec![(name, v.to_string())];
                 pairs.extend(companions(name));
@@ -1495,7 +1264,7 @@ mod tests {
             }
         }
         for name in read {
-            let numeric = RANGES.iter().any(|(n, _, _)| *n == name);
+            let numeric = ranges().iter().any(|(n, _, _)| *n == name);
             let default = load(&[]).expect("defaults");
             match (numeric, name.as_str()) {
                 (true, _) => {
@@ -1532,15 +1301,44 @@ mod tests {
     }
 
     #[test]
+    fn the_defaults_are_the_registry_items_and_match_what_they_name() {
+        let d = Limits::default();
+        assert_eq!(
+            (
+                d.argon2_memory_kib,
+                d.argon2_iterations,
+                d.argon2_parallelism
+            ),
+            (
+                argon2::Params::DEFAULT_M_COST,
+                argon2::Params::DEFAULT_T_COST,
+                argon2::Params::DEFAULT_P_COST
+            )
+        );
+        for (setting, value) in d.rows() {
+            match setting.default {
+                rchat_settings::Preset::Number(n) => assert_eq!(value, Some(n), "{}", setting.env),
+                rchat_settings::Preset::Picked(_) => assert_eq!(value, None, "{}", setting.env),
+                other => panic!("{}: {other:?}", setting.env),
+            }
+        }
+        assert_eq!(
+            rchat_settings::items::DEFAULT_SERVERS.setting.default,
+            rchat_settings::Preset::Text(crate::db::BUILTIN_SERVER)
+        );
+    }
+
+    #[test]
     fn every_ranged_limit_is_listed_with_its_value() {
         let default = Limits::default().rows();
-        let names: Vec<&str> = default.iter().map(|(name, _)| *name).collect();
-        let ranged: Vec<&str> = RANGES.iter().map(|(name, _, _)| *name).collect();
+        let names: BTreeSet<&str> = default.iter().map(|(s, _)| s.env).collect();
+        let ranged: BTreeSet<&str> = ranges().iter().map(|(name, _, _)| *name).collect();
         assert_eq!(names, ranged);
+        assert_eq!(default.len(), ranged.len());
         let unset: Vec<&str> = default
             .iter()
             .filter(|(_, value)| value.is_none())
-            .map(|(name, _)| *name)
+            .map(|(s, _)| s.env)
             .collect();
         assert_eq!(
             unset,
@@ -1553,15 +1351,13 @@ mod tests {
                 "MESSAGE_SEARCH_CONCURRENT_LIMIT",
             ]
         );
-        for (name, lo, hi) in RANGES {
+        for (name, _, hi) in ranges() {
             let mut pairs = vec![(name, hi.to_string())];
             pairs.extend(companions(name));
             let rows = load(&pairs).expect("loads").rows();
-            let value = rows.iter().find(|(n, _)| *n == name).map(|(_, v)| *v);
+            let value = rows.iter().find(|(s, _)| s.env == name).map(|(_, v)| *v);
             assert_eq!(value, Some(Some(hi)), "{name}");
-            assert_eq!(Limits::range(name), Some((lo, hi)), "{name}");
         }
-        assert_eq!(Limits::range("SFU_ENABLED"), None);
     }
 
     #[test]
@@ -1856,7 +1652,6 @@ mod tests {
             err.to_string(),
             "SERVER_CHANNELS_MAX: expected 1 to 10000, got 0"
         );
-        assert_eq!(Limits::most("CHANNEL_PINS_MAX"), 1000);
     }
 
     #[test]
@@ -2568,7 +2363,7 @@ mod tests {
                 .take_while(|l| l.starts_with("# ") && !l.contains('='))
                 .copied()
                 .collect();
-            match RANGES.iter().find(|(n, _, _)| *n == name) {
+            match ranges().iter().find(|(n, _, _)| *n == name) {
                 Some((_, lo, hi)) => assert!(
                     about.iter().any(|l| l.contains(&format!("{lo} to {hi}"))),
                     "{name}: the comment above it gives {lo} to {hi}"

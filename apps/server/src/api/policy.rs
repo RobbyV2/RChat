@@ -24,9 +24,8 @@ pub enum ServerCreation {
 }
 
 impl ServerCreation {
-    pub const KEY: &str = "server_creation";
-    pub const ENV: &str = "SERVER_CREATION";
-    pub const WORDS: [&str; 3] = ["everyone", "nobody", "some"];
+    pub const KEY: &str = rchat_settings::items::SERVER_CREATION.key();
+    pub const ENV: &str = rchat_settings::items::SERVER_CREATION.env();
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -60,9 +59,8 @@ pub enum ServerJoining {
 }
 
 impl ServerJoining {
-    pub const KEY: &str = "server_joining";
-    pub const ENV: &str = "SERVER_JOINING";
-    pub const WORDS: [&str; 3] = ["everyone", "invites", "nobody"];
+    pub const KEY: &str = rchat_settings::items::SERVER_JOINING.key();
+    pub const ENV: &str = rchat_settings::items::SERVER_JOINING.env();
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -94,9 +92,8 @@ pub enum DmCreation {
 }
 
 impl DmCreation {
-    pub const KEY: &str = "dm_creation";
-    pub const ENV: &str = "DM_CREATION";
-    pub const WORDS: [&str; 3] = ["everyone", "friends", "nobody"];
+    pub const KEY: &str = rchat_settings::items::DM_CREATION.key();
+    pub const ENV: &str = rchat_settings::items::DM_CREATION.env();
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -128,9 +125,8 @@ pub enum TempChange {
 }
 
 impl TempChange {
-    pub const KEY: &str = "password_change";
-    pub const ENV: &str = "TEMP_PASSWORD_CHANGE";
-    pub const WORDS: [&str; 2] = ["required", "encouraged"];
+    pub const KEY: &str = rchat_settings::items::TEMP_PASSWORD_CHANGE.key();
+    pub const ENV: &str = rchat_settings::items::TEMP_PASSWORD_CHANGE.env();
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -149,9 +145,9 @@ impl TempChange {
 }
 
 /// The control that says how many hours a temporary password signs in for; 0 is forever.
-pub const TEMP_PASSWORD_HOURS: &str = "temp_password_hours";
+pub const TEMP_PASSWORD_HOURS: &str = rchat_settings::items::TEMP_PASSWORD_HOURS.key();
 /// The longest a temporary password signs in for, in hours.
-pub const TEMP_PASSWORD_HOURS_MAX: i64 = 720;
+pub const TEMP_PASSWORD_HOURS_MAX: i64 = rchat_settings::items::TEMP_PASSWORD_HOURS.max();
 
 /// Whether the instance still has the built-in server it started with.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -163,25 +159,25 @@ pub enum Builtin {
 }
 
 /// The control that lists the servers every new account joins, by key and in order.
-pub const DEFAULT_SERVERS: &str = "default_servers";
+pub const DEFAULT_SERVERS: &str = rchat_settings::items::DEFAULT_SERVERS.key();
 
 /// The switch for voice channels and DM calls that run through the instance.
-pub const CALLS: &str = "calls";
+pub const CALLS: &str = rchat_settings::items::FEATURE_CALLS.key();
 
 /// The switch for incoming webhooks: creating them and posting through them.
-pub const INCOMING_WEBHOOKS: &str = "incoming_webhooks";
+pub const INCOMING_WEBHOOKS: &str = rchat_settings::items::FEATURE_INCOMING_WEBHOOKS.key();
 
 /// The switch for new friend requests.
-pub const FRIEND_REQUESTS: &str = "friend_requests";
+pub const FRIEND_REQUESTS: &str = rchat_settings::items::FEATURE_FRIEND_REQUESTS.key();
 
 /// The switch that lets server owners make servers readable by people who aren't members.
-pub const PUBLIC_READING: &str = "public_reading";
+pub const PUBLIC_READING: &str = rchat_settings::items::PUBLIC_READING.key();
 
 /// The switch for `GET /api/v1/server_search`.
-pub const SERVER_SEARCH: &str = "server_search";
+pub const SERVER_SEARCH: &str = rchat_settings::items::SERVER_SEARCH.key();
 
 /// The control that lists who may create servers while `server_creation` is `some`.
-pub const SERVER_CREATORS: &str = "server_creators";
+pub const SERVER_CREATORS: &str = rchat_settings::items::SERVER_CREATORS.key();
 
 /// One entry of `server_creators`: an account (its username in lowercase), or the holders of
 /// a role of a server (the `server:Role` entry as written). An entry with a `:` is always a

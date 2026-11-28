@@ -31,10 +31,8 @@ pub enum Level {
 }
 
 impl Level {
-    pub const KEY: &str = "profile_visibility";
-    pub const ENV: &str = "PROFILE_VISIBILITY";
-    /// The levels an instance may choose.
-    pub const WORDS: [&str; 3] = ["everyone", "public_servers", "shared"];
+    pub const KEY: &str = rchat_settings::items::PROFILE_VISIBILITY.key();
+    pub const ENV: &str = rchat_settings::items::PROFILE_VISIBILITY.env();
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -68,9 +66,8 @@ pub enum ProfileChoices {
 }
 
 impl ProfileChoices {
-    pub const KEY: &str = "profile_choices";
-    pub const ENV: &str = "PROFILE_CHOICES";
-    pub const WORDS: [&str; 3] = ["any", "narrower", "site"];
+    pub const KEY: &str = rchat_settings::items::PROFILE_CHOICES.key();
+    pub const ENV: &str = rchat_settings::items::PROFILE_CHOICES.env();
 
     pub fn as_str(self) -> &'static str {
         match self {

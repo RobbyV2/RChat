@@ -276,17 +276,12 @@ fn hashing() -> Arc<Hashing> {
     }
 }
 
-pub(crate) const SERVER_QUEUE_MAX: usize = 64;
-
 /// Places in the server work queue (waiting or running) per client address (an IPv6 /64) and
 /// per wider network (IPv4 /24, IPv6 /48), so that many addresses of one network can not fill it.
 static SERVER_ADDRESS: LazyLock<crate::api::budget::Slots> =
     LazyLock::new(crate::api::budget::Slots::default);
 static SERVER_NETWORK: LazyLock<crate::api::budget::Slots> =
     LazyLock::new(crate::api::budget::Slots::default);
-
-pub(crate) const SERVER_ADDRESS_MAX: usize = 16;
-pub(crate) const SERVER_NETWORK_MAX: usize = 32;
 
 /// The per-address and per-network places of the current client, if it has an address.
 fn client_slots() -> Result<Vec<crate::api::budget::Slot>, ApiError> {
@@ -1806,7 +1801,7 @@ mod tests {
         use crate::api::budget::as_client;
         let ip = |s: &str| -> std::net::IpAddr { s.parse().expect("ip") };
         let mut held = Vec::new();
-        for _ in 0..SERVER_ADDRESS_MAX {
+        for _ in 0..Limits::default().server_password_queue_per_address {
             held.push(
                 as_client(ip("2001:db8:5555:1::1"), async { client_slots() })
                     .await
@@ -1828,7 +1823,7 @@ mod tests {
         }
         assert_eq!(
             held.len(),
-            SERVER_NETWORK_MAX,
+            Limits::default().server_password_queue_per_network,
             "one /48 holds at most its share"
         );
         assert!(
