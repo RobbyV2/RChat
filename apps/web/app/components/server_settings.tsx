@@ -5,6 +5,7 @@ import { Loaded, useAccountSource } from './loaded'
 import { BanList } from './ban_list'
 import { DepartureSection } from './departure_section'
 import { OverviewSection } from './overview_section'
+import { MemberSearchSection } from './member_search_section'
 import { personName, notAName } from '../lib/names'
 import { Name, NameInput } from './name'
 import { ViewActorTag } from './view_actor'
@@ -92,7 +93,7 @@ import {
   ServerAccessSection,
   passwordName,
 } from './server_access'
-import { HostedMembers, MEMBER_SEARCH_PERMS } from './server_members'
+import { MEMBER_SEARCH_PERMS } from '../lib/member_filters'
 import { WidgetSettings } from './widget_settings'
 import { HostedRules } from './perm_dialog'
 import { MemberSearchField, useMemberSearch } from './member_search'
@@ -1565,7 +1566,7 @@ function Settings({ server, section }: { server: string; section: ServerSettings
         {canSearch ? (
           <>
             <p className={sectionCls}>Members</p>
-            <HostedMembers server={server} roles={detail.roles} perms={perms} />
+            <MemberSearchSection place={HostedServer.open(acct, server)} />
           </>
         ) : (
           canAdmin && (

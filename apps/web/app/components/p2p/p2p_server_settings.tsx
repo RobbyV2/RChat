@@ -8,29 +8,22 @@ import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useAccount } from '../../lib/client/react'
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Clock, Crown, Hash, Lock, Trash2, Volume2 } from 'lucide-react'
 import { useMask } from '../../lib/store'
 import { type ServerTab } from '../../lib/p2p/app'
-import {
-  EQUAL_ROLES_TEXT,
-  HIGHER_ROLES_TEXT,
-  OFFLINE_TEXT,
-  OWNER_TEXT,
-  VOUCH_INVITER_TEXT,
-} from '../../lib/p2p/flows'
+import { OWNER_TEXT } from '../../lib/p2p/flows'
 import { P } from '../../lib/p2p/state'
 import { fieldMax } from '../../lib/p2p/event_v2'
 import { voiceNotice } from '../../lib/p2p/voice'
-import type { MemberView, ServerView } from '../../lib/p2p/server'
+import type { ServerView } from '../../lib/p2p/server'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
-import { fieldCls, Masked, Sentinel } from '../ui'
+import { fieldCls, Masked } from '../ui'
 import { Row, Stack, Surface } from '../layout'
 import { ServerSettingsPage } from '../server_settings_page'
 import { StorageSettings } from '../storage_settings'
 import { deviceKeyNote, p2pSeal, storeRegister } from '../../lib/sealing'
 import { inShell } from '../../lib/platform'
-import { page, PAGE } from '../../lib/paging'
 import { MemberAvatar } from './p2p_badge'
 import { CodeList } from './p2p_invite_dialog'
 import { ServerNotices } from './p2p_server_flows'
@@ -39,7 +32,7 @@ import { SystemMessagesSection } from '../system_messages'
 import { PlaceProvider, useP2pRoom } from '../../lib/place/react'
 import { P2pRoom } from '../../lib/place/place'
 import { ServerProfilesMode } from './p2p_server_profile'
-import { ChannelAccess, MemberCard, RolesTab } from './p2p_server_roles'
+import { ChannelAccess, RolesTab } from './p2p_server_roles'
 import { slowTitle } from '../../lib/slowmode'
 import {
   UPGRADE_CO_OWNERS,
@@ -48,17 +41,6 @@ import {
   upgradeChanges,
   upgradeOffered,
 } from '../../lib/p2p_upgrade'
-import { PeerTimeoutBadge } from '../timeout_dialog'
-import { nameColor } from '../../lib/p2p/roles'
-import { openActionMenu } from '../../lib/actions/menu'
-import {
-  NO_FILTERS,
-  allowedFilters,
-  filterMembers,
-  p2pMemberRow,
-  type MemberFilters,
-} from '../../lib/member_filters'
-import { MemberFilterBar, MemberTable, MemberTableRow } from '../member_table'
 import { logLines } from '../../lib/audit_format'
 import { permItems } from '../../lib/perm_source'
 import { relativeTime } from '../../lib/timestamps'
@@ -69,6 +51,7 @@ import { Button, IconButton } from '../controls'
 import { BanList } from '../ban_list'
 import { DepartureSection } from '../departure_section'
 import { OverviewSection } from '../overview_section'
+import { MemberSearchSection } from '../member_search_section'
 import { P2pChannelMemberList, P2pMemberListSettings } from './p2p_member_list'
 
 // Settings of a P2P server. Every change is a signed state event that members check against
@@ -462,127 +445,6 @@ function History({ v }: { v: ServerView }) {
   )
 }
 
-const byLocale = (a: string, b: string) => a.localeCompare(b)
-
-function PeerMemberRow({ v, m, dated }: { v: ServerView; m: MemberView; dated: boolean }) {
-  const identity = useP2pApp()!
-  const acct = useAccount()
-  const me = useP2p(s => s.me)
-  const own = useP2p(s => ownsP2pServer(v, s.me))
-  const mask = useMask(own)
-  const timeout = v.timeouts === true && can(v, P.TimeoutMembers)
-  const roles = m.roles
-    .map(id => v.roles.find(r => r.id === id)?.name)
-    .filter((n): n is string => !!n)
-    .map(mask)
-  const facts = [roles.join(', '), m.via ? `Joined with: ${mask(m.via.label) || 'Invite'}` : '']
-    .filter(Boolean)
-    .join(' · ')
-  return (
-    <MemberTableRow
-      rowKey={m.name}
-      avatar={<MemberAvatar members={v.members} ik={m.ik} size={28} />}
-      name={
-        <Name
-          data-p2p-member-line={m.name}
-          of={p2pName(m.name, m.ik === me)}
-          color={nameColor(m, v.roles)}
-          look="min-w-0 flex-1 truncate text-sm"
-        />
-      }
-      badges={
-        <>
-          {m.owner && (
-            <span title="Owner" aria-label="Owner" role="img" className="flex text-tertiary">
-              <Crown size={14} />
-            </span>
-          )}
-          {m.m === 'invite' && (
-            <span className="shrink-0 text-xs text-on-surface-variant">
-              {m.waits ? VOUCH_INVITER_TEXT : 'Invited'}
-            </span>
-          )}
-          {(m.ik === me || timeout) && <PeerTimeoutBadge m={m} compact />}
-        </>
-      }
-      facts={facts || null}
-      joinedAt={m.joinedAt === undefined ? null : Math.floor(m.joinedAt / 1000)}
-      created={false}
-      joined={dated}
-      menu={(x, y) =>
-        openActionMenu(
-          x,
-          y,
-          { kind: 'p2p_member', v, m },
-          { header: <MemberCard room={v.id} ik={m.ik} /> },
-          acct,
-          identity
-        )
-      }
-    />
-  )
-}
-
-function Members({ v }: { v: ServerView }) {
-  const own = useP2p(s => ownsP2pServer(v, s.me))
-  const mask = useMask(own)
-  const kick = can(v, P.Kick)
-  const ban = can(v, P.Ban)
-  const timeout = v.timeouts === true && can(v, P.TimeoutMembers)
-  const search = v.memberSearch === true
-  const invites = can(v, P.Invite)
-  const [filters, setFilters] = useState<MemberFilters>(NO_FILTERS)
-  const shown = allowedFilters(filters, { created: false, via: invites })
-  const all = useMemo(() => v.members.filter(m => m.m === 'join' || m.m === 'invite'), [v.members])
-  const list = filterMembers(search ? shown : NO_FILTERS, all, p2pMemberRow, byLocale)
-  const [shownRows, setShownRows] = useState(PAGE)
-  const more = useCallback(() => setShownRows(n => n + PAGE), [])
-  const paged = page(list, shownRows)
-  const choices = useMemo(() => {
-    const via = new Map<string, string>()
-    for (const m of all) if (m.via) via.set(m.via.id, mask(m.via.label) || 'Invite')
-    return {
-      roles: v.roles.map(r => ({ id: r.id, name: mask(r.name) })),
-      via: invites ? [...via].map(([id, label]) => ({ id, label })) : null,
-      created: false,
-    }
-  }, [all, v.roles, invites, mask])
-  return (
-    <Stack gap="md">
-      {search && (
-        <MemberFilterBar
-          value={shown}
-          onChange={f => {
-            setFilters(f)
-            setShownRows(PAGE)
-          }}
-          choices={choices}
-        />
-      )}
-      <div data-p2p-members-tab>
-        <MemberTable created={false} joined={search} label="Members">
-          {paged.items.map(m => (
-            <PeerMemberRow key={m.ik} v={v} m={m} dated={search} />
-          ))}
-        </MemberTable>
-        {list.length === 0 && (
-          <Surface pad="sm" inset="bar" tone="plain" radius="none">
-            <p className="text-sm text-on-surface-variant">No matching members.</p>
-          </Surface>
-        )}
-      </div>
-      {paged.more && <Sentinel key={shownRows} onVisible={more} />}
-      {(kick || ban || timeout) && (
-        <Stack gap="2xs">
-          <Note>{EQUAL_ROLES_TEXT}</Note>
-          <Note>{HIGHER_ROLES_TEXT}</Note>
-          <Note>{OFFLINE_TEXT}</Note>
-        </Stack>
-      )}
-    </Stack>
-  )
-}
-
 // The server's moderation log: who changed what, to whom, why, and what changed, newest first.
 function ModerationLog({ v }: { v: ServerView }) {
   const identity = useP2pApp()!
@@ -713,7 +575,7 @@ function TabBody({ v, room, tab }: { v: ServerView; room: string; tab: string })
       {tab === 'invites' && <CodeList room={room} version={0} />}
       {tab === 'system' && <System room={room} />}
       {tab === 'history' && <History v={v} />}
-      {tab === 'members' && <Members v={v} />}
+      {tab === 'members' && <MemberSearchSection place={P2pRoom.open(identity, room)} />}
       {tab === 'bans' && <BanList place={P2pRoom.open(identity, room)} />}
       {tab === 'modlog' && <ModerationLog v={v} />}
       {tab === 'leave' && <DepartureSection place={P2pRoom.open(identity, room)} />}
