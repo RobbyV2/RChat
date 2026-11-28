@@ -411,6 +411,7 @@ const LOOKS = [
   ['settings_palette', 'Settings: Command palette', 'settings', 'Command', '', '', ''],
   ['settings_information', 'Settings: Information', 'settings', 'Keyboard', '', '', ''],
   ['apps.preview', 'App previews', 'commands', '', '', '', ''],
+  ['scheduled_open', 'Scheduled messages', 'navigation', 'CalendarClock', '', '', ''],
 ]
 const OTHER_LOOKS: Record<string, string[][]> = {
   dmState: [
@@ -459,6 +460,7 @@ const OTHER_LOOKS: Record<string, string[][]> = {
   ],
 }
 const KEYWORDS: Record<string, string[]> = {
+  scheduled_open: ['send later', 'schedule'],
   unmute_here: ['notifications'],
   unmute_server: ['notifications'],
   inbox: ['notifications', 'mentions', 'pings'],
@@ -502,6 +504,7 @@ const ORDER: Record<string, string> = {
     'start_dm create_server add_instance join_server palette_help logout friends add_friends block',
     'accept_carol deny_carol unfriend_dave unblock_erin theme streamer typing animations profanity',
     'spoilers appear_offline settings_settings settings_profile settings_general settings_notifications settings_privacy settings_sync settings_palette settings_information apps.preview',
+    'scheduled_open',
   ].join(' '),
   dmState: [
     'home inbox mark_read_here jump_unread jump_present select pins open_threads copy_link_here',
@@ -509,12 +512,14 @@ const ORDER: Record<string, string> = {
     'start_dm create_server add_instance join_server palette_help logout friends add_friends block',
     'accept_carol deny_carol unfriend_dave unblock_erin theme streamer typing animations profanity',
     'spoilers appear_offline settings_settings settings_profile settings_general settings_notifications settings_privacy settings_sync settings_palette settings_information',
+    'scheduled_open',
   ].join(' '),
   homeState: [
     'inbox switch_account manage_accounts mark_all_read mark_dms_read start_dm create_server add_instance join_server palette_help logout',
     'friends add_friends block accept_carol deny_carol unfriend_dave unblock_erin theme',
     'streamer typing animations profanity spoilers appear_offline settings_settings settings_profile settings_general settings_notifications settings_privacy',
     'settings_sync settings_palette settings_information',
+    'scheduled_open',
   ].join(' '),
   guestState: [
     'home mark_read_here jump_unread jump_present select pins open_threads copy_link_here search_channel',
@@ -533,6 +538,7 @@ const ORDER: Record<string, string> = {
     'create_server add_instance join_server palette_help logout friends add_friends block accept_carol',
     'deny_carol unfriend_dave unblock_erin theme streamer typing animations profanity spoilers',
     'appear_offline settings_settings settings_profile settings_general settings_notifications settings_privacy settings_sync settings_palette settings_information',
+    'scheduled_open',
   ].join(' '),
 }
 const RUNS: Record<string, Record<string, unknown[]>> = {

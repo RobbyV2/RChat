@@ -16,6 +16,7 @@
     "SYNC_TEXT",
     "ServerError",
     "Servers",
+    "SlowModeError",
     "THREAD_ROOT_TEXT",
     "TOO_OFTEN_TEXT",
     "UPDATE_TEXT",
