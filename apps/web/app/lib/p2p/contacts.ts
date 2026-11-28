@@ -1,3 +1,4 @@
+import type { PicWire } from './pictures'
 import type { Card } from './card'
 import {
   cleanName,
@@ -40,6 +41,8 @@ export interface Contact {
   host: string
   added: number
   lastSeen: number | null
+  // Their profile picture as they last sent it (pictures.ts); read with `parsePic`.
+  pic?: PicWire | null
 }
 
 // limits.ts `contacts`: the intro a request may carry and how many are kept, the petname, and the

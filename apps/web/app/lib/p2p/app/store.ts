@@ -1,3 +1,4 @@
+import type { P2pPic } from '../pictures'
 import type { StoreRegister } from '../../sealing'
 import { create } from 'zustand'
 import { readLocal, sessionStore, writeLocal } from '../../instances'
@@ -150,6 +151,8 @@ export interface P2pState {
   status: Status | 'off'
   ik: string | null
   name: string
+  // Our profile picture.
+  pic: P2pPic | null
   fingerprint: string
   card: string | null
   contacts: Contact[]
@@ -400,6 +403,7 @@ export const initialPeerState = (): P2pState => ({
   status: 'off',
   ik: null,
   name: '',
+  pic: null,
   fingerprint: '',
   card: null,
   contacts: [],

@@ -1,3 +1,4 @@
+import type { P2pPic } from './p2p/pictures'
 import type { MemberLook, UserRef } from './types'
 
 // The people the app draws. A name or a picture is drawn only from one of these two values, so
@@ -7,10 +8,13 @@ import type { MemberLook, UserRef } from './types'
 const minted: unique symbol = Symbol('person')
 type Minted = typeof minted
 
-// Someone as a place shows them. `avatar_image` is there only for someone with a picture.
+// Someone as a place shows them. `avatar_image` is there only for someone with a picture on an
+// instance. `avatar_pic` is the P2P picture a room settled for them (its look says: null for
+// none), and is left out where the picture of their identity shows.
 export class ShownPerson implements UserRef {
   declare private readonly shown: true
   declare readonly avatar_image?: string
+  declare readonly avatar_pic?: P2pPic | null
   constructor(
     by: Minted,
     readonly username: string,
@@ -56,6 +60,7 @@ export type AccountWhy =
 export class AccountPerson implements UserRef {
   declare private readonly account: true
   declare readonly avatar_image?: string
+  declare readonly avatar_pic?: P2pPic | null
   constructor(
     by: Minted,
     readonly why: AccountWhy,
@@ -89,9 +94,14 @@ export function shownUser<T extends UserRef>(
     !look || look.avatar_kind === null
       ? { avatar_kind: ref.avatar_kind, avatar_color: ref.avatar_color }
       : { avatar_kind: look.avatar_kind, avatar_color: look.avatar_color }
-  const { avatar_image: account = null, ...rest } = ref
+  const { avatar_image: account = null, avatar_pic: own, ...rest } = ref
   const image = look ? (look.avatar_image ?? (look.avatar_kind === null ? account : null)) : account
-  const avatar = { ...built, ...pictureOf(image) }
+  const pic = look && look.avatar_pic !== undefined ? look.avatar_pic : own
+  const avatar = {
+    ...built,
+    ...pictureOf(image),
+    ...(pic === undefined ? {} : { avatar_pic: pic }),
+  }
   const name = look && look.name !== null ? look.name : ref.display_name
   const person = Object.assign(
     new ShownPerson(minted, ref.username, name, avatar.avatar_kind, avatar.avatar_color),

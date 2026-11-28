@@ -113,26 +113,38 @@ export const hiddenFields = (reset: ResetFact | null | undefined, now: number): 
   return RESET_FIELDS.filter(f => reset.hide.includes(f) || locked.includes(f))
 }
 
-const EXTRA: Record<ResetField, keyof RoomExtras> = {
-  name: 'nick',
-  bio: 'bio',
-  avatar: 'av',
-  banner: 'bn',
+// The extras each part holds: the avatar is its kind and the picture.
+const EXTRA: Record<ResetField, readonly (keyof RoomExtras)[]> = {
+  name: ['nick'],
+  bio: ['bio'],
+  avatar: ['av', 'rpic'],
+  banner: ['bn'],
+}
+
+const textOf = (v: RoomExtras[keyof RoomExtras]): string | undefined => {
+  if (typeof v !== 'object') return v
+  return 'kind' in v ? `${v.kind} ${v.bg ?? ''}` : `${v.s[0]} ${v.l[0]} ${v.a?.[0] ?? ''}`
 }
 
 // The value of one part of room extras, as text to compare; undefined when it is not set.
 export const partOf = (extras: RoomExtras, f: ResetField): string | undefined => {
-  const v = extras[EXTRA[f]]
-  return typeof v === 'object' ? `${v.kind} ${v.bg ?? ''}` : v
+  const [first, ...more] = EXTRA[f].map(key => textOf(extras[key]))
+  if (more.every(t => t === undefined)) return first
+  return [first, ...more].map(t => t ?? '').join('\n')
 }
 
 // The parts `now` sets to another value than `then`.
 export const changedParts = (now: RoomExtras, then: RoomExtras): ResetField[] =>
   RESET_FIELDS.filter(f => partOf(now, f) !== undefined && partOf(now, f) !== partOf(then, f))
 
+const dropPart = (extras: RoomExtras, f: ResetField) => {
+  for (const key of EXTRA[f]) delete extras[key]
+}
+
 const movePart = (from: RoomExtras, to: RoomExtras, f: ResetField) => {
-  Object.assign(to, { [EXTRA[f]]: from[EXTRA[f]] })
-  delete from[EXTRA[f]]
+  dropPart(to, f)
+  for (const key of EXTRA[f]) if (from[key] !== undefined) Object.assign(to, { [key]: from[key] })
+  dropPart(from, f)
 }
 
 // What our device sets for itself in a room (`intent`) and keeps aside (`gone`) under the
@@ -156,7 +168,7 @@ export function settleIntent(
       changed = true
     } else if (partOf(kept, f) !== undefined) {
       if (mine === undefined && partOf(written, f) === undefined) movePart(kept, next, f)
-      else delete kept[EXTRA[f]]
+      else dropPart(kept, f)
       changed = true
     }
   }
@@ -166,7 +178,7 @@ export function settleIntent(
 // Room extras without the parts `fields` names.
 export const withoutFields = (extras: RoomExtras, fields: readonly ResetField[]): RoomExtras => {
   const out: RoomExtras = { ...extras }
-  for (const f of fields) delete out[EXTRA[f]]
+  for (const f of fields) dropPart(out, f)
   return out
 }
 

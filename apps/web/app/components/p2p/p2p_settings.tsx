@@ -35,7 +35,10 @@ import { editsRoomProfile } from '../../lib/server_profile_editor'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { DevicesSection } from './p2p_server_flows'
 import { MyCode } from './add_contact'
-import { badgeDate, P2pBadge } from './p2p_badge'
+import { badgeDate, KeyAvatar, P2pBadge } from './p2p_badge'
+import { PictureField } from '../avatar_upload'
+import { useP2pPictureMaker } from '../../lib/client/p2p_picture'
+import { identityPerson } from '../../lib/people'
 import {
   confirmResetFor,
   ElsewhereNotice,
@@ -66,6 +69,37 @@ function NameField() {
         Save
       </Button>
     </Row>
+  )
+}
+
+// The picture of this P2P identity: contacts and the members of its servers see it.
+function PictureRow() {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+  const me = useP2p(s => s.ik)
+  const has = useP2p(s => s.pic !== null)
+  const maker = useP2pPictureMaker()
+  if (!me) return null
+  return (
+    <PictureField
+      avatar={<KeyAvatar person={identityPerson(me, 'own')} size={48} />}
+      note="Your contacts and the members of your P2P servers see it. Your key's identicon shows while it loads."
+      source={{
+        off: maker.off,
+        maxBytes: maker.maxBytes,
+        has,
+        upload: async (file, crop) => {
+          const made = await maker.make(file, crop)
+          if (typeof made === 'string') return made
+          await p2p.setPic(made)
+          return null
+        },
+        remove: async () => {
+          await p2p.setPic(null)
+          return null
+        },
+      }}
+    />
   )
 }
 
@@ -563,6 +597,9 @@ function P2pSectionBody() {
               before="Key "
               look="font-mono text-2xs text-on-surface-variant"
             />
+          </Surface>
+          <Surface pad="sm" inset="bar" gap="sm" tone="plain" radius="none">
+            <PictureRow />
           </Surface>
           <P2pServerProfiles />
           <BadgeSetting />

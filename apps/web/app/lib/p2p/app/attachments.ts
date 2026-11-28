@@ -4,6 +4,8 @@ import { writeLocal } from '../../instances'
 import { fitContent, LIMITS as EV, type Attachment } from '../content'
 import { assemble, EMPTY_VIEW, offText } from '../blobs'
 import type { Hashed } from '../hashing'
+import type { P2pFile } from '../pictures'
+import { AVATAR_IMAGES } from '../../avatar_images'
 import { checkedThumb, hashFile, imageFits, previewOf, saveName, UrlCache } from '../files'
 import { kindOf, NEUTRAL_TYPE } from '../../sniff'
 import { sharing } from '../../platform'
@@ -87,7 +89,13 @@ export function createAttachmentsPart(
   // Stored images whose header says they are too large to show inline.
   const big = new Set<string>()
 
-  const dropUrl = (h: string) => urls.drop(h)
+  // Object URLs of stored profile picture files.
+  const pictureUrls = new UrlCache(64)
+
+  const dropUrl = (h: string) => {
+    urls.drop(h)
+    pictureUrls.drop(h)
+  }
 
   let pendingSeq = 0
 
@@ -155,6 +163,43 @@ export function createAttachmentsPart(
     },
 
     unuse: (h: string) => urls.unuse(h),
+
+    // A profile picture's file is fetched by itself, small as it is; one that can't be fetched
+    // now says nothing and the built-in avatar stays.
+    async fetchPicture(file: P2pFile) {
+      sizes.set(file.h, file.size)
+      const d = state.dms
+      if (!d || p2pHost.textOnly()) return
+      await d.blobs.download(file).catch(() => {})
+      void refreshFile(file.h)
+    },
+
+    // A stored profile picture file as a URL, when its bytes are an image of a type pictures
+    // have. Each call is one avatar using it until `unusePicture`.
+    pictureUrl(h: string): Promise<string | null> {
+      return pictureUrls.use(h, async () => {
+        const s = parts.dms.dbNow()
+        const blob = s ? await assemble(s.db, h).catch(() => null) : null
+        const known = (AVATAR_IMAGES.types as readonly string[]).includes(blob?.type ?? '')
+        if (!blob || !known || !(await imageFits(blob))) return null
+        return URL.createObjectURL(blob)
+      })
+    },
+
+    unusePicture: (h: string) => pictureUrls.unuse(h),
+
+    // Keeps the files of a picture made on this device, so the people shown it can fetch them.
+    async keepPicture(files: readonly Blob[]): Promise<P2pFile[] | null> {
+      const d = state.dms
+      if (!d) return null
+      const kept: P2pFile[] = []
+      for (const file of files) {
+        const hashed = await hashFile(file)
+        await d.blobs.putOwn(file, hashed)
+        kept.push({ h: hashed.h, size: hashed.size })
+      }
+      return kept
+    },
 
     // The stored file's URL while it is live (made by `url` and not dropped since).
     liveUrl: (h: string) => urls.current(h),

@@ -1,6 +1,7 @@
 import { signDeviceCert2 } from '../acl/binding'
 import { knownRules } from '../acl/rules'
 import {
+  identityPic,
   memberExtras,
   recentWrites,
   roomExtras,
@@ -8,6 +9,7 @@ import {
   writeFits,
   type RoomExtras,
 } from '../../profile_fields'
+import { picWire, samePic } from '../pictures'
 import {
   resetContent,
   roomLock,
@@ -386,6 +388,7 @@ export async function refreshMe(cx: ServerCtx, room: string) {
   const want = cx.profileContent(room)
   if (
     (m.profile && m.profile.name !== want.name) ||
+    !samePic(identityPic(m.profile), identityPic(want)) ||
     !sameExtras(memberExtras(m, cleanName), roomExtras(want, cleanName))
   )
     await writeProfile(cx, room).catch(() => {})
@@ -395,6 +398,8 @@ export async function refreshMe(cx: ServerCtx, room: string) {
 // there with the join it counts for.
 export function profileContent(cx: ServerCtx, room?: string) {
   const c: Record<string, unknown> = { name: cx.deps.node.name }
+  const pic = cx.deps.node.pic
+  if (pic) c.pic = picWire(pic)
   const binding = cx.deps.node.binding
   if (binding) c.binding = binding
   if (!room) return c

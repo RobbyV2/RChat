@@ -1,3 +1,4 @@
+import type { P2pPic } from '../pictures'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { isRecord } from '../../bytes'
 import type { Rank } from '../acl/rules'
@@ -198,6 +199,8 @@ export interface MemberView {
   // The nickname and avatar they set for this server, when its mode shows them.
   nick?: string
   av?: RoomExtras['av']
+  // The picture this server shows for them: their picture here, else the one of their identity.
+  pic?: P2pPic
   // The description and banner color of their profile in this server.
   bio?: string
   bn?: string

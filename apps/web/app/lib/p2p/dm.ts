@@ -1,3 +1,4 @@
+import type { PictureGate } from './picture_gate'
 import { withAlts } from '../alt_text'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { b64u, concat, utf8 } from './canonical'
@@ -764,6 +765,8 @@ export interface DmDeps {
   totalBytes?: number
   pace?: () => Promise<void>
   bulk?: Partial<BulkLimits>
+  // The gate of profile picture files (picture_gate.ts).
+  pictures?: PictureGate
   // Attachments are off (the instance is text only).
   attachments?: () => boolean
   // What the copy calls the instance.
@@ -835,9 +838,15 @@ export class Dms {
       clock: this.clock,
       limits: { ...this.local.bulk, ...deps.bulk },
       entitled: async (ik, h) =>
-        (await this.entitled(ik, h)) || ((await this.moreEntitled?.(ik, h)) ?? false),
+        (await this.entitled(ik, h)) ||
+        ((await this.moreEntitled?.(ik, h)) ?? false) ||
+        (deps.pictures?.entitled(ik, h) ?? false),
       members: async h => [
-        ...new Set([...(await this.holdersOf(h)), ...((await this.moreHolders?.(h)) ?? [])]),
+        ...new Set([
+          ...(await this.holdersOf(h)),
+          ...((await this.moreHolders?.(h)) ?? []),
+          ...(deps.pictures?.holders(h) ?? []),
+        ]),
       ],
       enabled: deps.attachments,
       label: deps.label,

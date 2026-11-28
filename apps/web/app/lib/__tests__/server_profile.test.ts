@@ -345,8 +345,9 @@ test('a room member shows the nickname only when no name of ours for them comes 
   expect(roomLookOf({ name: 'My friend', nick: 'Bobby' })).toBeNull()
   expect(
     roomLookOf({ name: 'My friend', nick: 'Bobby', av: { kind: 'color', bg: '#112233' } })
-  ).toEqual(look({ avatar_kind: 'color', avatar_color: '#112233' }))
-  expect(roomLookOf({ name: 'Bob', av: { kind: 'identicon' } })).toEqual(
-    look({ avatar_kind: 'identicon' })
-  )
+  ).toEqual({ ...look({ avatar_kind: 'color', avatar_color: '#112233' }), avatar_pic: null })
+  expect(roomLookOf({ name: 'Bob', av: { kind: 'identicon' } })).toEqual({
+    ...look({ avatar_kind: 'identicon' }),
+    avatar_pic: null,
+  })
 })

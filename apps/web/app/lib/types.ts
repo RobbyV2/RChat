@@ -1,3 +1,4 @@
+import type { P2pPic } from './p2p/pictures'
 import type { UploadExpiry } from './upload_expiry'
 import type { TimeoutWire } from './timeouts'
 import type { ProfileChoices, ProfileLevel } from './profile_choice'
@@ -59,6 +60,8 @@ export interface UserRef {
   avatar_color: string | null
   // The id of an uploaded picture on the instance; the built-in avatar shows without one.
   avatar_image?: string | null
+  // The picture of a P2P identity, as P2P files.
+  avatar_pic?: P2pPic | null
 }
 
 export interface ServerSummary {
@@ -218,6 +221,9 @@ export interface MemberLook {
   avatar_color: string | null
   // A picture for this place: over this look's avatar, or the account's when it has no kind.
   avatar_image?: string | null
+  // The same for a P2P room: the member's picture there as P2P files (their room picture, else
+  // the one of their identity).
+  avatar_pic?: P2pPic | null
 }
 
 export type ProfilesMode = 'all' | 'no_names' | 'off'

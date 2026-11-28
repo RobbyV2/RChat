@@ -26,6 +26,7 @@ import {
   type ContactLimits,
 } from './contacts'
 import { hasSecrets, withoutSecrets, type OwnBadge, type P2pStore, type SelfRecord } from './db'
+import { cleanPic, parsePic, picWire, samePic, type P2pPic } from './pictures'
 import type { Me } from './handshake'
 import {
   bindingProof,
@@ -143,6 +144,8 @@ export interface NodeView {
   status: Status
   ik: string
   name: string
+  // Our profile picture.
+  pic: P2pPic | null
   contacts: Contact[]
   presence: Record<string, Presence>
   // Message requests dropped or pruned to limit spam, until the user clears the count.
@@ -475,11 +478,16 @@ export class P2pNode {
     return null
   }
 
+  // The picture rides beside the signed profile: a peer that does not know it reads the rest.
   private profileMsg(ik: string, peer: string): Message {
     const binding = this.bindingFor(ik, peer)
-    return binding
-      ? { t: 'profile', profile: this.self.profile, binding }
-      : { t: 'profile', profile: this.self.profile }
+    const pic = cleanPic(this.self.pic)
+    return {
+      t: 'profile',
+      profile: this.self.profile,
+      ...(binding ? { binding } : {}),
+      ...(pic ? { pic } : {}),
+    }
   }
 
   private broadcastProfile() {
@@ -503,6 +511,7 @@ export class P2pNode {
       status: this.status,
       ik: this.ik,
       name: this.name,
+      pic: this.pic,
       contacts: [...this.contacts.values()],
       presence,
       dropped: this.dropped,
@@ -1252,9 +1261,14 @@ export class P2pNode {
       return
     }
     const p = m.profile
+    // The picture this session's identity sends now; one that is malformed reads as none.
+    const pic = parsePic(m.pic)
     await this.update(c.ik, cur => {
       if (!cur) return null
-      const next = withProfile(cur, p)
+      const named = withProfile(cur, p)
+      const next = samePic(parsePic(named.pic), pic)
+        ? named
+        : { ...named, pic: pic ? picWire(pic) : null }
       return next === cur ? null : recheckName(this.others(cur.ik), cur, next)
     })
     if (m.binding !== undefined && c.state !== 'blocked') this.heardBinding(c.ik, m.binding)
@@ -1534,6 +1548,19 @@ export class P2pNode {
     const n = parseVerifyCode(text)?.n as string
     for (const s of this.sessionsOf(ik)) void s.send({ t: 'verified', n }).catch(() => {})
     return { ok: true, text: verifyCheckText(check) }
+  }
+
+  // Our profile picture; null without one.
+  get pic(): P2pPic | null {
+    return parsePic(this.self.pic) ?? null
+  }
+
+  // Sets or removes our profile picture and tells everyone we are connected to.
+  async setPic(pic: P2pPic | null) {
+    if (this.self.moved || samePic(this.pic, pic)) return
+    await this.writeSelf(cur => ({ ...cur, pic: pic ? picWire(pic) : null }))
+    this.broadcastProfile()
+    this.changed()
   }
 
   async setName(name: string) {

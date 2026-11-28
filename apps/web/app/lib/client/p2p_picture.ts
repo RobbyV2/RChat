@@ -1,0 +1,60 @@
+'use client'
+
+import { useEffect, useMemo, useState } from 'react'
+import { picturesShown, type AvatarView } from '../avatar_setting'
+import { parsePic, stillFor, type P2pPic } from '../p2p/pictures'
+import { useP2p, useP2pApp } from './p2p_react'
+import type { AvatarCrop } from '../avatar_images'
+import { limitsOf } from '../instance_limits'
+import { P2P_NOT_RUNNING, keptPic } from '../p2p/app/pictures'
+import { pictureFiles } from '../picture_files'
+import { useStore } from '../store'
+
+// The address of the picture this device draws for the P2P identity `ik` at `size` CSS pixels;
+// null while it draws none. `placed` is the picture a room settled for them (null: none);
+// without it the picture of their identity shows: our own, or the one a contact sent. A file
+// that is not on this device is asked of who may hold it, and shows once it has arrived.
+export function useP2pPicture(
+  ik: string,
+  placed: P2pPic | null | undefined,
+  size: number,
+  view: AvatarView
+): string | null {
+  const identity = useP2pApp()
+  const own = useP2p(s => (s.ik === ik ? s.pic : null))
+  const sent = useP2p(s => s.contacts.find(c => c.ik === ik)?.pic)
+  const theirs = useMemo(() => parsePic(sent) ?? null, [sent])
+  const pic = placed !== undefined ? placed : (own ?? theirs)
+  const file = pic && picturesShown(view) ? stillFor(pic, size) : null
+  const h = file?.h ?? null
+  const bytes = file?.size ?? 0
+  const state = useP2p(s => (h ? s.files[h]?.state : undefined))
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    if (identity && h) identity.p2pFiles.watch({ h, size: bytes })
+  }, [identity, h, bytes])
+  useEffect(() => {
+    if (identity && h && state === 'none') void identity.p2pFiles.fetchPicture({ h, size: bytes })
+  }, [identity, h, bytes, state])
+  useEffect(() => {
+    if (!identity || !h || state !== 'done') return setUrl(null)
+    let live = true
+    void identity.p2pFiles.pictureUrl(h).then(made => live && setUrl(made))
+    return () => {
+      live = false
+      identity.p2pFiles.unusePicture(h)
+    }
+  }, [identity, h, state])
+  return h ? url : null
+}
+
+// What the P2P picture editors share: whether a picture can be made here now, the most bytes of
+// a source file, and making one from the chosen square of a file.
+export function useP2pPictureMaker() {
+  const identity = useP2pApp()
+  const served = useStore(s => s.settings.profile_pictures)
+  const maxBytes = useStore(s => limitsOf(s.instance).avatar_upload_bytes)
+  const make = async (file: Blob, crop: AvatarCrop): Promise<P2pPic | string> =>
+    identity ? keptPic(identity.p2pFiles, await pictureFiles(file, crop)) : P2P_NOT_RUNNING
+  return { off: served ? null : 'Profile pictures are turned off on this site', maxBytes, make }
+}

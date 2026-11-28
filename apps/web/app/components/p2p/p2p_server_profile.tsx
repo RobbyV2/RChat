@@ -13,6 +13,8 @@ import { ProfileEditor, ProfileReset, ProfilesModeField } from '../server_profil
 import type { ServerView } from '../../lib/p2p/server'
 import { P } from '../../lib/p2p/state'
 import { KeyAvatar } from './p2p_badge'
+import { useP2pPictureMaker } from '../../lib/client/p2p_picture'
+import { parsePic, picWire } from '../../lib/p2p/pictures'
 
 // A P2P identity's picture: its key's identicon, under the avatar set for the server.
 const keyAvatar = (user: Person, size: number) => <KeyAvatar person={user} size={size} />
@@ -34,8 +36,11 @@ function ServerProfileDialogBody({ room }: { room: string }) {
       [identity, room]
     )
   )
+  const maker = useP2pPictureMaker()
   if (!v || !me || v.me !== 'join') return null
   const names = v.profiles === 'all'
+  // The picture is set and removed at once; a saved draft keeps it.
+  const kept = v.profile.rpic ? { rpic: v.profile.rpic } : {}
   return (
     <ProfileEditor
       onClose={p2p.closeDialog}
@@ -50,15 +55,30 @@ function ServerProfileDialogBody({ room }: { room: string }) {
           names: held.profiles === 'all',
           saved: draftOfExtras(held.profile),
           lock: held.profileLock,
+          picture: {
+            off: maker.off,
+            maxBytes: maker.maxBytes,
+            has: held.profile.rpic !== undefined,
+            look: { avatar_pic: parsePic(held.profile.rpic) ?? null },
+            upload: async (file, crop) => {
+              const made = await maker.make(file, crop)
+              if (typeof made === 'string') return made
+              return p2pServer.setRoomProfile(room, { ...held.profile, rpic: picWire(made) })
+            },
+            remove: () => {
+              const { rpic: _, ...rest } = held.profile
+              return p2pServer.setRoomProfile(room, rest)
+            },
+          },
         }),
         avatar: keyAvatar,
         handles: false,
         // A name set before the server stopped showing names stays stored for when it does.
         save: (_from, to) =>
-          p2pServer.setRoomProfile(
-            room,
-            extrasOf(names ? to : { ...to, name: draftOfExtras(v.profile).name })
-          ),
+          p2pServer.setRoomProfile(room, {
+            ...extrasOf(names ? to : { ...to, name: draftOfExtras(v.profile).name }),
+            ...kept,
+          }),
         clear: () => p2pServer.setRoomProfile(room, {}),
       }}
     />

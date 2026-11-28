@@ -14,6 +14,7 @@ import {
 import type { MemberSum, Summary } from '../acl/summary'
 import { cleanName } from '../keys'
 import { roomLock, shownRoomProfile } from '../../profile_reset'
+import { identityPic } from '../../profile_fields'
 import { storeRegister } from '../../sealing'
 import type { Shown } from '../acl_room'
 import { getEvents } from '../dag'
@@ -118,8 +119,11 @@ const nickOf = (
   s: Summary,
   m: MemberSum,
   at: number
-): Pick<MemberView, 'nick' | 'av' | 'bio' | 'bn' | 'profileLocked'> => {
+): Pick<MemberView, 'nick' | 'av' | 'pic' | 'bio' | 'bn' | 'profileLocked'> => {
   const { look, bio, banner } = shownRoomProfile(m, s.profiles, at, cleanName)
+  // A picture set for this server shows; without one the picture of their identity does, unless
+  // they chose an avatar kind for this server.
+  const pic = look?.avatar_pic ?? (look?.avatar_kind ? undefined : identityPic(m.profile))
   const locked = roomLock(m.reset, Math.floor(at / 1000)).locked
   return {
     ...(locked ? { profileLocked: true as const } : {}),
@@ -127,6 +131,7 @@ const nickOf = (
     ...(look?.avatar_kind
       ? { av: { kind: look.avatar_kind, ...(look.avatar_color ? { bg: look.avatar_color } : {}) } }
       : {}),
+    ...(pic ? { pic } : {}),
     ...(bio ? { bio } : {}),
     ...(banner ? { bn: banner } : {}),
   }

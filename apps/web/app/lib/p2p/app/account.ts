@@ -1,4 +1,7 @@
 import { ask, sendTo } from '../../asks'
+import { pictureGate } from '../picture_gate'
+import type { P2pPic } from '../pictures'
+import { pictureFacts } from './pictures'
 import { persistently } from '../../own_loads'
 import { BADGE_NOT_SPREAD } from './badge'
 import { client } from '../../client/client'
@@ -138,6 +141,7 @@ export function createAccountPart(
       ik: v.ik,
       me: v.ik,
       name: v.name,
+      pic: v.pic,
       fingerprint: fingerprint(v.ik),
       contacts: v.contacts,
       presence: v.presence,
@@ -408,6 +412,7 @@ export function createAccountPart(
       dms: {
         ...rt.dms,
         attachments: () => !p2pHost.textOnly(),
+        pictures: pictureGate(() => pictureFacts(useP2p.getState())),
         label: homeLabel,
         room: freeSpace,
         space: storageSpace,
@@ -863,6 +868,7 @@ export function createAccountPart(
     verifyCode: (ik: string) => state.node?.verifyCodeFor(ik) ?? null,
     scanVerify: (ik: string, text: string) => withNode(n => n.scanVerifyCode(ik, text)),
     setName: (name: string) => withNode(n => n.setName(name)),
+    setPic: (pic: P2pPic | null) => withNode(n => n.setPic(pic)),
     async resetIdentity() {
       await withNode(n => n.resetIdentity())
       void state.keeper?.refresh().catch(() => {})

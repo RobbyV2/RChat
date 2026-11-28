@@ -1,3 +1,4 @@
+import { cleanPic, parsePic, samePic, type PicWire } from './p2p/pictures'
 import type { AvatarKind, MemberLook, ProfilesMode } from './types'
 
 // The limits of a server profile, the same for hosted servers and P2P rooms
@@ -34,6 +35,8 @@ export interface RoomExtras {
   bio?: string
   av?: { kind: AvatarKind; bg?: string }
   bn?: string
+  // Their picture in this room, as its P2P files (pictures.ts); read with `parsePic`.
+  rpic?: PicWire
 }
 
 // A server profile as a place shows it: the look, and the card's description and banner.
@@ -86,8 +89,16 @@ export function roomExtras(
   }
   const bn = color(c.bn)
   if (bn) out.bn = bn
+  const rpic = cleanPic(c.rpic)
+  if (rpic) out.rpic = rpic
   return out
 }
+
+// The picture of their identity a member's `profile` write names (`pic`, beside their name).
+export const identityPic = (content: unknown) =>
+  typeof content === 'object' && content !== null
+    ? parsePic((content as { pic?: unknown }).pic)
+    : undefined
 
 // The extras of a member's latest room `profile` write that count now. A write names the join
 // that started the membership it was made in (`in`), so what someone set before they left, were
@@ -113,13 +124,15 @@ export const roomMode = (content: unknown): ProfilesMode | undefined => {
 export function roomProfile(extras: RoomExtras, mode?: ProfilesMode | null): PlaceProfile {
   if (mode === 'off') return NO_PROFILE
   const name = (mode ?? 'all') === 'all' ? (extras.nick ?? null) : null
+  const pic = parsePic(extras.rpic)
   const look: MemberLook = {
     name,
     avatar_kind: extras.av?.kind ?? null,
     avatar_color: extras.av?.bg ?? null,
+    ...(pic ? { avatar_pic: pic } : {}),
   }
   return {
-    look: look.name === null && look.avatar_kind === null ? null : look,
+    look: look.name === null && look.avatar_kind === null && !pic ? null : look,
     bio: extras.bio ?? null,
     banner: extras.bn ?? null,
   }
@@ -139,4 +152,5 @@ export const sameExtras = (a: RoomExtras, b: RoomExtras) =>
   a.bio === b.bio &&
   a.bn === b.bn &&
   a.av?.kind === b.av?.kind &&
-  a.av?.bg === b.av?.bg
+  a.av?.bg === b.av?.bg &&
+  samePic(parsePic(a.rpic), parsePic(b.rpic))

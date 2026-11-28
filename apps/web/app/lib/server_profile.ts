@@ -1,3 +1,4 @@
+import type { P2pPic } from './p2p/pictures'
 import { nameWithUsername } from './display_name'
 import { shownUser, type ShownPerson } from './people'
 import { bannerColor } from './profile'
@@ -169,13 +170,24 @@ export function shownTypers(
   return { names, ask }
 }
 
-type RoomMember = { name: string; nick?: string; av?: { kind: AvatarKind; bg?: string } }
+const picKey = (pic: P2pPic | null | undefined) =>
+  pic ? [pic.s.h, pic.l.h, pic.a?.h ?? ''].join(' ') : ''
+
+type RoomMember = {
+  name: string
+  nick?: string
+  av?: { kind: AvatarKind; bg?: string }
+  // The picture the room shows for them: null for none, left out when nothing says.
+  pic?: P2pPic | null
+}
 
 // What a P2P room's rows draw of its members, as one string: it changes only when someone's
 // shown name or avatar there does, not when presence or anything else in the room moves.
 export const roomLooksKey = (members: readonly (RoomMember & { ik: string })[] | undefined) =>
   (members ?? [])
-    .map(m => [m.ik, m.name, m.nick ?? '', m.av?.kind ?? '', m.av?.bg ?? ''].join('\u0000'))
+    .map(m =>
+      [m.ik, m.name, m.nick ?? '', m.av?.kind ?? '', m.av?.bg ?? '', picKey(m.pic)].join('\u0000')
+    )
     .join('\n')
 
 // The look of a member of a P2P room as this device shows them: the nickname only when no name
@@ -183,8 +195,14 @@ export const roomLooksKey = (members: readonly (RoomMember & { ik: string })[] |
 export const roomLookOf = (m: RoomMember | undefined): MemberLook | null => {
   if (!m) return null
   const name = m.nick !== undefined && m.nick === m.name ? m.nick : null
-  if (name === null && !m.av) return null
-  return { name, avatar_kind: m.av?.kind ?? null, avatar_color: m.av?.bg ?? null }
+  if (name === null && !m.av && !m.pic) return null
+  return {
+    name,
+    avatar_kind: m.av?.kind ?? null,
+    avatar_color: m.av?.bg ?? null,
+    // An avatar kind chosen for the room, without a picture there, shows no picture.
+    ...(m.pic ? { avatar_pic: m.pic } : m.av ? { avatar_pic: null } : {}),
+  }
 }
 
 // Whoever a notification of a hosted server is about, under the name the server shows now. Their

@@ -1,6 +1,7 @@
 import { time } from '../platform/time'
 import { deleteDB, openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction } from 'idb'
 import type { Contact } from './contacts'
+import type { PicWire } from './pictures'
 import type { Summary } from './acl/summary'
 import type { RoomExtras } from '../profile_fields'
 import type { PackedRec } from './acl_room'
@@ -46,6 +47,8 @@ export interface SelfRecord {
   // when the newest one handed out expires: peers may show the badge until then, also after it
   // is turned off.
   badge?: OwnBadge | null
+  // Our profile picture, as our profile carries it (pictures.ts).
+  pic?: PicWire | null
 }
 
 export interface OwnBadge {
