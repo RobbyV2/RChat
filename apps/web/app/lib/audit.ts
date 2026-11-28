@@ -73,6 +73,7 @@ const FIELD_LABELS: Record<string, string> = {
   banner_color: 'Banner color',
   description: 'Description',
   icon_kind: 'Icon',
+  icon_picture: 'Picture',
   name_color: 'Name color',
   join_messages: 'Join messages',
   leave_messages: 'Leave messages',
@@ -153,6 +154,7 @@ export function valueText(field: string, v: unknown): string {
     if (field === 'lock_until') return 'Not locked'
     return 'None'
   }
+  if (field === 'icon_picture' && typeof v === 'boolean') return v ? 'Set' : 'None'
   if (field === 'icon_kind' && typeof v === 'string')
     return ICON_KINDS.find(k => k.kind === v)?.label ?? v
   if (field === 'authors' && Array.isArray(v))

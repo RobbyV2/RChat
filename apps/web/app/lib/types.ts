@@ -77,6 +77,8 @@ export interface ServerSummary {
   name_color?: string | null
   // How its icon is drawn. Absent on older servers: the letter.
   icon_kind?: ServerIconKind
+  // The id of its uploaded picture, drawn over the icon.
+  icon_image?: string | null
   // your timeout's end in unix seconds; on this device's clock once loaded (see api.ts)
   timed_out_until?: number
   timed_out_remaining?: number
@@ -110,6 +112,7 @@ export interface ServerSummaryLite {
   // What it is about, and how its icon is drawn. Absent on older servers: none, the letter.
   description?: string | null
   icon_kind?: ServerIconKind
+  icon_image?: string | null
   // Whether new messages are stored encrypted. Absent on older servers: off.
   seal?: StoredSeal
 }
@@ -396,6 +399,7 @@ export interface ServerDetail {
   listed?: boolean
   description?: string | null
   icon_kind?: ServerIconKind
+  icon_image?: string | null
   // Whether new messages are stored encrypted. Absent on older servers: off.
   seal?: StoredSeal
   channels: Channel[]
@@ -782,6 +786,7 @@ export interface ServerMatch {
   has_password: boolean
   description?: string | null
   icon_kind?: ServerIconKind
+  icon_image?: string | null
   banner_color?: string | null
 }
 

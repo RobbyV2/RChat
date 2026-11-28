@@ -336,7 +336,7 @@ function ServerTile({
   name: string
   displayName: string
   big: boolean
-  look: { icon_kind?: string | null; banner_color?: string | null }
+  look: { icon_kind?: string | null; icon_image?: string | null; banner_color?: string | null }
 }) {
   return (
     <Tile

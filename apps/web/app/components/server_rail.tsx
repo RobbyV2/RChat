@@ -64,8 +64,10 @@ import { folderStyle } from '../lib/folder_colors'
 import type { DropTarget } from '../lib/drag'
 import type { ServerDetail } from '../lib/types'
 import { iconKind } from '../lib/server_about'
-import { serverIconColor, serverIconKind } from '../lib/selectors'
+import { serverIconColor, serverIconImage, serverIconKind } from '../lib/selectors'
 import { ServerIcon } from './server_about'
+import { PictureOver } from './avatar_picture'
+import { useAccountPicture, useAvatarView } from '../lib/avatar_view'
 import { longPress } from './context_menu'
 import { dragScope } from './drag'
 import { InstallButton } from './pwa_register'
@@ -98,8 +100,11 @@ const dropServer = (s: RChatState, name: string, { zone, index, onto }: DropTarg
   else s.moveServer(name, index)
 }
 
-// A hosted server's icon. `look` is the server as an invite or search shows it; without it
-// the icon follows this account's server list.
+// The CSS pixels a server picture is asked for: the 128 pixel file fills every tile.
+const SERVER_PICTURE_PX = 64
+
+// A hosted server's icon, with its uploaded picture over it. `look` is the server as an invite
+// or search shows it; without it the icon follows this account's server list.
 export function ServerGlyph({
   name,
   displayName,
@@ -108,12 +113,14 @@ export function ServerGlyph({
 }: {
   name: string
   displayName: string
-  look?: { icon_kind?: string | null; banner_color?: string | null }
+  look?: { icon_kind?: string | null; icon_image?: string | null; banner_color?: string | null }
   framed?: boolean
 }) {
   const own = useOwnServer(name)
   const kind = useStore(s => (look ? iconKind(look.icon_kind) : serverIconKind(s, name)))
   const color = useStore(s => (look ? (look.banner_color ?? null) : serverIconColor(s, name)))
+  const image = useStore(s => (look ? (look.icon_image ?? null) : serverIconImage(s, name)))
+  const picture = useAccountPicture(image, SERVER_PICTURE_PX, useAvatarView())
   return name === 'rchat' ? (
     <Surface pad="2xs" tone="plain" radius="none" place="h-full w-full">
       <img
@@ -124,14 +131,16 @@ export function ServerGlyph({
       />
     </Surface>
   ) : (
-    <ServerIcon
-      seed={name}
-      name={displayName}
-      kind={kind}
-      color={color}
-      own={own}
-      framed={framed}
-    />
+    <PictureOver src={picture} size="fill">
+      <ServerIcon
+        seed={name}
+        name={displayName}
+        kind={kind}
+        color={color}
+        own={own}
+        framed={framed}
+      />
+    </PictureOver>
   )
 }
 

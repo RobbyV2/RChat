@@ -801,6 +801,7 @@ fn indexes_follow_every_op() {
                     profiles_mode: Default::default(),
                     description: None,
                     icon_kind: Default::default(),
+                    icon_image: None,
                 },
             },
         },
@@ -1551,6 +1552,7 @@ fn renamed(old_name: &str, name: &str) -> Op {
                 profiles_mode: Default::default(),
                 description: None,
                 icon_kind: Default::default(),
+                icon_image: None,
             },
         },
     }

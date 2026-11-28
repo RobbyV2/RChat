@@ -61,7 +61,7 @@ function ServerProfileDialogBody({ room }: { room: string }) {
             has: held.profile.rpic !== undefined,
             look: { avatar_pic: parsePic(held.profile.rpic) ?? null },
             upload: async (file, crop) => {
-              const made = await maker.make(file, crop)
+              const made = await maker.make(file, crop, `profile:${room}`)
               if (typeof made === 'string') return made
               return p2pServer.setRoomProfile(room, { ...held.profile, rpic: picWire(made) })
             },

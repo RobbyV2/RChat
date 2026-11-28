@@ -376,6 +376,11 @@ pub struct ServerSummary {
     pub name_color: Option<String>,
     /// How the server's icon is drawn (see `ServerSummaryLite`).
     pub icon_kind: server_about::IconKind,
+    /// The id of the server's uploaded picture, served at `GET /api/v1/avatars/{id}/{size}`;
+    /// `null` without one. The icon of `icon_kind` shows until it has loaded and where pictures
+    /// are not shown. Set with `PUT /api/v1/servers/{name}/icon`.
+    #[serde(default)]
+    pub icon_image: Option<String>,
     /// When your timeout in this server ends (unix seconds), while you are timed out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timed_out_until: Option<i64>,
@@ -453,6 +458,11 @@ pub struct ServerSummaryLite {
     /// `identicon` (a pattern made from its key), on its `banner_color` when it has one.
     #[serde(default)]
     pub icon_kind: server_about::IconKind,
+    /// The id of the server's uploaded picture, served at `GET /api/v1/avatars/{id}/{size}`;
+    /// `null` without one. The icon of `icon_kind` shows until it has loaded and where pictures
+    /// are not shown. Set with `PUT /api/v1/servers/{name}/icon`.
+    #[serde(default)]
+    pub icon_image: Option<String>,
     /// Whether new messages of the server are stored encrypted with a key this site keeps
     /// (this is not end-to-end encryption), and whether the site requires it. Set with
     /// `PATCH /api/v1/servers/{name}`. Older servers send nothing, which reads as off.
@@ -780,6 +790,11 @@ pub struct ServerDetail {
     pub description: Option<String>,
     /// How its icon is drawn (see `ServerSummaryLite`). Set with `PATCH /api/v1/servers/{name}`.
     pub icon_kind: server_about::IconKind,
+    /// The id of the server's uploaded picture, served at `GET /api/v1/avatars/{id}/{size}`;
+    /// `null` without one. The icon of `icon_kind` shows until it has loaded and where pictures
+    /// are not shown. Set with `PUT /api/v1/servers/{name}/icon`.
+    #[serde(default)]
+    pub icon_image: Option<String>,
     /// Whether new messages are stored encrypted (see `ServerSummaryLite`). Set with
     pub seal: seal::SealView,
     /// Channels the caller can see, in list order (see `category_id` and `position`). Channels
@@ -2414,6 +2429,10 @@ pub fn routes(
             .route(
                 "/me/avatar",
                 put(avatars::put_my_avatar).delete(avatars::delete_my_avatar),
+            )
+            .route(
+                "/servers/{name}/icon",
+                put(avatars::put_server_icon).delete(avatars::delete_server_icon),
             )
             .route(
                 "/servers/{name}/profile/avatar",

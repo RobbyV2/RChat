@@ -96,6 +96,8 @@ import { HostedRules } from './perm_dialog'
 import { MemberSearchField, useMemberSearch } from './member_search'
 import { ColorField } from './color_field'
 import { AboutEditor } from './server_about'
+import { ServerGlyph } from './server_rail'
+import { limitsOf } from '../lib/instance_limits'
 import { hostedAbout, hostedAboutPatch } from '../lib/server_about'
 import { ServerHeader } from './server_header'
 import { SystemMessagesSection } from './system_messages'
@@ -973,7 +975,14 @@ function HostedAbout({ server }: { server: string }) {
   const account = useAccount()
   const detail = useStore(s => s.servers[server])
   const own = useOwnServer(server)
+  const pictures = useStore(s => s.settings.profile_pictures)
+  const maxBytes = useStore(s => limitsOf(s.instance).avatar_upload_bytes)
   if (!detail) return null
+  const sent = (request: Promise<unknown>) =>
+    request.then(
+      () => null,
+      (e: unknown) => errorText(e)
+    )
   return (
     <AboutEditor
       seed={server}
@@ -984,6 +993,16 @@ function HostedAbout({ server }: { server: string }) {
       own={own}
       locked=""
       onSave={change => sendTo(account, ask.updateServer(server, hostedAboutPatch(change)))}
+      picture={{
+        glyph: <ServerGlyph name={server} displayName={detail.display_name} />,
+        source: {
+          off: pictures ? null : 'Profile pictures are turned off on this site',
+          maxBytes,
+          has: !!detail.icon_image,
+          upload: (file, crop) => sent(sendTo(account, ask.putServerIcon(server, file, crop))),
+          remove: () => sent(sendTo(account, ask.deleteServerIcon(server))),
+        },
+      }}
     />
   )
 }

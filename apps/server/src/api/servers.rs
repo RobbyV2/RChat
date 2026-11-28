@@ -448,6 +448,8 @@ pub struct ServerMatch {
     pub description: Option<String>,
     /// How its icon is drawn (see `ServerSummaryLite`).
     pub icon_kind: IconKind,
+    /// The id of its uploaded picture (see `ServerSummaryLite`); `null` without one.
+    pub icon_image: Option<String>,
     /// The color its icon is drawn on, as `#rrggbb`; `null` uses the theme color.
     pub banner_color: Option<String>,
 }
@@ -1024,7 +1026,7 @@ pub(crate) async fn role_ids_of(
     Ok(map)
 }
 
-const MY_SERVERS: &str = "SELECT s.name, s.display_name, s.creator, m.is_admin, m.joined_at, s.banner_color, s.name_color, t.until, s.profiles_mode, s.icon_kind FROM members m JOIN servers s ON s.name = m.server LEFT JOIN member_timeouts t ON t.server = m.server AND t.username = m.username WHERE m.username = $1";
+const MY_SERVERS: &str = "SELECT s.name, s.display_name, s.creator, m.is_admin, m.joined_at, s.banner_color, s.name_color, t.until, s.profiles_mode, s.icon_kind, s.icon_image FROM members m JOIN servers s ON s.name = m.server LEFT JOIN member_timeouts t ON t.server = m.server AND t.username = m.username WHERE m.username = $1";
 
 fn summary_rows(rows: &[sqlx::any::AnyRow]) -> Result<Vec<ServerSummary>, ApiError> {
     let t = now();
@@ -1039,6 +1041,7 @@ fn summary_rows(rows: &[sqlx::any::AnyRow]) -> Result<Vec<ServerSummary>, ApiErr
             banner_color: r.try_get(5)?,
             name_color: r.try_get(6)?,
             icon_kind: IconKind::stored(r.try_get::<Option<String>, _>(9)?.as_deref()),
+            icon_image: r.try_get(10)?,
             timed_out_until,
             timed_out_remaining: timed_out_until.map(|u| u - t),
             profiles_mode: crate::api::profiles::ProfilesMode::parse(&r.try_get::<String, _>(8)?),
@@ -1311,6 +1314,7 @@ async fn server_detail(
         profiles_mode,
         description,
         icon_kind,
+        icon_image,
         seal,
     } = access.lite().clone();
     let rows = sqlx::query(
@@ -1383,6 +1387,7 @@ async fn server_detail(
         listed,
         description,
         icon_kind,
+        icon_image,
         channels,
         categories,
         separators,
@@ -2446,6 +2451,7 @@ async fn found_server(
             profiles_mode: Default::default(),
             description: None,
             icon_kind: IconKind::Letter,
+            icon_image: None,
             seal: crate::api::seal::server_view(&state.db, 0, 0).await,
         },
     });
@@ -2623,7 +2629,7 @@ pub(crate) async fn search_servers(
     }
     let fuzzy = is_fuzzy(&q);
     let sql = format!(
-        "SELECT name, display_name, password_hash, description, icon_kind, banner_color FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging' AND ((name IN ({}) AND listed <> 0 AND COALESCE(password_hash, '') <> '!none') OR name IN (SELECT server FROM members WHERE username = $2)) ORDER BY name LIMIT 50",
+        "SELECT name, display_name, password_hash, description, icon_kind, banner_color, icon_image FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging' AND ((name IN ({}) AND listed <> 0 AND COALESCE(password_hash, '') <> '!none') OR name IN (SELECT server FROM members WHERE username = $2)) ORDER BY name LIMIT 50",
         crate::api::access::Reading::now(db).await.servers_sql()
     );
     let rows = state
@@ -2648,6 +2654,7 @@ pub(crate) async fn search_servers(
             has_password: r.try_get::<Option<String>, _>(2)?.is_some(),
             description: r.try_get(3)?,
             icon_kind: IconKind::stored(r.try_get::<Option<String>, _>(4)?.as_deref()),
+            icon_image: r.try_get(6)?,
             banner_color: r.try_get(5)?,
         });
         if out.len() >= 10 {

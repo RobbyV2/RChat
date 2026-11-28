@@ -412,7 +412,10 @@ export function createAccountPart(
       dms: {
         ...rt.dms,
         attachments: () => !p2pHost.textOnly(),
-        pictures: pictureGate(() => pictureFacts(useP2p.getState())),
+        pictures: pictureGate(
+          () => pictureFacts(useP2p.getState()),
+          (h, scope) => parts.attachments.p2pFiles.madePicture(h, scope)
+        ),
         label: homeLabel,
         room: freeSpace,
         space: storageSpace,

@@ -17,6 +17,8 @@ A holder serves a file only to a contact who shares a conversation with a live m
 
 A P2P identity sets a picture in Settings → P2P, and one per P2P server in its server profile. The device crops the image and makes 128 and 512 pixel files of at most 256 KiB each, as an instance does for an upload. The profile names both files by hash: `pic` beside the signed profile sent to contacts and in the `profile` write of each server, and `rpic` for a picture of one server. Only the device that made a picture serves its files: to the mutual contacts of its owner, and to the joined members of a server that shows it. A hash that someone else names as their picture fetches nothing from a device that holds that file for another reason. A receiver shows a file only when its bytes are a PNG or JPEG image.
 
+A P2P server's picture is the `pic` field of its `about` register, written by a member with Manage server. The device that set it serves its files to the joined members.
+
 ## In channels and DMs on an instance
 
 With `P2P_ATTACHMENTS` on, people can attach P2P files to messages in channels and DMs of the instance. The message goes through the instance, and the file stays in the sender's tab:

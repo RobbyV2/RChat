@@ -246,6 +246,7 @@ fn self_grants_are_recognized() {
             profiles_mode: Default::default(),
             description: None,
             icon_kind: Default::default(),
+            icon_image: None,
         },
     };
     assert_eq!(

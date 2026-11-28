@@ -109,13 +109,21 @@ describe('what the picture gate reads from the state', () => {
     contacts: [contact('bob', 'mutual', wire(3)), contact('eve', 'blocked', wire(5))],
     servers: {
       r1: {
+        id: 'r1',
         me: 'join',
         profile: {},
+        about: { pic: pic(11) },
         members: [member('carol', 'join', pic(7)), member('gone', 'leave'), member('me', 'join')],
       },
-      r2: { me: 'leave', profile: {}, members: [member('dan', 'join')] },
-      r3: { me: 'join', profile: { rpic: wire(9) }, members: [] },
-      r4: { me: 'join', profile: { av: { kind: 'color', bg: '#112233' } }, members: [] },
+      r2: { id: 'r2', me: 'leave', profile: {}, about: {}, members: [member('dan', 'join')] },
+      r3: { id: 'r3', me: 'join', profile: { rpic: wire(9) }, about: {}, members: [] },
+      r4: {
+        id: 'r4',
+        me: 'join',
+        profile: { av: { kind: 'color', bg: '#112233' } },
+        about: {},
+        members: [],
+      },
     },
   } as unknown as P2pState
 
@@ -123,9 +131,15 @@ describe('what the picture gate reads from the state', () => {
     const facts = pictureFacts(state)
     expect(facts.contacts).toEqual([{ ik: 'bob', pic: pic(3) }])
     expect(facts.rooms).toEqual([
-      { mine: pic(1), members: [{ ik: 'carol', pic: pic(7) }] },
-      { mine: pic(9), members: [] },
-      { mine: null, members: [] },
+      {
+        id: 'r1',
+        mine: null,
+        identity: true,
+        about: pic(11),
+        members: [{ ik: 'carol', pic: pic(7) }],
+      },
+      { id: 'r3', mine: pic(9), identity: false, about: null, members: [] },
+      { id: 'r4', mine: null, identity: false, about: null, members: [] },
     ])
     expect(pictureFacts(state)).toBe(facts)
   })
@@ -171,24 +185,27 @@ describe('a picture made on this device', () => {
 
   test('the 128 and 512 pixel files are kept for peers, within the size a file may have', async () => {
     const kept: number[] = []
+    const scopes: string[] = []
     const keeper = {
-      keepPicture: async (files: readonly Blob[]) =>
+      keepPicture: async (files: readonly Blob[], scope: string) =>
         files.map((f, i) => {
+          scopes.push(scope)
           kept.push(f.size)
           return { h: h(i + 1), size: f.size }
         }),
     }
     const made = { files: [blob(5), blob(50), blob(500)] }
-    expect(await keptPic(keeper, made)).toEqual({
+    expect(await keptPic(keeper, made, 'profile:r1')).toEqual({
       s: { h: h(1), size: 50 },
       l: { h: h(2), size: 500 },
     })
     expect(kept).toEqual([50, 500])
+    expect(scopes).toEqual(['profile:r1', 'profile:r1'])
     expect(PIC_LIMITS.still).toBe(AVATAR_IMAGES.p2p_max_bytes)
     const heavy = { files: [blob(5), blob(50), blob(PIC_LIMITS.still + 1)] }
-    expect(await keptPic(keeper, heavy)).toBe(PICTURE_TOO_DETAILED)
-    expect(await keptPic(keeper, { error: 'why' })).toBe('why')
-    expect(await keptPic({ keepPicture: async () => null }, made)).toBe(P2P_NOT_RUNNING)
+    expect(await keptPic(keeper, heavy, 'identity')).toBe(PICTURE_TOO_DETAILED)
+    expect(await keptPic(keeper, { error: 'why' }, 'identity')).toBe('why')
+    expect(await keptPic({ keepPicture: async () => null }, made, 'identity')).toBe(P2P_NOT_RUNNING)
     expect(picWire(pic(1))).toEqual(wire(1))
   })
 })

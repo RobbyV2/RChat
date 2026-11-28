@@ -1437,6 +1437,7 @@ async fn profile_pictures_upgrade_keeps_accounts_and_server_profiles() {
         for sql in [
             "DROP INDEX idx_users_avatar_image",
             "DROP INDEX idx_member_profiles_avatar_image",
+            "DROP INDEX idx_servers_icon_image",
             "DROP TABLE avatar_images",
             "ALTER TABLE users DROP COLUMN avatar_image",
             "ALTER TABLE member_profiles DROP COLUMN avatar_image",
@@ -1457,10 +1458,10 @@ async fn profile_pictures_upgrade_keeps_accounts_and_server_profiles() {
             assert_eq!(count(&db, "SELECT COUNT(*) FROM users WHERE username = 'alice' AND avatar_kind = 'color' AND avatar_color = '#112233'").await, 1);
             assert_eq!(count(&db, "SELECT COUNT(*) FROM member_profiles WHERE server = 'den' AND username = 'bob' AND name = 'Robert' AND avatar_kind = 'color' AND avatar_color = '#445566'").await, 1);
             let indexes = match sqlite {
-                true => "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_avatar_images_owner', 'idx_users_avatar_image', 'idx_member_profiles_avatar_image')",
-                false => "SELECT COUNT(*) FROM pg_indexes WHERE indexname IN ('idx_avatar_images_owner', 'idx_users_avatar_image', 'idx_member_profiles_avatar_image')",
+                true => "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_avatar_images_owner', 'idx_users_avatar_image', 'idx_member_profiles_avatar_image', 'idx_servers_icon_image')",
+                false => "SELECT COUNT(*) FROM pg_indexes WHERE indexname IN ('idx_avatar_images_owner', 'idx_users_avatar_image', 'idx_member_profiles_avatar_image', 'idx_servers_icon_image')",
             };
-            assert_eq!(count(&db, indexes).await, 3);
+            assert_eq!(count(&db, indexes).await, 4);
             assert_eq!(count(&db, "SELECT COUNT(*) FROM avatar_images").await, round);
             assert_eq!(count(&db, "SELECT COUNT(*) FROM servers WHERE name = 'den' AND icon_image IS NULL").await, 1, "old servers have no picture");
             assert_eq!(count(&db, "SELECT COUNT(*) FROM avatar_images WHERE a128 IS NOT NULL OR a512 IS NOT NULL").await, 0);

@@ -276,6 +276,9 @@ export interface BlobRecord {
   type: string | null
   // Sent from here.
   own: boolean
+  // The pictures this file was made for on this device (`identity`, `profile:<room>`,
+  // `about:<room>`): the picture gate serves it only as one of those.
+  pic?: string[]
   // The user (or auto-download) asked for it: an unfinished download resumes when a holder is
   // online.
   wanted: boolean

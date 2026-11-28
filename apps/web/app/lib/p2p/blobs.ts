@@ -1838,6 +1838,16 @@ export class Blobs {
     this.changed(h)
   }
 
+  // Marks a file made and kept here (`putOwn`) as the picture `scope` names: the picture gate
+  // serves a file only as a picture it was made for.
+  async markPicture(h: string, scope: string) {
+    await this.store.updateBlob(h, cur =>
+      cur?.own && cur.done && !cur.pic?.includes(scope)
+        ? { ...cur, pic: [...(cur.pic ?? []), scope] }
+        : null
+    )
+  }
+
   // Deletes a file here: its record, its blocks, its hashes and any download of it.
   async remove(h: string) {
     const dl = this.downloads.get(h)

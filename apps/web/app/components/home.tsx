@@ -96,6 +96,7 @@ import { ownsP2pServer } from '../lib/p2p/server/types'
 import { placesOf } from '../lib/p2p/palette_source'
 import { mutedOf, levelOf } from '../lib/notify'
 import { ServerIcon } from './server_about'
+import { P2pServerGlyph } from './p2p/p2p_server_glyph'
 import { hex } from '../lib/p2p/roles'
 import { KeyAvatar, P2pBadge, PresenceDot } from './p2p/p2p_badge'
 import { ElsewhereNotice } from './p2p/p2p_home'
@@ -984,13 +985,15 @@ function P2pServerUnreadRow({ v, pings, channels }: P2pUnreadRow) {
       glyph={
         <PlaceGlyph p2p>
           <span className="flex h-full w-full rounded-inherit text-on-surface">
-            <ServerIcon
-              seed={v.id}
-              name={v.name}
-              kind={v.about.icon}
-              color={hex(v.color)}
-              own={own}
-            />
+            <P2pServerGlyph pic={v.about.pic}>
+              <ServerIcon
+                seed={v.id}
+                name={v.name}
+                kind={v.about.icon}
+                color={hex(v.color)}
+                own={own}
+              />
+            </P2pServerGlyph>
           </span>
         </PlaceGlyph>
       }

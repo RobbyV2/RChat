@@ -330,3 +330,115 @@ async fn the_sweep_removes_only_old_pictures_nothing_names() {
     assert_eq!(left, kept);
     done(state, path).await;
 }
+
+async fn icon_of(state: &AppState, server: &str) -> Option<String> {
+    sqlx::query_scalar("SELECT icon_image FROM servers WHERE name = $1")
+        .bind(server)
+        .fetch_one(&state.db)
+        .await
+        .expect("server")
+}
+
+#[tokio::test]
+async fn a_manager_sets_and_removes_the_server_picture_and_others_are_refused() {
+    let (state, path) = temp_state("server_icon").await;
+    for name in ["alice", "bob", "carol"] {
+        account(&state, name).await;
+    }
+    for sql in [
+        "INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', 'alice', 1)",
+        "INSERT INTO members(server, username, is_admin, joined_at) VALUES('club', 'alice', 1, 1)",
+        "INSERT INTO members(server, username, joined_at) VALUES('club', 'bob', 1)",
+    ] {
+        sqlx::query(sql).execute(&state.db).await.expect("seed");
+    }
+    let set = |by: &'static str| {
+        let state = state.clone();
+        async move {
+            put_server_icon(
+                State(state),
+                Authed(mem_user(by, false)),
+                Path("club".to_string()),
+                Query(WHOLE),
+                HeaderMap::new(),
+                Body::from(png(&halves(90, 90))),
+            )
+            .await
+            .map(|Json(server)| server)
+        }
+    };
+    let unset = |by: &'static str| {
+        let state = state.clone();
+        async move {
+            delete_server_icon(
+                State(state),
+                Authed(mem_user(by, false)),
+                Path("club".to_string()),
+            )
+            .await
+            .map(|Json(server)| server)
+        }
+    };
+    assert_eq!(
+        refusal(set("bob").await).0,
+        403,
+        "a member without Manage server"
+    );
+    assert_eq!(refusal(unset("bob").await).0, 403);
+    assert_eq!(
+        refusal(set("carol").await).0,
+        403,
+        "an open server shows to anyone, and takes Manage server to change"
+    );
+    let unknown = put_server_icon(
+        State(state.clone()),
+        Authed(mem_user("alice", false)),
+        Path("nowhere".to_string()),
+        Query(WHOLE),
+        HeaderMap::new(),
+        Body::from(png(&halves(90, 90))),
+    )
+    .await;
+    assert_eq!(refusal(unknown).0, 404);
+    assert_eq!(stored(&state).await, 0);
+    let mut rx = state.hub.subscribe();
+    let server = set("alice").await.expect("set");
+    let id = server.icon_image.clone().expect("a picture id");
+    assert_eq!(icon_of(&state, "club").await.as_deref(), Some(id.as_str()));
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(WsEvent::ServerUpdated { server }) if server.icon_image.as_deref() == Some(id.as_str())
+    ));
+    let shown = served(&state, &id, "128", HeaderMap::new()).await;
+    assert_eq!(shown.status(), StatusCode::OK);
+    let again = set("alice").await.expect("replace");
+    assert_ne!(again.icon_image.as_deref(), Some(id.as_str()));
+    assert_eq!(stored(&state).await, 1, "the picture before is removed");
+    let audited: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_log WHERE server = 'club' AND action = 'server.update'",
+    )
+    .fetch_one(&state.db)
+    .await
+    .expect("audit");
+    assert_eq!(audited, 2);
+    sqlx::query("UPDATE avatar_images SET created_at = 0")
+        .execute(&state.db)
+        .await
+        .expect("aged");
+    assert_eq!(
+        sweep(&state.db, now()).await.expect("sweep"),
+        0,
+        "a server names it"
+    );
+    assert_eq!(unset("alice").await.expect("removed").icon_image, None);
+    assert_eq!(icon_of(&state, "club").await, None);
+    assert_eq!(stored(&state).await, 0);
+    assert!(matches!(rx.try_recv(), Ok(WsEvent::ServerUpdated { .. })));
+    assert!(matches!(rx.try_recv(), Ok(WsEvent::ServerUpdated { .. })));
+    assert_eq!(
+        unset("alice").await.expect("nothing to remove").icon_image,
+        None
+    );
+    assert!(rx.try_recv().is_err(), "nothing changed, nothing is sent");
+    done(state, path).await;
+}

@@ -89,7 +89,7 @@ function PictureRow() {
         maxBytes: maker.maxBytes,
         has,
         upload: async (file, crop) => {
-          const made = await maker.make(file, crop)
+          const made = await maker.make(file, crop, 'identity')
           if (typeof made === 'string') return made
           await p2p.setPic(made)
           return null

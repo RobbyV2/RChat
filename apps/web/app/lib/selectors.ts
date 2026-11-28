@@ -180,6 +180,10 @@ const listRow = (s: Pick<RChatState, 'me'>, name: string) => {
 export const serverIconKind = (s: Pick<RChatState, 'me' | 'servers'>, name: string) =>
   iconKind(s.servers[name]?.icon_kind ?? listRow(s, name)?.icon_kind)
 
+// The id of a hosted server's uploaded picture; null without one.
+export const serverIconImage = (s: Pick<RChatState, 'me' | 'servers'>, name: string) =>
+  (s.servers[name] ? s.servers[name].icon_image : listRow(s, name)?.icon_image) ?? null
+
 export const serverIconColor = (s: Pick<RChatState, 'me' | 'servers'>, name: string) =>
   (s.servers[name] ? s.servers[name].banner_color : listRow(s, name)?.banner_color) ?? null
 

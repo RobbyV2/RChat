@@ -1,4 +1,4 @@
-//! Uploaded profile pictures: an account or a server profile names one by its id, and anyone
+//! Uploaded pictures: an account, a server profile or a server names one by its id, and anyone
 //! who was shown that id reads it. An id is random and never reused, so a picture's address
 //! never changes what it serves.
 
@@ -14,13 +14,16 @@ use serde::Deserialize;
 use sqlx::Row;
 use utoipa::IntoParams;
 
-use crate::api::access::not_found;
+use crate::api::access::perms::Perm;
+use crate::api::access::{Proof, ServerAccess, not_found, resolve_server};
+use crate::api::audit;
 use crate::api::auth::MeUpdated;
 use crate::api::features::Feature;
 use crate::api::media::{declared_length, read_raw, reading_slot, reserve};
-use crate::api::{ApiError, ApiErrorBody, Authed, Settings};
+use crate::api::{ApiError, ApiErrorBody, Authed, ServerSummaryLite, Settings};
 use crate::db::{Db, User, now};
 use crate::state::AppState;
+use crate::ws::WsEvent;
 
 use rchat_avatar::{Crop, Encoded, Mime, Refused, SIZES};
 
@@ -172,9 +175,10 @@ pub(crate) async fn discard(conn: &mut sqlx::AnyConnection, id: &str) -> sqlx::R
     Ok(())
 }
 
-/// Removes the pictures no account and no server profile names, once they are an hour old.
+/// Removes the pictures no account, no server profile and no server names, once they are an
+/// hour old.
 pub(crate) async fn sweep(db: &Db, at: i64) -> sqlx::Result<u64> {
-    Ok(sqlx::query("DELETE FROM avatar_images WHERE created_at < $1 AND NOT EXISTS (SELECT 1 FROM users u WHERE u.avatar_image = avatar_images.id) AND NOT EXISTS (SELECT 1 FROM member_profiles p WHERE p.avatar_image = avatar_images.id)")
+    Ok(sqlx::query("DELETE FROM avatar_images WHERE created_at < $1 AND NOT EXISTS (SELECT 1 FROM users u WHERE u.avatar_image = avatar_images.id) AND NOT EXISTS (SELECT 1 FROM member_profiles p WHERE p.avatar_image = avatar_images.id) AND NOT EXISTS (SELECT 1 FROM servers s WHERE s.icon_image = avatar_images.id)")
         .bind(at - UNUSED_KEEP)
         .execute(db)
         .await?
@@ -255,6 +259,118 @@ pub(crate) async fn delete_my_avatar(
             crate::api::auth::profile_changed(&state, &user.username).await?,
         )),
         None => Ok(Json(crate::api::auth::me_updated(&state.db, user).await?)),
+    }
+}
+
+/// Sets the picture of the server `key` to `next` and removes the one before, in one
+/// transaction with its audit line. Gives whether a picture was there before.
+async fn replace_icon(
+    state: &AppState,
+    access: &ServerAccess,
+    user: &User,
+    next: Option<&Encoded>,
+) -> Result<bool, ApiError> {
+    let key = access.name();
+    let actor = access.audit_actor(&state.db, Perm::ManageServer).await?;
+    let mut tx = state.db.begin().await?;
+    let before: Option<String> = sqlx::query("SELECT icon_image FROM servers WHERE name = $1")
+        .bind(key)
+        .fetch_optional(&mut *tx)
+        .await?
+        .map(|r| r.try_get(0))
+        .transpose()?
+        .flatten();
+    let id = match next {
+        Some(picture) => Some(store(&mut tx, &user.username, Some(key), picture).await?),
+        None => None,
+    };
+    sqlx::query("UPDATE servers SET icon_image = $1 WHERE name = $2")
+        .bind(&id)
+        .bind(key)
+        .execute(&mut *tx)
+        .await?;
+    if let Some(old) = &before {
+        discard(&mut tx, old).await?;
+    }
+    if before.is_some() || id.is_some() {
+        audit::record(
+            &mut tx,
+            audit::Entry::new(key, &actor, audit::Action::ServerUpdate)
+                .target(audit::Target::server(&access.lite().display_name))
+                .details(audit::Details::new().change(
+                    "icon_picture",
+                    before.is_some(),
+                    id.is_some(),
+                )),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(before.is_some())
+}
+
+/// The server a manager opens to change its picture.
+async fn managed(state: &AppState, user: &User, name: &str) -> Result<ServerAccess, ApiError> {
+    let access = resolve_server(&state.db, name, Some(user), &Proof::none()).await?;
+    access.require_perm(&state.db, Perm::ManageServer).await?;
+    Ok(access)
+}
+
+/// The server after its picture changed: tells everyone who sees it, and gives the answer.
+async fn icon_changed(
+    state: &AppState,
+    user: &User,
+    key: &str,
+) -> Result<Json<ServerSummaryLite>, ApiError> {
+    let server = resolve_server(&state.db, key, Some(user), &Proof::none())
+        .await?
+        .lite()
+        .clone();
+    state.hub.broadcast(WsEvent::ServerUpdated {
+        server: server.clone(),
+    });
+    Ok(Json(server))
+}
+
+/// Upload a server picture
+///
+/// Sets the picture of the server from the image in the request body, under the rules of
+/// `PUT /api/v1/me/avatar` (types, `limits.avatar_upload_bytes`, 40 megapixels, the crop `x`,
+/// `y`, `size`, the stored sizes). It shows over the server's icon (`icon_kind`), which stays
+/// as it is and shows where pictures are not shown. The picture before is removed. Needs the
+/// Manage server permission. Logged in the audit log as `server.update`. Emits
+/// `server_updated`. Requires the `profile_pictures` switch. Strict rate-limit bucket.
+#[utoipa::path(put, path = "/api/v1/servers/{name}/icon", tag = "Servers", params(("name" = String, Path, description = "Server name, case-insensitive"), CropQuery), request_body(content = Vec<u8>, content_type = "application/octet-stream", description = "The image file"), responses((status = 200, description = "The server; `icon_image` is the id of the picture", body = ServerSummaryLite), (status = 400, description = "As `PUT /api/v1/me/avatar`: not an image of a known type, over 40 megapixels, or a crop outside the picture", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Missing the Manage server permission, or `Profile pictures are turned off on this site` (`reason.kind` `off_site`, `reason.control` `profile_pictures`)", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`: no such server, or one you have no access to (identical responses)", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`", body = ApiErrorBody), (status = 413, description = "`Picture exceeds 8MB limit` with the configured number (`reason.control` `avatar_upload_max_mib`)", body = ApiErrorBody), (status = 429, description = "Too many requests in the strict bucket, or 3 of your uploads are already being read", body = ApiErrorBody), (status = 503, description = "`Too many uploads right now, try again in a moment`", body = ApiErrorBody)), security(("bearer" = [])))]
+pub(crate) async fn put_server_icon(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+    Query(crop): Query<CropQuery>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Json<ServerSummaryLite>, ApiError> {
+    let access = managed(&state, &user, &name).await?;
+    let picture = uploaded(&state, &user, &headers, crop, body).await?;
+    replace_icon(&state, &access, &user, Some(&picture)).await?;
+    icon_changed(&state, &user, access.name()).await
+}
+
+/// Remove a server picture
+///
+/// Removes the picture of the server, which shows its icon (`icon_kind`) again. Removing a
+/// picture that is not there changes nothing. Needs the Manage server permission. Works while
+/// the `profile_pictures` switch is off. Logged in the audit log as `server.update` and emits
+/// `server_updated` when a picture was removed. Strict rate-limit bucket.
+#[utoipa::path(delete, path = "/api/v1/servers/{name}/icon", tag = "Servers", params(("name" = String, Path, description = "Server name, case-insensitive")), responses((status = 200, description = "The server without a picture", body = ServerSummaryLite), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Missing the Manage server permission", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`: no such server, or one you have no access to (identical responses)", body = ApiErrorBody), (status = 429, description = "Too many requests in the strict bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+pub(crate) async fn delete_server_icon(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+) -> Result<Json<ServerSummaryLite>, ApiError> {
+    let access = managed(&state, &user, &name).await?;
+    match replace_icon(&state, &access, &user, None).await? {
+        true => icon_changed(&state, &user, access.name()).await,
+        false => Ok(Json(access.lite().clone())),
     }
 }
 

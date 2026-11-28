@@ -747,6 +747,10 @@ export const endpoints = (c: ApiClient) => ({
   putAvatar: (file: Blob, crop: AvatarCrop | null) =>
     c.req<MeUpdated>('PUT', `/me/avatar${cropQuery(crop)}`, file),
   deleteAvatar: () => c.req<MeUpdated>('DELETE', '/me/avatar'),
+  putServerIcon: (server: string, file: Blob, crop: AvatarCrop | null) =>
+    c.req<ServerSummaryLite>('PUT', `/servers/${seg(server)}/icon${cropQuery(crop)}`, file),
+  deleteServerIcon: (server: string) =>
+    c.req<ServerSummaryLite>('DELETE', `/servers/${seg(server)}/icon`),
   putProfileAvatar: (server: string, file: Blob, crop: AvatarCrop | null) =>
     c.req<ServerProfile>('PUT', `/servers/${seg(server)}/profile/avatar${cropQuery(crop)}`, file),
   deleteProfileAvatar: (server: string) =>

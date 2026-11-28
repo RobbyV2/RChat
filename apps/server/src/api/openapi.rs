@@ -276,6 +276,8 @@ impl Modify for Bearer {
         super::avatars::put_my_avatar,
         super::avatars::delete_my_avatar,
         super::avatars::get_avatar,
+        super::avatars::put_server_icon,
+        super::avatars::delete_server_icon,
         super::profiles::reset_member_profile,
         super::profiles::unlock_member_profile,
         super::guest_voice::disconnect_guest,

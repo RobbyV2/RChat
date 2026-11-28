@@ -1,7 +1,8 @@
+import { parsePic, picWire, type P2pPic } from './p2p/pictures'
 import { charCount, charsLeft, cleanBio } from './rules'
 
 // A server's about: a short description and the look of its icon. Hosted servers keep them in
-// `description` and `icon_kind`; P2P servers in the `about` register ({text, icon}).
+// `description` and `icon_kind`; P2P servers in the `about` register ({text, icon, pic}).
 
 export const ABOUT_MAX = 300
 
@@ -17,6 +18,8 @@ export const ICON_KINDS: readonly { kind: ServerIconKind; label: string }[] = [
 export interface ServerAbout {
   text: string | null
   icon: ServerIconKind
+  // The uploaded picture of a P2P server, as P2P files. A hosted server's is `icon_image`.
+  pic?: P2pPic
 }
 
 export const NO_ABOUT: ServerAbout = { text: null, icon: 'letter' }
@@ -50,12 +53,15 @@ export const hostedAbout = (s: { description?: string | null; icon_kind?: string
 export const p2pAbout = (c: unknown): ServerAbout => {
   if (c === null || typeof c !== 'object' || Array.isArray(c)) return NO_ABOUT
   const r = c as Record<string, unknown>
-  return { text: aboutText(r.text), icon: iconKind(r.icon) }
+  const pic = parsePic(r.pic)
+  return { text: aboutText(r.text), icon: iconKind(r.icon), ...(pic ? { pic } : {}) }
 }
 
 export interface AboutChange {
   text?: string | null
   icon?: ServerIconKind
+  // A P2P server's picture: null removes it.
+  pic?: P2pPic | null
 }
 
 // What a save changes: only the fields that differ from what is saved.
@@ -79,6 +85,10 @@ export const p2pAboutContent = (
     else out.text = clipped(cleanAbout(change.text), ABOUT_MAX)
   }
   if (change.icon !== undefined) out.icon = change.icon
+  if (change.pic !== undefined) {
+    if (change.pic === null) delete out.pic
+    else out.pic = picWire(change.pic)
+  }
   return out
 }
 

@@ -5,6 +5,7 @@ import { fitContent, LIMITS as EV, type Attachment } from '../content'
 import { assemble, EMPTY_VIEW, offText } from '../blobs'
 import type { Hashed } from '../hashing'
 import type { P2pFile } from '../pictures'
+import type { PictureScope } from '../picture_gate'
 import { AVATAR_IMAGES } from '../../avatar_images'
 import { checkedThumb, hashFile, imageFits, previewOf, saveName, UrlCache } from '../files'
 import { kindOf, NEUTRAL_TYPE } from '../../sniff'
@@ -188,14 +189,20 @@ export function createAttachmentsPart(
 
     unusePicture: (h: string) => pictureUrls.unuse(h),
 
-    // Keeps the files of a picture made on this device, so the people shown it can fetch them.
-    async keepPicture(files: readonly Blob[]): Promise<P2pFile[] | null> {
+    // Whether the file `h` was made on this device as the picture `scope` names.
+    madePicture: async (h: string, scope: PictureScope) =>
+      (await recordOf(h))?.pic?.includes(scope) === true,
+
+    // Keeps the files of a picture made on this device for `scope`, so the people shown it can
+    // fetch them.
+    async keepPicture(files: readonly Blob[], scope: PictureScope): Promise<P2pFile[] | null> {
       const d = state.dms
       if (!d) return null
       const kept: P2pFile[] = []
       for (const file of files) {
         const hashed = await hashFile(file)
         await d.blobs.putOwn(file, hashed)
+        await d.blobs.markPicture(hashed.h, scope)
         kept.push({ h: hashed.h, size: hashed.size })
       }
       return kept

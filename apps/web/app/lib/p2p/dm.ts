@@ -840,7 +840,7 @@ export class Dms {
       entitled: async (ik, h) =>
         (await this.entitled(ik, h)) ||
         ((await this.moreEntitled?.(ik, h)) ?? false) ||
-        (deps.pictures?.entitled(ik, h) ?? false),
+        ((await deps.pictures?.entitled(ik, h)) ?? false),
       members: async h => [
         ...new Set([
           ...(await this.holdersOf(h)),

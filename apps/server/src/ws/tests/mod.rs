@@ -139,6 +139,7 @@ fn lite(name: &str) -> ServerSummaryLite {
         profiles_mode: Default::default(),
         description: None,
         icon_kind: Default::default(),
+        icon_image: None,
     }
 }
 

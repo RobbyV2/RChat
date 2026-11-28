@@ -57,6 +57,7 @@ import { P2pRoom } from '../../lib/place/place'
 import { useGate } from '../composer_gate'
 import type { DropTarget } from '../../lib/drag'
 import { AboutLine, ServerIcon } from '../server_about'
+import { P2pServerGlyph } from './p2p_server_glyph'
 import { longPress } from '../context_menu'
 import { PingBadge, RailPingBadge, pingLabel } from '../ping_badge'
 import { RailVoiceBadge, useP2pVoice } from '../rail_voice_badge'
@@ -162,14 +163,16 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
       <span
         className={`flex h-full w-full items-center justify-center rounded-inherit ${muted && !active ? 'opacity-50' : ''}`}
       >
-        <ServerIcon
-          seed={v.id}
-          name={v.name}
-          kind={v.about.icon}
-          color={hex(v.color)}
-          own={own}
-          framed={active}
-        />
+        <P2pServerGlyph pic={v.about.pic}>
+          <ServerIcon
+            seed={v.id}
+            name={v.name}
+            kind={v.about.icon}
+            color={hex(v.color)}
+            own={own}
+            framed={active}
+          />
+        </P2pServerGlyph>
       </span>
       <span
         aria-hidden
@@ -251,7 +254,9 @@ function P2pFolderEntryBody({
               key={v.id}
               className="folder-mini flex min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-md text-3xs leading-none font-semibold"
             >
-              <ServerIcon seed={v.id} name={v.name} kind={v.about.icon} color={hex(v.color)} />
+              <P2pServerGlyph pic={v.about.pic}>
+                <ServerIcon seed={v.id} name={v.name} kind={v.about.icon} color={hex(v.color)} />
+              </P2pServerGlyph>
             </span>
           ))}
         </Grid>

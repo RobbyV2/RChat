@@ -54,7 +54,9 @@ import {
   type MemberFilters,
 } from '../../lib/member_filters'
 import { MemberFilterBar, MemberTable, MemberTableRow } from '../member_table'
-import { AboutEditor } from '../server_about'
+import { AboutEditor, ServerIcon } from '../server_about'
+import { P2pServerGlyph } from './p2p_server_glyph'
+import { useP2pPictureMaker } from '../../lib/client/p2p_picture'
 import { logLines } from '../../lib/audit_format'
 import { permItems } from '../../lib/perm_source'
 import { relativeTime } from '../../lib/timestamps'
@@ -83,6 +85,13 @@ function Overview({ v }: { v: ServerView }) {
   const [name, setName] = useState(v.name)
   const edit = can(v, P.ManageServer)
   const dirty = name.trim() !== v.name && name.trim() !== ''
+  const maker = useP2pPictureMaker()
+  // The text of what a signed change failed on, or null once it is written.
+  const written = (change: Promise<unknown>) =>
+    change.then(
+      () => null,
+      (e: unknown) => (e instanceof Error ? e.message : String(e))
+    )
   return (
     <Stack gap="md">
       <Stack as="label" gap="2xs">
@@ -117,6 +126,33 @@ function Overview({ v }: { v: ServerView }) {
         own={ownsP2pServer(v, me)}
         locked="Only members with Manage server can change this."
         onSave={change => p2pServer.setAbout(v.id, change)}
+        picture={
+          edit
+            ? {
+                glyph: (
+                  <P2pServerGlyph pic={v.about.pic}>
+                    <ServerIcon
+                      seed={v.id}
+                      name={v.name}
+                      kind={v.about.icon}
+                      color={hex(v.color) ?? null}
+                    />
+                  </P2pServerGlyph>
+                ),
+                source: {
+                  off: maker.off,
+                  maxBytes: maker.maxBytes,
+                  has: v.about.pic !== undefined,
+                  upload: async (file, crop) => {
+                    const made = await maker.make(file, crop, `about:${v.id}`)
+                    if (typeof made === 'string') return made
+                    return written(p2pServer.setAbout(v.id, { pic: made }))
+                  },
+                  remove: () => written(p2pServer.setAbout(v.id, { pic: null })),
+                },
+              }
+            : undefined
+        }
       />
       <Stack gap="2xs">
         <p className="text-sm">Server profiles</p>

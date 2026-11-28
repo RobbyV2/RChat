@@ -3,7 +3,7 @@
 import { Covered } from './covered'
 import { Name, NameArea } from './name'
 import { serverCalled } from '../lib/names'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { minidenticon } from 'minidenticons'
 import { useMask } from '../lib/store'
 import { charCount, serverInitial } from '../lib/rules'
@@ -21,6 +21,7 @@ import {
 import { iconLook } from '../lib/server_icon'
 import { Button } from './controls'
 import { Row, Stack } from './layout'
+import { PictureField, type PictureSource } from './avatar_upload'
 import { Chips, fieldCls, FieldError, Masked, sectionCls } from './ui'
 
 // One server icon for the rail, invite cards and search: the first letter of its name or a
@@ -117,6 +118,7 @@ export function AboutEditor({
   own,
   locked,
   onSave,
+  picture,
 }: {
   seed: string
   name: string
@@ -128,6 +130,9 @@ export function AboutEditor({
   // What shows to members who may not change it.
   locked: string
   onSave: (change: AboutChange) => Promise<unknown>
+  // The server's uploaded picture, set and removed at once: where it is kept, and the icon as
+  // it shows now with the picture over it. Left out for who may not change it.
+  picture?: { source: PictureSource; glyph: ReactNode }
 }) {
   const [text, setText] = useState(about.text ?? '')
   const [icon, setIcon] = useState<ServerIconKind>(about.icon)
@@ -182,6 +187,21 @@ export function AboutEditor({
             />
           </Stack>
         </Row>
+        {picture && (
+          <PictureField
+            source={picture.source}
+            avatar={
+              <span
+                aria-label="Picture preview"
+                role="img"
+                className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-surface-container-highest text-lg font-semibold text-on-surface"
+              >
+                {picture.glyph}
+              </span>
+            }
+            note="Shown over the icon. The icon shows while it loads and where pictures are hidden."
+          />
+        )}
         {editable ? (
           <Stack as="label" gap="xs">
             <span className="text-sm text-on-surface">Description</span>

@@ -29,7 +29,7 @@ The gear next to the server name opens Server settings, and so does a right-clic
 | Section         | What it holds                                                                                                                 |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | Invites         | The invite link, for everyone who can open the settings.                                                                      |
-| Overview        | Name, about text, banner and name colors.                                                                                     |
+| Overview        | Name, about text, icon, picture, banner and name colors.                                                                      |
 | Widgets         | Chat and voice channels other sites can embed.                                                                                |
 | System messages | Where join and leave messages go.                                                                                             |
 | Uploads         | How long files posted in the server are kept, within the instance's limit.                                                    |

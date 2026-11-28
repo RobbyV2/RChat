@@ -165,6 +165,9 @@ export const applyServerChange = (
         ? (server.description ?? null)
         : detail.description,
       icon_kind: server.icon_kind ?? detail.icon_kind,
+      icon_image: Object.hasOwn(server, 'icon_image')
+        ? (server.icon_image ?? null)
+        : detail.icon_image,
       seal: server.seal ?? detail.seal,
     }
   }
@@ -227,6 +230,9 @@ export const applyServerChange = (
                   name_color: server.name_color ?? null,
                   profiles_mode: server.profiles_mode ?? x.profiles_mode,
                   icon_kind: server.icon_kind ?? x.icon_kind,
+                  icon_image: Object.hasOwn(server, 'icon_image')
+                    ? (server.icon_image ?? null)
+                    : x.icon_image,
                 }
               : x
           ),

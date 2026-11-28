@@ -1077,6 +1077,7 @@ mod tests {
                 profiles_mode: Default::default(),
                 description: None,
                 icon_kind: Default::default(),
+                icon_image: None,
             },
         });
         router.deliver(WsEvent::PresenceChanged {
@@ -1129,6 +1130,7 @@ mod tests {
                 profiles_mode: Default::default(),
                 description: None,
                 icon_kind: Default::default(),
+                icon_image: None,
             },
         });
         router.deliver(WsEvent::ChannelUpdated {
