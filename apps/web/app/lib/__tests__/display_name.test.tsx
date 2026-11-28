@@ -430,7 +430,7 @@ test('a P2P reply quote shows the P2P name, with the key only in its title', () 
   expect(streamer.includes(KEY)).toBe(false)
   Object.assign(initial, { streamer: false })
   const account = render(<ReplyPreview quote={quoteOf(impostor)} avatar={36} onJump={() => {}} />)
-  expect(account).toContain(USERNAME_AFTER('alice', 'bob'))
+  expect(account).toContain(FITTED('alice', 'bob'))
 })
 
 test('a P2P reply quote masks the P2P name of others only', async () => {

@@ -160,9 +160,15 @@ export function ReplyPreview({
         ) : (
           <span
             style={{ color }}
-            className="max-w-2/5 shrink-0 truncate font-medium text-on-surface"
+            className="flex max-w-2/5 min-w-0 shrink-0 font-medium text-on-surface"
           >
-            <Name of={personName(author, own)} withUsername before={quote.mention ? '@' : null} />
+            <Name
+              of={personName(author, own)}
+              withUsername
+              fit
+              before={quote.mention ? '@' : null}
+              place="flex min-w-0"
+            />
           </span>
         )}
         {isWebhookAuthor(author.username) && <WebhookBadge />}
