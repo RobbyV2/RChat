@@ -101,6 +101,7 @@ describe('the slot catalog', () => {
       'toast',
       'typing',
       'call.tile',
+      'image.reveal',
     ])
     expect(SLOTS.filter(s => s.tail).map(s => s.id)).toEqual(['message.arrive'])
   })

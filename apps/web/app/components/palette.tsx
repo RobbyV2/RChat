@@ -715,6 +715,7 @@ function Palette() {
         backdrop: 'dim',
       }}
       layer="palette"
+      motion="palette"
       height="tall"
       surface="low"
       aria-label="Command palette"

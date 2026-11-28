@@ -76,6 +76,7 @@ import { P2pDmPane } from '../components/p2p/p2p_dm_pane'
 import { P2pChannelPane, P2pMemberList, P2pServerSidebar } from '../components/p2p/p2p_server_view'
 import { P2pThreadPanel } from '../components/p2p/p2p_thread'
 import { P2pSearchPanel } from '../components/p2p/p2p_search'
+import { plays, playsBehind } from '../lib/motion/play'
 
 function markEntry(account: AccountSession) {
   if (!client.ownsHistoryEntry(account)) return
@@ -551,13 +552,20 @@ function Chat() {
         )}
         {leftOpen && (
           <div data-drawer className="fixed inset-x-0 top-app z-page flex h-app md:hidden">
-            <div className="flex h-full bg-surface-container-lowest safe-l-0 shadow-elevation-3">
+            <div
+              ref={plays('drawer')}
+              className="flex h-full bg-surface-container-lowest safe-l-0 shadow-elevation-3"
+            >
               <DrawerClose.Provider value={closeLeft}>
                 <ServerRail />
                 {p2pServer ? <P2pServerSidebar /> : (!p2pHome || p2pBeside) && <ChannelSidebar />}
               </DrawerClose.Provider>
             </div>
-            <div className="flex-1 bg-scrim/50" onClick={() => setLeftOpen(false)} />
+            <div
+              ref={playsBehind('drawer')}
+              className="flex-1 bg-scrim/50"
+              onClick={() => setLeftOpen(false)}
+            />
           </div>
         )}
         {rightOpen && (isChannel || p2pServer) && (
@@ -565,8 +573,15 @@ function Chat() {
             data-drawer
             className="fixed inset-x-0 top-app z-page flex h-app justify-end lg:hidden"
           >
-            <div className="flex-1 bg-scrim/50" onClick={() => setRightOpen(false)} />
-            <div className="h-full bg-surface-container-low safe-r-0 shadow-elevation-3">
+            <div
+              ref={playsBehind('panel')}
+              className="flex-1 bg-scrim/50"
+              onClick={() => setRightOpen(false)}
+            />
+            <div
+              ref={plays('panel')}
+              className="h-full bg-surface-container-low safe-r-0 shadow-elevation-3"
+            >
               {p2pServer ? <P2pMemberList /> : <MemberSidebar />}
             </div>
           </div>

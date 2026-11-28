@@ -31,6 +31,10 @@ import { MessageTime, ShortTime } from './timestamp'
 import { UnreadDivider } from './unread_banner'
 import { UserAvatar } from './user_avatar'
 import { WebhookBadge } from './webhooks'
+import { plays, playsOn } from '../lib/motion/play'
+
+// A row rises as its message arrives and fades as it is deleted.
+const ARRIVES = plays('message.arrive', plays('message.remove'))
 
 export const avatarTriggerCls =
   'block cursor-pointer rounded-full outline-offset-2 hover:opacity-85 focus-visible:outline-2 focus-visible:outline-primary'
@@ -322,9 +326,10 @@ export const MessageRow = memo(function MessageRow(props: RowProps) {
   )
   const status = props.sent ? <Sent {...props} /> : null
   return (
-    <div data-row data-mid={m.id} data-event={props.event}>
+    <div ref={ARRIVES} data-row data-mid={m.id} data-event={props.event}>
       {divider && <UnreadDivider />}
       <div
+        ref={playsOn('message.send', props.sent === 'pending' ? 0 : 1)}
         {...longPress((x, y) => on.menu(m, x, y))}
         data-flash={flash ? '' : undefined}
         data-mentioned={mentioned ? '' : undefined}

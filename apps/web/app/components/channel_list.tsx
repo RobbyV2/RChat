@@ -1,7 +1,7 @@
 'use client'
 
 import type { ReactNode, Ref } from 'react'
-import { ChevronDown, ChevronRight, Hash, Lock, Plus } from 'lucide-react'
+import { ChevronDown, Hash, Lock, Plus } from 'lucide-react'
 import {
   unfolded,
   unfoldedRows,
@@ -19,6 +19,7 @@ import { IconButton, SideRow } from './controls'
 import type { DragSpec } from './drag'
 import { Row, Stack, Surface } from './layout'
 import { Masked } from './ui'
+import { look as moves } from '../lib/motion/play'
 
 function PrivateIcon() {
   return (
@@ -147,11 +148,11 @@ export function ChannelList({
               open={category.open}
               caps={categoryStyleOf(category.style) === 'default'}
             >
-              {category.open ? (
-                <ChevronDown size={14} className="shrink-0" />
-              ) : (
-                <ChevronRight size={14} className="shrink-0" />
-              )}
+              <ChevronDown
+                size={14}
+                {...moves('expand')}
+                className={`shrink-0 ${category.open ? '' : '-rotate-90'}`}
+              />
               <span className="truncate">
                 <Masked text={category.name} own={state.ownPlace} />
               </span>

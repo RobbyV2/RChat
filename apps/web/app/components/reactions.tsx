@@ -28,6 +28,7 @@ import { useChat } from '../lib/place/use_chat'
 import { Surface, Row, Inset } from './layout'
 import { time } from '../lib/platform/time'
 import { Chip, IconButton } from './controls'
+import { plays, playsOn } from '../lib/motion/play'
 
 const EMPTY: Reaction[] = []
 
@@ -164,7 +165,7 @@ function ReactionChip({
   return (
     <>
       <Chip
-        ref={ref}
+        ref={plays('reaction.add', ref)}
         data-reaction={r.emoji}
         aria-describedby={tip ? tipId : undefined}
         {...longPress(() => {
@@ -190,7 +191,9 @@ function ReactionChip({
         <span aria-hidden className={emojiCls}>
           {r.emoji}
         </span>
-        <span aria-hidden>{r.count}</span>
+        <span ref={playsOn('reaction.count', r.count)} aria-hidden className="inline-block">
+          {r.count}
+        </span>
       </Chip>
       {tip && ref.current && (
         <ReactionTooltip anchor={ref.current} id={tipId} messageId={m.id} r={r} />

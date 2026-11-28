@@ -94,6 +94,7 @@ import {
 } from './selection'
 import { ChatWorkNotices } from './own_load'
 import { Button, IconButton, LinkButton } from './controls'
+import { playsOn } from '../lib/motion/play'
 
 export { groupPadCls } from './grouped_row'
 
@@ -592,6 +593,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
 
   return (
     <main
+      ref={playsOn('route', scope ?? '')}
       className="relative flex h-full min-w-0 flex-1 flex-col bg-surface"
       data-share-drop-pane
       onDragEnter={e => {

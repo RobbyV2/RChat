@@ -280,6 +280,7 @@ export const SLOTS: readonly Slot[] = [
     owner: 'images',
     plays: 'enter',
     label: 'Images loading',
+    solo: true,
   },
   {
     id: 'banner.unread',

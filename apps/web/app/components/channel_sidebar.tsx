@@ -8,7 +8,6 @@ import { useP2pApp, useP2p, P2pProvider } from '../lib/client/p2p_react'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   ChevronDown,
-  ChevronRight,
   FolderPlus,
   Hash,
   ListFilter,
@@ -88,6 +87,7 @@ import { ContactRow, lastTsOf } from './p2p/p2p_home'
 import { P2pBadge } from './p2p/p2p_badge'
 import { ChannelListSkeleton, DmListSkeleton, Held } from './skeletons'
 import { channelTarget } from '../lib/viewing'
+import { look } from '../lib/motion/play'
 
 const base = 'flex h-full w-60 shrink-0 flex-col bg-surface-container-low'
 
@@ -511,7 +511,11 @@ export function DmBlock({
             <Surface pad="md" inset="bar" tone="plain" radius="none">
               <Row gap="none">
                 <SideRow onClick={() => collapse(!collapsed)} tone="section" open={!collapsed}>
-                  {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                  <ChevronDown
+                    size={14}
+                    {...look('expand')}
+                    className={collapsed ? '-rotate-90' : undefined}
+                  />
                   <Covered what="channel" look="truncate">
                     {label}
                   </Covered>

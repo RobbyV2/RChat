@@ -50,6 +50,7 @@ import { BulkJobBar, Selectable, SelectionBar, openSelectionMenu } from './selec
 import { ChatWorkNotices } from './own_load'
 import { Inset, Row, Surface } from './layout'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
+import { plays } from '../lib/motion/play'
 
 const EMPTY: Message[] = []
 const NO_SENDS: Outgoing[] = []
@@ -164,7 +165,11 @@ export function ThreadPanelView({
     thread.loadOlder()
   }
   return (
-    <div data-thread-panel className="flex h-full w-full flex-col bg-surface-container-low">
+    <div
+      ref={plays('thread')}
+      data-thread-panel
+      className="flex h-full w-full flex-col bg-surface-container-low"
+    >
       <PanelHeader
         actor={peer ? <PeerActorTag header /> : <ViewActorTag header />}
         icon={MessageSquareText}

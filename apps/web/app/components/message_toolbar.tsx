@@ -16,6 +16,7 @@ import { EmojiPicker, useTopEmojis } from './emoji_picker'
 import { time } from '../lib/platform/time'
 import { messageToolbarLook } from '../lib/controls'
 import { IconButton } from './controls'
+import { look } from '../lib/motion/play'
 
 // It straddles the row's top edge, so a pointer moving up from the row reaches it before leaving.
 const messageToolbarCls = messageToolbarLook
@@ -109,6 +110,7 @@ export function MessageToolbar({
       aria-label="Message actions"
       data-toolbar
       data-open={open ? '' : undefined}
+      {...look('toolbar.hover')}
       className={messageToolbarCls}
     >
       {react && (

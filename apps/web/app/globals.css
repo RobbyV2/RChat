@@ -519,12 +519,11 @@ body {
 
 /* nav.indicator: the marker of the open server, channel or tab glides and changes shape. */
 :root[data-motion-slots~='nav.indicator'] [data-motion~='nav.indicator'] {
-  transition:
-    translate var(--motion-short) var(--motion-standard),
-    scale var(--motion-short) var(--motion-standard),
-    opacity var(--motion-short) var(--motion-standard),
-    border-radius var(--motion-short) var(--motion-standard),
-    background-color var(--motion-short) var(--motion-standard);
+  transition-property:
+    color, background-color, border-color, outline-color, opacity, box-shadow, border-radius,
+    translate, scale;
+  transition-duration: var(--motion-short);
+  transition-timing-function: var(--motion-standard);
 }
 
 :root[data-motion='lively'][data-motion-slots~='nav.indicator'] [data-motion~='nav.indicator'] {

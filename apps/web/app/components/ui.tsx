@@ -314,7 +314,7 @@ export function Popover({
   return (
     <div
       {...rest}
-      ref={ref}
+      ref={at === null ? ref : plays('menu', ref)}
       role="dialog"
       data-popover=""
       style={at === 'pane' || at === null ? undefined : at}
@@ -347,6 +347,7 @@ export function Sheet({
   scroll = false,
   selectable = true,
   role = 'dialog',
+  motion,
   onClose,
   overlay,
   gripProps,
@@ -363,6 +364,8 @@ export function Sheet({
   scroll?: boolean
   selectable?: boolean
   role?: 'dialog' | 'menu'
+  // The motion slot it plays, when it is not the one of a sheet, a menu or a dialog.
+  motion?: PlaySlot
   onClose: () => void
   overlay?: DivAttrs
   gripProps?: DivAttrs
@@ -370,7 +373,7 @@ export function Sheet({
   children: ReactNode
 }) {
   const backdrop = sheet ? 'dim' : (float?.backdrop ?? 'dim')
-  const slot: PlaySlot = sheet ? 'sheet' : role === 'menu' ? 'menu' : 'dialog'
+  const slot: PlaySlot = sheet ? 'sheet' : (motion ?? (role === 'menu' ? 'menu' : 'dialog'))
   const look = sheet
     ? `absolute inset-x-0 bottom-0 ${SHEET_HEIGHT[height]} ${FUNCTIONAL.sheetUp} rounded-t-3xl safe-x pb-[max(var(--space-md),env(safe-area-inset-bottom))]`
     : `absolute ${float?.at ?? 'inset-0 m-auto h-fit max-h-[85%] w-[min(28rem,calc(100%-2rem))]'} ${FLOAT_SHAPE}`

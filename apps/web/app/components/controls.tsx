@@ -388,6 +388,7 @@ export function Tab<const S extends string = never>({
       ref={ref}
       role="tab"
       aria-selected={selected}
+      {...look('nav.indicator')}
       className={placed('inline-flex', tabLook, place)}
     >
       {Icon && <Icon size={16} aria-hidden className="shrink-0" />}
@@ -507,7 +508,7 @@ export function Tile<const S extends string = never>({
       aria-label={label}
       aria-pressed={pressed}
       style={tint}
-      {...look('hover')}
+      {...look('hover', 'nav.indicator')}
       className={placed('flex', tileLook(tone), place)}
     >
       {children}
@@ -578,6 +579,7 @@ export function SideRow<const S extends string = never>({
       aria-current={current ? 'page' : undefined}
       aria-pressed={pressed}
       aria-expanded={open}
+      {...look('nav.indicator')}
       className={placed(
         'flex',
         `${sideRowButtonLook(tone, dim && !current && !pressed)}${caps ? ' tracking-wider uppercase' : ''}`,

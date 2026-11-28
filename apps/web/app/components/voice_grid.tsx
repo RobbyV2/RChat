@@ -100,6 +100,7 @@ import { time } from '../lib/platform/time'
 import type { Cancel } from '../lib/clock'
 import { Button, CallButton, CardButton, Hotspot, IconButton, LinkButton } from './controls'
 import { FUNCTIONAL } from '../lib/motion/functional'
+import { plays, playsOnly } from '../lib/motion/play'
 
 const useAudioGate = create<{ blocked: boolean }>(() => ({ blocked: false }))
 const seenShares = new WeakMap<object, ReadonlySet<string>>()
@@ -411,6 +412,7 @@ export function Tile({
   const menuOpen = useGuestMenuOpen(user.username)
   return (
     <div
+      ref={plays('call.tile')}
       {...(menu ? longPress(menu) : {})}
       style={{
         width,
@@ -1383,6 +1385,7 @@ export function VoiceGrid({
       {joined && <SharePill />}
       <div
         ref={area}
+        {...playsOnly('call.tile')}
         className={`voice-stage min-h-0 flex-1 overflow-y-auto ${
           joined || channelId !== undefined || forVoice ? 'voice-stage-clear' : ''
         }`}

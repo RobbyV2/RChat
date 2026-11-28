@@ -4,7 +4,7 @@ import { Name } from './name'
 
 import { memo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { look } from '../lib/motion/play'
+import { look, plays } from '../lib/motion/play'
 import { shownTypers } from '../lib/server_profile'
 import { useMask, useStore } from '../lib/store'
 import { rowTypers } from '../lib/typing_rows'
@@ -119,6 +119,7 @@ export function TypingIndicator({
   if (!parts.length) return null
   return (
     <Inset
+      ref={plays('typing')}
       data-typing
       row
       pad="lg"

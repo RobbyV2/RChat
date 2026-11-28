@@ -29,6 +29,7 @@ import { Masked } from './ui'
 import { time } from '../lib/platform/time'
 import { Stack } from './layout'
 import { FUNCTIONAL } from '../lib/motion/functional'
+import { plays } from '../lib/motion/play'
 
 function Pieces({ pieces }: { pieces: Piece[] }) {
   return pieces.map((p, i) => {
@@ -91,7 +92,7 @@ function NoticeCard({ notice, paused }: { notice: Notice; paused: boolean }) {
   }
   return (
     <div
-      ref={card}
+      ref={plays('toast', card)}
       onKeyDown={e => {
         if (e.key === 'Escape') close()
       }}

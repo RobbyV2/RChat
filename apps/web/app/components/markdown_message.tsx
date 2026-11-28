@@ -116,6 +116,7 @@ import { time } from '../lib/platform/time'
 import { iconButtonLook } from '../lib/controls'
 import { embedNoteLook } from '../lib/controls'
 import { FUNCTIONAL } from '../lib/motion/functional'
+import { plays } from '../lib/motion/play'
 
 export const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
 
@@ -232,7 +233,14 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
       />
     )
   if (shown)
-    return <img src={shown} alt={alt ?? ''} className="msg-block max-h-80 max-w-full rounded-xl" />
+    return (
+      <img
+        ref={plays('image.reveal')}
+        src={shown}
+        alt={alt ?? ''}
+        className="msg-block max-h-80 max-w-full rounded-xl"
+      />
+    )
   if (!src) return <>{alt}</>
   if (inLink) return <>{alt || src}</>
   return <MessageLink href={href}>{alt || src}</MessageLink>

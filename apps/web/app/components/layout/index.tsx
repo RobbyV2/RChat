@@ -31,6 +31,7 @@ import {
   type SurfaceSafe,
   type SurfaceTone,
 } from '../../lib/layout'
+import { still } from '../../lib/motion/play'
 
 // The boxes every screen is laid out with. Their spacing and alignment come only from their props
 // (the scale and choices of `lib/layout.ts`); they take no class names or styles, so a screen
@@ -243,7 +244,7 @@ export function Dock({
   children: ReactNode
 }) {
   return (
-    <div {...rest} className={`flex ${dockLook(gap)}`}>
+    <div {...rest} {...still} className={`flex ${dockLook(gap)}`}>
       {children}
     </div>
   )
