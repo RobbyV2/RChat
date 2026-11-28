@@ -51,7 +51,9 @@ describe('an avatar with an uploaded picture', () => {
     const plain = renderToStaticMarkup(<UserAvatar person={carol(null)} size={32} />)
     expect(renderToStaticMarkup(<UserAvatar person={carol(ID)} size={32} />)).toBe(plain)
     served(true, true)
-    expect(renderToStaticMarkup(<UserAvatar person={carol(ID)} size={32} />)).toBe(plain)
+    const hidden = renderToStaticMarkup(<UserAvatar person={carol(ID)} size={32} />)
+    expect(hidden).toContain('alt=""')
+    expect(hidden).toBe(plain.replace(/alt="[^"]*"/, 'alt=""'))
   })
 })
 

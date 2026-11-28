@@ -35,7 +35,7 @@ export function UserAvatar({ person, size = 32, covered = false }: Props) {
       {src ? (
         <img
           src={src}
-          alt={username}
+          alt={view.streamer ? '' : username}
           width={size}
           height={size}
           style={background ? { background } : undefined}
