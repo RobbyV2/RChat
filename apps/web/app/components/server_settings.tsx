@@ -1,4 +1,5 @@
 'use client'
+import { Loaded, useAccountSource } from './loaded'
 
 import { asAccount } from '../lib/people'
 import { personCalled, personName } from '../lib/names'
@@ -991,27 +992,48 @@ function HostedAbout({ server }: { server: string }) {
 }
 
 function StandingInvite({ server, manage }: { server: string; manage: boolean }) {
+  const { shareOrigin } = useAccount()
+  const mode = useStore(s => s.servers[server]?.join_mode)
+  const [load, source] = useAccountSource(
+    async api => {
+      const invite = await api.standingInvite(server)
+      return invite ? codeUrl(invite.code, shareOrigin) : null
+    },
+    [server, mode, shareOrigin]
+  )
+  return (
+    <>
+      <p className={sectionCls}>Invite link</p>
+      <Loaded load={load} skeleton={null} what="the invite link">
+        {link => (
+          <StandingLink
+            server={server}
+            manage={manage}
+            link={link}
+            onChange={next => source.change(() => next)}
+          />
+        )}
+      </Loaded>
+    </>
+  )
+}
+
+function StandingLink({
+  server,
+  manage,
+  link,
+  onChange,
+}: {
+  server: string
+  manage: boolean
+  link: string | null
+  onChange: (link: string | null) => void
+}) {
   const { api, shareOrigin } = useAccount()
-  const [link, setLink] = useState<string | null>()
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
   const askConfirm = useStore(s => s.askConfirm)
-  const mode = useStore(s => s.servers[server]?.join_mode)
-  useEffect(() => {
-    let active = true
-    api.standingInvite(server).then(
-      result => {
-        if (active) setLink(result ? codeUrl(result.code, shareOrigin) : null)
-      },
-      (err: unknown) => {
-        if (active) setError(errorText(err))
-      }
-    )
-    return () => {
-      active = false
-    }
-  }, [server, mode])
   const change = async (remove: boolean) => {
     setBusy(true)
     setError(null)
@@ -1019,10 +1041,10 @@ function StandingInvite({ server, manage }: { server: string; manage: boolean })
     try {
       if (remove) {
         await api.revokeInvite(server)
-        setLink(null)
+        onChange(null)
       } else {
         const invite = await api.renewInvite(server)
-        setLink(codeUrl(invite.code, shareOrigin))
+        onChange(codeUrl(invite.code, shareOrigin))
       }
     } catch (err) {
       setError(errorText(err))
@@ -1040,40 +1062,37 @@ function StandingInvite({ server, manage }: { server: string; manage: boolean })
     })
   }
   return (
-    <>
-      <p className={sectionCls}>Invite link</p>
-      <Stack gap="xs">
-        {link && <input readOnly value={link} aria-label="Invite link" className={fieldCls} />}
-        <Row gap="sm" wrap>
-          {link && (
-            <button
-              className={textBtn}
-              onClick={() =>
-                void sharing()
-                  .copyText(link)
-                  .then(ok => {
-                    if (ok) setCopied(true)
-                    else setError("Couldn't copy the link.")
-                  })
-              }
-            >
-              {copied ? 'Copied' : 'Copy link'}
-            </button>
-          )}
-          {manage && link !== undefined && (
-            <button className={textBtn} disabled={busy} onClick={() => request(false)}>
-              {link ? 'Replace link' : 'Create invite link'}
-            </button>
-          )}
-          {manage && link && (
-            <button className={dangerBtn} disabled={busy} onClick={() => request(true)}>
-              Revoke link
-            </button>
-          )}
-        </Row>
-        <FieldError message={error} />
-      </Stack>
-    </>
+    <Stack gap="xs">
+      {link && <input readOnly value={link} aria-label="Invite link" className={fieldCls} />}
+      <Row gap="sm" wrap>
+        {link && (
+          <button
+            className={textBtn}
+            onClick={() =>
+              void sharing()
+                .copyText(link)
+                .then(ok => {
+                  if (ok) setCopied(true)
+                  else setError("Couldn't copy the link.")
+                })
+            }
+          >
+            {copied ? 'Copied' : 'Copy link'}
+          </button>
+        )}
+        {manage && (
+          <button className={textBtn} disabled={busy} onClick={() => request(false)}>
+            {link ? 'Replace link' : 'Create invite link'}
+          </button>
+        )}
+        {manage && link && (
+          <button className={dangerBtn} disabled={busy} onClick={() => request(true)}>
+            Revoke link
+          </button>
+        )}
+      </Row>
+      <FieldError message={error} />
+    </Stack>
   )
 }
 

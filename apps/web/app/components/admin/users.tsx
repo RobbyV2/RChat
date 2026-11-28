@@ -3,10 +3,10 @@ import { Name } from '../name'
 import { handleName, personCalled } from '../../lib/names'
 import { asAccount } from '../../lib/people'
 import { useAccount } from '../../lib/client/react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { ACCOUNT_FILTERS, signInLine } from '../../lib/admin_accounts'
-import { ApiError } from '../../lib/api'
-import { errorText, useStore } from '../../lib/store'
+import { orMissing } from '../../lib/api_errors'
+import { useStore } from '../../lib/store'
 import type { AccountFilter, AdminAccount, ServerSummaryLite, UserRef } from '../../lib/types'
 import { openActionMenu } from '../../lib/actions/menu'
 import { longPress } from '../context_menu'
@@ -16,64 +16,36 @@ import { Button, ListRow } from '../controls'
 import { Grid, Row, Stack, Surface } from '../layout'
 import { Chips, Sentinel, fieldCls } from '../ui'
 import { useAccountChanges } from './account_state'
+import { Loaded, More, useAccountPages, useAccountSource, useRefreshOn } from '../loaded'
 import { time } from '../../lib/platform/time'
 
 function UserServers({ username }: { username: string }) {
-  const ownerSession = useAccount()
-  const setError = useStore(s => s.setError)
   const openServer = useStore(s => s.openServer)
   const openAdmin = useStore(s => s.openAdmin)
-  const [list, setList] = useState<ServerSummaryLite[] | null>(null)
-  const [next, setNext] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
-  const busy = useRef(false)
-  const fetchFrom = useCallback(
-    (cursor: string | null) => {
-      if (busy.current && cursor !== null) return Promise.resolve()
-      busy.current = true
-      setLoading(true)
-      return ownerSession.api
-        .adminUserServers(username, cursor)
-        .then(page => {
-          setList(cur => {
-            const base = cursor === null ? [] : (cur ?? [])
-            const seen = new Set(base.map(sv => sv.name))
-            return [...base, ...page.items.filter(sv => !seen.has(sv.name))]
-          })
-          setNext(page.next)
-        })
-        .catch(ownerSession.lifetime.inSession((e: unknown) => setError(errorText(e))))
-        .finally(() => {
-          busy.current = false
-          setLoading(false)
-        })
-    },
-    [ownerSession, username, setError]
+  const [load] = useAccountPages(
+    (api, cursor) => api.adminUserServers(username, cursor),
+    (sv: ServerSummaryLite) => sv.name,
+    [username]
   )
-  useEffect(() => {
-    void fetchFrom(null)
-  }, [fetchFrom])
-  if (!list) return null
   return (
-    <>
-      {list.length === 0 && <p className="text-sm text-on-surface-variant">No servers created.</p>}
-      {list.map(sv => (
-        <Surface key={sv.name} tone="base" radius="lg" pad="md">
-          <Row gap="sm" wrap>
-            <span className="streamer min-w-24 flex-1 truncate text-sm">
-              {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
-            </span>
-            <Button onClick={() => void openServer(sv.name)}>Open</Button>
-            <Button onClick={() => openAdmin('servers', sv.name)}>Manage</Button>
-          </Row>
-        </Surface>
-      ))}
-      {next !== null && (
-        <Button onClick={() => void fetchFrom(next)} disabled={loading}>
-          {loading ? 'Loading' : 'Show more'}
-        </Button>
+    <Loaded load={load} skeleton={null} empty="No servers created." what="the servers">
+      {pages => (
+        <>
+          {pages.items.map(sv => (
+            <Surface key={sv.name} tone="base" radius="lg" pad="md">
+              <Row gap="sm" wrap>
+                <span className="streamer min-w-24 flex-1 truncate text-sm">
+                  {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
+                </span>
+                <Button onClick={() => void openServer(sv.name)}>Open</Button>
+                <Button onClick={() => openAdmin('servers', sv.name)}>Manage</Button>
+              </Row>
+            </Surface>
+          ))}
+          <More pages={pages} />
+        </>
       )}
-    </>
+    </Loaded>
   )
 }
 
@@ -100,165 +72,184 @@ function AccountFacts({ account }: { account: AdminAccount }) {
   )
 }
 
+function AccountBody({ user, mine, facts }: { user: UserRef; mine: boolean; facts: ReactNode }) {
+  const openDialog = useStore(s => s.openDialog)
+  return (
+    <>
+      <Row gap="md">
+        <UserAvatar person={asAccount(user, 'administration')} size={40} />
+        <Stack as="span" gap="none">
+          <Name of={personCalled(user.display_name)} look="truncate font-medium" />
+          <Name of={handleName(user.username)} look="truncate text-sm text-on-surface-variant" />
+        </Stack>
+      </Row>
+      {facts}
+      <Row gap="sm" wrap>
+        {!mine && (
+          <>
+            <Button
+              onClick={() => openDialog({ kind: 'new_password_confirm', username: user.username })}
+            >
+              New temporary password
+            </Button>
+            <Button
+              onClick={() => openDialog({ kind: 'sign_out_confirm', username: user.username })}
+            >
+              Sign out everywhere
+            </Button>
+          </>
+        )}
+        <Button
+          onClick={() => openDialog({ kind: 'admin_add_to_server', username: user.username })}
+        >
+          Add to server
+        </Button>
+      </Row>
+      <div>
+        <PageGroup label="Servers they created">
+          <UserServers username={user.username} />
+        </PageGroup>
+        {!mine && (
+          <PageGroup label="Danger">
+            <Row gap="sm" wrap>
+              <Button
+                variant="danger"
+                onClick={() =>
+                  openDialog({ kind: 'remove_phrase_confirm', username: user.username })
+                }
+              >
+                Remove backup phrase
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => openDialog({ kind: 'ban_confirm', username: user.username })}
+              >
+                Ban site-wide
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => openDialog({ kind: 'delete_user_confirm', username: user.username })}
+              >
+                Delete account
+              </Button>
+            </Row>
+          </PageGroup>
+        )}
+      </div>
+    </>
+  )
+}
+
 // One account: how it signs in, the account actions and the servers it created.
 export function UserPage({ username }: { username: string }) {
-  const ownerSession = useAccount()
-  const openDialog = useStore(s => s.openDialog)
   const openAdmin = useStore(s => s.openAdmin)
-  const setError = useStore(s => s.setError)
   const mine = useStore(s => s.me?.username === username)
   const listed = useStore(s => s.adminUsers.list.find(u => u.username === username))
   const rev = useAccountChanges(s => s.rev)
-  const [account, setAccount] = useState<AdminAccount | null | undefined>(undefined)
-  useEffect(() => {
-    let live = true
-    const load = () =>
-      ownerSession.api
-        .adminAccount(username)
-        .then(found => {
-          if (live) setAccount(found)
-        })
-        .catch(
-          ownerSession.lifetime.inSession((e: unknown) => {
-            if (!live) return
-            if (e instanceof ApiError && e.status === 404) return setAccount(null)
-            setError(errorText(e))
-          })
-        )
-    void load()
-    const again = () => {
-      if (document.visibilityState === 'visible') void load()
-    }
-    window.addEventListener('focus', again)
-    document.addEventListener('visibilitychange', again)
-    return () => {
-      live = false
-      window.removeEventListener('focus', again)
-      document.removeEventListener('visibilitychange', again)
-    }
-  }, [ownerSession, username, rev, setError])
-  const user = account?.user ?? listed
+  const [load, source] = useAccountSource(
+    api => api.adminAccount(username).catch(orMissing(null)),
+    [username, rev]
+  )
+  useRefreshOn(source, { front: true })
   return (
     <Stack gap="lg">
       <Button onClick={() => openAdmin('users')} place="hidden md:inline-flex self-start">
         Back to users
       </Button>
-      {account === null && !listed && (
-        <p className="text-sm text-on-surface-variant">No such account.</p>
-      )}
-      {user && (
-        <>
-          <Row gap="md">
-            <UserAvatar person={asAccount(user, 'administration')} size={40} />
-            <Stack as="span" gap="none">
-              <Name of={personCalled(user.display_name)} look="truncate font-medium" />
-              <Name
-                of={handleName(user.username)}
-                look="truncate text-sm text-on-surface-variant"
+      {listed ? (
+        <AccountBody
+          user={listed}
+          mine={mine}
+          facts={
+            <Loaded load={load} skeleton={null} what="how this account signs in">
+              {account => account && <AccountFacts account={account} />}
+            </Loaded>
+          }
+        />
+      ) : (
+        <Loaded load={load} what="this account">
+          {account =>
+            account ? (
+              <AccountBody
+                user={account.user}
+                mine={mine}
+                facts={<AccountFacts account={account} />}
               />
-            </Stack>
-          </Row>
-          {account && <AccountFacts account={account} />}
-          <Row gap="sm" wrap>
-            {!mine && (
-              <>
-                <Button
-                  onClick={() =>
-                    openDialog({ kind: 'new_password_confirm', username: user.username })
-                  }
-                >
-                  New temporary password
-                </Button>
-                <Button
-                  onClick={() => openDialog({ kind: 'sign_out_confirm', username: user.username })}
-                >
-                  Sign out everywhere
-                </Button>
-              </>
-            )}
-            <Button
-              onClick={() => openDialog({ kind: 'admin_add_to_server', username: user.username })}
-            >
-              Add to server
-            </Button>
-          </Row>
-          <div>
-            <PageGroup label="Servers they created">
-              <UserServers username={user.username} />
-            </PageGroup>
-            {!mine && (
-              <PageGroup label="Danger">
-                <Row gap="sm" wrap>
-                  <Button
-                    variant="danger"
-                    onClick={() =>
-                      openDialog({ kind: 'remove_phrase_confirm', username: user.username })
-                    }
-                  >
-                    Remove backup phrase
-                  </Button>
-                  <Button
-                    variant="danger"
-                    onClick={() => openDialog({ kind: 'ban_confirm', username: user.username })}
-                  >
-                    Ban site-wide
-                  </Button>
-                  <Button
-                    variant="danger"
-                    onClick={() =>
-                      openDialog({ kind: 'delete_user_confirm', username: user.username })
-                    }
-                  >
-                    Delete account
-                  </Button>
-                </Row>
-              </PageGroup>
-            )}
-          </div>
-        </>
+            ) : (
+              <p className="text-sm text-on-surface-variant">No such account.</p>
+            )
+          }
+        </Loaded>
       )}
     </Stack>
   )
 }
 
+function AccountRow({ user }: { user: UserRef }) {
+  const acct = useAccount()
+  const openAdmin = useStore(s => s.openAdmin)
+  return (
+    <ListRow
+      variant="card"
+      chevron
+      onClick={() => openAdmin('users', user.username)}
+      {...longPress((x, y) =>
+        openActionMenu(
+          x,
+          y,
+          { kind: 'member', user, server: null, where: 'admin' },
+          undefined,
+          acct
+        )
+      )}
+      leading={<UserAvatar person={asAccount(user, 'administration')} size={28} />}
+      streamer
+      label={
+        <>
+          {user.display_name} <span className="text-on-surface-variant">({user.username})</span>
+        </>
+      }
+    />
+  )
+}
+
 // The accounts whose password is temporary or expired, a page at a time. The whole list of
 // accounts is the store's.
-const useFiltered = (q: string, filter: AccountFilter, rev: number) => {
-  const ownerSession = useAccount()
-  const setError = useStore(s => s.setError)
-  const [page, setPage] = useState<{ list: UserRef[]; next: string | null }>({
-    list: [],
-    next: null,
-  })
-  const busy = useRef(false)
-  const fetchFrom = useCallback(
-    (cursor: string | null) => {
-      if (filter === 'all' || (busy.current && cursor !== null)) return
-      busy.current = true
-      ownerSession.api
-        .adminUsers(cursor, q, filter)
-        .then(found =>
-          setPage(cur => {
-            const base = cursor === null ? [] : cur.list
-            const seen = new Set(base.map(u => u.username))
-            return {
-              list: [...base, ...found.items.filter(u => !seen.has(u.username))],
-              next: found.next,
-            }
-          })
-        )
-        .catch(ownerSession.lifetime.inSession((e: unknown) => setError(errorText(e))))
-        .finally(() => {
-          busy.current = false
-        })
-    },
-    [ownerSession, q, filter, setError]
+function FilteredAccounts({
+  q,
+  filter,
+  rev,
+}: {
+  q: string
+  filter: Exclude<AccountFilter, 'all'>
+  rev: number
+}) {
+  const [load] = useAccountPages(
+    (api, cursor) => api.adminUsers(cursor, q, filter),
+    (u: UserRef) => u.username,
+    [q, filter, rev],
+    { delayMs: 300 }
   )
-  useEffect(() => {
-    const t = time().after(300, () => fetchFrom(null))
-    return () => t?.()
-  }, [fetchFrom, rev])
-  return { ...page, more: () => fetchFrom(page.next) }
+  return (
+    <Loaded
+      load={load}
+      what="these accounts"
+      empty={
+        filter === 'expired'
+          ? 'No account has an expired temporary password.'
+          : 'No account has a temporary password.'
+      }
+    >
+      {pages => (
+        <Stack gap="2xs">
+          {pages.items.map(u => (
+            <AccountRow key={u.username} user={u} />
+          ))}
+          <More pages={pages} auto />
+        </Stack>
+      )}
+    </Loaded>
+  )
 }
 
 export function UsersSection() {
@@ -268,12 +259,10 @@ export function UsersSection() {
   const adminUsers = useStore(s => s.adminUsers)
   const loadAdminUsers = useStore(s => s.loadAdminUsers)
   const loadAdminOverview = useStore(s => s.loadAdminOverview)
-  const openAdmin = useStore(s => s.openAdmin)
   const openDialog = useStore(s => s.openDialog)
   const rev = useAccountChanges(s => s.rev)
   const [q, setQ] = useState('')
   const [filter, setFilter] = useState<AccountFilter>('all')
-  const filtered = useFiltered(q, filter, rev)
   useEffect(() => {
     void loadAdminOverview()
   }, [loadAdminOverview])
@@ -282,9 +271,6 @@ export function UsersSection() {
     return () => t?.()
   }, [q, loadAdminUsers])
   const more = useCallback(() => void loadAdminUsers(q), [q, loadAdminUsers])
-  const all = filter === 'all'
-  const list = all ? adminUsers.list : filtered.list
-  const hasMore = all ? adminUsers.hasMore : filtered.next !== null
   return (
     <Stack gap="md">
       <Row gap="sm" wrap>
@@ -313,42 +299,16 @@ export function UsersSection() {
         />
       </Row>
       <Chips label="Show accounts" value={filter} options={ACCOUNT_FILTERS} onChange={setFilter} />
-      <Stack gap="2xs">
-        {list.length === 0 && !hasMore && !all && (
-          <p className="text-sm text-on-surface-variant">
-            {filter === 'expired'
-              ? 'No account has an expired temporary password.'
-              : 'No account has a temporary password.'}
-          </p>
-        )}
-        {list.map(u => (
-          <ListRow
-            key={u.username}
-            variant="card"
-            chevron
-            onClick={() => openAdmin('users', u.username)}
-            {...longPress((x, y) =>
-              openActionMenu(
-                x,
-                y,
-                { kind: 'member', user: u, server: null, where: 'admin' },
-                undefined,
-                acct
-              )
-            )}
-            leading={<UserAvatar person={asAccount(u, 'administration')} size={28} />}
-            streamer
-            label={
-              <>
-                {u.display_name} <span className="text-on-surface-variant">({u.username})</span>
-              </>
-            }
-          />
-        ))}
-        {hasMore && (
-          <Sentinel key={`${filter}:${list.length}`} onVisible={all ? more : filtered.more} />
-        )}
-      </Stack>
+      {filter === 'all' ? (
+        <Stack gap="2xs">
+          {adminUsers.list.map(u => (
+            <AccountRow key={u.username} user={u} />
+          ))}
+          {adminUsers.hasMore && <Sentinel key={adminUsers.list.length} onVisible={more} />}
+        </Stack>
+      ) : (
+        <FilteredAccounts q={q} filter={filter} rev={rev} />
+      )}
     </Stack>
   )
 }

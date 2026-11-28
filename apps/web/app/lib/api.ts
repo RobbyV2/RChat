@@ -1,4 +1,5 @@
 import type { Announcement, AnnouncementFeed } from './announcements'
+import type { Widget, WidgetConfig } from './widgets'
 import { reasonOf } from './reasons'
 import { apiRoot, versionedBase, type ApiPrefix } from './api_version'
 import { localUntil, type TimeoutWire } from './timeouts'
@@ -981,6 +982,14 @@ export const endpoints = (c: ApiClient) => ({
     c.req<unknown>('POST', `/servers/${seg(server)}/roles/${id}/assign`, { username }),
   unassignRole: (server: string, id: number, username: string) =>
     c.req<unknown>('DELETE', `/servers/${seg(server)}/roles/${id}/assign/${seg(username)}`),
+  widgets: (server: string, cursor: string | null, signal?: AbortSignal) =>
+    c.page<Widget>(withCursor(`/servers/${seg(server)}/widgets`, cursor), signal),
+  saveWidget: (server: string, id: string | null, body: WidgetConfig) =>
+    c.req<Widget>(
+      id === null ? 'POST' : 'PUT',
+      `/servers/${seg(server)}/widgets${id === null ? '' : `/${id}`}`,
+      body
+    ),
   channelPerms: (id: number, cursor: string | null = null) =>
     c.page<ChannelPerm>(withCursor(`/channels/${id}/perms`, cursor)),
   setChannelPerm: (id: number, perm: ChannelPermInput) =>

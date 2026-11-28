@@ -3,6 +3,7 @@
 import { KeyRound, LayoutGrid, X } from 'lucide-react'
 import type { PassKind } from '../lib/password'
 import { Grid, Row, Stack, Surface } from './layout'
+import { Loaded, useAccountRequest } from './loaded'
 
 interface Props {
   words: string[]
@@ -99,5 +100,38 @@ export function PassSwitch({
       {tab('text', 'Password', <KeyRound size={16} />)}
       {tab('words', 'Word grid', <LayoutGrid size={16} />)}
     </Row>
+  )
+}
+
+// The 20 words of `username` on the account's instance, to pick 7 from. `delayMs` waits for a
+// name that is still being typed.
+export function AccountWords({
+  username,
+  selected,
+  onChange,
+  delayMs,
+}: {
+  username: string
+  selected: string[]
+  onChange: (selected: string[]) => void
+  delayMs?: number
+}) {
+  const load = useAccountRequest(async api => (await api.words(username)).words, [username], {
+    delayMs,
+  })
+  return (
+    <Loaded
+      load={load}
+      skeleton={<p className="text-sm text-on-surface-variant">Loading the 20 words</p>}
+      what="the 20 words"
+    >
+      {words => (
+        <WordGrid
+          words={words}
+          selected={selected.filter(word => words.includes(word))}
+          onChange={onChange}
+        />
+      )}
+    </Loaded>
   )
 }

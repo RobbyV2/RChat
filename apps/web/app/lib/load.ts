@@ -1,5 +1,6 @@
 import { refusalOf, type Refusal } from './api_errors'
 import type { Cancel, Time } from './clock'
+import { appendUnique, type Key } from './lists'
 import type { Live } from './place/live'
 
 // What a screen knows about something it loads: still loading, here, here and empty, refused, or
@@ -18,7 +19,7 @@ export const LOAD_DEADLINE_MS = 10_000
 
 type State<T> =
   | { status: 'loading'; overdueAt: number }
-  | { status: 'ready'; value: T }
+  | { status: 'ready'; value: T; stale: Refusal | null }
   | { status: 'empty' }
   | { status: 'failed'; refusal: Refusal; retryAt: number | null }
   | { status: 'waiting'; why: Waiting }
@@ -46,7 +47,7 @@ export class Load<T> {
   map<U>(to: (value: T) => U): Load<U> {
     const s = read(this)
     return s.status === 'ready'
-      ? new Load<U>(minted, { status: 'ready', value: to(s.value) }, this.retry)
+      ? new Load<U>(minted, { status: 'ready', value: to(s.value), stale: s.stale }, this.retry)
       : new Load<U>(minted, s, this.retry)
   }
 }
@@ -80,12 +81,20 @@ export interface LoadMaker<T> {
 
 export interface LoadSource<T> extends Live<Load<T>> {
   retry(): void
+  // Asks again and keeps what is on screen meanwhile. A refusal then sits beside the kept value.
+  refresh(): void
+  // Replaces a value that is here with what the person just made of it.
+  change(to: (value: T) => T): void
 }
 
 export interface RequestOptions<T> {
   // Whether what came back counts as nothing to show.
   empty?: (value: T) => boolean
   deadlineMs?: number
+  // How long to wait before asking, for what a person is still typing.
+  delayMs?: number
+  // Asks again this often while watched, keeping the value on screen.
+  everyMs?: number
 }
 
 // A value that one request fetches. The request starts when the load is first watched and is
@@ -94,17 +103,26 @@ export interface RequestOptions<T> {
 export function fromRequest<T>(
   time: Time,
   run: (signal: AbortSignal) => Promise<T>,
-  { empty, deadlineMs = LOAD_DEADLINE_MS }: RequestOptions<T> = {}
+  { empty, deadlineMs = LOAD_DEADLINE_MS, delayMs = 0, everyMs }: RequestOptions<T> = {}
 ): LoadSource<T> {
   const listeners = new Set<() => void>()
   let abort: AbortController | null = null
   let wake: Cancel | null = null
+  let poll: Cancel | null = null
   let turn = 0
   let running = false
-  const loading = (): State<T> => ({ status: 'loading', overdueAt: time.elapsed() + deadlineMs })
+  let held: { value: T } | null = null
+  const loading = (): State<T> => ({
+    status: 'loading',
+    overdueAt: time.elapsed() + delayMs + deadlineMs,
+  })
   const set = (state: State<T>) => {
     current = new Load<T>(minted, state, retry)
     for (const l of [...listeners]) l()
+  }
+  const arrived = (value: T) => {
+    held = { value }
+    set(empty?.(value) ? { status: 'empty' } : { status: 'ready', value, stale: null })
   }
   const halt = () => {
     turn++
@@ -114,23 +132,21 @@ export function fromRequest<T>(
     wake?.()
     wake = null
   }
-  const start = (quiet = false) => {
-    halt()
+  const ask = (keep: boolean) => {
     const id = turn
-    running = true
     const mine = (abort = new AbortController())
-    if (quiet) current = new Load<T>(minted, loading(), retry)
-    else set(loading())
     run(mine.signal).then(
       value => {
         if (id !== turn) return
         running = false
-        set(empty?.(value) ? { status: 'empty' } : { status: 'ready', value })
+        arrived(value)
       },
       (error: unknown) => {
         if (id !== turn) return
         running = false
         const refusal = refusalOf(error)
+        if (keep && held && !empty?.(held.value))
+          return set({ status: 'ready', value: held.value, stale: refusal })
         set({
           status: 'failed',
           refusal,
@@ -139,6 +155,18 @@ export function fromRequest<T>(
       }
     )
   }
+  const start = (quiet = false) => {
+    halt()
+    const id = turn
+    running = true
+    if (quiet) current = new Load<T>(minted, loading(), retry)
+    else set(loading())
+    if (delayMs <= 0) return ask(false)
+    wake = time.after(delayMs, () => {
+      wake = null
+      if (id === turn) ask(false)
+    })
+  }
   function retry() {
     const s = read(current)
     const wait = s.status === 'failed' && s.retryAt !== null ? s.retryAt - time.elapsed() : 0
@@ -146,19 +174,126 @@ export function fromRequest<T>(
     wake?.()
     wake = time.after(wait, () => start())
   }
+  const refresh = () => {
+    const settled = current.status === 'ready' || current.status === 'empty'
+    if (listeners.size === 0) {
+      if (settled) current = new Load<T>(minted, loading(), retry)
+      return
+    }
+    if (!settled || !held) return start()
+    halt()
+    running = true
+    ask(true)
+  }
   let current = new Load<T>(minted, loading(), retry)
   return {
     get: () => current,
     subscribe: changed => {
       listeners.add(changed)
       const settled = current.status === 'ready' || current.status === 'empty'
-      if (listeners.size === 1 && !running && !settled) start(true)
+      if (listeners.size === 1) {
+        if (!running && !settled) start(true)
+        if (everyMs !== undefined) poll = time.every(everyMs, refresh)
+      }
       return () => {
         listeners.delete(changed)
-        if (listeners.size === 0) halt()
+        if (listeners.size > 0) return
+        halt()
+        poll?.()
+        poll = null
       }
     },
     retry,
+    refresh,
+    change: to => {
+      const settled = current.status === 'ready' || current.status === 'empty'
+      if (settled && held) arrived(to(held.value))
+    },
+  }
+}
+
+export interface Page<T> {
+  items: T[]
+  next: string | null
+}
+
+// A list that arrives a page at a time.
+export interface Pages<T> {
+  items: T[]
+  // Asks for the next page. Null when there is none, or while one is on its way.
+  more: (() => void) | null
+  loadingMore: boolean
+  // Why the next page did not come; `more` asks for it again.
+  refusal: Refusal | null
+}
+
+export interface PagesOptions {
+  deadlineMs?: number
+  delayMs?: number
+  // False where a list with no rows still draws (a form that adds the first one).
+  showEmpty?: boolean
+}
+
+export interface PagesSource<T> extends Live<Load<Pages<T>>> {
+  retry(): void
+  refresh(): void
+  // Replaces the rows that are here with what the person just made of them.
+  change(to: (items: T[]) => T[]): void
+}
+
+// A list one request per page fetches. The first page is the load; later pages join the value,
+// and a page that is refused leaves the rows in place with the refusal beside them.
+export function fromPages<T>(
+  time: Time,
+  run: (cursor: string | null, signal: AbortSignal) => Promise<Page<T>>,
+  keyOf: (item: T) => Key,
+  { showEmpty = true, ...options }: PagesOptions = {}
+): PagesSource<T> {
+  let stop: AbortController | null = null
+  const view = (
+    items: T[],
+    next: string | null,
+    loadingMore: boolean,
+    refusal: Refusal | null
+  ): Pages<T> => ({
+    items,
+    more: next === null || loadingMore ? null : () => more(next),
+    loadingMore,
+    refusal,
+  })
+  const first = fromRequest<Pages<T>>(
+    time,
+    signal => {
+      stop?.abort()
+      stop = null
+      return run(null, signal).then(page => view(page.items, page.next, false, null))
+    },
+    {
+      ...options,
+      empty: pages =>
+        showEmpty && pages.items.length === 0 && pages.more === null && !pages.loadingMore,
+    }
+  )
+  const more = (cursor: string) => {
+    const mine = (stop = new AbortController())
+    first.change(v => view(v.items, cursor, true, null))
+    run(cursor, mine.signal).then(
+      page => {
+        if (mine.signal.aborted) return
+        first.change(v => view(appendUnique(v.items, page.items, keyOf), page.next, false, null))
+      },
+      (error: unknown) => {
+        if (mine.signal.aborted) return
+        first.change(v => view(v.items, cursor, false, refusalOf(error)))
+      }
+    )
+  }
+  return {
+    get: first.get,
+    subscribe: first.subscribe,
+    retry: first.retry,
+    refresh: first.refresh,
+    change: to => first.change(v => ({ ...v, items: to(v.items) })),
   }
 }
 
@@ -184,7 +319,7 @@ export function fromStore<S, T>(
       const at = from === 'now' ? (since as number) : time.elapsed()
       return new Load<T>(minted, { status: 'loading', overdueAt: at + deadlineMs }, retry)
     },
-    ready: value => new Load<T>(minted, { status: 'ready', value }, retry),
+    ready: value => new Load<T>(minted, { status: 'ready', value, stale: null }, retry),
     empty: () => new Load<T>(minted, { status: 'empty' }, retry),
     failed: error =>
       new Load<T>(minted, { status: 'failed', refusal: refusalOf(error), retryAt: null }, retry),

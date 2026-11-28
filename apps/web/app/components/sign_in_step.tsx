@@ -14,9 +14,8 @@ import type { PassKind } from '../lib/password'
 import { showPasswordForm, showRegister } from '../lib/sso'
 import { ProviderButtons } from './sso/provider_buttons'
 import { AvatarPicker } from './avatar_picker'
-import { PassSwitch, WordGrid } from './word_grid'
+import { AccountWords, PassSwitch } from './word_grid'
 import { FieldError } from './ui'
-import { time } from '../lib/platform/time'
 type Mode = 'login' | 'register'
 const inputBase = 'rounded-lg border bg-transparent px-3 py-2 outline-none'
 const inputCls = `${inputBase} border-outline focus:border-primary`
@@ -36,8 +35,6 @@ export function SignInStep({
   adding?: boolean
 }) {
   const account = useAccount()
-  const { api } = account
-  const host = useStore(s => s.instanceHost)
   const error = useStore(s => s.error)
   const setError = useStore(s => s.setError)
   const mounted = useRef(false)
@@ -61,7 +58,6 @@ export function SignInStep({
   const [username, setUsername] = useState(owner?.username ?? '')
   const [passKind, setPassKind] = useState<PassKind>('text')
   const [password, setPassword] = useState('')
-  const [words, setWords] = useState<string[]>([])
   const [selected, setSelected] = useState<string[]>([])
   const [avatarKind, setAvatarKind] = useState<AvatarKind>('identicon')
   const [avatarColor, setAvatarColor] = useState('#6750a4')
@@ -74,31 +70,6 @@ export function SignInStep({
     if (!owner && new URLSearchParams(window.location.search).get('mode') === 'register')
       setMode('register')
   }, [account, owner])
-
-  useEffect(() => {
-    if (passKind !== 'words') return
-    const name = username.trim()
-    if (!name) {
-      setWords([])
-      setSelected([])
-      return
-    }
-    let live = true
-    const timer = time().after(300, () => {
-      api
-        .words(name)
-        .then(res => {
-          if (!live) return
-          setWords(res.words)
-          setSelected(sel => sel.filter(w => res.words.includes(w)))
-        })
-        .catch(e => live && setError(e instanceof Error ? e.message : String(e)))
-    })
-    return () => {
-      live = false
-      timer()
-    }
-  }, [api, host, username, passKind, setError])
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -203,6 +174,7 @@ export function SignInStep({
                 value={username}
                 onChange={e => {
                   setUsername(e.target.value)
+                  setSelected([])
                   setNameError(null)
                 }}
                 autoFocus
@@ -226,8 +198,13 @@ export function SignInStep({
                 className={inputCls}
               />
             </Stack>
-          ) : words.length ? (
-            <WordGrid words={words} selected={selected} onChange={setSelected} />
+          ) : username.trim() ? (
+            <AccountWords
+              username={username.trim()}
+              selected={selected}
+              onChange={setSelected}
+              delayMs={300}
+            />
           ) : (
             <p className="text-sm text-on-surface-variant">
               Type a username to see its 20 words, then pick 7 in order.

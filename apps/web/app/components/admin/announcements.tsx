@@ -1,14 +1,15 @@
 'use client'
 import { useAccount, useConn } from '../../lib/client/react'
 import { useEffect, useRef, useState } from 'react'
-import { ApiError } from '../../lib/api'
+import { orMissing } from '../../lib/api_errors'
 import { errorText, useStore } from '../../lib/store'
-import type { Announcement } from '../../lib/announcements'
 import { PageGroup, PageRow } from '../settings_page'
 import { Button } from '../controls'
 import { Grid, Row, Stack, Surface } from '../layout'
 import { fieldCls } from '../ui'
-import { time } from '../../lib/platform/time'
+import { Loaded, useAccountSource, useRefreshOn } from '../loaded'
+
+const REFRESH = ['rchat-announcements', 'online']
 
 export function AnnouncementEditor() {
   const conn = useConn()
@@ -18,47 +19,25 @@ export function AnnouncementEditor() {
 
 function Editor() {
   const ownerSession = useAccount()
-  const [rows, setRows] = useState<Announcement[]>([])
   const [message, setMessage] = useState('')
   const [start, setStart] = useState('')
   const [end, setEnd] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [available, setAvailable] = useState(true)
-  const [loadError, setLoadError] = useState('')
   const brand = useStore(s => s.brand)
   const mounted = useRef(false)
+  const [load, source] = useAccountSource(
+    api => api.adminAnnouncements().catch(orMissing(null)),
+    [brand],
+    { everyMs: 30000 }
+  )
+  useRefreshOn(source, { events: REFRESH })
   useEffect(() => {
     mounted.current = true
-    let generation = 0
-    const mark = ownerSession.lifetime.sessionMark()
-    const load = async () => {
-      const id = ++generation
-      try {
-        const next = await ownerSession.api.adminAnnouncements()
-        if (id === generation && mark === ownerSession.lifetime.sessionMark()) {
-          setRows(next)
-          setLoadError('')
-        }
-      } catch (e) {
-        if (id !== generation || mark !== ownerSession.lifetime.sessionMark()) return
-        if (e instanceof ApiError && e.status === 404) setAvailable(false)
-        else setLoadError(errorText(e))
-      }
-    }
-    if (!available) return
-    void load()
-    window.addEventListener('rchat-announcements', load)
-    window.addEventListener('online', load)
-    const timer = time().every(30000, load)
     return () => {
       mounted.current = false
-      ++generation
-      window.removeEventListener('rchat-announcements', load)
-      window.removeEventListener('online', load)
-      timer()
     }
-  }, [ownerSession, brand, available])
+  }, [])
   async function save(id?: string) {
     if (busy) return
     const mark = ownerSession.lifetime.sessionMark()
@@ -86,88 +65,99 @@ function Editor() {
       if (current()) setBusy(false)
     }
   }
+  const form = (
+    <>
+      <Stack
+        as="form"
+        gap="md"
+        onSubmit={e => {
+          e.preventDefault()
+          void save()
+        }}
+      >
+        <label className="text-sm font-medium">
+          <Stack as="span" gap="2xs">
+            Announcement
+            <input
+              required
+              maxLength={500}
+              value={message}
+              onChange={e => setMessage(e.target.value)}
+              className={fieldCls}
+            />
+          </Stack>
+        </label>
+        <Grid cols={{ base: 1, sm: 2 }} gap="md">
+          <label className="min-w-0 text-sm">
+            <Stack as="span" gap="2xs">
+              Start (leave blank for now)
+              <input
+                type="datetime-local"
+                value={start}
+                onChange={e => setStart(e.target.value)}
+                className={fieldCls}
+              />
+            </Stack>
+          </label>
+          <label className="min-w-0 text-sm">
+            <Stack as="span" gap="2xs">
+              End
+              <input
+                type="datetime-local"
+                required
+                value={end}
+                onChange={e => setEnd(e.target.value)}
+                className={fieldCls}
+              />
+            </Stack>
+          </label>
+        </Grid>
+        <p className="text-xs text-on-surface-variant">Dates use your local time.</p>
+        <Button type="submit" variant="filled" size="md" disabled={busy} place="self-start">
+          {start ? 'Schedule announcement' : 'Publish now'}
+        </Button>
+      </Stack>
+      {error && (
+        <p role="alert" className="text-sm text-error">
+          {error}
+        </p>
+      )}
+    </>
+  )
   return (
     <PageGroup label="Announcements">
       <PageRow id="announcements">
-        {!available ? (
-          <p>Announcements are unavailable on this server version.</p>
-        ) : (
-          <Stack gap="lg">
-            <Stack
-              as="form"
-              gap="md"
-              onSubmit={e => {
-                e.preventDefault()
-                void save()
-              }}
-            >
-              <label className="text-sm font-medium">
-                <Stack as="span" gap="2xs">
-                  Announcement
-                  <input
-                    required
-                    maxLength={500}
-                    value={message}
-                    onChange={e => setMessage(e.target.value)}
-                    className={fieldCls}
-                  />
-                </Stack>
-              </label>
-              <Grid cols={{ base: 1, sm: 2 }} gap="md">
-                <label className="min-w-0 text-sm">
-                  <Stack as="span" gap="2xs">
-                    Start (leave blank for now)
-                    <input
-                      type="datetime-local"
-                      value={start}
-                      onChange={e => setStart(e.target.value)}
-                      className={fieldCls}
-                    />
-                  </Stack>
-                </label>
-                <label className="min-w-0 text-sm">
-                  <Stack as="span" gap="2xs">
-                    End
-                    <input
-                      type="datetime-local"
-                      required
-                      value={end}
-                      onChange={e => setEnd(e.target.value)}
-                      className={fieldCls}
-                    />
-                  </Stack>
-                </label>
-              </Grid>
-              <p className="text-xs text-on-surface-variant">Dates use your local time.</p>
-              <Button type="submit" variant="filled" size="md" disabled={busy} place="self-start">
-                {start ? 'Schedule announcement' : 'Publish now'}
-              </Button>
-            </Stack>
-            {(error || loadError) && (
-              <p role="alert" className="text-sm text-error">
-                {error || loadError}
-              </p>
-            )}
-            <h3 className="text-sm font-medium">Active and upcoming</h3>
-            {!rows.length && <p className="text-sm text-on-surface-variant">No announcements.</p>}
-            {rows.map(a => (
-              <Surface key={a.id} tone="plain" radius="none" border="top" pad="sm">
-                <Row gap="sm" wrap>
-                  <div className="min-w-0 grow basis-48">
-                    <p className="break-words text-sm">{a.message}</p>
-                    <p className="text-xs text-on-surface-variant">
-                      {new Date(a.starts_at * 1000).toLocaleString()} to{' '}
-                      {new Date(a.ends_at * 1000).toLocaleString()}
-                    </p>
-                  </div>
-                  <Button variant="danger" disabled={busy} onClick={() => void save(a.id)}>
-                    Remove
-                  </Button>
-                </Row>
-              </Surface>
-            ))}
-          </Stack>
-        )}
+        <Loaded load={load} what="the announcements">
+          {rows =>
+            rows === null ? (
+              <p>Announcements are unavailable on this server version.</p>
+            ) : (
+              <Stack gap="lg">
+                {form}
+                <h3 className="text-sm font-medium">Active and upcoming</h3>
+                {!rows.length && (
+                  <p className="text-sm text-on-surface-variant">No announcements.</p>
+                )}
+                {rows.map(a => (
+                  <Surface key={a.id} tone="plain" radius="none" border="top" pad="sm">
+                    <Row gap="sm" wrap>
+                      <div className="min-w-0 grow basis-48">
+                        <p className="break-words text-sm">{a.message}</p>
+                        <p className="text-xs text-on-surface-variant">
+                          {new Date(a.starts_at * 1000).toLocaleString()} to{' '}
+                          {new Date(a.ends_at * 1000).toLocaleString()}
+                        </p>
+                      </div>
+                      <Button variant="danger" disabled={busy} onClick={() => void save(a.id)}>
+                        Remove
+                      </Button>
+                    </Row>
+                  </Surface>
+                ))}
+              </Stack>
+            )
+          }
+        </Loaded>
       </PageRow>
     </PageGroup>
   )

@@ -4,6 +4,7 @@ import { ManualTime } from './helpers/test_clock'
 import {
   LOAD_DEADLINE_MS,
   fromLive,
+  fromPages,
   fromRequest,
   fromStore,
   overdueIn,
@@ -119,6 +120,192 @@ describe('a request', () => {
     const mapped: Load<number> = source.get().map(list => list.length)
     expect(mapped.status).toBe('ready')
     expect(mapped.retry).toBe(source.retry)
+  })
+})
+
+describe('a request that is asked again', () => {
+  test('waits before it asks, for a name that is being typed', async () => {
+    const clock = new ManualTime()
+    let asked = 0
+    const source = fromRequest(
+      clock,
+      () => {
+        asked++
+        return Promise.resolve('found')
+      },
+      { delayMs: 300 }
+    )
+    const stop = source.subscribe(() => {})
+    clock.advance(299)
+    expect(asked).toBe(0)
+    stop()
+    clock.advance(1000)
+    expect(asked).toBe(0)
+    source.subscribe(() => {})
+    clock.advance(300)
+    expect(asked).toBe(1)
+    await settle()
+    expect(source.get().status).toBe('ready')
+  })
+
+  test('a refresh keeps what is on screen, and a refusal sits beside it', async () => {
+    const clock = new ManualTime()
+    let asked = 0
+    const source = fromRequest<string>(clock, () => {
+      asked++
+      return asked === 2 ? Promise.reject(new ApiError('No', 500)) : Promise.resolve(`v${asked}`)
+    })
+    const seen: string[] = []
+    source.subscribe(() => seen.push(source.get().status))
+    await settle()
+    source.refresh()
+    expect(source.get().status).toBe('ready')
+    await settle()
+    expect(source.get().status).toBe('ready')
+    expect(seen).toEqual(['ready', 'ready'])
+    const values: string[] = []
+    source.get().map(v => values.push(v))
+    expect(values).toEqual(['v1'])
+    source.refresh()
+    await settle()
+    source.get().map(v => values.push(v))
+    expect(values).toEqual(['v1', 'v3'])
+  })
+
+  test('a refresh with nothing held is a failed load when refused', async () => {
+    const clock = new ManualTime()
+    let asked = 0
+    const source = fromRequest<string[]>(
+      clock,
+      () => {
+        asked++
+        return asked === 1 ? Promise.resolve([]) : Promise.reject(new ApiError('No', 500))
+      },
+      { empty: list => list.length === 0 }
+    )
+    source.subscribe(() => {})
+    await settle()
+    expect(source.get().status).toBe('empty')
+    source.refresh()
+    await settle()
+    expect(source.get().status).toBe('failed')
+  })
+
+  test('asks again on its interval while watched', async () => {
+    const clock = new ManualTime()
+    let asked = 0
+    const source = fromRequest(
+      clock,
+      () => {
+        asked++
+        return Promise.resolve(asked)
+      },
+      { everyMs: 30_000 }
+    )
+    const stop = source.subscribe(() => {})
+    await settle()
+    clock.advance(30_000)
+    expect(asked).toBe(2)
+    await settle()
+    stop()
+    clock.advance(60_000)
+    expect(asked).toBe(2)
+  })
+
+  test('a change replaces the value that is here', async () => {
+    const clock = new ManualTime()
+    const source = fromRequest<string[]>(clock, () => Promise.resolve([]), {
+      empty: list => list.length === 0,
+    })
+    source.change(list => [...list, 'early'])
+    source.subscribe(() => {})
+    await settle()
+    expect(source.get().status).toBe('empty')
+    source.change(list => [...list, 'a'])
+    expect(source.get().status).toBe('ready')
+    const values: string[][] = []
+    source.get().map(v => values.push(v))
+    expect(values).toEqual([['a']])
+  })
+})
+
+describe('a list that comes in pages', () => {
+  const pagesOf = (source: { get: () => Load<unknown> }) => {
+    let held: unknown = null
+    source.get().map(v => (held = v))
+    return held as {
+      items: number[]
+      more: (() => void) | null
+      loadingMore: boolean
+      refusal: { status: number | null } | null
+    }
+  }
+
+  test('later pages join the rows, without repeats', async () => {
+    const clock = new ManualTime()
+    const asked: (string | null)[] = []
+    const source = fromPages<number>(
+      clock,
+      cursor => {
+        asked.push(cursor)
+        return Promise.resolve(
+          cursor === null ? { items: [1, 2], next: 'b' } : { items: [2, 3], next: null }
+        )
+      },
+      n => n
+    )
+    source.subscribe(() => {})
+    await settle()
+    expect(pagesOf(source).items).toEqual([1, 2])
+    pagesOf(source).more?.()
+    expect(pagesOf(source).loadingMore).toBe(true)
+    expect(pagesOf(source).more).toBeNull()
+    await settle()
+    expect(asked).toEqual([null, 'b'])
+    expect(pagesOf(source).items).toEqual([1, 2, 3])
+    expect(pagesOf(source).more).toBeNull()
+    expect(pagesOf(source).loadingMore).toBe(false)
+  })
+
+  test('a refused page leaves the rows, says why, and can be asked again', async () => {
+    const clock = new ManualTime()
+    let asked = 0
+    const source = fromPages<number>(
+      clock,
+      cursor => {
+        asked++
+        if (cursor === null) return Promise.resolve({ items: [1], next: 'b' })
+        return asked === 2
+          ? Promise.reject(new ApiError('No', 503))
+          : Promise.resolve({ items: [2], next: null })
+      },
+      n => n
+    )
+    source.subscribe(() => {})
+    await settle()
+    pagesOf(source).more?.()
+    await settle()
+    expect(source.get().status).toBe('ready')
+    expect(pagesOf(source).items).toEqual([1])
+    expect(pagesOf(source).refusal?.status).toBe(503)
+    pagesOf(source).more?.()
+    await settle()
+    expect(pagesOf(source).items).toEqual([1, 2])
+    expect(pagesOf(source).refusal).toBeNull()
+  })
+
+  test('no rows is empty, unless the screen draws an empty list itself', async () => {
+    const clock = new ManualTime()
+    const none = () => Promise.resolve({ items: [] as number[], next: null })
+    const plain = fromPages<number>(clock, none, n => n)
+    const form = fromPages<number>(clock, none, n => n, { showEmpty: false })
+    plain.subscribe(() => {})
+    form.subscribe(() => {})
+    await settle()
+    expect(plain.get().status).toBe('empty')
+    expect(form.get().status).toBe('ready')
+    form.change(rows => [...rows, 4])
+    expect(pagesOf(form).items).toEqual([4])
   })
 })
 

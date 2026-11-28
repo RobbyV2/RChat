@@ -2,7 +2,7 @@
 
 import { Name } from '../name'
 import { handleName, serverCalled } from '../../lib/names'
-import { useEffect, useId, useState } from 'react'
+import { useId, useState } from 'react'
 import { Check, Copy, X } from 'lucide-react'
 import {
   ACCOUNT_SERVERS_MAX,
@@ -21,18 +21,14 @@ import { listOf } from '../../lib/admin_servers'
 import { useAccount } from '../../lib/client/react'
 import { sharing } from '../../lib/platform'
 import { errorText, useStore } from '../../lib/store'
-import type {
-  AccountServer,
-  AddedServer,
-  IssuedPassword,
-  Role,
-  ServerSummaryLite,
-} from '../../lib/types'
+import type { AccountServer, AddedServer, IssuedPassword, ServerSummaryLite } from '../../lib/types'
 import { Button, Chip, IconButton, ListRow } from '../controls'
 import { Row, Stack, Surface } from '../layout'
 import { Dialog, FieldError, fieldCls, useCopied } from '../ui'
 import { useAccountChanges } from './account_state'
 import { useControl } from './config_state'
+import { ServerMatches } from './server_matches'
+import { Loaded, useAccountRequest } from '../loaded'
 import { time } from '../../lib/platform/time'
 
 const now = () => Math.floor(time().now() / 1000)
@@ -124,31 +120,7 @@ function ServerSearch({
   disabled: boolean
   onPick: (server: ServerSummaryLite) => void
 }) {
-  const {
-    api,
-    lifetime: { inSession },
-  } = useAccount()
-  const setError = useStore(s => s.setError)
   const [q, setQ] = useState('')
-  const [found, setFound] = useState<ServerSummaryLite[]>([])
-  useEffect(() => {
-    const text = q.trim()
-    let live = true
-    const t = time().after(300, () => {
-      if (text === '') return setFound([])
-      api
-        .adminServers(null, text)
-        .then(page => {
-          if (live) setFound(page.items.slice(0, 6))
-        })
-        .catch(inSession((e: unknown) => setError(errorText(e))))
-    })
-    return () => {
-      live = false
-      t()
-    }
-  }, [q, setError])
-  const open = found.filter(sv => !taken.includes(sv.name))
   return (
     <Stack gap="2xs">
       <Row gap="none">
@@ -161,28 +133,28 @@ function ServerSearch({
           className={`${fieldCls} streamer disabled:opacity-50`}
         />
       </Row>
-      {open.length > 0 && (
-        <Stack as="ul" gap="2xs">
-          {open.map(sv => (
-            <li key={sv.name}>
-              <ListRow
-                variant="card"
-                onClick={() => {
-                  setQ('')
-                  setFound([])
-                  onPick(sv)
-                }}
-                streamer
-                label={
-                  <>
-                    {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
-                  </>
-                }
-              />
-            </li>
-          ))}
-        </Stack>
-      )}
+      <ServerMatches
+        q={q}
+        limit={6}
+        row={sv =>
+          taken.includes(sv.name) ? null : (
+            <ListRow
+              key={sv.name}
+              variant="card"
+              onClick={() => {
+                setQ('')
+                onPick(sv)
+              }}
+              streamer
+              label={
+                <>
+                  {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
+                </>
+              }
+            />
+          )
+        }
+      />
     </Stack>
   )
 }
@@ -197,36 +169,24 @@ function RoleToggles({
   roles: number[]
   onChange: (roles: number[]) => void
 }) {
-  const {
-    api,
-    lifetime: { inSession },
-  } = useAccount()
-  const setError = useStore(s => s.setError)
-  const [all, setAll] = useState<Role[] | null>(null)
-  useEffect(() => {
-    let live = true
-    api
-      .getServer(server)
-      .then(detail => {
-        if (live) setAll(detail.roles)
-      })
-      .catch(inSession((e: unknown) => setError(errorText(e))))
-    return () => {
-      live = false
-    }
-  }, [server, setError])
-  if (all === null || all.length === 0) return null
+  const load = useAccountRequest(async api => (await api.getServer(server)).roles, [server], {
+    empty: all => all.length === 0,
+  })
   return (
-    <Row role="group" aria-label="Roles" gap="xs" wrap>
-      {all.map(role => {
-        const on = roles.includes(role.id)
-        return (
-          <Chip key={role.id} on={on} onClick={() => onChange(toggledRole(roles, role.id))}>
-            <span className="streamer">{role.name}</span>
-          </Chip>
-        )
-      })}
-    </Row>
+    <Loaded load={load} skeleton={null} empty={null} what="this server's roles">
+      {all => (
+        <Row role="group" aria-label="Roles" gap="xs" wrap>
+          {all.map(role => {
+            const on = roles.includes(role.id)
+            return (
+              <Chip key={role.id} on={on} onClick={() => onChange(toggledRole(roles, role.id))}>
+                <span className="streamer">{role.name}</span>
+              </Chip>
+            )
+          })}
+        </Row>
+      )}
+    </Loaded>
   )
 }
 

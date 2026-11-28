@@ -1,8 +1,6 @@
 'use client'
 import { useAccount, useApi } from '../lib/client/react'
-import { useEffect, useMemo, useState } from 'react'
-import { withCursor } from '../lib/api'
-import { appendUnique } from '../lib/lists'
+import { useMemo, useState } from 'react'
 import { sharing } from '../lib/platform'
 import { useStore, errorText } from '../lib/store'
 import type { Channel } from '../lib/types'
@@ -14,6 +12,7 @@ import {
   type WidgetMode,
 } from '../lib/widgets'
 import { Button } from './controls'
+import { Loaded, More, useAccountPages } from './loaded'
 import { Row, Stack } from './layout'
 import { fieldCls } from './ui'
 
@@ -41,76 +40,49 @@ export function WidgetSettings({ server, channels }: WidgetSettingsProps) {
 
 function WidgetPicker({ server, channels }: WidgetSettingsProps) {
   const api = useApi()
-  const [list, setList] = useState<Widget[]>([])
   const [selected, setSelected] = useState('')
-  const [error, setError] = useState('')
-  const [next, setNext] = useState<string | null>(null)
-  const [request, setRequest] = useState<{ cursor: string | null } | null>({ cursor: null })
   const channelNames = useMemo(() => new Map(channels.map(c => [c.id, c.name])), [channels])
-  const path = '/servers/' + encodeURIComponent(server) + '/widgets'
-  useEffect(() => {
-    if (!request) return
-    const abort = new AbortController()
-    api.page<Widget>(withCursor(path, request.cursor), abort.signal).then(
-      page => {
-        if (abort.signal.aborted) return
-        setList(previous => appendUnique(previous, page.items, row => row.id))
-        setNext(page.next)
-        setError('')
-        setRequest(null)
-      },
-      e => {
-        if (abort.signal.aborted) return
-        setError(errorText(e))
-        setRequest(null)
-      }
-    )
-    return () => abort.abort()
-  }, [api, path, request])
+  const [load, source] = useAccountPages(
+    (from, cursor, signal) => from.widgets(server, cursor, signal),
+    (row: Widget) => row.id,
+    [server],
+    { showEmpty: false }
+  )
   return (
-    <>
-      <label className="block text-sm">
-        Widget
-        <select
-          aria-label="Widget"
-          className={fieldCls + ' w-full cursor-pointer'}
-          value={selected}
-          onChange={e => setSelected(e.target.value)}
-        >
-          <option value="">New widget</option>
-          {list.map(w => (
-            <option key={w.id} value={w.id}>
-              {channelNames.get(w.channel_id)} · {labels[w.mode]}
-              {w.enabled ? '' : ' (disabled)'}
-            </option>
-          ))}
-        </select>
-      </label>
-      {(next || error) && (
-        <Button
-          disabled={request !== null}
-          onClick={() => setRequest({ cursor: next })}
-          place="self-start"
-        >
-          {error ? 'Retry loading widgets' : 'Load more widgets'}
-        </Button>
+    <Loaded load={load} what="the widgets">
+      {pages => (
+        <>
+          <label className="block text-sm">
+            Widget
+            <select
+              aria-label="Widget"
+              className={fieldCls + ' w-full cursor-pointer'}
+              value={selected}
+              onChange={e => setSelected(e.target.value)}
+            >
+              <option value="">New widget</option>
+              {pages.items.map(w => (
+                <option key={w.id} value={w.id}>
+                  {channelNames.get(w.channel_id)} · {labels[w.mode]}
+                  {w.enabled ? '' : ' (disabled)'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <More pages={pages} label="Load more widgets" />
+          <WidgetForm
+            key={selected}
+            widget={pages.items.find(w => w.id === selected)}
+            channels={channels}
+            save={async body => {
+              const w = await api.saveWidget(server, selected || null, body)
+              source.change(rows => [...rows.filter(row => row.id !== w.id), w])
+              setSelected(w.id)
+            }}
+          />
+        </>
       )}
-      {error && <p role="alert">{error}</p>}
-      <WidgetForm
-        key={selected}
-        widget={list.find(w => w.id === selected)}
-        channels={channels}
-        save={async body => {
-          const w = await api.req<Widget>(
-            selected ? 'PUT' : 'POST',
-            selected ? path + '/' + selected : path,
-            body
-          )
-          setList(previous => [...previous.filter(row => row.id !== w.id), w])
-          setSelected(w.id)
-        }}
-      />
-    </>
+    </Loaded>
   )
 }
 

@@ -110,6 +110,17 @@ export const refusalOf = (error: unknown): Refusal => {
   return plain('unknown', typeof error === 'string' && error ? error : 'Something went wrong')
 }
 
+// Whether the answer was that the thing is not there (or not the caller's to see).
+export const missing = (error: unknown): boolean => refusalOf(error).status === 404
+
+// `fallback` in place of a thing that is not there; any other failure stays a failure.
+export const orMissing =
+  <F>(fallback: F) =>
+  (error: unknown): F => {
+    if (missing(error)) return fallback
+    throw error
+  }
+
 // Whether asking again can help without the person changing anything.
 export const canRetry = (r: Refusal): boolean =>
   r.kind === 'rate' ||

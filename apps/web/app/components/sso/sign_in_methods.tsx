@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useId, useState, type ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { useAccount, useStore } from '../../lib/client/react'
 import { beginPopup, canUnlink, DEFAULT_AUTH, linkable } from '../../lib/sso'
 import { mayManageSignIns } from '../../lib/sso_actions'
@@ -11,54 +11,48 @@ import { ReAuthPrompt } from '../backup_phrase/reauth_prompt'
 import { useConfirmation } from './use_confirmation'
 import { tabWrap } from '../../lib/settings_page'
 import { Button } from '../controls'
+import { Refreshed, useAccountSource } from '../loaded'
 import { Row, Stack, Surface } from '../layout'
 import { CloseButton, FieldError, TopDialog } from '../ui'
 
 type Provider = { id: string; name: string }
-export function useSignInLinks() {
-  const acct = useAccount(),
-    current = useConfirmation()
+export interface SignInList {
+  // The state of the lookup, to draw where the methods are listed.
+  notice: ReactNode
+  supported: boolean
+  refresh: () => void
+}
+
+// The account's linked sign-ins for `children`: null until they are known.
+export function SignInLinks({
+  children,
+}: {
+  children: (links: LinkedProvider[] | null, list: SignInList) => ReactNode
+}) {
   const hasPassword = useStore(s => s.me?.has_password)
   const supported = useStore(
     s =>
       mayManageSignIns(s) &&
       (s.me?.has_password !== undefined || !!s.instance?.auth?.providers.length)
   )
-  const [links, setLinks] = useState<LinkedProvider[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [revision, setRevision] = useState(0)
-  useEffect(() => {
-    let live = true
-    const stillCurrent = () =>
-      live && current() && acct.store.getState().me?.has_password === hasPassword
-    setLinks(null)
-    setError(null)
-    if (supported)
-      acct.api
-        .ssoLinks()
-        .then(rows => {
-          if (stillCurrent()) setLinks(rows)
-        })
-        .catch(e => {
-          if (stillCurrent()) setError(errorText(e))
-        })
-    return () => {
-      live = false
-    }
-  }, [acct, supported, hasPassword, revision, current])
-  return {
-    links,
-    error,
-    supported,
-    refresh: () => {
-      setLinks(null)
-      setError(null)
-      setRevision(n => n + 1)
-    },
-  }
+  const [load, source] = useAccountSource<LinkedProvider[] | null>(
+    api => (supported ? api.ssoLinks() : Promise.resolve(null)),
+    [supported, hasPassword]
+  )
+  return (
+    <Refreshed load={load} known={null} what="your sign-in methods">
+      {(links, notice) => children(links, { notice, supported, refresh: source.refresh })}
+    </Refreshed>
+  )
 }
 
-export function SignInMethods({ list }: { list: ReturnType<typeof useSignInLinks> }) {
+export function SignInMethods({
+  links,
+  list,
+}: {
+  links: LinkedProvider[] | null
+  list: SignInList
+}) {
   const acct = useAccount(),
     current = useConfirmation()
   const auth = useStore(s => s.instance?.auth ?? DEFAULT_AUTH),
@@ -67,7 +61,6 @@ export function SignInMethods({ list }: { list: ReturnType<typeof useSignInLinks
   const [op, setOp] = useState<{ type: 'link' | 'unlink'; p: Provider } | null>(mode ?? null)
   const [busy, setBusy] = useState(false),
     [error, setError] = useState<string | null>(null)
-  const { links } = list
   if (!list.supported || !me || (!auth.providers.length && links?.length === 0)) return null
   const cancel = () => {
     setOp(null)
@@ -85,12 +78,7 @@ export function SignInMethods({ list }: { list: ReturnType<typeof useSignInLinks
   return (
     <Stack as="section" gap="sm" place="w-full">
       <h3 className="text-sm font-medium">Sign-in methods</h3>
-      {list.error && (
-        <>
-          <FieldError message={list.error} />
-          <Button onClick={list.refresh}>Retry</Button>
-        </>
-      )}
+      {list.notice}
       {links?.map(l => {
         const allowed = canUnlink(me, links, l.provider)
         const unlink = (opener?: HTMLElement) =>

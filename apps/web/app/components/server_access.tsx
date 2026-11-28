@@ -2,10 +2,11 @@
 
 import { Name } from './name'
 import { handleName } from '../lib/names'
-import { useCallback, useEffect, useId, useState, type ReactNode } from 'react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
 import { Check, Copy, Lock, LockOpen, Plus } from 'lucide-react'
 import { readLocal, writeLocal } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
+import { Loaded, useAccountSource } from './loaded'
 import { useAccount, useApi } from '../lib/client/react'
 import { inviteUrl } from '../lib/invite'
 import { passwordDone, passwordPrompt } from '../lib/rules'
@@ -685,15 +686,7 @@ function MemberPrivacy({ server, visible }: { server: string; visible: boolean }
   )
 }
 
-export function ServerAccessSection({
-  server,
-  hasPassword,
-  canSettings,
-  canInvites,
-  canRemove,
-  publicRead,
-  membersVisible,
-}: {
+interface AccessProps {
   server: string
   canSettings: boolean
   canInvites: boolean
@@ -701,7 +694,31 @@ export function ServerAccessSection({
   canRemove: boolean
   publicRead: PublicRead
   membersVisible: boolean | null
-}) {
+}
+
+export function ServerAccessSection(props: AccessProps) {
+  const { server, hasPassword, canSettings, canInvites } = props
+  const [load, source] = useAccountSource(
+    api => api.listPasswords(server),
+    [server, hasPassword, canSettings, canInvites]
+  )
+  return (
+    <Loaded load={load} what="who can join">
+      {data => <AccessBody {...props} data={data} refresh={source.refresh} />}
+    </Loaded>
+  )
+}
+
+function AccessBody({
+  data,
+  refresh,
+  server,
+  canSettings,
+  canInvites,
+  canRemove,
+  publicRead,
+  membersVisible,
+}: AccessProps & { data: ServerPasswords; refresh: () => void }) {
   const { api, conn: home } = useAccount()
   const username = useStore(s => s.me?.username ?? null)
   const key = username && home.scoped(secretsKey(username))
@@ -709,30 +726,12 @@ export function ServerAccessSection({
   const settings = useStore(s => s.settings)
   const publicReadable = readableNow(publicRead, false, settings)
   const name = useId()
-  const [data, setData] = useState<ServerPasswords | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [book, setBook] = useState<SecretBook>(() => (key ? readBook(key) : parseSecrets(null)))
   const [creating, setCreating] = useState(false)
-  const [rev, setRev] = useState(0)
-  const refresh = useCallback(() => setRev(r => r + 1), [])
 
   useEffect(() => {
-    let live = true
-    api.listPasswords(server).then(
-      res => {
-        if (!live) return
-        setData(res)
-        setError(null)
-      },
-      (err: unknown) => live && setError(errorText(err))
-    )
-    return () => {
-      live = false
-    }
-  }, [api, server, rev, hasPassword, canSettings, canInvites])
-
-  useEffect(() => {
-    if (!canInvites || !data || !key) return
+    if (!canInvites || !key) return
     const now = nowSeconds()
     const live = data.passwords.filter(p => statusAt(p, now) === 'live').map(p => p.id)
     setBook(prev => {
@@ -742,13 +741,13 @@ export function ServerAccessSection({
     })
   }, [data, server, key, canInvites])
 
-  const soonest = (data?.passwords ?? [])
+  const soonest = data.passwords
     .filter(p => p.status === 'live' && p.expires_at !== null)
     .reduce((min, p) => Math.min(min, (p.expires_at ?? 0) - nowSeconds()), Infinity)
   const now = useNow(tickMs(soonest))
 
   const setProtected = (on: boolean) => {
-    if (!data || data.protected === on) return
+    if (data.protected === on) return
     askConfirm(
       on
         ? {
@@ -783,113 +782,103 @@ export function ServerAccessSection({
           .then(refresh, (err: unknown) => setError(errorText(err))),
     })
 
-  const live = data?.passwords.filter(p => statusAt(p, now) === 'live').length ?? 0
-  const closed = data && (canInvites ? isClosed(data, now) : data.closed)
+  const live = data.passwords.filter(p => statusAt(p, now) === 'live').length
+  const closed = canInvites ? isClosed(data, now) : data.closed
 
   return (
     <>
-      {!data ? (
-        error ? (
-          <FieldError message={error} />
-        ) : (
-          <p className="text-sm text-on-surface-variant">Loading…</p>
-        )
-      ) : (
-        <Stack gap="md">
-          {canSettings && (
-            <Grid cols={{ base: 1, sm: 2 }} gap="sm">
-              <Radio
-                name={name}
-                checked={!data.protected}
-                onChange={() => setProtected(false)}
-                title="Public"
-                detail={publicDetail(settings, publicReadable)}
-                icon={<LockOpen size={14} />}
+      <Stack gap="md">
+        {canSettings && (
+          <Grid cols={{ base: 1, sm: 2 }} gap="sm">
+            <Radio
+              name={name}
+              checked={!data.protected}
+              onChange={() => setProtected(false)}
+              title="Public"
+              detail={publicDetail(settings, publicReadable)}
+              icon={<LockOpen size={14} />}
+            />
+            <Radio
+              name={name}
+              checked={data.protected}
+              onChange={() => setProtected(true)}
+              title="Password protected"
+              detail={protectedDetail(settings, readableNow(publicRead, true, settings))}
+              icon={<Lock size={14} />}
+            />
+          </Grid>
+        )}
+        {data.protected && (
+          <>
+            {closed && (
+              <Surface role="status" pad="md" gap="3xs" tone="error" radius="lg">
+                <p className="text-sm font-medium">Closed: nobody new can join</p>
+                <p className="text-xs">
+                  Set a permanent password or add a password below to let people in.
+                </p>
+              </Surface>
+            )}
+            {canSettings && (
+              <PermanentPassword
+                server={server}
+                has={data.permanent}
+                canRemove={canRemove}
+                refresh={refresh}
               />
-              <Radio
-                name={name}
-                checked={data.protected}
-                onChange={() => setProtected(true)}
-                title="Password protected"
-                detail={protectedDetail(settings, readableNow(publicRead, true, settings))}
-                icon={<Lock size={14} />}
-              />
-            </Grid>
-          )}
-          {data.protected && (
-            <>
-              {closed && (
-                <Surface role="status" pad="md" gap="3xs" tone="error" radius="lg">
-                  <p className="text-sm font-medium">Closed: nobody new can join</p>
-                  <p className="text-xs">
-                    Set a permanent password or add a password below to let people in.
+            )}
+            {canInvites && (
+              <Stack gap="xs">
+                <Row gap="sm">
+                  <p className="flex-1 text-sm font-medium text-on-surface">
+                    Passwords{' '}
+                    <span className="text-xs font-normal text-on-surface-variant">
+                      {live}/{ACTIVE_MAX} active
+                    </span>
                   </p>
-                </Surface>
-              )}
-              {canSettings && (
-                <PermanentPassword
-                  server={server}
-                  has={data.permanent}
-                  canRemove={canRemove}
-                  refresh={refresh}
-                />
-              )}
-              {canInvites && (
-                <Stack gap="xs">
-                  <Row gap="sm">
-                    <p className="flex-1 text-sm font-medium text-on-surface">
-                      Passwords{' '}
-                      <span className="text-xs font-normal text-on-surface-variant">
-                        {live}/{ACTIVE_MAX} active
-                      </span>
+                  <Button
+                    icon={Plus}
+                    onClick={() => setCreating(true)}
+                    disabled={live >= ACTIVE_MAX}
+                  >
+                    New password
+                  </Button>
+                </Row>
+                {data.passwords.length ? (
+                  <Stack gap="none">
+                    {data.passwords.map(p => (
+                      <PasswordRow
+                        key={p.id}
+                        server={server}
+                        password={p}
+                        now={now}
+                        secret={secretFor(book, server, p.id)}
+                        onRevoke={() => revoke(p)}
+                      />
+                    ))}
+                  </Stack>
+                ) : (
+                  <Surface pad="sm" inset="bar" tone="plain" radius="none">
+                    <p className="text-sm text-on-surface-variant">
+                      No other passwords. Add temporary passwords or tickets with a use limit.
                     </p>
-                    <Button
-                      icon={Plus}
-                      onClick={() => setCreating(true)}
-                      disabled={live >= ACTIVE_MAX}
-                    >
-                      New password
-                    </Button>
-                  </Row>
-                  {data.passwords.length ? (
-                    <Stack gap="none">
-                      {data.passwords.map(p => (
-                        <PasswordRow
-                          key={p.id}
-                          server={server}
-                          password={p}
-                          now={now}
-                          secret={secretFor(book, server, p.id)}
-                          onRevoke={() => revoke(p)}
-                        />
-                      ))}
-                    </Stack>
-                  ) : (
-                    <Surface pad="sm" inset="bar" tone="plain" radius="none">
-                      <p className="text-sm text-on-surface-variant">
-                        No other passwords. Add temporary passwords or tickets with a use limit.
-                      </p>
-                    </Surface>
-                  )}
-                  <p className="text-xs text-on-surface-variant">
-                    Renaming the server revokes these passwords.
-                  </p>
-                </Stack>
-              )}
-            </>
-          )}
-          {canSettings && (
-            <>
-              <PublicReading server={server} hasPassword={data.protected} option={publicRead} />
-              {membersVisible !== null && (
-                <MemberPrivacy server={server} visible={membersVisible} />
-              )}
-              <GuestParticipation server={server} />
-            </>
-          )}
-          <FieldError message={error} />
-        </Stack>
-      )}
+                  </Surface>
+                )}
+                <p className="text-xs text-on-surface-variant">
+                  Renaming the server revokes these passwords.
+                </p>
+              </Stack>
+            )}
+          </>
+        )}
+        {canSettings && (
+          <>
+            <PublicReading server={server} hasPassword={data.protected} option={publicRead} />
+            {membersVisible !== null && <MemberPrivacy server={server} visible={membersVisible} />}
+            <GuestParticipation server={server} />
+          </>
+        )}
+        <FieldError message={error} />
+      </Stack>
       {creating && (
         <NewPasswordDialog
           server={server}

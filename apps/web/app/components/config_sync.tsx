@@ -1,4 +1,7 @@
 'use client'
+import { Loaded, useAccountRequest } from './loaded'
+import { RowsSkeleton } from './skeletons'
+import { orMissing } from '../lib/api_errors'
 import { routeOwnerFor } from '../lib/client/account_paths'
 import { accountPath } from '../lib/view'
 import { P2pProvider, useP2pApp, useP2p } from '../lib/client/p2p_react'
@@ -996,48 +999,32 @@ export function ConfigSyncSection() {
   )
 }
 
-type LinkState =
-  | { kind: 'loading' }
-  | { kind: 'missing' }
-  | { kind: 'error'; message: string }
-  | { kind: 'ready'; doc: ConfigDoc; expiresAt: number }
+interface SharedConfig {
+  doc: ConfigDoc
+  expiresAt: number
+}
 
 function LinkCard({ id }: { id: string }) {
   const account = useAccount()
   const selected = useP2pApp()
   const [identity] = useState(selected)
-  const { api, handoff } = account
+  const { handoff } = account
   const mark = account.lifetime.sessionMark()
   const router = useRouter()
   const showToast = useStore(s => s.showToast)
   const authed = useStore(s => s.me !== null || s.guest)
   const closeConfigLink = useStore(s => s.closeConfigLink)
-  const [state, setState] = useState<LinkState>({ kind: 'loading' })
   const [done, setDone] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let live = true
-    api.configShare(id).then(
-      async res => {
+  const load = useAccountRequest<SharedConfig | null>(
+    api =>
+      api.configShare(id).then(async res => {
         const decoded = await decodeLink(res.blob)
-        if (!live || mark !== account.lifetime.sessionMark()) return
-        setState(
-          decoded.ok
-            ? { kind: 'ready', doc: decoded.doc, expiresAt: res.expires_at }
-            : { kind: 'error', message: decoded.error }
-        )
-      },
-      (e: unknown) => {
-        if (!live || mark !== account.lifetime.sessionMark()) return
-        const status = (e as { status?: number }).status
-        setState(status === 404 ? { kind: 'missing' } : { kind: 'error', message: errorText(e) })
-      }
-    )
-    return () => {
-      live = false
-    }
-  }, [id, api, account, mark])
+        if (!decoded.ok) throw new Error(decoded.error)
+        return { doc: decoded.doc, expiresAt: res.expires_at }
+      }, orMissing(null)),
+    [id]
+  )
 
   const current = () =>
     mark === account.lifetime.sessionMark() && account.store.getState().configLink === id
@@ -1052,55 +1039,61 @@ function LinkCard({ id }: { id: string }) {
   return (
     <div className="w-full max-w-md rounded-3xl bg-surface-container shadow-elevation-2">
       <Surface pad="xl" gap="lg" tone="plain">
-        {state.kind !== 'ready' && (
-          <Stack gap="md">
-            {title}
-            {state.kind === 'loading' && (
-              <p className="text-sm text-on-surface-variant">Loading…</p>
-            )}
-            {state.kind === 'missing' && (
-              <p className="text-sm text-on-surface-variant">
-                This link has expired or was revoked.
-              </p>
-            )}
-            {state.kind === 'error' && <FieldError message={state.message} />}
-          </Stack>
-        )}
-        {state.kind === 'ready' && (
-          <>
-            <Stack gap="2xs">
+        <Loaded
+          load={load}
+          what="the shared config"
+          skeleton={
+            <Stack gap="md">
               {title}
-              <p className="text-sm text-on-surface-variant">
-                Pick what to apply on this device. Link active{' '}
-                {untilText(state.expiresAt * 1000, time().now())}.
-              </p>
+              <RowsSkeleton rows={3} label="Loading the shared config" />
             </Stack>
-            {done ? (
-              <p role="status" className="text-sm text-on-surface">
-                {done}
-              </p>
+          }
+        >
+          {shared =>
+            shared === null ? (
+              <Stack gap="md">
+                {title}
+                <p className="text-sm text-on-surface-variant">
+                  This link has expired or was revoked.
+                </p>
+              </Stack>
             ) : (
-              <P2pProvider identity={identity}>
-                <ImportPreview
-                  identity={identity}
-                  doc={state.doc}
-                  loggedOut={!authed}
-                  onDone={(applied, err) => {
-                    if (!current()) return
-                    setError(err)
-                    if (!applied) return
-                    if (authed) {
-                      showToast('Config applied')
-                      closeConfigLink()
-                    } else if (hasStashedConfig(handoff)) logIn()
-                    else setDone('Applied on this device')
-                  }}
-                />
-              </P2pProvider>
-            )}
-            <FieldError message={error} />
-          </>
-        )}
+              <>
+                <Stack gap="2xs">
+                  {title}
+                  <p className="text-sm text-on-surface-variant">
+                    Pick what to apply on this device. Link active{' '}
+                    {untilText(shared.expiresAt * 1000, time().now())}.
+                  </p>
+                </Stack>
+                {done ? (
+                  <p role="status" className="text-sm text-on-surface">
+                    {done}
+                  </p>
+                ) : (
+                  <P2pProvider identity={identity}>
+                    <ImportPreview
+                      identity={identity}
+                      doc={shared.doc}
+                      loggedOut={!authed}
+                      onDone={(applied, err) => {
+                        if (!current()) return
+                        setError(err)
+                        if (!applied) return
+                        if (authed) {
+                          showToast('Config applied')
+                          closeConfigLink()
+                        } else if (hasStashedConfig(handoff)) logIn()
+                        else setDone('Applied on this device')
+                      }}
+                    />
+                  </P2pProvider>
+                )}
+                <FieldError message={error} />
+              </>
+            )
+          }
+        </Loaded>
         <Row gap="sm" wrap>
           {!authed && <Button onClick={logIn}>Log in</Button>}
           {authed && <Button onClick={closeConfigLink}>Close</Button>}

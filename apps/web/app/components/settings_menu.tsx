@@ -4,7 +4,7 @@ import { instanceAddress, instanceName, personCalled } from '../lib/names'
 import { asAccount, pictured } from '../lib/people'
 import { useP2p } from '../lib/client/p2p_react'
 
-import { SignInMethods, useSignInLinks } from './sso/sign_in_methods'
+import { SignInLinks, SignInMethods } from './sso/sign_in_methods'
 import { useConfirmation } from './sso/use_confirmation'
 import { ReAuthPrompt } from './backup_phrase/reauth_prompt'
 import { PhraseSettings } from './backup_phrase/phrase_settings'
@@ -32,7 +32,7 @@ import {
   UserRound,
   type LucideIcon,
 } from 'lucide-react'
-import { errorText, useStore } from '../lib/store'
+import { useStore } from '../lib/store'
 import { limitsOf } from '../lib/instance_limits'
 import { iceOffer } from '../lib/ice'
 import { ownTurn } from '../lib/relays'
@@ -75,7 +75,7 @@ import { BlockedUsersSection } from './blocking'
 import { PaletteSettingsSection } from './palette_settings'
 import { Choice, PrivacyChoices } from './friends'
 import { LinkSafetySection } from './link_safety_settings'
-import { PassSwitch, WordGrid } from './word_grid'
+import { AccountWords, PassSwitch } from './word_grid'
 import { PageRow, SettingsPage, type PageSection } from './settings_page'
 import {
   dangerBtn,
@@ -451,25 +451,23 @@ function ProfileFields() {
   )
 }
 
+const NO_LINKS: LinkedProvider[] = []
+
 function SecretField({
   label,
   kind,
   onKind,
-  words,
+  username,
   selected,
   onSelected,
-  wordsError,
-  onRetry,
   children,
 }: {
   label: string
   kind: PassKind
   onKind: (kind: PassKind) => void
-  words: string[]
+  username: string
   selected: string[]
   onSelected: (selected: string[]) => void
-  wordsError: string | null
-  onRetry: () => void
   children: React.ReactNode
 }) {
   return (
@@ -478,17 +476,8 @@ function SecretField({
       <PassSwitch value={kind} onChange={onKind} label={`${label} type`} />
       {kind === 'text' ? (
         children
-      ) : words.length ? (
-        <WordGrid words={words} selected={selected} onChange={onSelected} />
-      ) : wordsError ? (
-        <Row gap="md">
-          <span className="text-sm text-error">Couldn't load your words: {wordsError}</span>
-          <button type="button" onClick={onRetry} className="text-sm font-medium text-primary">
-            Retry
-          </button>
-        </Row>
       ) : (
-        <p className="text-sm text-on-surface-variant">Loading your 20 words…</p>
+        <AccountWords username={username} selected={selected} onChange={onSelected} />
       )}
     </Stack>
   )
@@ -502,7 +491,6 @@ function PasswordSection({ links }: { links: LinkedProvider[] }) {
   )
   const [confirming, setConfirming] = useState(false)
   const title = first ? 'Set a password' : 'Change password'
-  const { api } = useAccount()
   const username = useStore(s => s.me?.username)
   const savedKind = useStore(s => s.me?.password_kind ?? 'text')
   const changePassword = useStore(s => s.changePassword)
@@ -520,36 +508,15 @@ function PasswordSection({ links }: { links: LinkedProvider[] }) {
   const [confirm, setConfirm] = useState('')
   const [currentWords, setCurrentWords] = useState<string[]>([])
   const [newWords, setNewWords] = useState<string[]>([])
-  const [words, setWords] = useState<string[]>([])
-  const [wordsError, setWordsError] = useState<string | null>(null)
-  const [wordsTry, setWordsTry] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
   const [busy, setBusy] = useState(false)
-  const needWords = currentKind === 'words' || newKind === 'words'
 
   useEffect(() => {
     void refreshAccount()
   }, [refreshAccount])
 
-  useEffect(() => {
-    if (!needWords || words.length || !username) return
-    let live = true
-    api
-      .words(username)
-      .then(res => live && setWords(res.words))
-      .catch(e => live && setWordsError(errorText(e)))
-    return () => {
-      live = false
-    }
-  }, [needWords, words.length, username, wordsTry])
-
   if (!username || (first && !allowed)) return null
-
-  const retryWords = () => {
-    setWordsError(null)
-    setWordsTry(n => n + 1)
-  }
 
   const edit =
     <T,>(fn: (v: T) => void) =>
@@ -624,11 +591,9 @@ function PasswordSection({ links }: { links: LinkedProvider[] }) {
             label="Current password"
             kind={currentKind}
             onKind={edit(setCurrentKind)}
-            words={words}
+            username={username}
             selected={currentWords}
             onSelected={edit(setCurrentWords)}
-            wordsError={wordsError}
-            onRetry={retryWords}
           >
             <input
               type="password"
@@ -645,11 +610,9 @@ function PasswordSection({ links }: { links: LinkedProvider[] }) {
           label="New password"
           kind={newKind}
           onKind={edit(setNewKind)}
-          words={words}
+          username={username}
           selected={newWords}
           onSelected={edit(setNewWords)}
-          wordsError={wordsError}
-          onRetry={retryWords}
         >
           <input
             type="password"
@@ -709,17 +672,20 @@ function PasswordSection({ links }: { links: LinkedProvider[] }) {
 }
 
 function AccountMethods() {
-  const list = useSignInLinks()
   const phrase = useStore(
     s => s.settings.backup_phrase && s.me?.password_temporary?.change !== 'required'
   )
   return (
-    <>
-      <PasswordSection links={list.links ?? []} />
-      <SignInMethods list={list} />
-      {phrase && <PhraseSettings links={list.links ?? []} />}
-      <DeleteAccount links={list.links ?? []} />
-    </>
+    <SignInLinks>
+      {(links, list) => (
+        <>
+          <PasswordSection links={links ?? NO_LINKS} />
+          <SignInMethods links={links} list={list} />
+          {phrase && <PhraseSettings links={links ?? NO_LINKS} />}
+          <DeleteAccount links={links ?? NO_LINKS} />
+        </>
+      )}
+    </SignInLinks>
   )
 }
 

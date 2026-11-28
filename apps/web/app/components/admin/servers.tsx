@@ -20,12 +20,12 @@ import {
 } from '../../lib/admin_servers'
 import { ApiError } from '../../lib/api'
 import { errorText, useStore } from '../../lib/store'
-import type { ServerSummaryLite } from '../../lib/types'
 import { PageGroup, PageRow } from '../settings_page'
 import { Button, IconButton, ListRow } from '../controls'
 import { Row, Stack, Surface } from '../layout'
 import { FieldError, Sentinel, fieldCls } from '../ui'
 import { useControl } from './config_state'
+import { ServerMatches } from './server_matches'
 import { ServerManage } from './server_manage'
 import { SourceNote } from './source'
 import { time } from '../../lib/platform/time'
@@ -96,28 +96,10 @@ function DefaultServers() {
   const updateSettings = useStore(s => s.updateSettings)
   const setError = useStore(s => s.setError)
   const [q, setQ] = useState('')
-  const [found, setFound] = useState<ServerSummaryLite[]>([])
   const [wrong, setWrong] = useState<string | null>(null)
   const pinned = control?.pinned ?? false
   const list = listOf(control?.value)
   const full = list.length >= DEFAULT_SERVERS_MAX
-  useEffect(() => {
-    const text = q.trim()
-    let live = true
-    const t = time().after(300, () => {
-      if (text === '') return setFound([])
-      ownerSession.api
-        .adminServers(null, text)
-        .then(page => {
-          if (live) setFound(page.items.slice(0, 8))
-        })
-        .catch(ownerSession.lifetime.inSession((e: unknown) => setError(errorText(e))))
-    })
-    return () => {
-      live = false
-      t?.()
-    }
-  }, [ownerSession, q, setError])
   const save = (next: string[]) => {
     setWrong(null)
     void updateSettings({ default_servers: next })
@@ -220,25 +202,24 @@ function DefaultServers() {
                 Add
               </Button>
             </Row>
-            {found.length > 0 && (
-              <Stack gap="2xs">
-                {found.map(sv => (
-                  <ListRow
-                    key={sv.name}
-                    disabled={pinned || full || list.includes(sv.name)}
-                    onClick={() => add(sv.name)}
-                    streamer
-                    label={
-                      <>
-                        {sv.display_name}{' '}
-                        <span className="text-on-surface-variant">({sv.name})</span>
-                      </>
-                    }
-                    trailing={<span className="shrink-0 text-primary">Add</span>}
-                  />
-                ))}
-              </Stack>
-            )}
+            <ServerMatches
+              q={q}
+              limit={8}
+              row={sv => (
+                <ListRow
+                  key={sv.name}
+                  disabled={pinned || full || list.includes(sv.name)}
+                  onClick={() => add(sv.name)}
+                  streamer
+                  label={
+                    <>
+                      {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
+                    </>
+                  }
+                  trailing={<span className="shrink-0 text-primary">Add</span>}
+                />
+              )}
+            />
             <FieldError message={wrong} />
           </>
         )}

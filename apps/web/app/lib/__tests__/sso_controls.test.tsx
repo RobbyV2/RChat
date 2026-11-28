@@ -12,7 +12,7 @@ test('Settings protects the configured provider and allows removing an obsolete 
   ]
   const html = renderToStaticMarkup(
     <AccountProvider session={acct}>
-      <SignInMethods list={{ links, supported: true, error: null, refresh: () => {} }} />
+      <SignInMethods links={links} list={{ notice: null, supported: true, refresh: () => {} }} />
     </AccountProvider>
   )
   const buttons = Array.from(html.matchAll(/<button([^>]*)>Unlink<\/button>/g), match => match[1])

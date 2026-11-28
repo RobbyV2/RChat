@@ -1,11 +1,11 @@
 'use client'
+import { Refreshed, useAccountRequest } from './loaded'
 
 import { asAccount, pictured, type Person } from '../lib/people'
 import { Name } from './name'
 import { p2pName, personCalled, personName } from '../lib/names'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import { Lock } from 'lucide-react'
-import { useApi } from '../lib/client/react'
 import { DEFAULT_COLOR } from '../lib/identicon'
 import { MODE_LABELS, PROFILE_FIELDS } from '../lib/profile_fields'
 import {
@@ -33,7 +33,7 @@ import {
   type ProfileDraft,
 } from '../lib/server_profile_editor'
 import { errorText, useStore } from '../lib/store'
-import type { AvatarKind, MemberLook, ProfilesMode, ServerProfile, UserRef } from '../lib/types'
+import type { AvatarKind, ProfilesMode, ServerProfile, UserRef } from '../lib/types'
 import { AvatarPicker } from './avatar_picker'
 import { BannerPicker } from './settings_menu'
 import { useLook } from './shown_user'
@@ -449,9 +449,12 @@ export interface ProfileResetSource {
 // A moderator clears parts of someone's server profile and may lock it for a while.
 export function ProfileReset({
   source,
+  notice = null,
   onClose,
 }: {
   source: ProfileResetSource
+  // The state of a lookup the dialog's facts wait on.
+  notice?: ReactNode
   onClose: () => void
 }) {
   const { user, lock } = source
@@ -579,6 +582,7 @@ export function ProfileReset({
             </Stack>
           </label>
         )}
+        {notice}
         <FieldError message={error} />
         <Row gap="sm" justify="end">
           <Button size="md" onClick={onClose}>
@@ -599,7 +603,6 @@ export function ProfileReset({
 }
 
 function HostedResetDialog({ server, user }: { server: string; user: UserRef }) {
-  const api = useApi()
   const close = useStore(s => s.closeDialog)
   const reset = useStore(s => s.resetMemberProfile)
   const unlock = useStore(s => s.unlockMemberProfile)
@@ -607,37 +610,34 @@ function HostedResetDialog({ server, user }: { server: string; user: UserRef }) 
   const known = useStore(s => s.profileLocks[server]?.[user.username])
   const listed = useLook(server, user.username)
   // The card's facts say what is there to reset, and whether a lock runs.
-  const [fetched, setFetched] = useState<MemberLook | null | undefined>(undefined)
-  useEffect(() => {
-    let live = true
-    api.userProfile(user.username, server).then(
-      p => {
-        if (!live) return
-        setFetched(p.member?.profile ?? null)
-        note(server, user.username, p.member?.profile_locked_until)
-      },
-      () => {}
-    )
-    return () => {
-      live = false
-    }
-  }, [api, note, server, user.username])
+  const load = useAccountRequest(
+    async api => {
+      const p = await api.userProfile(user.username, server)
+      note(server, user.username, p.member?.profile_locked_until)
+      return p.member?.profile ?? null
+    },
+    [note, server, user.username]
+  )
   const now = useNow(known !== undefined, 30_000)
-  const look = fetched === undefined ? listed : fetched
   return (
-    <ProfileReset
-      onClose={close}
-      source={{
-        user: shownUser(user, look),
-        subtitle: `@${user.username}`,
-        name: look?.name ?? null,
-        lock: lockState(known, Math.floor(now / 1000)),
-        reasons: true,
-        avatar: accountAvatar,
-        submit: (fields, secs, reason) => reset(server, user.username, fields, secs, reason),
-        unlock: () => unlock(server, user.username),
-      }}
-    />
+    <Refreshed load={load} known={listed} what="their server profile">
+      {(look, notice) => (
+        <ProfileReset
+          onClose={close}
+          notice={notice}
+          source={{
+            user: shownUser(user, look),
+            subtitle: `@${user.username}`,
+            name: look?.name ?? null,
+            lock: lockState(known, Math.floor(now / 1000)),
+            reasons: true,
+            avatar: accountAvatar,
+            submit: (fields, secs, reason) => reset(server, user.username, fields, secs, reason),
+            unlock: () => unlock(server, user.username),
+          }}
+        />
+      )}
+    </Refreshed>
   )
 }
 

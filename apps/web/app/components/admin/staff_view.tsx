@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { STAFF_REASON_MAX, STAFF_VIEW_MINUTES } from '../../lib/staff_view'
 import { useStore } from '../../lib/store'
 import { ReAuthPrompt } from '../backup_phrase/reauth_prompt'
-import { useSignInLinks } from '../sso/sign_in_methods'
+import { SignInLinks } from '../sso/sign_in_methods'
 import { Row, Stack } from '../layout'
 import { Dialog, fieldCls } from '../ui'
 
@@ -24,7 +24,6 @@ function Confirm({ channel }: { channel: number }) {
   })
   const confirm = useStore(s => s.confirmStaffView)
   const close = useStore(s => s.closeStaffAsk)
-  const { links } = useSignInLinks()
   const [reason, setReason] = useState('')
   return (
     <Dialog title="Open this channel?" compact layer="confirm" onClose={close}>
@@ -44,12 +43,19 @@ function Confirm({ channel }: { channel: number }) {
             className={fieldCls}
           />
         </Row>
-        <ReAuthPrompt
-          purpose="staff_view"
-          context={String(channel)}
-          links={links ?? []}
-          onBody={reauth => confirm(reauth, reason)}
-        />
+        <SignInLinks>
+          {(links, list) => (
+            <>
+              {list.notice}
+              <ReAuthPrompt
+                purpose="staff_view"
+                context={String(channel)}
+                links={links ?? []}
+                onBody={reauth => confirm(reauth, reason)}
+              />
+            </>
+          )}
+        </SignInLinks>
       </Stack>
     </Dialog>
   )

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { Loaded } from '../../components/loaded'
+import { Loaded, Refreshed } from '../../components/loaded'
 import { ApiError } from '../api'
 import { ManualTime } from './helpers/test_clock'
 import { LOAD_DEADLINE_MS, fromStore, type Load, type LoadMaker } from '../load'
@@ -137,5 +137,51 @@ describe('a load on screen', () => {
       draw(load<number>(time, make => make.failed('no'))),
     ].join('')
     expect(all.includes('—')).toBe(false)
+  })
+})
+
+describe('a load over what the screen already knows', () => {
+  const over = (l: Load<number>) =>
+    renderToStaticMarkup(
+      <Refreshed load={l} known={1} what="the count">
+        {(value, notice) => (
+          <>
+            <b>{value}</b>
+            <i>{notice}</i>
+          </>
+        )}
+      </Refreshed>
+    )
+
+  test('the known value while it loads, then the value', () => {
+    const time = clock()
+    expect(over(load<number>(time, make => make.loading()))).toBe('<b>1</b><i></i>')
+    expect(over(load<number>(time, make => make.ready(7)))).toBe('<b>7</b><i></i>')
+  })
+
+  test('a refusal is handed over as a notice beside the known value', () => {
+    const time = clock()
+    const html = over(
+      load<number>(
+        time,
+        make => make.failed(new ApiError('No', 500)),
+        () => {}
+      )
+    )
+    expect(html.startsWith('<b>1</b><i>')).toBe(true)
+    expect(html).toContain('data-notice="error"')
+    expect(html).toContain('Could not load the count.')
+    expect(html).toContain('Try again')
+  })
+
+  test('a load past its deadline says so', () => {
+    const time = clock()
+    const l = load<number>(
+      time,
+      make => make.loading(),
+      () => {}
+    )
+    time.advance(LOAD_DEADLINE_MS)
+    expect(over(l)).toContain('Still loading the count.')
   })
 })
