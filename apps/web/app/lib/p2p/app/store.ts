@@ -185,6 +185,8 @@ export interface P2pState {
   // When we may post again in a slow-mode channel, by draft key.
   slowUntil: Record<string, number>
   replying: { room: string; id: string } | null
+  // The composer asked to take the focus, by draft key; `n` rises with each ask.
+  composerFocus: { key: string; n: number } | null
   // `alt`: the description of the message's first image as edited, with its root hash.
   editing: {
     room: string
@@ -424,6 +426,7 @@ export const initialPeerState = (): P2pState => ({
   drafts: {},
   slowUntil: {},
   replying: null,
+  composerFocus: null,
   editing: null,
   focus: null,
   pulling: false,

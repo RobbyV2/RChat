@@ -1,7 +1,15 @@
 'use client'
 
 import { composerTextLook } from '../lib/controls'
-import { useEffect, useRef, useState, type ClipboardEvent, type ReactNode, type Ref } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type ReactNode,
+  type Ref,
+  type RefObject,
+} from 'react'
 import { Smile } from 'lucide-react'
 import { spliceText } from '../lib/autocomplete'
 import { background } from '../lib/api_errors'
@@ -28,6 +36,18 @@ export const fits = (compose: Compose, text: string, max: number) =>
 // The field a message is written in, whichever place it goes to: the text with its completions
 // and formatting, the emoji picker, the character counter and the send button. What is sent, and
 // what else can be added to it (`tools`), is the caller's.
+// Gives `field` the focus each time its list's composer is asked to take it (a reply started, an
+// edit left).
+export function useFocusAsks(compose: Compose, field: RefObject<HTMLTextAreaElement | null>) {
+  const { focus } = useLive(compose.state)
+  const seen = useRef(focus)
+  useEffect(() => {
+    if (focus === seen.current) return
+    seen.current = focus
+    if (focus > 0) field.current?.focus()
+  }, [focus, field])
+}
+
 export function ComposerField({
   compose,
   listKey,
@@ -78,6 +98,7 @@ export function ComposerField({
     else if (givenRef) givenRef.current = el
   }
 
+  useFocusAsks(compose, ownRef)
   const typingNow = focused && text.trim() !== ''
   useEffect(() => {
     if (key !== null) compose.typing(key, typingNow)

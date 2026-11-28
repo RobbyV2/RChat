@@ -691,7 +691,11 @@ export function createDmsPart(
     },
 
     startReply(room: string, id: string) {
-      useP2p.setState({ replying: { room, id }, editing: null })
+      useP2p.setState(s => ({
+        replying: { room, id },
+        editing: null,
+        composerFocus: { key: room, n: (s.composerFocus?.n ?? 0) + 1 },
+      }))
     },
 
     cancelReply: () => useP2p.setState({ replying: null }),

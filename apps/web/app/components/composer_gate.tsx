@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useState, type Ref } from 'react'
+import { useRef, useState } from 'react'
 import { Eye, Lock } from 'lucide-react'
 import { NO_THREADS_TEXT } from '../lib/channel_perms'
 import { accountPrompt } from '../lib/features'
@@ -13,6 +13,7 @@ import { useLive } from '../lib/place/react'
 import { time } from '../lib/platform/time'
 import { errorText, useStore } from '../lib/store'
 import { Button, LinkButton } from './controls'
+import { useFocusAsks } from './composer_field'
 import { GateNote } from './gate_note'
 import { Dock, Row, Surface } from './layout'
 import { Name } from './name'
@@ -134,16 +135,10 @@ function JoinBar({ name, compose }: { name: string; compose: Compose }) {
 }
 
 // A guest's own field: plain text, sent as the guest.
-function GuestField({
-  compose,
-  list,
-  inputRef,
-}: {
-  compose: Compose
-  list: ComposerList
-  inputRef?: Ref<HTMLTextAreaElement>
-}) {
+function GuestField({ compose, list }: { compose: Compose; list: ComposerList }) {
   const { key, replying } = useLive(compose.state)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  useFocusAsks(compose, inputRef)
   const answered = useAnswered(replying?.to ?? null)
   return (
     <Dock data-guest-editor gap="sm">
@@ -162,16 +157,14 @@ function GuestField({
 interface GateProps {
   compose: Compose
   list: ComposerList
-  // The field a guest writes in, for whoever asks it to take the focus.
-  inputRef?: Ref<HTMLTextAreaElement>
 }
 
-function Bar({ gate, compose, list, inputRef }: GateProps & { gate: Gate }) {
+function Bar({ gate, compose, list }: GateProps & { gate: Gate }) {
   switch (gate.kind) {
     case 'join':
       return <JoinBar key={gate.server} name={gate.name} compose={compose} />
     case 'guestWrite':
-      return <GuestField compose={compose} list={list} inputRef={inputRef} />
+      return <GuestField compose={compose} list={list} />
     case 'guest':
       return <GuestNote posting={gate.posting} />
     case 'noSend':
@@ -220,8 +213,8 @@ function Bar({ gate, compose, list, inputRef }: GateProps & { gate: Gate }) {
 
 // What stands in a composer's place while the composer itself cannot be used there, whichever
 // place it is in; nothing while the composer is open.
-export function ComposerGate({ compose, list, inputRef }: GateProps) {
+export function ComposerGate({ compose, list }: GateProps) {
   const { gate, ends } = useGate(compose)
-  if (gate !== null) return <Bar gate={gate} compose={compose} list={list} inputRef={inputRef} />
+  if (gate !== null) return <Bar gate={gate} compose={compose} list={list} />
   return ends === null ? null : <TimedOutBar ends={ends} />
 }

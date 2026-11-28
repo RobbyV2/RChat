@@ -139,6 +139,21 @@ placeContract(composer, (kind, world) => {
     ])
   })
 
+  test('a list asked to take the focus says so, and only that list', () => {
+    const { ann } = world()
+    const main = seat(world(), [])
+    const thread = seat(world(), [], 'thread')
+    expect(main.state.get().focus).toBe(0)
+    const key = main.state.get().key as string
+    if (hosted) ann.account.store.setState({ composerFocus: { key, n: 3 } })
+    else ann.app?.useP2p.setState({ composerFocus: { key, n: 3 } })
+    expect(main.state.get().focus).toBe(3)
+    expect(thread.state.get().focus).toBe(0)
+    if (hosted) return
+    ann.app?.p2pDm.startReply(key, 'e6')
+    expect(main.state.get().focus).toBe(4)
+  })
+
   test('typing is said as often as the place wants it', () => {
     const calls: unknown[][] = []
     const main = seat(world(), calls)

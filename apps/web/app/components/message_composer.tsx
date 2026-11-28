@@ -213,7 +213,6 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const sendThreadMessage = useStore(s => s.sendThreadMessage)
   const linkPrefs = useStore(s => s.linkPrefs)
   const forwarding = useForwardClip() !== null
-  const focusAsk = useStore(s => s.composerFocus)
   const sedEdit = useStore(s => s.sedEdit)
   const [expiryOpen, setExpiryOpen] = useState(false)
   const [pollOpen, setPollOpen] = useState(false)
@@ -226,16 +225,8 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
       s.settings.scheduled_messages || !!(s.scheduled.counts?.waiting || s.scheduled.counts?.failed)
   )
   const fileRef = useRef<HTMLInputElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
-  const focusSeen = useRef(focusAsk?.n ?? 0)
   const channelId = thread ? threadChannel : view?.kind === 'channel' ? view.channelId : null
   const slowLeft = useSlowLeft(channelId)
-
-  useEffect(() => {
-    if (!focusAsk || focusAsk.n === focusSeen.current) return
-    focusSeen.current = focusAsk.n
-    if (focusAsk.key === draftKey) inputRef.current?.focus()
-  }, [focusAsk, draftKey])
 
   useEffect(() => {
     if (draftKey && scheduledHere) void loadScheduled(draftKey)
@@ -243,8 +234,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
 
   if (!thread && !view) return null
 
-  if (shut)
-    return <ComposerGate compose={compose} list={thread ? 'thread' : 'main'} inputRef={inputRef} />
+  if (shut) return <ComposerGate compose={compose} list={thread ? 'thread' : 'main'} />
 
   const placeholder = thread
     ? 'Message thread'
@@ -488,7 +478,6 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
         slowLeft={slowLeft}
         mayEditLast={can.send}
         bar={bar}
-        inputRef={inputRef}
         later={laterDraft}
         onSend={send}
         onPaste={e => {

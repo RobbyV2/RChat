@@ -29,6 +29,8 @@ export interface ComposeState {
   max: number
   // The message being answered; null while none is.
   replying: Replying | null
+  // Rises each time the field is asked to take the focus; 0 while it never was.
+  focus: number
 }
 
 // The message a draft answers, as its bar above the composer says it.
@@ -137,12 +139,14 @@ const hosted = (account: AccountSession): Composer =>
             key === null ? undefined : s.replying[key],
             s.view?.kind === 'channel' ? s.view.server : null,
             s.me?.username,
+            key !== null && s.composerFocus?.key === key ? s.composerFocus.n : 0,
           ] as const
         },
-        ([key, text, max, reply, server, me]): ComposeState => ({
+        ([key, text, max, reply, server, me, focus]): ComposeState => ({
           key,
           text,
           max,
+          focus,
           replying: reply
             ? {
                 to: { kind: 'account', user: reply.message.author, server },
@@ -300,13 +304,15 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
             key === null ? '' : (s.drafts[key] ?? ''),
             key !== null && s.replying?.room === key ? s.replying.id : null,
             initial && shown.initial ? shown.initial() : shown.get(),
+            key !== null && s.composerFocus?.key === key ? s.composerFocus.n : 0,
           ] as const
         },
-        ([key, text, id, rows]): ComposeState => {
+        ([key, text, id, rows, focus]): ComposeState => {
           const answered = id === null ? undefined : rows.message(id)
           return {
             key,
             text,
+            focus,
             max: P2P_LIMITS.body,
             replying: answered
               ? {
