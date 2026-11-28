@@ -23,7 +23,7 @@ import { ViewableImage } from '../media_lightbox'
 import { VideoAttachment } from '../video_attachment'
 import { Masked } from '../ui'
 import { useInstanceLabel } from '../instance_badge'
-import { Row, Stack, Surface } from '../layout'
+import { Row, Stack, Surface, Inset } from '../layout'
 
 // P2P attachments in messages and in the composer. What a file is shown as comes from its
 // stored bytes only (sniff.ts): images, video and audio play inline, everything else (SVG and
@@ -119,7 +119,7 @@ function Tile({
 
   if (textOnly)
     return (
-      <p className="mt-1 text-xs text-on-surface-variant italic">
+      <p className="msg-part text-xs text-on-surface-variant italic">
         Attachment hidden: <span className="streamer">{label}</span> is text only
       </p>
     )
@@ -188,7 +188,7 @@ export function TileView({
   const canGet = canFetch && !done && !busy && v?.state !== 'removed' && !!v && v.holders > 0
 
   const caption = (
-    <span className="mt-1 flex max-w-full items-center gap-2">
+    <Row as="span" gap="sm" look="msg-part" place="max-w-full">
       <span className="max-w-60 truncate text-xs text-on-surface-variant">
         <Masked text={clean} own={own} />
       </span>
@@ -198,7 +198,7 @@ export function TileView({
       <button title={`Save ${name}`} aria-label="Save" onClick={save} className={iconBtn}>
         <Download size={14} />
       </button>
-    </span>
+    </Row>
   )
 
   const card = {
@@ -222,13 +222,18 @@ export function TileView({
           data-file-spoiler
           title="Click to reveal"
           onClick={() => setRevealed(true)}
-          className="relative mt-1 block w-fit overflow-hidden rounded-xl"
+          className="msg-part relative block w-fit overflow-hidden rounded-xl"
         >
           <img src={url} alt="Spoiler" className="max-h-80 max-w-full blur-2xl" />
           <span className="absolute inset-0 flex items-center justify-center">
-            <span className="rounded-full bg-scrim/70 px-3 py-1 text-xs font-medium tracking-wide text-white uppercase">
+            <Inset
+              as="span"
+              pad="md"
+              inset="chip"
+              look="rounded-full bg-scrim/70 text-xs font-medium tracking-wide text-white uppercase"
+            >
               Spoiler
-            </span>
+            </Inset>
           </span>
         </button>
       )
@@ -266,7 +271,7 @@ export function TileView({
     )
 
   const stored = (
-    <p className="mt-2 text-xs text-on-surface-variant">
+    <p className="msg-part-loose text-xs text-on-surface-variant">
       {v?.tooBig
         ? 'Stored on this device. Too large to show here: save it to view.'
         : 'Stored on this device'}
@@ -301,7 +306,7 @@ export function TileView({
   if (done && url && kind === 'audio')
     return (
       <FileCard {...card} data={{ 'data-p2p-file': att.h }} progress={null}>
-        <audio src={url} controls className="mt-3 w-full" />
+        <audio src={url} controls className="msg-part-loose w-full" />
       </FileCard>
     )
 
@@ -317,7 +322,7 @@ export function TileView({
             src={thumb}
             alt=""
             aria-hidden
-            className="mb-3 max-h-40 max-w-60 rounded-lg object-contain"
+            className="max-h-40 max-w-60 rounded-lg object-contain"
           />
         )
       }
@@ -325,7 +330,7 @@ export function TileView({
       {status && !busy && (
         <p
           data-file-status
-          className={`mt-2 text-xs ${v?.state === 'failed' ? 'text-error' : 'text-on-surface-variant'}`}
+          className={`msg-part-loose text-xs ${v?.state === 'failed' ? 'text-error' : 'text-on-surface-variant'}`}
         >
           {status}
         </p>
@@ -374,32 +379,35 @@ function PendingChip({ room, p }: { room: string; p: PendingFile }) {
       look="h-24 w-40 border-tertiary/60 border-dashed border"
       place="relative shrink-0"
     >
-      <button
+      <Surface
         title="Remove file"
         aria-label="Remove file"
         onClick={() => p2pFiles.remove(room, p.id)}
-        className="absolute -top-2 -right-2 rounded-full bg-error-container p-1 text-on-error-container shadow-elevation-1"
+        as="button"
+        pad="2xs"
+        tone="error"
+        radius="full"
+        elevation={1}
+        place="absolute -top-2 -right-2"
       >
         <X size={12} />
-      </button>
+      </Surface>
       <Row gap="2xs" justify="between">
         {thumb ? (
           <img src={thumb} alt="" aria-hidden className="h-10 w-14 rounded object-cover" />
         ) : (
           <FileText size={20} className="text-tertiary" />
         )}
-        <button
+        <Inset
           title={p.spoiler ? 'Unmark spoiler' : 'Mark as spoiler'}
           aria-label={p.spoiler ? 'Unmark spoiler' : 'Mark as spoiler'}
           onClick={() => p2pFiles.toggleSpoiler(room, p.id)}
-          className={`rounded-full p-1 ${
-            p.spoiler
-              ? 'bg-primary-container text-on-primary-container'
-              : 'text-on-surface-variant hover:bg-surface-container-high'
-          }`}
+          as="button"
+          pad="2xs"
+          look={`rounded-full ${p.spoiler ? 'bg-primary-container text-on-primary-container' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
         >
           {p.spoiler ? <EyeOff size={14} /> : <Eye size={14} />}
-        </button>
+        </Inset>
       </Row>
       <span className="truncate text-xs">
         {p.spoiler ? 'Spoiler · ' : ''}
@@ -451,13 +459,19 @@ function PendingFilesBody({ room }: { room: string }) {
             </Stack>
           </div>
         ))}
-        <span
+        <Inset
           title="Sent peer-to-peer: stored on your devices and shared with the people in this conversation"
-          className="flex shrink-0 items-center gap-1 self-end rounded bg-tertiary-container px-1.5 py-0.5 text-2xs font-medium text-on-tertiary-container"
+          as="span"
+          row
+          pad="xs"
+          inset="chip"
+          gap="2xs"
+          look="rounded bg-tertiary-container text-2xs font-medium text-on-tertiary-container"
+          place="shrink-0 self-end"
         >
           <Waypoints size={10} />
           P2P
-        </span>
+        </Inset>
       </Row>
     </Surface>
   )

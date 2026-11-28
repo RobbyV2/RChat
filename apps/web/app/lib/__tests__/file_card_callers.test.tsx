@@ -117,9 +117,9 @@ describe('a P2P file in a hosted message', () => {
     )
     const card = html.indexOf('data-file-card=""')
     expect(card).toBeGreaterThan(-1)
-    expect(html.indexOf('<audio src="blob:song" controls="" class="msg-part-loose w-full"></audio>')).toBe(
-      html.indexOf('<audio', card)
-    )
+    expect(
+      html.indexOf('<audio src="blob:song" controls="" class="msg-part-loose w-full"></audio>')
+    ).toBe(html.indexOf('<audio', card))
     expect(html).toContain('lucide-file-headphone')
     expect(html).toContain('aria-label="Download song.mp3"')
     expect(html.includes('aria-label="Play audio"')).toBe(false)
@@ -166,7 +166,7 @@ describe('a P2P room or DM file', () => {
     expect(html).toContain('border-dashed border-tertiary/60')
     expect(html).toContain('aria-label="Download Mandy Save.zip"')
     expect(html.includes('disabled=""')).toBe(false)
-    expect(html).toContain('data-file-status="true" class="mt-2 text-xs text-on-surface-variant"')
+    expect(html).toContain('data-file-status="true" class="msg-part-loose text-xs text-on-surface-variant"')
     expect(html).toContain('Available from 2 online members')
     expect(html).toContain('844 KB')
     expect(html.includes('Expires')).toBe(false)
@@ -214,7 +214,9 @@ describe('a P2P room or DM file', () => {
     expect(html).toContain('data-p2p-file="h1" data-file-card=""')
     expect(html.includes('data-state')).toBe(false)
     expect(html).toContain('border-dashed')
-    expect(html).toContain('<audio src="blob:song" controls="" class="msg-part-loose w-full"></audio>')
+    expect(html).toContain(
+      '<audio src="blob:song" controls="" class="msg-part-loose w-full"></audio>'
+    )
     expect(html).toContain('844 KB · 1:23')
     expect(html).toContain('aria-label="Save song.mp3"')
     expect(html).toContain('lucide-file-headphone')

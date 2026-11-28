@@ -31,7 +31,7 @@ import { P2pDm } from '../../lib/place/place'
 import { PlaceProvider } from '../../lib/place/react'
 import { NoteBar, P2pChatBody, P2pIntro } from './p2p_chat'
 import { Masked } from '../ui'
-import { Row } from '../layout'
+import { Row, Surface, Inset } from '../layout'
 
 const NONE: string[] = []
 
@@ -146,37 +146,58 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
   if (!chat) return null
 
   const header = (
-    <header className="flex h-14 shrink-0 items-center gap-1 border-b border-outline-variant px-3 sm:gap-2 md:px-4">
-      <button
+    <Inset
+      as="header"
+      row
+      pad="md"
+      inset="sides"
+      gap="2xs"
+      border="bottom"
+      look="h-14"
+      place="shrink-0"
+    >
+      <Inset
         title={menuPings ? `Menu, ${pingLabel(menuPings)}` : 'Menu'}
         aria-label="Menu"
         onClick={onMenu}
-        className="relative rounded-full p-1.5 hover:bg-surface-container-high md:hidden"
+        as="button"
+        pad="xs"
+        look="rounded-full hover:bg-surface-container-high"
+        place="relative md:hidden"
       >
         <Menu size={20} />
         <PingBadge
           count={menuPings}
           className="absolute -top-1 -right-1.5 border-2 border-surface"
         />
-      </button>
+      </Inset>
       <PeerActorTag header />
       {onBack && (
-        <button
+        <Inset
           title="Back to contacts"
           aria-label="Back to contacts"
           onClick={onBack}
-          className="rounded-full p-1.5 hover:bg-surface-container-high"
+          as="button"
+          pad="xs"
+          look="rounded-full hover:bg-surface-container-high"
         >
           <ArrowLeft size={20} />
-        </button>
+        </Inset>
       )}
       {/* Below 360 px the header has room for the avatar only: the shield sits on it, and the
           name stays the label. */}
-      <button
+      <Surface
         title={streamer ? 'Contact' : peerName}
         aria-labelledby={peer ? `${nameId} ${shieldId} ${statusId}` : `${nameId} ${statusId}`}
         onClick={() => peer && p2p.openDialog({ kind: 'contact', ik: peer.ik })}
-        className="flex min-w-0 items-center gap-2 rounded-full py-1 pr-1.5 pl-1 hover:bg-surface-container-high sm:pr-2.5"
+        as="button"
+        row
+        pad="2xs"
+        gap="sm"
+        tone="plain"
+        radius="full"
+        look="hover:bg-surface-container-high"
+        place="min-w-0"
       >
         <span className="relative shrink-0">
           <KeyAvatar person={identityPerson(peerIk, 'contact')} size={28} />
@@ -215,7 +236,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
             </span>
           </Row>
         </span>
-      </button>
+      </Surface>
       <span className="max-sm:hidden">
         <P2pBadge />
       </span>
@@ -226,7 +247,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
           <ThreadsButton />
         </PlaceProvider>
       </Row>
-    </header>
+    </Inset>
   )
 
   const above = (

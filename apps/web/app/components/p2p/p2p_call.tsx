@@ -13,7 +13,7 @@ import type { P2pMessage } from '../../lib/p2p/dm'
 import type { CallLog } from '../../lib/types'
 import { CallLogLine } from '../message_pane'
 import { P2pBadge } from './p2p_badge'
-import { Row, Surface } from '../layout'
+import { Row, Surface, Inset } from '../layout'
 
 const seconds = (ms: number) => Math.floor(ms / 1000)
 
@@ -81,22 +81,28 @@ function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: st
       data-call-split={video ? 'video' : 'voice'}
       className={`flex items-center rounded-full ${off ? 'opacity-40' : ''}`}
     >
-      <button
+      <Inset
         title={title}
         aria-label={title}
         disabled={off}
         onClick={() => void p2pCall.start(peer, video)}
-        className="relative rounded-l-full py-1.5 pr-1 pl-1.5 outline-offset-2 [@media(pointer:coarse)]:h-10 [@media(pointer:coarse)]:min-w-10 hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary disabled:hover:bg-transparent"
+        as="button"
+        pad="xs"
+        look="relative rounded-l-full outline-offset-2 pointer-coarse:h-10 pointer-coarse:min-w-10 hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary disabled:hover:bg-transparent"
       >
         <Icon size={20} />
-        <span
+        <Inset
           aria-hidden
-          className="absolute -bottom-0.5 left-3 rounded bg-tertiary-container px-0.5 text-3xs leading-tight font-bold text-on-tertiary-container"
+          as="span"
+          pad="3xs"
+          inset="sides"
+          look="rounded bg-tertiary-container text-3xs leading-tight font-bold text-on-tertiary-container"
+          place="absolute -bottom-0.5 left-3"
         >
           P2P
-        </span>
-      </button>
-      <button
+        </Inset>
+      </Inset>
+      <Inset
         title={`${kind} options`}
         aria-label={`${kind} options`}
         aria-haspopup="menu"
@@ -106,10 +112,15 @@ function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: st
           const r = e.currentTarget.getBoundingClientRect()
           menu(r.left - 24, r.bottom + 4)
         }}
-        className="flex h-8 items-center rounded-r-full pr-1 pl-0.5 text-on-surface-variant [@media(pointer:coarse)]:h-10 [@media(pointer:coarse)]:min-w-7 [@media(pointer:coarse)]:justify-center outline-offset-2 hover:bg-surface-container-high hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary disabled:hover:bg-transparent"
+        as="button"
+        row
+        pad="3xs"
+        inset="sides"
+        justify="center"
+        look="h-8 rounded-r-full text-on-surface-variant pointer-coarse:h-10 pointer-coarse:min-w-7 outline-offset-2 hover:bg-surface-container-high hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary disabled:hover:bg-transparent"
       >
         <ChevronDown size={14} />
-      </button>
+      </Inset>
     </div>
   )
 }
@@ -133,12 +144,18 @@ function P2pCallButtonsBody({
   )
   if (elsewhere && there)
     return (
-      <span
+      <Surface
         data-call-elsewhere
-        className="rounded-full bg-surface-container-high px-2.5 py-1 text-xs text-on-surface-variant"
+        as="span"
+        pad="sm"
+        inset="chip"
+        tone="high"
+        radius="full"
+        text="xs"
+        ink="muted"
       >
         {CALL_ELSEWHERE}
-      </span>
+      </Surface>
     )
   const why = elsewhere
     ? 'P2P is open in another tab'
@@ -189,25 +206,41 @@ function IncomingCallBarBody({ room, name }: { room: string; name: string }) {
           </span>
         </Row>
         <Row as="span" gap="xs">
-          <button
+          <Surface
             title="Accept"
             aria-label="Accept"
             disabled={accepting}
             onClick={() => void p2pCall.accept()}
-            className="flex items-center gap-1 rounded-full bg-status-green px-2.5 py-1 text-xs [@media(pointer:coarse)]:px-3.5 [@media(pointer:coarse)]:py-2 font-medium text-surface outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60"
+            as="button"
+            row
+            pad="md"
+            inset="chip"
+            gap="2xs"
+            tone="plain"
+            radius="full"
+            text="xs"
+            look="bg-status-green font-medium text-surface outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60 pointer-coarse:min-h-11"
           >
             <Phone size={12} />
             Accept
-          </button>
-          <button
+          </Surface>
+          <Surface
             title="Decline"
             aria-label="Decline"
             onClick={() => p2pCall.decline()}
-            className="flex items-center gap-1 rounded-full bg-danger px-2.5 py-1 text-xs [@media(pointer:coarse)]:px-3.5 [@media(pointer:coarse)]:py-2 font-medium text-on-danger outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary"
+            as="button"
+            row
+            pad="md"
+            inset="chip"
+            gap="2xs"
+            tone="plain"
+            radius="full"
+            text="xs"
+            look="bg-danger font-medium text-on-danger outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11"
           >
             <PhoneOff size={12} />
             Decline
-          </button>
+          </Surface>
         </Row>
       </Row>
     </Surface>
