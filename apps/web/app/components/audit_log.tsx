@@ -1,5 +1,6 @@
 'use client'
 
+import { IconButton } from './controls'
 import { personName } from '../lib/names'
 import { Name } from './name'
 
@@ -258,18 +259,14 @@ function ActorField({
         className={`${smallField} ${value ? 'streamer' : ''}`}
       />
       {value && (
-        <Inset
+        <IconButton
+          icon={X}
+          label="Clear member filter"
+          size="sm"
           type="button"
-          title="Clear member filter"
-          aria-label="Clear member filter"
           onClick={() => pick('', '')}
-          as="button"
-          pad="2xs"
-          look="rounded-full text-on-surface-variant hover:bg-surface-container-highest"
           place="absolute top-1/2 right-1.5 -translate-y-1/2"
-        >
-          <X size={14} />
-        </Inset>
+        />
       )}
       {open && found.active && hits.length > 0 && (
         <Surface

@@ -51,7 +51,7 @@ import { TypingEllipsis } from '../typing_indicator'
 import { MutedIcon } from '../notify_menu'
 import { P2pDmPane } from './p2p_dm_pane'
 import { VoiceDock } from '../voice_grid'
-import { Dialog, fieldCls, iconBtn, Masked, textBtn, useBackdrop } from '../ui'
+import { Dialog, fieldCls, Masked, textBtn, useBackdrop } from '../ui'
 import { AddContactDialog } from './add_contact'
 import { VerifyDialog } from './verify_dialog'
 import { P2pFolderDialog, ServerInviteDialog, ServerNewDialog } from './p2p_invite_dialog'
@@ -514,32 +514,9 @@ function RequestRow({ c }: { c: Contact }) {
             look="truncate font-mono text-2xs text-on-surface-variant"
           />
         </div>
-        <button
-          title="Accept"
-          aria-label="Accept"
-          onClick={() => void p2p.accept(c.ik)}
-          className={iconBtn}
-        >
-          <Check size={18} />
-        </button>
-        <button
-          title="Ignore"
-          aria-label="Ignore"
-          onClick={() => void p2p.ignore(c.ik)}
-          className={iconBtn}
-        >
-          <X size={18} />
-        </button>
-        <Inset
-          title="Block"
-          aria-label="Block"
-          onClick={() => void p2p.block(c.ik)}
-          as="button"
-          pad="sm"
-          look="rounded-full text-on-surface-variant hover:bg-surface-container-high hover:text-error"
-        >
-          <Ban size={18} />
-        </Inset>
+        <IconButton icon={Check} label="Accept" size="lg" onClick={() => void p2p.accept(c.ik)} />
+        <IconButton icon={X} label="Ignore" size="lg" onClick={() => void p2p.ignore(c.ik)} />
+        <IconButton icon={Ban} label="Block" tone="danger" onClick={() => void p2p.block(c.ik)} />
       </Row>
       {shield === 'warning' && (
         <p className="text-xs text-error">Uses the same name or account as one of your contacts.</p>
@@ -715,22 +692,18 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
         )}
         {adds && (
           <>
-            <button
-              title="Show my code"
-              aria-label="Show my code"
+            <IconButton
+              icon={QrIcon}
+              label="Show my code"
+              size="lg"
               onClick={() => p2p.openDialog({ kind: 'add', tab: 'mine' })}
-              className={iconBtn}
-            >
-              <QrIcon size={20} />
-            </button>
-            <button
-              title="Add contact"
-              aria-label="Add contact"
+            />
+            <IconButton
+              icon={UserPlus}
+              label="Add contact"
+              size="lg"
               onClick={() => p2p.openDialog({ kind: 'add' })}
-              className={iconBtn}
-            >
-              <UserPlus size={20} />
-            </button>
+            />
           </>
         )}
       </Inset>

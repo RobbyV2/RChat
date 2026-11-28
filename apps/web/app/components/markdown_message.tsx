@@ -1,5 +1,6 @@
 'use client'
 
+import { IconButton } from './controls'
 import { Name } from './name'
 import { personCalled } from '../lib/names'
 import { PeerCodeButton } from './p2p/peer_code_button'
@@ -737,22 +738,19 @@ export function P2pFile({
   }
 
   const saveButton = (
-    <Inset
-      title={
+    <IconButton
+      icon={Download}
+      label="Download"
+      tooltip={
         streamer || hoster === null
           ? "Download from the sender's browser"
           : `Download from ${hosterName}'s browser`
       }
-      aria-label="Download"
+      size="sm"
       onClick={() => run(true)}
       disabled={busy || !online}
-      as="button"
-      pad="2xs"
-      look="rounded-full text-on-surface-variant hover:bg-surface-container-high hover:text-primary disabled:opacity-40"
       place="shrink-0"
-    >
-      <Download size={14} />
-    </Inset>
+    />
   )
 
   if (text !== null && lang !== null) {
@@ -1096,14 +1094,13 @@ export function MediaAttachment({
               file={text}
               actions={
                 fetched ? (
-                  <button
-                    title={`Download ${filename}`}
-                    aria-label="Download"
+                  <IconButton
+                    icon={Download}
+                    label="Download"
+                    tooltip={`Download ${filename}`}
+                    size="sm"
                     onClick={save}
-                    className={iconBtn}
-                  >
-                    <Download size={14} />
-                  </button>
+                  />
                 ) : (
                   <a
                     href={api.mediaUrl(id)}
@@ -1207,17 +1204,13 @@ function EmbedCard({
         />
       )}
       {canDelete && (
-        <Inset
-          title="Embed options"
-          aria-label="Embed options"
+        <IconButton
+          icon={EllipsisVertical}
+          label="Embed options"
+          size="sm"
           onClick={e => menu(e.clientX, e.clientY)}
-          as="button"
-          pad="2xs"
-          look="rounded-full text-on-surface-variant hover:bg-surface-container-highest"
           place="absolute top-1.5 right-1.5 opacity-0 group-focus-within/embed:opacity-100 group-hover/embed:opacity-100 max-md:opacity-100"
-        >
-          <EllipsisVertical size={14} />
-        </Inset>
+        />
       )}
     </Surface>
   )
@@ -1432,20 +1425,14 @@ export const MarkdownMessage = memo(function MarkdownMessage({
               />
             )}
             {remove && (
-              <Surface
-                title="Remove attachment"
-                aria-label="Remove attachment"
+              <IconButton
+                icon={X}
+                label="Remove attachment"
+                tone="danger"
+                size="xs"
                 onClick={remove}
-                as="button"
-                pad="2xs"
-                tone="highest"
-                radius="full"
-                elevation={1}
-                look="text-on-surface-variant hover:text-error"
                 place="absolute -top-1.5 -right-1.5 opacity-0 group-focus-within/att:opacity-100 group-hover/att:opacity-100 group-has-[[data-video-attachment]]/att:hidden max-md:opacity-100"
-              >
-                <X size={12} />
-              </Surface>
+              />
             )}
           </div>
         )}

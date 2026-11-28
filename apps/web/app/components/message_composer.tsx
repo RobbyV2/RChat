@@ -522,18 +522,14 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           look="h-24 w-48"
           place="relative"
         >
-          <Surface
-            title="Remove file"
+          <IconButton
+            icon={X}
+            label="Remove file"
+            tone="filled-danger"
+            size="xs"
             onClick={() => attach(null)}
-            as="button"
-            pad="2xs"
-            tone="error"
-            radius="full"
-            elevation={1}
             place="absolute -top-2 -right-2"
-          >
-            <X size={12} />
-          </Surface>
+          />
           <div className="flex items-center justify-between">
             <FileIcon size={20} className="text-primary" />
             <Row gap="2xs">
@@ -554,15 +550,13 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
                 {pending.mode === 'p2p' ? <Share2 size={12} /> : <Server size={12} />}
                 {pending.mode === 'p2p' ? 'P2P' : 'Server'}
               </Surface>
-              <Inset
-                title={pending.spoiler ? 'Unmark spoiler' : 'Mark as spoiler'}
+              <IconButton
+                icon={pending.spoiler ? EyeOff : Eye}
+                label={pending.spoiler ? 'Unmark spoiler' : 'Mark as spoiler'}
+                size="sm"
+                pressed={pending.spoiler}
                 onClick={() => draftKey && toggleSpoiler(draftKey)}
-                as="button"
-                pad="2xs"
-                look={`rounded-full ${pending.spoiler ? 'bg-primary-container text-on-primary-container' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
-              >
-                {pending.spoiler ? <EyeOff size={14} /> : <Eye size={14} />}
-              </Inset>
+              />
             </Row>
           </div>
           <span className="truncate text-xs">

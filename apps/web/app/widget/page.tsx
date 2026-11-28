@@ -1,5 +1,5 @@
 'use client'
-import { Button } from '../components/controls'
+import { Button, IconButton } from '../components/controls'
 import { asAccount } from '../lib/people'
 import { useAccount } from '../lib/client/react'
 import { useContext, useEffect, useMemo, useReducer, useRef, useState, type FormEvent } from 'react'
@@ -276,19 +276,15 @@ function ChatRow({
         )}
       </div>
       {canReply && (
-        <Inset
+        <IconButton
+          icon={Reply}
+          label="Reply"
+          tone="primary"
+          size="sm"
           type="button"
-          aria-label="Reply"
-          title="Reply"
           onClick={pick}
-          as="button"
-          pad="2xs"
-          inset="sides"
-          look="cursor-pointer rounded text-primary pointer-fine:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
           place="col-start-3 row-start-1"
-        >
-          <Reply size={16} />
-        </Inset>
+        />
       )}
     </article>
   )

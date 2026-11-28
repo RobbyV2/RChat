@@ -1,5 +1,6 @@
 'use client'
 
+import { Button } from './controls'
 import type { ReactNode } from 'react'
 import {
   Phone,
@@ -114,40 +115,12 @@ function CallLine({ m, call, logs }: { m: Message; call: CallLog; logs: CallLogs
     >
       {tone === 'ringing' && incoming && (
         <Row as="span" gap="xs">
-          <Surface
-            title="Accept"
-            aria-label="Accept"
-            onClick={() => logs.accept(m)}
-            as="button"
-            row
-            pad="md"
-            inset="chip"
-            gap="2xs"
-            tone="plain"
-            radius="full"
-            text="xs"
-            look="bg-status-green font-medium text-surface outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11"
-          >
-            <Phone size={12} />
+          <Button variant="accept" icon={Phone} title="Accept" onClick={() => logs.accept(m)}>
             Accept
-          </Surface>
-          <Surface
-            title="Decline"
-            aria-label="Decline"
-            onClick={logs.decline}
-            as="button"
-            row
-            pad="md"
-            inset="chip"
-            gap="2xs"
-            tone="plain"
-            radius="full"
-            text="xs"
-            look="bg-danger font-medium text-on-danger outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11"
-          >
-            <PhoneOff size={12} />
+          </Button>
+          <Button variant="filled-danger" icon={PhoneOff} title="Decline" onClick={logs.decline}>
             Decline
-          </Surface>
+          </Button>
         </Row>
       )}
     </CallLogLine>

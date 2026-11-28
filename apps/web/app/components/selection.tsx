@@ -340,24 +340,15 @@ export function SelectionBar({
     </Surface>
   ))
   const moreBtn = more.length > 0 && (
-    <Surface
-      title="More actions"
-      aria-label="More actions"
+    <IconButton
+      icon={Ellipsis}
+      label="More actions"
+      tone="inherit"
+      size="sm"
       disabled={busy !== null}
       onClick={openMore}
-      as="button"
-      row
-      pad={compact ? 'sm' : 'md'}
-      inset="chip"
-      gap="xs"
-      tone="plain"
-      radius="full"
-      text="sm"
-      look={barLook}
       place="shrink-0"
-    >
-      <Ellipsis size={16} />
-    </Surface>
+    />
   )
   if (sheet)
     return (

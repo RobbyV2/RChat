@@ -1,5 +1,6 @@
 'use client'
 
+import { IconButton } from './controls'
 import { useEffect, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import { charCount } from '../lib/rules'
@@ -76,22 +77,18 @@ export function AltBadge({
           }
         >
           <Masked text={alt} own={own} />
-          <Inset
+          <IconButton
+            icon={X}
+            label="Close"
+            size="xs"
             type="button"
-            title="Close"
-            aria-label="Close"
             onClick={e => {
               e.preventDefault()
               e.stopPropagation()
               setOpen(false)
             }}
-            as="button"
-            pad="2xs"
-            look="rounded-full text-on-surface-variant hover:bg-surface-container-high"
             place="absolute top-1.5 right-1.5"
-          >
-            <X size={12} />
-          </Inset>
+          />
         </Surface>
       )}
     </span>

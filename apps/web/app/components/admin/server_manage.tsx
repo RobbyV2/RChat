@@ -21,10 +21,10 @@ import {
   ServerPasswordField,
 } from '../server_settings'
 import { MemberSearchField, useMemberSearch } from '../member_search'
-import { Button, SectionHeading } from '../controls'
+import { Button, IconButton, SectionHeading } from '../controls'
 import { Inset, Row, Surface } from '../layout'
 import { Sentinel } from '../ui'
-import { dangerBtn, fieldCls } from './touch'
+import { fieldCls } from './touch'
 
 function NameForm({
   initial,
@@ -168,7 +168,18 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
                   submitLabel="Rename"
                   onSubmit={v => run(() => renameChannel(c.id, v))}
                 />
-                <button
+                <IconButton
+                  icon={Trash2}
+                  label={`Delete ${c.name}`}
+                  tooltip={
+                    deletable
+                      ? `Delete ${c.name}`
+                      : c.kind === 'text'
+                        ? 'Cannot delete the only text channel'
+                        : 'Cannot delete the only channel'
+                  }
+                  tone="danger"
+                  size="sm"
                   disabled={!deletable}
                   onClick={() =>
                     askConfirm({
@@ -181,18 +192,7 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
                       action: () => run(() => deleteChannel(c.id)),
                     })
                   }
-                  aria-label={`Delete ${c.name}`}
-                  title={
-                    deletable
-                      ? `Delete ${c.name}`
-                      : c.kind === 'text'
-                        ? 'Cannot delete the only text channel'
-                        : 'Cannot delete the only channel'
-                  }
-                  className={`${dangerBtn} shrink-0`}
-                >
-                  <Trash2 size={16} />
-                </button>
+                />
               </Row>
             }
           />

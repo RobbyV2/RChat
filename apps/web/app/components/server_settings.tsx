@@ -108,13 +108,13 @@ import {
   headerColors,
 } from '../lib/server_colors'
 import { Row, Stack, Surface, Inset } from './layout'
-import { Dialog, FieldError, Sentinel, dangerBtn, fieldCls, sectionCls, useOwnServer } from './ui'
+import { Dialog, FieldError, Sentinel, fieldCls, sectionCls, useOwnServer } from './ui'
 import { LabelText } from './instance_badge'
 import { endsText } from '../lib/durations'
 import { ServerSettingsPage } from './server_settings_page'
 import { HostedServer } from '../lib/place/place'
 import { type ServerSettingsSection } from '../lib/server_settings_sections'
-import { Button } from './controls'
+import { Button, IconButton } from './controls'
 
 function HostedSystemMessages({ server }: { server: string }) {
   const place = useHostedServer(server)
@@ -271,15 +271,15 @@ function RoleRow({
             />
           </Row>
           <span title={noDelete ?? `Delete ${role.name}`} className="shrink-0">
-            <button
+            <IconButton
+              icon={Trash2}
+              label={`Delete ${role.name}`}
+              tooltip={noDelete ?? `Delete ${role.name}`}
+              tone="danger"
+              size="sm"
               onClick={() => void deleteRole(server, role.id).then(inSession(after))}
               disabled={!!noDelete}
-              aria-label={`Delete ${role.name}`}
-              title={noDelete ?? `Delete ${role.name}`}
-              className={`${dangerBtn} disabled:pointer-events-none`}
-            >
-              <Trash2 size={16} />
-            </button>
+            />
           </span>
         </Row>
         <Row {...keepPress} gap="sm" wrap>

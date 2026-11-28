@@ -1,5 +1,6 @@
 'use client'
 
+import { IconButton } from './controls'
 import { useEffect, useState, type ReactNode } from 'react'
 import { ChevronDown, Phone, Video } from 'lucide-react'
 import { useAccount } from '../lib/client/react'
@@ -115,16 +116,14 @@ function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
       data-call-split={video ? 'video' : 'voice'}
       className={`flex items-center rounded-full ${busy ? 'opacity-40' : ''}`}
     >
-      <Inset
-        title={title}
-        aria-label={title}
+      <IconButton
+        icon={Icon}
+        label={title}
+        tone="inherit"
+        size="lg"
         disabled={busy}
         onClick={() => start(route)}
-        as="button"
-        pad="xs"
-        look="relative rounded-l-full outline-offset-2 hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary disabled:hover:bg-transparent"
       >
-        <Icon size={20} />
         {route === 'p2p' && (
           <Inset
             aria-hidden
@@ -137,10 +136,11 @@ function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
             P2P
           </Inset>
         )}
-      </Inset>
-      <Inset
-        title={`${kind} options`}
-        aria-label={`${kind} options`}
+      </IconButton>
+      <IconButton
+        icon={ChevronDown}
+        label={`${kind} options`}
+        size="sm"
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={busy}
@@ -148,15 +148,7 @@ function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
           const r = e.currentTarget.getBoundingClientRect()
           menu(r.left - 24, r.bottom + 4)
         }}
-        as="button"
-        row
-        pad="3xs"
-        inset="sides"
-        justify="center"
-        look="h-8 rounded-r-full text-on-surface-variant pointer-coarse:h-10 pointer-coarse:min-w-10 outline-offset-2 hover:bg-surface-container-high hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary disabled:hover:bg-transparent"
-      >
-        <ChevronDown size={14} />
-      </Inset>
+      />
     </div>
   )
 }

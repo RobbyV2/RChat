@@ -1,5 +1,6 @@
 'use client'
 
+import { Button } from './controls'
 import { UNREADABLE_TEXT } from '../lib/sealing'
 import { memo, type ComponentType, type ReactNode } from 'react'
 import { Check, CircleAlert, Clock, EyeOff, MessageSquareText, Reply, Trash2 } from 'lucide-react'
@@ -12,7 +13,7 @@ import { isWebhookAuthor } from '../lib/webhooks'
 import { longPress } from './context_menu'
 import { ForwardCard, forwardAction } from './forwards'
 import { groupPadCls, gutterTimeCls } from './grouped_row'
-import { Inset, Row, Surface } from './layout'
+import { Inset, Row } from './layout'
 import { MarkdownMessage } from './markdown_message'
 import { Name } from './name'
 import type { Face } from '../lib/place/looks'
@@ -306,24 +307,17 @@ export const MessageRow = memo(function MessageRow(props: RowProps) {
       {Files && <Files m={m} />}
       <ReactionBar m={m} canReact={canReact} canRemove={props.canUnreact} />
       {chip && m.reply_count > 0 && (
-        <Surface
-          as="button"
-          title="Open thread"
-          data-thread-chip
-          onClick={() => on.thread(m)}
-          row
-          pad="md"
-          inset="chip"
-          gap="xs"
-          tone="base"
-          radius="full"
-          text="xs"
-          fit
-          look="msg-part font-medium text-primary hover:bg-surface-container-high"
-        >
-          <MessageSquareText size={12} />
-          {m.reply_count} {m.reply_count === 1 ? 'reply' : 'replies'}
-        </Surface>
+        <div className="msg-part">
+          <Button
+            variant="tonal"
+            icon={MessageSquareText}
+            title="Open thread"
+            data-thread-chip
+            onClick={() => on.thread(m)}
+          >
+            {m.reply_count} {m.reply_count === 1 ? 'reply' : 'replies'}
+          </Button>
+        </div>
       )}
     </>
   )

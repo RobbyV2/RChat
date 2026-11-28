@@ -26,7 +26,7 @@ import { voiceNotice } from '../../lib/p2p/voice'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { fieldCls, Masked, Sentinel } from '../ui'
-import { Row, Stack, Surface, Inset } from '../layout'
+import { Row, Stack, Surface } from '../layout'
 import { ServerSettingsPage } from '../server_settings_page'
 import { page, PAGE } from '../../lib/paging'
 import { MemberAvatar } from './p2p_badge'
@@ -58,7 +58,7 @@ import { relativeTime } from '../../lib/timestamps'
 import type { LogPage } from '../../lib/p2p/server/modlog'
 import { usePermissionRules } from '../use_permission_rules'
 import { time } from '../../lib/platform/time'
-import { Button } from '../controls'
+import { Button, IconButton } from '../controls'
 
 // Settings of a P2P server. Every change is a signed state event that members check against
 // the server's rules; what someone may not change shows read-only.
@@ -266,9 +266,12 @@ function Channels({ v }: { v: ServerView }) {
                 className={`${fieldCls} min-w-0 flex-1`}
               />
               {edit && (voice || texts.length > 1) && (
-                <Inset
-                  title={`Delete ${voice ? mask(c.name) : `#${mask(c.name)}`}`}
-                  aria-label={`Delete ${label}`}
+                <IconButton
+                  icon={Trash2}
+                  label={`Delete ${label}`}
+                  tooltip={`Delete ${voice ? mask(c.name) : `#${mask(c.name)}`}`}
+                  tone="error"
+                  size="sm"
                   onClick={() =>
                     ownerAccount.store.getState().askConfirm({
                       title: 'Delete Channel',
@@ -279,12 +282,7 @@ function Channels({ v }: { v: ServerView }) {
                       action: () => void p2pServer.removeChannel(v.id, c.id),
                     })
                   }
-                  as="button"
-                  pad="xs"
-                  look="rounded-full text-error hover:bg-surface-container-highest"
-                >
-                  <Trash2 size={16} />
-                </Inset>
+                />
               )}
             </Row>
             <input

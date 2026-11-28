@@ -1,4 +1,5 @@
 'use client'
+import { Button, IconButton } from '../controls'
 import { Name } from '../name'
 import { p2pName } from '../../lib/names'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -50,16 +51,14 @@ function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: st
       data-call-split={video ? 'video' : 'voice'}
       className={`flex items-center rounded-full ${off ? 'opacity-40' : ''}`}
     >
-      <Inset
-        title={title}
-        aria-label={title}
+      <IconButton
+        icon={Icon}
+        label={title}
+        tone="inherit"
+        size="lg"
         disabled={off}
         onClick={() => void p2pCall.start(peer, video)}
-        as="button"
-        pad="xs"
-        look="relative rounded-l-full outline-offset-2 pointer-coarse:h-10 pointer-coarse:min-w-10 hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary disabled:hover:bg-transparent"
       >
-        <Icon size={20} />
         <Inset
           aria-hidden
           as="span"
@@ -70,10 +69,11 @@ function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: st
         >
           P2P
         </Inset>
-      </Inset>
-      <Inset
-        title={`${kind} options`}
-        aria-label={`${kind} options`}
+      </IconButton>
+      <IconButton
+        icon={ChevronDown}
+        label={`${kind} options`}
+        size="sm"
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={off}
@@ -81,15 +81,7 @@ function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: st
           const r = e.currentTarget.getBoundingClientRect()
           menu(r.left - 24, r.bottom + 4)
         }}
-        as="button"
-        row
-        pad="3xs"
-        inset="sides"
-        justify="center"
-        look="h-8 rounded-r-full text-on-surface-variant pointer-coarse:h-10 pointer-coarse:min-w-7 outline-offset-2 hover:bg-surface-container-high hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary disabled:hover:bg-transparent"
-      >
-        <ChevronDown size={14} />
-      </Inset>
+      />
     </div>
   )
 }
@@ -175,41 +167,23 @@ function IncomingCallBarBody({ room, name }: { room: string; name: string }) {
           </span>
         </Row>
         <Row as="span" gap="xs">
-          <Surface
+          <Button
+            variant="accept"
+            icon={Phone}
             title="Accept"
-            aria-label="Accept"
             disabled={accepting}
             onClick={() => void p2pCall.accept()}
-            as="button"
-            row
-            pad="md"
-            inset="chip"
-            gap="2xs"
-            tone="plain"
-            radius="full"
-            text="xs"
-            look="bg-status-green font-medium text-surface outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60 pointer-coarse:min-h-11"
           >
-            <Phone size={12} />
             Accept
-          </Surface>
-          <Surface
+          </Button>
+          <Button
+            variant="filled-danger"
+            icon={PhoneOff}
             title="Decline"
-            aria-label="Decline"
             onClick={() => p2pCall.decline()}
-            as="button"
-            row
-            pad="md"
-            inset="chip"
-            gap="2xs"
-            tone="plain"
-            radius="full"
-            text="xs"
-            look="bg-danger font-medium text-on-danger outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11"
           >
-            <PhoneOff size={12} />
             Decline
-          </Surface>
+          </Button>
         </Row>
       </Row>
     </Surface>

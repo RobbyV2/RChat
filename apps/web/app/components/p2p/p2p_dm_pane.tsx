@@ -1,4 +1,5 @@
 'use client'
+import { IconButton } from '../controls'
 import { Name } from '../name'
 import { p2pName } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
@@ -121,33 +122,29 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
       look="h-14"
       place="shrink-0"
     >
-      <Inset
-        title={menuPings ? `Menu, ${pingLabel(menuPings)}` : 'Menu'}
-        aria-label="Menu"
+      <IconButton
+        icon={Menu}
+        label="Menu"
+        tooltip={menuPings ? `Menu, ${pingLabel(menuPings)}` : 'Menu'}
+        tone="inherit"
+        size="lg"
         onClick={onMenu}
-        as="button"
-        pad="xs"
-        look="rounded-full hover:bg-surface-container-high"
         place="relative md:hidden"
       >
-        <Menu size={20} />
         <PingBadge
           count={menuPings}
           className="absolute -top-1 -right-1.5 border-2 border-surface"
         />
-      </Inset>
+      </IconButton>
       <PeerActorTag header />
       {onBack && (
-        <Inset
-          title="Back to contacts"
-          aria-label="Back to contacts"
+        <IconButton
+          icon={ArrowLeft}
+          label="Back to contacts"
+          tone="inherit"
+          size="lg"
           onClick={onBack}
-          as="button"
-          pad="xs"
-          look="rounded-full hover:bg-surface-container-high"
-        >
-          <ArrowLeft size={20} />
-        </Inset>
+        />
       )}
       {/* Below 360 px the header has room for the avatar only: the shield sits on it, and the
           name stays the label. */}

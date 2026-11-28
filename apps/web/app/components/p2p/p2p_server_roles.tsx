@@ -1,5 +1,5 @@
 'use client'
-import { Button } from '../controls'
+import { Button, IconButton } from '../controls'
 import { Name } from '../name'
 import { p2pName } from '../../lib/names'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -74,7 +74,7 @@ import {
   RoleNameForm,
   SlowmodeField,
 } from '../settings_fields'
-import { dangerBtn, Dialog, fieldCls, Masked } from '../ui'
+import { Dialog, fieldCls, Masked } from '../ui'
 import { PeerTimeoutBadge } from '../timeout_dialog'
 import { MemberAvatar } from './p2p_badge'
 import { RoleLooksFields } from '../role_looks_fields'
@@ -234,14 +234,13 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
               </>
             )}
             {edit && (!r.held || can(v, P.ManageChannels)) && (
-              <button
+              <IconButton
+                icon={Trash2}
+                label={`Delete ${mask(r.name)}`}
+                tone="danger"
+                size="sm"
                 onClick={() => peerServer.forIdentity(identity).deleteRole(v, r, acct)}
-                aria-label={`Delete ${mask(r.name)}`}
-                title={`Delete ${mask(r.name)}`}
-                className={dangerBtn}
-              >
-                <Trash2 size={16} />
-              </button>
+              />
             )}
           </Row>
         </div>
@@ -490,19 +489,16 @@ function MemberCardBody({ room, ik }: { room: string; ik: string }) {
               <span aria-hidden className="h-2.5 w-2.5 rounded-full" style={swatch(r.color)} />
               <Masked text={r.name} own={own} />
               {mayTakeRole(v, m, r, me) ? (
-                <Inset
+                <IconButton
+                  icon={X}
+                  label={`Remove ${mask(r.name)}`}
+                  tone="danger"
+                  size="xs"
                   onClick={e => {
                     e.stopPropagation()
                     peerServer.forIdentity(identity).takeRole(v, m, r, acct)
                   }}
-                  title={`Remove ${mask(r.name)}`}
-                  aria-label={`Remove ${mask(r.name)}`}
-                  as="button"
-                  pad="3xs"
-                  look="rounded-full text-on-surface-variant hover:bg-surface-container-high hover:text-error"
-                >
-                  <X size={12} />
-                </Inset>
+                />
               ) : (
                 <span className="w-1" />
               )}

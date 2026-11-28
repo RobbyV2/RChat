@@ -1,5 +1,5 @@
 'use client'
-import { Button } from '../controls'
+import { Button, IconButton } from '../controls'
 import { PeerCodeButton } from './peer_code_button'
 import { useActorSuffix, usePeerActor } from '../view_actor'
 import { identityScopeKey } from '../../lib/p2p/app/host'
@@ -74,7 +74,7 @@ import { laterBlocked, type ComposerDraft } from '../../lib/scheduled'
 import { P2pBadge } from './p2p_badge'
 import { AttachmentList, PendingFiles } from './p2p_files'
 import { namePasted } from '../message_composer'
-import { Row, Stack, Surface, Inset, Dock } from '../layout'
+import { Row, Stack, Surface, Dock } from '../layout'
 
 // The message list and composer of a P2P conversation, shared by direct messages and P2P server
 // channels: what differs (the header, who may do what, names, mentions) comes in as props.
@@ -98,17 +98,14 @@ function P2pIntroBody({ id, children }: { id: string; children: ReactNode }) {
           <Row gap="md" align="start">
             <P2pBadge />
             <p className="min-w-0 flex-1">{children}</p>
-            <Inset
-              title="Dismiss"
-              aria-label="Dismiss"
+            <IconButton
+              icon={X}
+              label="Dismiss"
+              tone="inherit"
+              size="sm"
               onClick={() => acct.home.hideTip(id)}
-              as="button"
-              pad="2xs"
-              look="rounded-full hover:bg-surface-container-highest"
               place="shrink-0"
-            >
-              <X size={16} />
-            </Inset>
+            />
           </Row>
         </Surface>
       </div>
@@ -392,17 +389,13 @@ function P2pComposerBody({
               tools={
                 !textOnly && (
                   <>
-                    <Inset
-                      title="Attach files"
-                      aria-label="Attach files"
+                    <IconButton
+                      icon={Plus}
+                      label="Attach files"
+                      size="lg"
                       onClick={() => fileRef.current?.click()}
-                      as="button"
-                      pad="xs"
-                      look="rounded-full text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
                       place="shrink-0"
-                    >
-                      <Plus size={20} />
-                    </Inset>
+                    />
                     <input
                       ref={fileRef}
                       type="file"

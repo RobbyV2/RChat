@@ -20,7 +20,7 @@ import {
 } from '../../lib/place/channels'
 import { ChannelList } from '../channel_list'
 import { VoiceRow } from '../voice_row'
-import { IconButton, Button } from '../controls'
+import { Button, IconButton } from '../controls'
 import MemberSidebar from '../member_sidebar'
 
 import { useCallback, useMemo, useState, type CSSProperties } from 'react'
@@ -69,7 +69,7 @@ import { voiceLabel } from '../../lib/voice_rail'
 import { MutedIcon } from '../notify_menu'
 import { PinsButton } from '../pins'
 import { ThreadsButton } from '../threads'
-import { iconBtn, Masked, renameFieldCls } from '../ui'
+import { Masked, renameFieldCls } from '../ui'
 import { Row, Stack, Surface, Inset, Grid } from '../layout'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { ElsewhereNotice } from './p2p_home'
@@ -461,14 +461,12 @@ function ServerHead({ v }: { v: ServerView }) {
         </span>
       </Surface>
       {can(v, P.Invite) && (
-        <button
-          title="Invite people"
-          aria-label="Invite people"
+        <IconButton
+          icon={UserPlus}
+          label="Invite people"
+          size="lg"
           onClick={() => p2p.openDialog({ kind: 'server_invite', room: v.id })}
-          className={iconBtn}
-        >
-          <UserPlus size={18} />
-        </button>
+        />
       )}
     </Surface>
   )

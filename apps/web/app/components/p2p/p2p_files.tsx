@@ -1,4 +1,5 @@
 'use client'
+import { IconButton } from '../controls'
 import { Name } from '../name'
 import { instanceName } from '../../lib/names'
 import { altText, describableFile } from '../../lib/alt_text'
@@ -26,13 +27,10 @@ import { VideoAttachment } from '../video_attachment'
 import { Masked } from '../ui'
 import { useInstanceLabel } from '../instance_badge'
 import { Row, Stack, Surface, Inset } from '../layout'
-import { miniIconOffLook } from '../../lib/controls'
 
 // P2P attachments in messages and in the composer. What a file is shown as comes from its
 // stored bytes only (sniff.ts): images, video and audio play inline, everything else (SVG and
 // HTML included) is offered as a download under a safe name.
-
-const iconBtn = miniIconOffLook
 
 const fmtDur = (ms: number) => {
   const s = Math.round(ms / 1000)
@@ -197,9 +195,7 @@ export function TileView({
       <span className="shrink-0 text-xs text-on-surface-variant tabular-nums">
         {fmtSize(att.size)}
       </span>
-      <button title={`Save ${name}`} aria-label="Save" onClick={save} className={iconBtn}>
-        <Download size={14} />
-      </button>
+      <IconButton icon={Download} label="Save" tooltip={`Save ${name}`} size="sm" onClick={save} />
     </Row>
   )
 
@@ -381,35 +377,27 @@ function PendingChip({ room, p }: { room: string; p: PendingFile }) {
       look="h-24 w-40 border-tertiary/60 border-dashed border"
       place="relative shrink-0"
     >
-      <Surface
-        title="Remove file"
-        aria-label="Remove file"
+      <IconButton
+        icon={X}
+        label="Remove file"
+        tone="filled-danger"
+        size="xs"
         onClick={() => p2pFiles.remove(room, p.id)}
-        as="button"
-        pad="2xs"
-        tone="error"
-        radius="full"
-        elevation={1}
         place="absolute -top-2 -right-2"
-      >
-        <X size={12} />
-      </Surface>
+      />
       <Row gap="2xs" justify="between">
         {thumb ? (
           <img src={thumb} alt="" aria-hidden className="h-10 w-14 rounded object-cover" />
         ) : (
           <FileText size={20} className="text-tertiary" />
         )}
-        <Inset
-          title={p.spoiler ? 'Unmark spoiler' : 'Mark as spoiler'}
-          aria-label={p.spoiler ? 'Unmark spoiler' : 'Mark as spoiler'}
+        <IconButton
+          icon={p.spoiler ? EyeOff : Eye}
+          label={p.spoiler ? 'Unmark spoiler' : 'Mark as spoiler'}
+          size="sm"
+          pressed={p.spoiler}
           onClick={() => p2pFiles.toggleSpoiler(room, p.id)}
-          as="button"
-          pad="2xs"
-          look={`rounded-full ${p.spoiler ? 'bg-primary-container text-on-primary-container' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
-        >
-          {p.spoiler ? <EyeOff size={14} /> : <Eye size={14} />}
-        </Inset>
+        />
       </Row>
       <span className="truncate text-xs">
         {p.spoiler ? 'Spoiler · ' : ''}

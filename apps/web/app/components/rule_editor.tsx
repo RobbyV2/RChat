@@ -1,6 +1,6 @@
 'use client'
 
-import { Button } from './controls'
+import { Button, IconButton } from './controls'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Check, Slash, X } from 'lucide-react'
 import {
@@ -212,24 +212,16 @@ export function RuleEditor({
                 >
                   {render(s)}
                 </Surface>
-                <Surface
-                  as="button"
+                <IconButton
+                  icon={X}
+                  label={`Remove ${name}`}
+                  tone="danger"
+                  size="sm"
                   type="button"
                   onClick={() => remove(s)}
                   disabled={listed.has(s) && !!block}
-                  aria-label={`Remove ${name}`}
-                  title={`Remove ${name}`}
-                  pad="xs"
-                  row
-                  tone="plain"
-                  radius="full"
-                  justify="center"
-                  ink="muted"
-                  look="hover:bg-surface-container-highest hover:text-error disabled:opacity-40 pointer-coarse:size-11"
                   place="shrink-0 disabled:pointer-events-none"
-                >
-                  <X size={14} />
-                </Surface>
+                />
               </Row>
             </Surface>
           )
