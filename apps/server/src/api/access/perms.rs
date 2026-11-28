@@ -214,7 +214,7 @@ pub const EVERYONE_BITS: i64 = masks::BASE as i64;
 pub const ROLE_BITS: i64 = ALL_PERMS | EVERYONE_BITS;
 
 /// What someone who is not a member may hold at most in a channel. Whether a guest may send or
-/// join voice at all is `ResolvedChannel::guest_participation`.
+/// join voice at all is `ResolvedChannel::guest_send` and `guest_seat`.
 pub const VISITOR_CAPS: Mask = masks::READ_LINK | masks::GUEST_CHAT | masks::GUEST_VOICE;
 
 /// The @everyone mask of a server from its stored `everyone_perms`.

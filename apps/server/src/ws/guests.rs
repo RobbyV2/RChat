@@ -166,7 +166,11 @@ async fn admit(state: &AppState, access: &Access, channel_id: i64) -> Result<Str
     if !channel.member_rights(&state.db).await?.view() {
         return Err(gone());
     }
-    if !channel.guest_participation(&state.db).await? {
+    let seated = crate::api::Settings::cached(&state.db)
+        .await
+        .guest_voice()
+        .is_some_and(|on| channel.guest_seat(&on).is_ok());
+    if !seated {
         return Err(GUESTS_NO_VOICE.into());
     }
     Ok(server)

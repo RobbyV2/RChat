@@ -15,9 +15,11 @@ use super::access::{Proof, not_found, resolve_channel, resolve_message};
 use super::audit::{self, Action, Details, Entry, Target};
 use super::budget;
 use super::messages::{Quotes, cannot_reply, load_message, partial_quote};
-use super::{ApiError, Authed, Message, OkResp, ProfanityTarget, check_len, check_profanity, ok};
+use super::{
+    ApiError, Authed, Message, OkResp, ProfanityTarget, Settings, check_len, check_profanity, ok,
+};
 use crate::crypt::body::{Parts, Scope};
-use crate::db::{ChannelKind, Db, lock_server, now, pool_key, secret_key};
+use crate::db::{Db, lock_server, now, pool_key, secret_key};
 use crate::identity::random_id;
 use crate::limits::bucket::{Keyed, Policy};
 use crate::state::AppState;
@@ -114,9 +116,11 @@ pub(crate) async fn status(
 ) -> Result<Json<Option<i64>>, ApiError> {
     let db = &state.db;
     let channel = resolve_channel(db, id, None, &Proof::headers(&headers, &state.limits)).await?;
-    if channel.kind() != ChannelKind::Text || !channel.guest_participation(db).await? {
-        return Err(not_found());
-    }
+    let on = Settings::cached(db)
+        .await
+        .guest_chat()
+        .ok_or_else(not_found)?;
+    channel.guest_send(&on)?;
     Ok(Json(
         paused_until(db, channel.server().name(), &headers).await?,
     ))
@@ -143,10 +147,13 @@ pub(crate) async fn post(
     }
     let db = &state.db;
     let proof = Proof::headers(&headers, &state.limits);
-    let channel = resolve_channel(db, id, None, &proof).await?;
-    if channel.kind() != ChannelKind::Text || !channel.guest_participation(db).await? {
-        return Err(not_found());
-    }
+    let resolved = resolve_channel(db, id, None, &proof).await?;
+    let on = Settings::cached(db)
+        .await
+        .guest_chat()
+        .ok_or_else(not_found)?;
+    let right = resolved.guest_send(&on)?;
+    let channel = right.channel();
     let GuestText {
         content,
         reply_to,

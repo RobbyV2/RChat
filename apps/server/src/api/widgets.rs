@@ -552,7 +552,7 @@ pub(crate) async fn room(
     let may_stay = interactive
         && channel.kind() == ChannelKind::Voice
         && match user {
-            None => channel.guest_participation(db).await?,
+            None => channel.guest_allowed(&settings),
             Some(_) => {
                 channel.server().via() != Via::Staff
                     && channel
@@ -566,7 +566,7 @@ pub(crate) async fn room(
     } else if !interactive {
         false
     } else if user.is_none() {
-        channel.guest_participation(db).await?
+        channel.guest_allowed(&settings)
     } else {
         channel.can_send_text(db).await?
     };

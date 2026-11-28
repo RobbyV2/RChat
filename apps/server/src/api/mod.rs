@@ -24,6 +24,7 @@ pub mod features;
 pub mod form_heads;
 pub mod friends;
 pub mod guest_chat;
+pub mod guest_switch;
 pub mod guest_voice;
 pub mod health;
 pub mod inbox;

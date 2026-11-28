@@ -1901,24 +1901,51 @@ impl ResolvedChannel {
 
     /// Effective guest participation in this channel, using the site's current controls: a
     /// guest who holds Send in a text channel, or Connect and Speak in a voice channel.
-    pub(crate) async fn guest_participation(&self, db: &Db) -> Result<bool, ApiError> {
-        let (opted_in, control, need) = match self.kind {
-            ChannelKind::Text => (
-                self.server.lite.guest_chat,
-                "guest_chat_enabled",
-                masks::GUEST_CHAT,
-            ),
-            ChannelKind::Voice => (
-                self.server.lite.guest_voice,
-                "guest_voice_enabled",
-                masks::GUEST_VOICE,
-            ),
-        };
-        if self.server.user.is_some() || !opted_in || self.rights.mask as Mask & need != need {
-            return Ok(false);
+    /// Guest text here: a text channel whose server opted in and whose guest mask lets guests
+    /// post, for a guest, while the site's guest chat switch is on.
+    pub fn guest_send(
+        &self,
+        _: &crate::api::guest_switch::GuestSwitch<crate::api::guest_switch::Chat>,
+    ) -> Result<GuestSend<'_>, ApiError> {
+        match self.guest_takes_part(ChannelKind::Text) {
+            true => Ok(GuestSend { channel: self }),
+            false => Err(not_found()),
         }
-        Ok(sqlx::query("SELECT 1 FROM settings WHERE key = $1 AND value = '1' AND EXISTS (SELECT 1 FROM settings WHERE key = 'guests_enabled' AND value = '1')")
-            .bind(control).fetch_optional(db).await?.is_some())
+    }
+
+    /// A guest's seat in this voice channel, under the same rule for voice.
+    pub fn guest_seat(
+        &self,
+        _: &crate::api::guest_switch::GuestSwitch<crate::api::guest_switch::Voice>,
+    ) -> Result<GuestSeat<'_>, ApiError> {
+        match self.guest_takes_part(ChannelKind::Voice) {
+            true => Ok(GuestSeat { channel: self }),
+            false => Err(not_found()),
+        }
+    }
+
+    /// Whether a guest may take part here under `settings`: `guest_send` or `guest_seat` for
+    /// the channel's kind.
+    pub fn guest_allowed(&self, settings: &crate::api::Settings) -> bool {
+        match self.kind {
+            ChannelKind::Text => settings
+                .guest_chat()
+                .is_some_and(|on| self.guest_send(&on).is_ok()),
+            ChannelKind::Voice => settings
+                .guest_voice()
+                .is_some_and(|on| self.guest_seat(&on).is_ok()),
+        }
+    }
+
+    fn guest_takes_part(&self, kind: ChannelKind) -> bool {
+        let (opted_in, need) = match kind {
+            ChannelKind::Text => (self.server.lite.guest_chat, masks::GUEST_CHAT),
+            ChannelKind::Voice => (self.server.lite.guest_voice, masks::GUEST_VOICE),
+        };
+        self.kind == kind
+            && self.server.user.is_none()
+            && opted_in
+            && self.rights.mask as Mask & need == need
     }
 
     /// Whether the viewer may send here at all: a member with the send permission in a text
@@ -2225,6 +2252,30 @@ impl<'a> PollManage<'a> {
 
     pub fn moderator(&self) -> bool {
         self.moderator
+    }
+}
+
+/// The decision that a guest may post in a channel now. Only `ResolvedChannel::guest_send`
+/// makes one.
+pub struct GuestSend<'a> {
+    channel: &'a ResolvedChannel,
+}
+
+impl<'a> GuestSend<'a> {
+    pub fn channel(&self) -> &'a ResolvedChannel {
+        self.channel
+    }
+}
+
+/// The decision that a guest may join a voice channel now. Only `ResolvedChannel::guest_seat`
+/// makes one.
+pub struct GuestSeat<'a> {
+    channel: &'a ResolvedChannel,
+}
+
+impl<'a> GuestSeat<'a> {
+    pub fn channel(&self) -> &'a ResolvedChannel {
+        self.channel
     }
 }
 
