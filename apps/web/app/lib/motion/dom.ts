@@ -1,6 +1,6 @@
 // The page as the engine sees it, on the real document.
 import type { Time } from '../clock'
-import type { Page, Place, Shot } from './engine'
+import type { Page, Place, Shot, Spot } from './engine'
 import { MARK, ONLY, STILL } from './play'
 import type { PlaySlot, SlotId } from './slots'
 import { spring } from './spring'
@@ -9,6 +9,8 @@ import { SPRINGS } from './tokens'
 const STYLE = 'data-motion'
 const LOOKS = 'data-motion-slots'
 // A copy with more elements than this, or with what a copy can't show, goes without an exit.
+// A list is at rest this long (ms) after the last change in it.
+const REST_MS = 250
 const MAX_COPIED = 1500
 const UNCOPIED = 'video, canvas, iframe'
 const CARRIED = [
@@ -142,6 +144,60 @@ export const page = (doc: Document, time: Time): Page & { close(): void } => {
       return at ?? null
     },
     drop: ghost => ghost.remove(),
+    spots(scope, items) {
+      const boxes = new Map<Element, DOMRect>()
+      const boxOf = (el: Element) => {
+        let box = boxes.get(el)
+        if (!box) {
+          box = el.getBoundingClientRect()
+          boxes.set(el, box)
+        }
+        return box
+      }
+      const spots: Spot[] = []
+      for (const el of scope.querySelectorAll(items)) {
+        const box = boxOf(el)
+        const holder = el.parentElement?.closest(items)
+        const inside = holder && scope.contains(holder) ? holder : scope
+        const base = boxOf(inside)
+        const scrolled = inside === scope ? { x: scope.scrollLeft, y: scope.scrollTop } : null
+        spots.push({
+          el,
+          at: {
+            x: box.left - base.left + (scrolled?.x ?? 0),
+            y: box.top - base.top + (scrolled?.y ?? 0),
+          },
+          seen:
+            box.width > 0 &&
+            box.bottom > 0 &&
+            box.right > 0 &&
+            box.top < root.clientHeight &&
+            box.left < root.clientWidth,
+        })
+      }
+      return spots
+    },
+    watch(scope, items, on) {
+      const holds = (n: Node) =>
+        n.nodeType === 1 && ((n as Element).matches(items) || !!(n as Element).querySelector(items))
+      let resting = time.after(REST_MS, on.rest)
+      const lists = new MutationObserver(records => {
+        let came = false
+        let left = false
+        for (const r of records) {
+          for (const n of r.addedNodes) came ||= holds(n)
+          for (const n of r.removedNodes) left ||= holds(n)
+        }
+        if (came && left) on.moved()
+        resting()
+        resting = time.after(REST_MS, on.rest)
+      })
+      lists.observe(scope, { childList: true, subtree: true })
+      return () => {
+        lists.disconnect()
+        resting()
+      }
+    },
     mark(style, looks: readonly SlotId[]) {
       if (style === null) {
         root.removeAttribute(STYLE)

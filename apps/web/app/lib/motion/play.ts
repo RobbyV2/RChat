@@ -3,7 +3,7 @@
 // off these are constants and calls that return at once: no state, effect or listener.
 import type { RefCallback, RefObject } from 'react'
 import type { LookSlot, PlaySlot } from './slots'
-import { playerNow } from './wire'
+import { addList, playerNow } from './wire'
 
 type Other = RefCallback<never> | { current: unknown } | null | undefined
 
@@ -87,6 +87,10 @@ export const playsOn = (slot: PlaySlot, key: string | number): RefCallback<Eleme
   }
   return ref
 }
+
+// The items of the list `scope` (what matches `items` in it) glide to their places when their
+// order changes, from now until the call this returns.
+export const reorders = (scope: Element, items: string): (() => void) => addList(scope, items)
 
 export const MARK = 'data-motion'
 export const WITH = 'data-motion-with'

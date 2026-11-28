@@ -7,6 +7,7 @@ import {
   MAX_ENTERING,
   MAX_LEAVING,
   MAX_RUNNING,
+  MIN_GLIDE,
   behind,
   leaving,
   looksOf,
@@ -14,7 +15,9 @@ import {
   resolve,
   type Config,
   type Page,
+  type ListWatch,
   type Place,
+  type Spot,
 } from '../motion/engine'
 import { BUILTINS, PRESETS } from '../motion/presets'
 import { LOOK_IDS, PLAY_IDS, type PlaySlot, type SlotId } from '../motion/slots'
@@ -86,6 +89,9 @@ const world = (config: Config = SUBTLE, step: 0 | 1 | 2 | 3 = 0, frameMs?: numbe
     inside: new Map<El, El>(),
     ghosts: [] as El[],
     twins: new Map<El, El>(),
+    spots: [] as { el: El; at: Place; seen?: boolean }[],
+    lists: [] as ListWatch[],
+    unwatched: 0,
     dropped: [] as El[],
     marks: [] as [string | null, readonly SlotId[]][],
     soon: [] as (() => void)[],
@@ -112,6 +118,12 @@ const world = (config: Config = SUBTLE, step: 0 | 1 | 2 | 3 = 0, frameMs?: numbe
       return dom(twin)
     },
     drop: g => void state.dropped.push(g as unknown as El),
+    spots: () =>
+      state.spots.map(({ el, at, seen = true }): Spot => ({ el: dom(el), at: { ...at }, seen })),
+    watch: (_scope, _items, on) => {
+      state.lists.push(on)
+      return () => void state.unwatched++
+    },
     mark: (style, looks) => void state.marks.push([style, looks]),
     soon: fn => void state.soon.push(fn),
   }
@@ -546,6 +558,113 @@ describe('the engine', () => {
     state.places.set(a, { x: 0, y: 4000 })
     engine.change(dom(a), 'reorder', 9)
     expect(a.played).toHaveLength(1)
+  })
+
+  test('the items of a list glide from where they stood when the list was last at rest', () => {
+    const { engine, state } = world()
+    const [a, b, c] = [el(), el(), el()]
+    state.spots = [
+      { el: a, at: { x: 0, y: 0 } },
+      { el: b, at: { x: 0, y: 40 } },
+      { el: c, at: { x: 0, y: 80 } },
+    ]
+    engine.list(dom(el()), '[data-item]')
+    state.lists[0].moved()
+    expect([a, b, c].flatMap(e => e.played)).toHaveLength(0)
+    state.lists[0].rest()
+    state.spots = [
+      { el: b, at: { x: 0, y: 0 } },
+      { el: c, at: { x: 0, y: 40 } },
+      { el: a, at: { x: 0, y: 80 } },
+    ]
+    state.lists[0].moved()
+    expect(a.played[0].keyframes).toEqual([
+      { transform: 'translate(0px, -80px)' },
+      { transform: 'translate(0, 0)' },
+    ])
+    expect(a.played[0].options.duration).toBe(DURATIONS.medium)
+    expect(b.played[0].keyframes[0]).toEqual({ transform: 'translate(0px, 40px)' })
+    expect(c.played[0].keyframes[0]).toEqual({ transform: 'translate(0px, 40px)' })
+  })
+
+  test('an item that is new, out of sight, hardly moved or far away does not glide', () => {
+    const { engine, state } = world()
+    const [fresh, hidden, near, far, moved] = [el(), el(), el(), el(), el()]
+    state.spots = [
+      { el: hidden, at: { x: 0, y: 0 } },
+      { el: near, at: { x: 0, y: 40 } },
+      { el: far, at: { x: 0, y: 80 } },
+      { el: moved, at: { x: 0, y: 120 } },
+    ]
+    engine.list(dom(el()), '[data-item]')
+    state.lists[0].rest()
+    state.spots = [
+      { el: fresh, at: { x: 0, y: 0 } },
+      { el: hidden, at: { x: 0, y: 40 }, seen: false },
+      { el: near, at: { x: 0, y: 40 + MIN_GLIDE - 1 } },
+      { el: far, at: { x: 0, y: 2000 } },
+      { el: moved, at: { x: 0, y: 160 } },
+    ]
+    state.lists[0].moved()
+    expect([fresh, hidden, near, far].flatMap(e => e.played)).toHaveLength(0)
+    expect(moved.played).toHaveLength(1)
+  })
+
+  test('a list that changes order again glides from where it had settled to', () => {
+    const { engine, state } = world()
+    const a = el()
+    state.spots = [{ el: a, at: { x: 0, y: 0 } }]
+    engine.list(dom(el()), '[data-item]')
+    state.lists[0].rest()
+    state.spots = [{ el: a, at: { x: 0, y: 40 } }]
+    state.lists[0].moved()
+    state.spots = [{ el: a, at: { x: 500, y: 500 } }]
+    state.lists[0].rest()
+    state.spots = [{ el: a, at: { x: 0, y: 100 } }]
+    state.lists[0].moved()
+    expect(a.played[0].state).toBe('cancelled')
+    expect(a.played[1].keyframes[0]).toEqual({ transform: 'translate(0px, -60px)' })
+  })
+
+  test(`the farthest items glide first when more move than the ${MAX_RUNNING} that may run`, () => {
+    const { engine, state } = world()
+    const items = Array.from({ length: MAX_RUNNING + 3 }, () => el())
+    state.spots = items.map((e, i) => ({ el: e, at: { x: 0, y: i * 40 } }))
+    engine.list(dom(el()), '[data-item]')
+    state.lists[0].rest()
+    state.spots = items.map((e, i) => ({ el: e, at: { x: 0, y: i * 40 + (i + 1) * 10 } }))
+    state.lists[0].moved()
+    expect(engine.count).toBe(MAX_RUNNING)
+    expect(items.slice(0, 3).flatMap(e => e.played)).toHaveLength(0)
+    expect(items.slice(3).every(e => e.played.length === 1)).toBe(true)
+  })
+
+  test('a list stops being watched as it goes, or as the engine stops', () => {
+    const { engine, state } = world()
+    const off = engine.list(dom(el()), '[data-item]')
+    engine.list(dom(el()), '[data-item]')
+    off()
+    expect(state.unwatched).toBe(1)
+    engine.stop()
+    expect(state.unwatched).toBe(2)
+    engine.list(dom(el()), '[data-item]')
+    expect(state.lists).toHaveLength(2)
+  })
+
+  test('with reordering set to off, or reduced, a list jumps', () => {
+    for (const config of [
+      { style: 'custom', custom: { reorder: 'off' }, reduced: false } as Config,
+      { ...SUBTLE, reduced: true },
+    ]) {
+      const { engine, state } = world(config)
+      const a = el()
+      state.spots = [{ el: a, at: { x: 0, y: 0 } }]
+      engine.list(dom(el()), '[data-item]')
+      state.lists[0].rest()
+      state.spots = [{ el: a, at: { x: 0, y: 40 } }]
+      state.lists[0].moved()
+      expect(a.played).toHaveLength(0)
+    }
   })
 
   test('frames are timed only while something plays', () => {

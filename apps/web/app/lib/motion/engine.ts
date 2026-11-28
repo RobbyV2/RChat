@@ -20,6 +20,8 @@ export const MAX_LEAVING = 4
 export const MAX_ENTERING = 300
 // A reorder farther than this (px) is a jump, not a glide.
 export const MAX_GLIDE = 600
+// An item less than this (px) from where it was has not moved.
+export const MIN_GLIDE = 2
 
 export interface Config {
   style: AnimStyle
@@ -31,6 +33,20 @@ export interface Config {
 export interface Place {
   x: number
   y: number
+}
+
+// An item of a list: where it stands in the list, and whether it shows in the window.
+export interface Spot {
+  el: Element
+  at: Place
+  seen: boolean
+}
+
+// What the page tells of a list: `moved` as its items change order, before the page shows it,
+// and `rest` a while after anything in it changed.
+export interface ListWatch {
+  moved(): void
+  rest(): void
 }
 
 // What the engine keeps of an element that is about to leave the page, to show it going.
@@ -57,6 +73,10 @@ export interface Page {
   // What stands for `inner`, an element inside `el`, in `el`'s copy.
   twin(el: Element, inner: Element, ghost: Element): Element | null
   drop(ghost: Element): void
+  // The items of the list `scope` (what matches `items` in it), each placed against the item
+  // that holds it, or against the list.
+  spots(scope: Element, items: string): Spot[]
+  watch(scope: Element, items: string, on: ListWatch): () => void
   // What the style sheet reads: the style, the slots it moves, and whether backdrops blur.
   mark(style: 'subtle' | 'lively' | 'reduced' | null, looks: readonly SlotId[]): void
   // After the update that is running now.
@@ -138,6 +158,8 @@ export class Engine implements Player {
   private onEl = new WeakMap<Element, Map<PlaySlot, Run>>()
   private keys = new WeakMap<Element, Map<PlaySlot, string | number>>()
   private places = new WeakMap<Element, Place>()
+  private spots = new WeakMap<Element, Place>()
+  private lists = new Set<() => void>()
   private ghosts = new Set<Element>()
   private entered = new WeakSet<Element>()
   private batch: Element[] = []
@@ -380,9 +402,59 @@ export class Engine implements Player {
     this.run(el, slot, { keyframes: [from, ...a.keyframes], timing: a.timing }, 'backwards')
   }
 
+  // The items of a list glide to their places when their order changes: each from where it
+  // stood when the list was last at rest, the farthest first.
+  list(scope: Element, items: string): () => void {
+    if (this.stopped) return () => {}
+    const rest = () => {
+      for (const { el, at } of this.page.spots(scope, items))
+        if (!this.onEl.get(el)?.has('reorder')) this.spots.set(el, at)
+    }
+    const off = this.page.watch(scope, items, {
+      moved: () => this.reordered(scope, items),
+      rest,
+    })
+    const stop = () => {
+      off()
+      this.lists.delete(stop)
+    }
+    this.lists.add(stop)
+    return stop
+  }
+
+  private reordered(scope: Element, items: string) {
+    if (this.stopped) return
+    let spots = this.page.spots(scope, items)
+    const gliding = spots.map(s => this.onEl.get(s.el)?.get('reorder')).filter(run => !!run)
+    if (gliding.length > 0) {
+      for (const run of gliding) run.cancel()
+      spots = this.page.spots(scope, items)
+    }
+    const a = this.animation('reorder')
+    const moves: { el: Element; dx: number; dy: number }[] = []
+    for (const { el, at, seen } of spots) {
+      const was = this.spots.get(el)
+      this.spots.set(el, at)
+      if (!was || !a || !seen || !this.may(el, 'reorder')) continue
+      const dx = Math.round(was.x - at.x)
+      const dy = Math.round(was.y - at.y)
+      const far = Math.max(Math.abs(dx), Math.abs(dy))
+      if (far >= MIN_GLIDE && far <= MAX_GLIDE) moves.push({ el, dx, dy })
+    }
+    if (!a) return
+    const far = (m: { dx: number; dy: number }) => Math.abs(m.dx) + Math.abs(m.dy)
+    moves.sort((x, y) => far(y) - far(x))
+    for (const { el, dx, dy } of moves) {
+      const from: Frame = { transform: `translate(${dx}px, ${dy}px)` }
+      const glide = { keyframes: [from, ...a.keyframes], timing: a.timing }
+      if (!this.run(el, 'reorder', glide, 'backwards')) break
+    }
+  }
+
   stop() {
     if (this.stopped) return
     this.stopped = true
+    for (const off of [...this.lists]) off()
     this.watching?.()
     this.watching = null
     for (const run of [...this.running]) run.cancel()

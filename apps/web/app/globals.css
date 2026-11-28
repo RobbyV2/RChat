@@ -463,19 +463,40 @@ body {
   }
 }
 
-/* drag: what is being dragged lifts. */
-:root[data-motion-slots~='drag'] [data-motion~='drag'] {
-  transition:
-    scale var(--motion-short) var(--motion-standard),
-    opacity var(--motion-short) var(--motion-standard);
+/* drag: what can be dragged lifts under the press and settles as it is let go, and the copy that
+   is carried lifts off the page. */
+:root[data-motion-slots~='drag'] :is([data-drag-key], [data-lifted]) {
+  transition-property:
+    color, background-color, border-color, outline-color, opacity, box-shadow, scale;
+  transition-duration: var(--motion-short);
+  transition-timing-function: var(--motion-standard);
 }
 
-:root[data-motion-slots~='drag'] [data-motion~='drag'][data-lifted] {
+:root[data-motion-slots~='drag'] [data-lifted] {
   scale: var(--motion-hover);
   opacity: 0.9;
 }
 
-:root[data-motion='lively'][data-motion-slots~='drag'] [data-motion~='drag'] {
+:root[data-motion-slots~='drag'] .drag-ghost {
+  scale: var(--motion-hover);
+  transition:
+    opacity var(--motion-short) var(--motion-standard),
+    scale var(--motion-short) var(--motion-standard);
+}
+
+:root[data-motion-slots~='drag'] .drag-ghost:not([data-off]) {
+  opacity: 0.9;
+}
+
+@starting-style {
+  :root[data-motion-slots~='drag'] .drag-ghost {
+    scale: 1;
+    opacity: 1;
+  }
+}
+
+:root[data-motion='lively'][data-motion-slots~='drag']
+  :is([data-drag-key], [data-lifted], .drag-ghost) {
   transition-timing-function: var(--motion-spring-bouncy, var(--motion-standard));
 }
 

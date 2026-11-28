@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { applyMotion, stopMotion, type Load } from '../motion/host'
 import { MOTION_PERMISSION, MOTION_POINTS } from '../motion/names'
-import { look, plays, playsOn, playsOnly, still } from '../motion/play'
+import { look, plays, playsOn, playsOnly, reorders, still } from '../motion/play'
 import { ANIM_DEFAULT, type AnimPrefs } from '../motion/setting'
 import { blurringNow, liveNow, playerNow, setLive, watchLive, type Player } from '../motion/wire'
 
@@ -14,6 +14,10 @@ const recorder = () => {
     enter: (el, slot) => void calls.push(['enter', el, slot]),
     leave: (el, slot) => void calls.push(['leave', el, slot]),
     change: (el, slot, key) => void calls.push(['change', el, slot, key]),
+    list: (scope, items) => {
+      calls.push(['list', scope, items])
+      return () => void calls.push(['unlist', scope])
+    },
     stop: () => void calls.push(['stop']),
   }
   return { calls, player }
@@ -161,5 +165,34 @@ describe('plugin extension points', () => {
       slots: 'motion.slots@1',
     })
     expect(MOTION_PERMISSION).toBe('ui:motion')
+  })
+})
+
+describe('a list whose items glide', () => {
+  test('is given to the player that runs, and taken back as it goes', async () => {
+    const l = loader()
+    await applyMotion(ON, false, l.load)
+    const scope = node()
+    const off = reorders(scope, '[data-item]')
+    expect(l.rec.calls).toEqual([['list', scope, '[data-item]']])
+    off()
+    off()
+    expect(l.rec.calls).toEqual([
+      ['list', scope, '[data-item]'],
+      ['unlist', scope],
+    ])
+  })
+
+  test('one that was there before animations came on is given to the player as it starts', async () => {
+    const scope = node()
+    const gone = node()
+    const off = reorders(scope, '[data-item]')
+    reorders(gone, '[data-item]')()
+    const l = loader()
+    await applyMotion(ON, false, l.load)
+    expect(l.rec.calls).toEqual([['list', scope, '[data-item]']])
+    stopMotion()
+    off()
+    expect(l.rec.calls).toEqual([['list', scope, '[data-item]'], ['stop']])
   })
 })

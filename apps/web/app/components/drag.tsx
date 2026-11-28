@@ -15,6 +15,7 @@ import {
   type Slot,
   type Span,
 } from '../lib/drag'
+import { reorders } from '../lib/motion/play'
 import { time } from '../lib/platform/time'
 
 export interface DragSpec {
@@ -295,5 +296,9 @@ export const dragScope = (el: HTMLElement | null) => {
   }
   el.setAttribute('data-drag-scope', '')
   el.addEventListener('touchmove', onMove, { passive: false })
-  return () => el.removeEventListener('touchmove', onMove)
+  const still = reorders(el, '[data-drag-key], [data-drag-box]')
+  return () => {
+    el.removeEventListener('touchmove', onMove)
+    still()
+  }
 }

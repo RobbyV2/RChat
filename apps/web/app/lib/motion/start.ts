@@ -14,6 +14,7 @@ export const start = (config: Config): Player => {
     enter: (el, slot, behind) => engine.enter(el, slot, behind),
     leave: (el, slot, behind) => engine.leave(el, slot, behind),
     change: (el, slot, key) => engine.change(el, slot, key),
+    list: (scope, items) => engine.list(scope, items),
     stop() {
       engine.stop()
       on.close()
