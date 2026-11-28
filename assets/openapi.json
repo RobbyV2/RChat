@@ -15461,7 +15461,7 @@
           "Messages"
         ],
         "summary": "Edit a message",
-        "description": "Replaces the text of your own message, and with `media_alt` the description of its image, and\nsets `edited_at`. Requires a bearer token. Only the\nauthor can edit, only `user` messages (not call logs), and only while the author can still\nsend there: in server channels, membership and the send permission (slow mode does not\napply); in DMs, being a participant. The text is checked like a new message (length, blank\ntext without attachment, profanity filter in server channels). The same text again changes\nnothing. Edits never ping and keep the reply quote, reactions and attachment. If the links\nchange, old link previews are removed and new ones are fetched. In server channels, clients\nthat can see the channel get a `message_updated` stub without content (`id`,\n`thread_root_id`, `edited_at`, `stub: true`; sent again when new previews are stored). They\nread the message again through the message list (`around=id`), which applies the\nread-history rules. In DMs, both participants get `message_updated` with the full message, and\nnew previews as `embeds_resolved`. General rate-limit bucket.",
+        "description": "Replaces the text of your own message, with `media_alt` the description of its image and\nwith `embeds` its rich embeds, and sets `edited_at`. Requires a bearer token. Only the\nauthor can edit, only `user` messages (not call logs), and only while the author can still\nsend there: in server channels, membership and the send permission (slow mode does not\napply); in DMs, being a participant. The text is checked like a new message (length, blank\ntext without attachment or embeds, profanity filter in server channels); new embeds need\nEmbed links in server channels and are refused in text-only channels. The same text again\nchanges nothing. Edits never ping and keep the reply quote, reactions and attachment. If the links\nchange, old link previews are removed and new ones are fetched. In server channels, clients\nthat can see the channel get a `message_updated` stub without content (`id`,\n`thread_root_id`, `edited_at`, `stub: true`; sent again when new previews are stored). They\nread the message again through the message list (`around=id`), which applies the\nread-history rules. In DMs, both participants get `message_updated` with the full message, and\nnew previews as `embeds_resolved`. General rate-limit bucket.",
         "operationId": "edit_message",
         "parameters": [
           {
@@ -15506,7 +15506,7 @@
             }
           },
           "400": {
-            "description": "Blocked by the profanity filter, text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), blank text on a message without attachment (`Message is empty`), or not a user message (`Cannot edit this message`). A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors; or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
+            "description": "Blocked by the profanity filter, text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), blank text on a message without attachment or embeds (`Message is empty`), invalid embeds (`reason.field` `embeds`), embeds in a text-only channel (`This channel only accepts text`), or not a user message (`Cannot edit this message`). A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors; or an `X-Audit-Reason` header that is not percent-encoded text (`The audit reason must be percent-encoded text`) or is longer than 300 characters (`The audit reason is too long`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -15526,7 +15526,7 @@
             }
           },
           "403": {
-            "description": "Not your message (`You can only edit your own messages`), no longer a member of the server, or no permission to send in the channel, or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)",
+            "description": "Not your message (`You can only edit your own messages`), no longer a member of the server, or no permission to send in the channel, new embeds without Embed links (`No permission to embed links in this channel`), or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)",
             "content": {
               "application/json": {
                 "schema": {
@@ -35920,6 +35920,16 @@
             "description": "The new text, at most `limits.message_chars` characters (Unicode code points; by default\n4000, `MESSAGE_MAX_CHARS`). It may only be blank when\nthe message has an attachment.",
             "example": "Hello again"
           },
+          "embeds": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/RichEmbed"
+            },
+            "description": "New rich embeds, replacing the message's own (checked like `embeds` of\n`POST /api/v1/channels/{id}/messages`); `[]` removes them, omit to keep them."
+          },
           "media_alt": {
             "type": [
               "string",
@@ -35973,6 +35983,14 @@
             "type": "boolean",
             "description": "The preview image was removed; the text part stays."
           },
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The page's accent color as `#rrggbb` (lowercase), from its `theme-color` meta tag (the\nfirst one without a `media` condition, else the first with one) or its\n`msapplication-TileColor`; `null` when it has none. Clients pick a color of their own\nfor a known site, and keep the bar readable on their theme.",
+            "example": "#ff0000"
+          },
           "description": {
             "type": [
               "string",
@@ -36010,6 +36028,26 @@
             "type": "string",
             "description": "The linked URL.",
             "example": "https://example.com/post"
+          }
+        }
+      },
+      "EmbedAuthor": {
+        "type": "object",
+        "description": "The line above a rich embed's title.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "At most 256 characters, not blank."
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An `http(s)` link for the name, at most 2048 characters."
           }
         }
       },
@@ -38965,6 +39003,13 @@
               }
             ]
           },
+          "rich_embeds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RichEmbed"
+            },
+            "description": "Rich embeds (cards, see `RichEmbed`) the author attached, in order; empty when there are\nnone. A webhook message carries the same in `webhook.embeds`."
+          },
           "thread_root_id": {
             "type": [
               "integer",
@@ -41868,8 +41913,19 @@
       },
       "RichEmbed": {
         "type": "object",
-        "description": "A simple rich embed posted by a webhook: a card with a title (optionally linked), text,\nfields and a footer. All text counts toward 6000 characters per message, and passes the\nprofanity filter like message text. Nothing in it is fetched.",
+        "description": "A rich embed: a card with an author line, a title (linked when `url` is set), text, fields, a\nfooter and a time. Webhooks post them, and members attach them to their messages. All text\ncounts toward 6000 characters per message, and passes the profanity filter like message text\nin server channels. Nothing in it is fetched: it names no images.",
         "properties": {
+          "author": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EmbedAuthor",
+                "description": "The line above the title."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "color": {
             "type": [
               "integer",
@@ -41883,7 +41939,7 @@
               "string",
               "null"
             ],
-            "description": "At most 4096 characters. Rendered like message text (markdown)."
+            "description": "At most 4096 characters. Rendered like message text (markdown, so `[text](https://...)`\nlinks)."
           },
           "fields": {
             "type": "array",
@@ -41902,6 +41958,15 @@
                 "type": "null"
               }
             ]
+          },
+          "timestamp": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "A time shown next to the footer, in Unix seconds from 0 to 253402300799. An RFC 3339 date\n(`2026-11-27T10:00:00Z`) is also taken, and stored as seconds.",
+            "example": 1795773600
           },
           "title": {
             "type": [
@@ -43126,6 +43191,13 @@
             "type": "string",
             "description": "Message text, at most `limits.message_chars` characters (Unicode code points; by default\n4000, `MESSAGE_MAX_CHARS`). May be empty or blank when\nan attachment is given. Up to 3 `http(s)` links in it (invite links excluded) get link\npreviews after the message is posted.",
             "example": "Hello https://example.com"
+          },
+          "embeds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RichEmbed"
+            },
+            "description": "Optional rich embeds (cards, see `RichEmbed`), at most 5; the message may then have no\ntext. In server channels they need Embed links (`403 No permission to embed links in\nthis channel`), are refused in text-only channels (`400 This channel only accepts text`)\nand pass the profanity filter. Not with `poll` (`400 Polls cannot have embeds`); ignored\nwith `forward_of`."
           },
           "forward_of": {
             "type": [

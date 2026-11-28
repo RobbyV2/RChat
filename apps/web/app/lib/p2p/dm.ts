@@ -1,5 +1,7 @@
 import type { PictureGate } from './picture_gate'
 import { withAlts } from '../alt_text'
+import { shownEmbeds } from '../rich_embeds'
+import type { RichEmbed } from '../types'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { b64u, concat, utf8 } from './canonical'
 import {
@@ -97,6 +99,8 @@ export interface P2pMessage {
   mentions: string[]
   fwd: Fwd | null
   att: Attachment[]
+  // Rich embeds it shows (`emb`), as its latest edit leaves them.
+  emb?: RichEmbed[]
   edited: number | null
   reactions: P2pReaction[]
   pinned: number | null
@@ -245,6 +249,7 @@ export const deriveMessage = (
     mentions: c.fwd ? [] : (c.mentions ?? []),
     fwd: c.fwd ?? null,
     att: withAlts(c.att ?? [], edit?.wire.c),
+    emb: c.fwd ? [] : shownEmbeds(c, edit?.wire.c),
     edited: edit ? edit.effTs : null,
     reactions: reactionsOf(related, me),
     pinned: pinOf(related),
@@ -1228,12 +1233,23 @@ export class Dms {
     return r
   }
 
-  async edit(w: DmRoom, target: string, body: string, alts?: Record<string, string>) {
+  async edit(
+    w: DmRoom,
+    target: string,
+    body: string,
+    alts?: Record<string, string>,
+    emb?: RichEmbed[]
+  ) {
     const room = await this.live(w)
     const r = await this.ownMessage(room, target)
     if (r.sender !== this.me || (r.wire.c as MsgContent | null)?.fwd)
       throw new DmError("You can't edit this message")
-    return this.create(room, 'edit', alts ? { target, body, alts } : { target, body })
+    return this.create(room, 'edit', {
+      target,
+      body,
+      ...(alts ? { alts } : {}),
+      ...(emb ? { emb } : {}),
+    })
   }
 
   async redact(w: DmRoom, target: string) {

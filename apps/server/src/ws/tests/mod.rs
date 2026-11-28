@@ -72,6 +72,7 @@ fn message() -> Message {
         group_mentions: Vec::new(),
         poll: None,
         webhook: None,
+        rich_embeds: Vec::new(),
     }
 }
 

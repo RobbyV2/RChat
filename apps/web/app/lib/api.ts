@@ -79,6 +79,7 @@ import type {
   ServerUpdated,
   SiteSettings,
   SiteSettingsPatch,
+  RichEmbed,
   StoredSeal,
   Unread,
   UserRef,
@@ -655,6 +656,7 @@ export interface SendOpts {
   forward_of?: number
   show_source?: boolean
   poll?: PollReq
+  embeds?: RichEmbed[]
 }
 
 export interface PollOptionReq {
@@ -1175,12 +1177,12 @@ export const endpoints = (c: ApiClient) => ({
   sendScheduled: (id: number) => c.req<Message>('POST', `/me/scheduled/${id}/send`),
   deleteScheduled: (id: number) => c.req<unknown>('DELETE', `/me/scheduled/${id}`),
   // `alt`: a new description of the message's image (null removes it); left out keeps it.
-  editMessage: (id: number, content: string, alt?: string | null) =>
-    c.req<Message>(
-      'PATCH',
-      `/messages/${id}`,
-      alt === undefined ? { content } : { content, media_alt: alt }
-    ),
+  editMessage: (id: number, content: string, alt?: string | null, embeds?: RichEmbed[]) =>
+    c.req<Message>('PATCH', `/messages/${id}`, {
+      content,
+      ...(alt === undefined ? {} : { media_alt: alt }),
+      ...(embeds === undefined ? {} : { embeds }),
+    }),
   deleteMedia: (id: number) => c.req<unknown>('DELETE', `/messages/${id}/media`),
   messageLocation: (id: number) => c.req<MessageLocation>('GET', `/messages/${id}/location`),
   messagePlace: (id: number) =>

@@ -1,3 +1,5 @@
+import { shownEmbeds } from '../../rich_embeds'
+import { embedsShow } from '../acl/rules'
 import { withAlts } from '../../alt_text'
 import { atLeast, outranks as above } from '../../perms'
 import {
@@ -722,6 +724,7 @@ export async function rows(cx: ServerCtx, room: string, recs: EventRecord[]) {
   )
   const out: P2pMessage[] = []
   const viewed: string[] = []
+  const facts = chanFactsOf(cx.sumOf(room))
   const replies = new Map<string, Shown | null>()
   const roots = new Map<string, Promise<EventRecord | undefined>>()
   const getRoot = (id: string) => {
@@ -810,6 +813,10 @@ export async function rows(cx: ServerCtx, room: string, recs: EventRecord[]) {
       mentions: c.fwd ? [] : (c.mentions ?? []),
       fwd: c.fwd ?? null,
       att: withAlts(c.att ?? [], edit ? serverWire(edit).c : null),
+      emb:
+        c.fwd || !r.chan || !embedsShow(facts, r.sender, r.chan)
+          ? []
+          : shownEmbeds(c, edit ? serverWire(edit).c : null),
       edited: edit ? edit.effTs : null,
       reactions: reactionsOf(reacts, cx.me),
       pinned: sh.pin?.on && pin && !thread ? pin.effTs : null,

@@ -260,6 +260,7 @@ export function Composer({ list = 'main' }: { list?: ComposerList }) {
         later={() => compose.laterDraft({ pick: () => setLaterOpen(true), busy: pollOpen })}
         onSend={() => compose.send(() => setExpiryOpen(true))}
         onPaste={e => compose.paste(pastedFiles(e))}
+        embedsAsked={list === 'main'}
         tools={
           <>
             <AttachButton compose={compose} />

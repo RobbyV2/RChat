@@ -1,5 +1,7 @@
+import type { RichEmbed } from '../../types'
 import {
   contentLack,
+  embedsShow,
   holdsIn,
   knownRules,
   mayDelete,
@@ -39,6 +41,7 @@ import {
 
 export const NO_SEND_TEXT = "You can't send messages in this channel"
 export const NO_FILES_TEXT = "You can't attach files in this channel"
+export const NO_EMBEDS_TEXT = "You can't embed links in this channel"
 export const NO_REACT_TEXT = "You can't react in this channel"
 export const NO_THREAD_TEXT = "You can't start threads in this channel"
 const LACK_TEXT = {
@@ -61,6 +64,8 @@ function requireHeld(
   if (!knownRules(F.rules) || rulesOf(F.rules) < RULES_NEXT) return
   const lack = contentLack(F, cx.me, ch, t, c)
   if (lack !== null) throw new ServerError(LACK_TEXT[lack])
+  if (Array.isArray(c.emb) && c.emb.length > 0 && !embedsShow(F, cx.me, ch))
+    throw new ServerError(NO_EMBEDS_TEXT)
 }
 
 // Whether the thread of `root` has a reply held here.
@@ -196,12 +201,19 @@ export async function edit(
   room: string,
   target: string,
   body: string,
-  alts?: Record<string, string>
+  alts?: Record<string, string>,
+  emb?: RichEmbed[]
 ) {
   const r = await cx.message(room, target)
   if (r.sender !== cx.me || (serverWire(r).c as MsgContent | null)?.fwd)
     throw new ServerError("You can't edit this message")
-  return cx.content(room, 'edit', { target, body, ch: r.chan, ...(alts ? { alts } : {}) })
+  return cx.content(room, 'edit', {
+    target,
+    body,
+    ch: r.chan,
+    ...(alts ? { alts } : {}),
+    ...(emb ? { emb } : {}),
+  })
 }
 
 export async function redact(cx: ServerCtx, room: string, target: string) {

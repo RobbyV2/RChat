@@ -203,6 +203,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("scheduled_messages", "media_alt TEXT"),
     ("scheduled_messages", "poll TEXT"),
     ("avatar_images", "seal_key {INT}"),
+    ("embeds", "color TEXT"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -354,7 +355,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// `media_name`, `media_alt`, `poll`).
 /// 73: sealed descriptions of server profiles (`member_profiles.bio_sealed`).
 /// 74: sealed pictures (`avatar_images.seal_key`).
-pub const SCHEMA_VERSION: i64 = 74;
+/// 75: the accent colors of link previews (`embeds.color`).
+pub const SCHEMA_VERSION: i64 = 75;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;
@@ -382,6 +384,9 @@ pub(super) const SERVER_BIOS_VERSION: i64 = 73;
 /// The schema version that adds sealed pictures.
 #[cfg(test)]
 pub(super) const SEALED_PICTURES_VERSION: i64 = 74;
+/// The schema version that adds the accent colors of link previews.
+#[cfg(test)]
+pub(super) const EMBED_COLOR_VERSION: i64 = 75;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 25] {

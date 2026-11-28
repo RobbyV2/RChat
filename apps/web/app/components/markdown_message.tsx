@@ -16,6 +16,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type CSSProperties,
 } from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -82,11 +83,13 @@ import { warnsBefore } from '../lib/link_open'
 import { Ended, errorText, groupPills, useMask, userRefFor, useStore } from '../lib/store'
 import { useChat } from '../lib/place/use_chat'
 import { useWatch } from '../lib/place/react'
-import type { Embed, Message, MessageMedia } from '../lib/types'
+import type { Embed, Message, MessageMedia, RichEmbed } from '../lib/types'
 import { longPress } from './context_menu'
 import { InviteCard, RemoteInviteCard } from './invite_card'
 import { MessageLinkCard, WidgetLinkCards, WidgetMessageLinkCard } from './message_link_card'
 import { RichEmbeds } from './webhooks'
+import { cardsOf } from '../lib/rich_embeds'
+import { previewAccent } from '../lib/embed_colors'
 import { ProfileButton } from './profile_card'
 import { EditedMark } from './message_editor'
 import {
@@ -1169,56 +1172,63 @@ function EmbedCard({
 
   const menu = (x: number, y: number) =>
     openActionMenu(x, y, { kind: 'embed', message, ord, banner: path !== null }, undefined, acct)
+  const theme = useStore(s => s.theme)
+  const accent = previewAccent(embed, theme)
 
   return (
-    <Surface
-      {...(canDelete ? longPress(menu) : {})}
-      pad="md"
-      inset="bar"
-      gap="2xs"
-      tone="base"
-      radius="md"
-      fit
-      look="msg-part border-l-4 border-primary"
-      place="group/embed relative max-w-md"
+    <div
+      className="contents"
+      style={accent ? ({ '--embed-accent': accent } as CSSProperties) : undefined}
     >
-      {site_name !== null && (
-        <div className="text-xs text-on-surface-variant">
-          <Masked text={site_name} />
-        </div>
-      )}
-      <MessageLink
-        href={url}
-
-        className="block text-sm font-medium break-words text-primary hover:underline"
+      <Surface
+        {...(canDelete ? longPress(menu) : {})}
+        pad="md"
+        inset="bar"
+        gap="2xs"
+        tone="base"
+        radius="md"
+        fit
+        look="msg-part border-l-4 border-l-accent"
+        place="group/embed relative max-w-md"
       >
-        {title === null ? url : <Masked text={title} />}
-      </MessageLink>
-      {description !== null && (
-        <p className="line-clamp-3 text-xs break-words text-on-surface-variant">
-          <Masked text={description} />
-        </p>
-      )}
-      {src && broken !== src && (
-        <img
-          src={src}
-          alt={title ?? url}
-          referrerPolicy="no-referrer"
-          loading="lazy"
-          onError={() => setBroken(src)}
-          className="max-h-60 max-w-full rounded-md"
-        />
-      )}
-      {canDelete && (
-        <IconButton
-          icon={EllipsisVertical}
-          label="Embed options"
-          size="sm"
-          onClick={e => menu(e.clientX, e.clientY)}
-          place="absolute top-1.5 right-1.5 opacity-0 group-focus-within/embed:opacity-100 group-hover/embed:opacity-100 max-md:opacity-100"
-        />
-      )}
-    </Surface>
+        {site_name !== null && (
+          <div className="text-xs text-on-surface-variant">
+            <Masked text={site_name} />
+          </div>
+        )}
+        <MessageLink
+          href={url}
+
+          className="block text-sm font-medium break-words text-primary hover:underline"
+        >
+          {title === null ? url : <Masked text={title} />}
+        </MessageLink>
+        {description !== null && (
+          <p className="line-clamp-3 text-xs break-words text-on-surface-variant">
+            <Masked text={description} />
+          </p>
+        )}
+        {src && broken !== src && (
+          <img
+            src={src}
+            alt={title ?? url}
+            referrerPolicy="no-referrer"
+            loading="lazy"
+            onError={() => setBroken(src)}
+            className="max-h-60 max-w-full rounded-md"
+          />
+        )}
+        {canDelete && (
+          <IconButton
+            icon={EllipsisVertical}
+            label="Embed options"
+            size="sm"
+            onClick={e => menu(e.clientX, e.clientY)}
+            place="absolute top-1.5 right-1.5 opacity-0 group-focus-within/embed:opacity-100 group-hover/embed:opacity-100 max-md:opacity-100"
+          />
+        )}
+      </Surface>
+    </div>
   )
 }
 
@@ -1266,6 +1276,23 @@ function SpoilerLinkCard({ url }: { url: string }) {
 
 // Text inside a webhook's rich embed, read like messages (spoilers, the personal filter) but
 // without mentions. `text` is markdown; `line` is one plain line (title, field name, footer).
+// Rich embeds as a message shows them, for the builder's preview.
+export function EmbedsPreview({ embeds }: { embeds: RichEmbed[] }) {
+  const card = useCardText()
+  return (
+    <RichEmbeds
+      embeds={embeds}
+      text={card.text}
+      line={card.line}
+      link={(href, className, children) => (
+        <MessageLink href={href} className={className}>
+          {children}
+        </MessageLink>
+      )}
+    />
+  )
+}
+
 function useCardText() {
   const mask = useMask()
   return useMemo(() => {
@@ -1330,6 +1357,8 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   )
   const chat = useChat()
   const known = useWatch(() => chat.known(message, candidates), [chat, message, candidates])
+  const self = useWatch(() => chat.self, [chat])
+  const mineCards = !message.webhook && self !== null && self === message.author.username
   const pills = useStore(s => groupPills(s, message))
   const own = useOwn(message.webhook || message.forward ? null : message.author.username)
   const mask = useMask(own)
@@ -1442,9 +1471,10 @@ export const MarkdownMessage = memo(function MarkdownMessage({
             )}
           </div>
         )}
-        {message.webhook?.embeds && message.webhook.embeds.length > 0 && (
+        {cardsOf(message).length > 0 && (
           <RichEmbeds
-            embeds={message.webhook.embeds}
+            embeds={cardsOf(message)}
+            remove={mineCards ? i => () => chat.removeEmbed(message, i) : undefined}
             text={card.text}
             line={card.line}
             link={(href, className, children) => (

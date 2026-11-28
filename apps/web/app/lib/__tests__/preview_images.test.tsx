@@ -61,6 +61,7 @@ describe('link preview images', () => {
     description: null,
     image_url,
     banner_removed: false,
+    color: null,
   })
   const render = (image_url: string | null) =>
     renderToStaticMarkup(

@@ -120,6 +120,7 @@ export const embed = (ord: number, over: Partial<Embed> = {}): Embed => ({
   description: 'D',
   image_url: 'https://e.com/i.png',
   banner_removed: false,
+  color: null,
   ...over,
 })
 

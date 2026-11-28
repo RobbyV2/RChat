@@ -25,7 +25,7 @@ export const FORMATS: FormatItem[] = [
   { format: 'code', label: 'Code', keys: 'Mod+E' },
   { format: 'spoiler', label: 'Spoiler', keys: 'Mod+Shift+H' },
   { format: 'quote', label: 'Quote', keys: null },
-  { format: 'link', label: 'Link', keys: null },
+  { format: 'link', label: 'Insert link', keys: 'Mod+Shift+K' },
 ]
 
 export const isApple = () =>

@@ -38,6 +38,7 @@ use crate::api::pings::{
 };
 use crate::api::polls::PollReq;
 use crate::api::rare::{self, Rare};
+use crate::api::rich_embeds::{Cards, RichEmbed};
 use crate::api::seal;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Message, OkResp, ProfanityTarget, Settings, UserRef, allowed,
@@ -95,9 +96,6 @@ pub const USER_AGENT: &str = "rchat-webhooks/1.0";
 const TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const CLAIM_SECS: i64 = 60;
-const EMBEDS_MAX: usize = 10;
-const EMBED_TEXT_MAX: usize = 6000;
-const FIELDS_MAX: usize = 25;
 const AUTHOR_PREFIX: &str = "@webhook:";
 const UNKNOWN: &str = "Unknown webhook";
 const UNKNOWN_MESSAGE: &str = "Unknown message";
@@ -191,50 +189,6 @@ pub async fn current_refs(db: &Db, ids: &[i64]) -> HashMap<String, UserRef> {
     out
 }
 
-/// A field of a rich embed.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
-pub struct EmbedField {
-    /// At most 256 characters, not blank.
-    pub name: String,
-    /// At most 1024 characters, not blank.
-    pub value: String,
-    /// Shown next to other inline fields. Defaults to `false`.
-    #[serde(default)]
-    pub inline: bool,
-}
-
-/// The footer of a rich embed.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
-pub struct EmbedFooter {
-    /// At most 2048 characters, not blank.
-    pub text: String,
-}
-
-/// A simple rich embed posted by a webhook: a card with a title (optionally linked), text,
-/// fields and a footer. All text counts toward 6000 characters per message, and passes the
-/// profanity filter like message text. Nothing in it is fetched.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, ToSchema)]
-pub struct RichEmbed {
-    /// At most 256 characters.
-    #[serde(default)]
-    pub title: Option<String>,
-    /// At most 4096 characters. Rendered like message text (markdown).
-    #[serde(default)]
-    pub description: Option<String>,
-    /// An `http(s)` link for the title, at most 2048 characters.
-    #[serde(default)]
-    pub url: Option<String>,
-    /// Accent color as an integer `0xRRGGBB` (0 to 16777215).
-    #[serde(default)]
-    pub color: Option<i64>,
-    /// At most 25.
-    #[serde(default)]
-    pub fields: Vec<EmbedField>,
-    /// Small text at the bottom.
-    #[serde(default)]
-    pub footer: Option<EmbedFooter>,
-}
-
 /// The webhook part of a message.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct MessageWebhook {
@@ -245,113 +199,15 @@ pub struct MessageWebhook {
     pub embeds: Vec<RichEmbed>,
 }
 
-pub fn parse_embeds(stored: Option<&str>) -> Vec<RichEmbed> {
-    stored
-        .and_then(|s| serde_json::from_str(s).ok())
-        .unwrap_or_default()
-}
-
-pub fn stored_embeds(list: &[RichEmbed]) -> Option<String> {
-    match list.is_empty() {
-        true => None,
-        false => serde_json::to_string(list).ok(),
-    }
-}
-
 /// What `insert_message` stores for a webhook message.
 pub struct HookPost {
     pub id: i64,
     pub name: String,
     pub avatar: String,
-    pub embeds: Vec<RichEmbed>,
 }
 
 fn blank(s: &str) -> bool {
     s.trim().is_empty()
-}
-
-fn web_url(raw: &str) -> bool {
-    raw.chars().count() <= URL_MAX
-        && Url::parse(raw).is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.has_host())
-}
-
-/// Checks `list` (counts, lengths, URLs, colors, the profanity filter) and trims nothing.
-pub fn validate_embeds(list: &[RichEmbed], settings: &Settings) -> Result<(), ApiError> {
-    if list.len() > EMBEDS_MAX {
-        return Err(ApiError::invalid("At most 10 embeds", "embeds"));
-    }
-    let mut total = 0;
-    for e in list {
-        let RichEmbed {
-            title,
-            description,
-            url,
-            color,
-            fields,
-            footer,
-        } = e;
-        let mut texts: Vec<(&str, usize, &str)> = Vec::new();
-        if let Some(t) = title {
-            texts.push((t, 256, "Embed title"));
-        }
-        if let Some(d) = description {
-            texts.push((d, 4096, "Embed description"));
-        }
-        if fields.len() > FIELDS_MAX {
-            return Err(ApiError::invalid("At most 25 embed fields", "embeds"));
-        }
-        for f in fields {
-            if blank(&f.name) || blank(&f.value) {
-                return Err(ApiError::invalid(
-                    "Embed fields need a name and a value",
-                    "embeds",
-                ));
-            }
-            texts.push((&f.name, 256, "Embed field name"));
-            texts.push((&f.value, 1024, "Embed field value"));
-        }
-        if let Some(f) = footer {
-            if blank(&f.text) {
-                return Err(ApiError::invalid("Embed footer is empty", "embeds"));
-            }
-            texts.push((&f.text, 2048, "Embed footer"));
-        }
-        if let Some(u) = url
-            && !web_url(u)
-        {
-            return Err(ApiError::invalid(
-                "Embed url must be an http or https link",
-                "embeds",
-            ));
-        }
-        if let Some(c) = color
-            && !(0..=0xff_ffff).contains(c)
-        {
-            return Err(ApiError::invalid(
-                "Embed color must be between 0 and 16777215",
-                "embeds",
-            ));
-        }
-        let shown = title.as_deref().is_some_and(|t| !blank(t))
-            || description.as_deref().is_some_and(|d| !blank(d))
-            || !fields.is_empty()
-            || footer.is_some();
-        if !shown {
-            return Err(ApiError::invalid("Embed is empty", "embeds"));
-        }
-        for (text, max, what) in texts {
-            check_len(text, max, what)?;
-            total += text.chars().count();
-            settings.check_profanity(ProfanityTarget::Messages, text)?;
-        }
-    }
-    match total > EMBED_TEXT_MAX {
-        true => Err(ApiError::invalid(
-            "Embeds must have at most 6000 characters in total",
-            "embeds",
-        )),
-        false => Ok(()),
-    }
 }
 
 fn new_token() -> String {
@@ -1384,7 +1240,7 @@ async fn post(
     let settings = Settings::cached(db).await;
     check_len(&content, state.limits.message_max_chars, "Message")?;
     settings.check_profanity(ProfanityTarget::Messages, &content)?;
-    validate_embeds(&cards, &settings)?;
+    let cards = Cards::hook(cards, &settings)?;
     let name = match username.as_deref() {
         Some(n) if n.trim() != hook.name => check_name(db, &hook.server, n).await?,
         Some(_) | None => hook.name.clone(),
@@ -1531,12 +1387,12 @@ async fn post(
         forward_of: None,
         show_source: None,
         poll,
+        embeds: Vec::new(),
     };
     let extra = HookPost {
         id: hook.id,
         name: name.clone(),
         avatar: stored_avatar(kind, color.as_deref()),
-        embeds: cards,
     };
     let message = insert_message(
         state,
@@ -1548,6 +1404,7 @@ async fn post(
         quote.as_ref(),
         groups,
         Some(&extra),
+        cards,
         false,
         None,
     )
@@ -1737,9 +1594,12 @@ pub(crate) async fn edit_hook_message(
             None => return Err(unknown_message()),
         };
     let old = parts.content.clone();
-    let old_cards = parse_embeds(parts.embeds.as_deref());
+    let old_cards = Cards::stored(parts.embeds.as_deref());
     let content = content.unwrap_or_else(|| old.clone());
-    let cards = cards.unwrap_or(old_cards.clone());
+    let cards = match cards {
+        Some(list) => Cards::hook(list, &settings)?,
+        None => old_cards.clone(),
+    };
     if text_only && !cards.is_empty() && cards != old_cards {
         return Err(ApiError::off_server(
             StatusCode::BAD_REQUEST,
@@ -1749,7 +1609,6 @@ pub(crate) async fn edit_hook_message(
     }
     check_len(&content, state.limits.message_max_chars, "Message")?;
     settings.check_profanity(ProfanityTarget::Messages, &content)?;
-    validate_embeds(&cards, &settings)?;
     if blank(&content) && !attached && cards.is_empty() {
         return Err(ApiError::invalid("Message is empty", "content"));
     }
@@ -1757,7 +1616,7 @@ pub(crate) async fn edit_hook_message(
         let relink = embeds::extract_urls(&content) != embeds::extract_urls(&old);
         let parts = Parts {
             content: content.clone(),
-            embeds: stored_embeds(&cards),
+            embeds: cards.stored_form(),
             ..parts
         };
         crate::api::seal::store_parts(&mut tx, writer.as_ref(), mid, &author, &parts).await?;

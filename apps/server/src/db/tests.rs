@@ -9655,6 +9655,47 @@ async fn sealed_pictures_are_added_to_an_old_database() {
 }
 
 #[tokio::test]
+async fn link_preview_colors_are_added_to_an_old_database() {
+    on_each_database("embed_color_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        for sql in [
+            "INSERT INTO embeds(url, site_name, title, description, image_url, fetched_at) VALUES('https://example.com/', 'Example', 'Kept', 'A page', NULL, 9)",
+            "ALTER TABLE embeds DROP COLUMN color",
+        ] {
+            sqlx::query(sql).execute(&db).await.expect(sql);
+        }
+        sqlx::query("UPDATE settings SET value = $1 WHERE key = 'schema_version'")
+            .bind((super::migrate::EMBED_COLOR_VERSION - 1).to_string())
+            .execute(&db)
+            .await
+            .expect("version");
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM embeds WHERE url = 'https://example.com/' AND site_name = 'Example' AND title = 'Kept' AND description = 'A page' AND fetched_at = 9").await,
+                1,
+                "{round}: the old preview keeps its values"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM embeds WHERE color IS NULL").await,
+                i64::from(round == 0),
+                "{round}: an old preview has no color"
+            );
+            if round == 0 {
+                sqlx::query("UPDATE embeds SET color = '#ff0000'")
+                    .execute(&db)
+                    .await
+                    .expect("color");
+            }
+            close(&db).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn change_server_profile_is_given_to_stored_everyone_permissions() {
     on_each_database("change_profile_upgrade", |url| async move {
         let db = open_started(Some(&url)).await.expect("open");

@@ -1,3 +1,4 @@
+import type { RichEmbed } from '../../types'
 import { knownRules } from '../acl/rules'
 import { emptySummary, type SumDelta, type Summary } from '../acl/summary'
 import type { Carried, PackedRec, Plan } from '../acl_room'
@@ -1907,8 +1908,14 @@ export class Servers {
     return messages.message(ctx(this), room, target)
   }
 
-  edit(room: string, target: string, body: string, alts?: Record<string, string>) {
-    return messages.edit(ctx(this), room, target, body, alts)
+  edit(
+    room: string,
+    target: string,
+    body: string,
+    alts?: Record<string, string>,
+    emb?: RichEmbed[]
+  ) {
+    return messages.edit(ctx(this), room, target, body, alts, emb)
   }
 
   redact(room: string, target: string) {

@@ -74,6 +74,7 @@ import type {
   SiteSettings,
   SiteSettingsPatch,
   Theme,
+  RichEmbed,
   UserRef,
   WsEvent,
   WsStatus,
@@ -700,7 +701,14 @@ export interface RChatState {
   saveEdit: (refocus?: boolean) => void
   editLast: (key: string) => boolean
   sedEdit: (key: string, sed: Sed) => Promise<boolean>
-  sendMessage: (content: string, p2pExpiresIn?: number | null, p2pRelay?: RelayChoice) => void
+  // Takes the rich embed at `index` off your message `m`.
+  removeEmbed: (m: Message, index: number) => void
+  sendMessage: (
+    content: string,
+    p2pExpiresIn?: number | null,
+    p2pRelay?: RelayChoice,
+    embeds?: RichEmbed[]
+  ) => void
   markRead: (scope: string, messageId: number) => void
   // Sends the read marks that are waiting after a failure, now.
   resendReadMarks: () => void
@@ -744,7 +752,12 @@ export interface RChatState {
   setInboxOpen: (open: boolean) => void
   loadOlderThread: () => Promise<void>
   loadNewerThread: () => Promise<void>
-  sendThreadMessage: (content: string, p2pExpiresIn?: number | null, p2pRelay?: RelayChoice) => void
+  sendThreadMessage: (
+    content: string,
+    p2pExpiresIn?: number | null,
+    p2pRelay?: RelayChoice,
+    embeds?: RichEmbed[]
+  ) => void
   searchRun: (args: SearchArgs, reset: boolean) => Promise<void>
   dismissNotice: (id: number) => void
   pauseNotices: (paused: boolean) => void

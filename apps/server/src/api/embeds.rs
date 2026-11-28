@@ -107,6 +107,7 @@ struct Meta {
     title: Option<String>,
     description: Option<String>,
     image: Option<String>,
+    color: Option<String>,
 }
 
 impl Meta {
@@ -118,15 +119,54 @@ impl Meta {
     }
 }
 
+/// A CSS color as `#rrggbb` (lowercase): `#rgb`, `#rrggbb` or `rgb(r, g, b)` with whole numbers
+/// from 0 to 255. Anything else (names, alpha, percentages) is no color.
+pub(crate) fn parse_color(raw: &str) -> Option<String> {
+    let t = raw.trim().to_ascii_lowercase();
+    if let Some(hex) = t.strip_prefix('#') {
+        if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        return match hex.len() {
+            3 => Some(hex.chars().flat_map(|c| [c, c]).collect::<String>()),
+            6 => Some(hex.to_string()),
+            _ => None,
+        }
+        .map(|h| format!("#{h}"));
+    }
+    let inner = t.strip_prefix("rgb(")?.strip_suffix(')')?;
+    let parts: Vec<&str> = match inner.contains(',') {
+        true => inner.split(',').map(str::trim).collect(),
+        false => inner.split_ascii_whitespace().collect(),
+    };
+    let [r, g, b] = parts.as_slice() else {
+        return None;
+    };
+    let channel = |p: &str| match p.bytes().all(|b| b.is_ascii_digit()) && p.len() <= 3 {
+        true => p.parse::<u8>().ok(),
+        false => None,
+    };
+    Some(format!(
+        "#{:02x}{:02x}{:02x}",
+        channel(r)?,
+        channel(g)?,
+        channel(b)?
+    ))
+}
+
 fn parse_meta(html: &str, base: &Url) -> Meta {
     let mut meta = Meta {
         site_name: None,
         title: None,
         description: None,
         image: None,
+        color: None,
     };
     let mut fallback_title: Option<String> = None;
     let mut fallback_desc: Option<String> = None;
+    let mut theme: Option<String> = None;
+    let mut theme_media: Option<String> = None;
+    let mut tile: Option<String> = None;
     let dom = match tl::parse(html, tl::ParserOptions::default()) {
         Ok(dom) => dom,
         Err(_) => return meta,
@@ -173,11 +213,24 @@ fn parse_meta(html: &str, base: &Url) -> Meta {
                 meta.image = image_url(&content, base)
             }
             "description" if fallback_desc.is_none() => fallback_desc = cap(&content, 600),
+            _ if key.eq_ignore_ascii_case("theme-color") => {
+                let slot = match attr("media") {
+                    Some(_) => &mut theme_media,
+                    None => &mut theme,
+                };
+                if slot.is_none() {
+                    *slot = parse_color(&content);
+                }
+            }
+            _ if key.eq_ignore_ascii_case("msapplication-tilecolor") && tile.is_none() => {
+                tile = parse_color(&content)
+            }
             _ => {}
         }
     }
     meta.title = meta.title.or(fallback_title);
     meta.description = meta.description.or(fallback_desc);
+    meta.color = theme.or(theme_media).or(tile);
     meta
 }
 
@@ -439,7 +492,7 @@ async fn resolve(db: &Db, url: &str, policy: &Policy) -> anyhow::Result<Option<E
 }
 
 async fn resolve_once(db: &Db, url: &str, policy: &Policy) -> anyhow::Result<Option<Embed>> {
-    let embed = |site_name, title, description, image_url| Embed {
+    let embed = |site_name, title, description, image_url, color| Embed {
         ord: 0,
         url: url.to_string(),
         site_name,
@@ -447,9 +500,10 @@ async fn resolve_once(db: &Db, url: &str, policy: &Policy) -> anyhow::Result<Opt
         description,
         image_url,
         banner_removed: false,
+        color,
     };
     let cached = sqlx::query(
-        "SELECT site_name, title, description, image_url FROM embeds WHERE url = $1 AND fetched_at > $2",
+        "SELECT site_name, title, description, image_url, color FROM embeds WHERE url = $1 AND fetched_at > $2",
     )
     .bind(url)
     .bind(now() - CACHE_TTL)
@@ -461,6 +515,7 @@ async fn resolve_once(db: &Db, url: &str, policy: &Policy) -> anyhow::Result<Opt
             r.try_get(1)?,
             r.try_get(2)?,
             r.try_get(3)?,
+            r.try_get(4)?,
         )));
     }
     let parsed = Url::parse(url)?;
@@ -477,19 +532,21 @@ async fn resolve_once(db: &Db, url: &str, policy: &Policy) -> anyhow::Result<Opt
         title,
         description,
         image,
+        color,
     } = meta;
     sqlx::query(
-        "INSERT INTO embeds(url, site_name, title, description, image_url, fetched_at) VALUES($1, $2, $3, $4, $5, $6) ON CONFLICT(url) DO UPDATE SET site_name = excluded.site_name, title = excluded.title, description = excluded.description, image_url = excluded.image_url, fetched_at = excluded.fetched_at",
+        "INSERT INTO embeds(url, site_name, title, description, image_url, color, fetched_at) VALUES($1, $2, $3, $4, $5, $6, $7) ON CONFLICT(url) DO UPDATE SET site_name = excluded.site_name, title = excluded.title, description = excluded.description, image_url = excluded.image_url, color = excluded.color, fetched_at = excluded.fetched_at",
     )
     .bind(url)
     .bind(&site_name)
     .bind(&title)
     .bind(&description)
     .bind(&image)
+    .bind(&color)
     .bind(now())
     .execute(db)
     .await?;
-    Ok(Some(embed(site_name, title, description, image)))
+    Ok(Some(embed(site_name, title, description, image, color)))
 }
 
 async fn live_server(db: &Db, message_id: i64) -> sqlx::Result<Option<Option<String>>> {
@@ -881,6 +938,77 @@ mod tests {
     }
 
     #[test]
+    fn page_colors_come_from_theme_color_then_tile_color() {
+        let base = Url::parse("https://site.example/").unwrap();
+        let color = |head: &str| {
+            parse_meta(
+                &format!("<html><head><title>T</title>{head}</head></html>"),
+                &base,
+            )
+            .color
+        };
+        assert_eq!(
+            color(r##"<meta name="theme-color" content="#F00">"##).as_deref(),
+            Some("#ff0000")
+        );
+        assert_eq!(
+            color(
+                r##"<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111111"><meta name="theme-color" content="#2A2B2C">"##
+            )
+            .as_deref(),
+            Some("#2a2b2c"),
+            "a color without a media condition wins"
+        );
+        assert_eq!(
+            color(
+                r##"<meta name="theme-color" media="(prefers-color-scheme: light)" content="#fefefe"><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111111">"##
+            )
+            .as_deref(),
+            Some("#fefefe"),
+            "else the first with one"
+        );
+        assert_eq!(
+            color(
+                r##"<meta name="theme-color" content="rgba(255, 255, 255, 0.98)"><meta name="msapplication-TileColor" content="rgb(0, 128, 255)">"##
+            )
+            .as_deref(),
+            Some("#0080ff"),
+            "an unreadable theme color falls back to the tile color"
+        );
+        assert_eq!(color(r#"<meta name="theme-color" content="red">"#), None);
+        assert_eq!(color(""), None);
+        let empty = parse_meta(
+            r##"<html><head><meta name="theme-color" content="#ff0000"></head></html>"##,
+            &base,
+        );
+        assert!(empty.is_empty(), "a color alone makes no preview");
+    }
+
+    #[test]
+    fn colors_parse_strictly() {
+        for (raw, want) in [
+            ("#abc", Some("#aabbcc")),
+            ("  #A1B2C3 ", Some("#a1b2c3")),
+            ("rgb(255,0,10)", Some("#ff000a")),
+            ("RGB( 1 , 2 , 3 )", Some("#010203")),
+            ("rgb(1 2 3)", Some("#010203")),
+            ("#abcd", None),
+            ("#ggg", None),
+            ("abc", None),
+            ("rgb(256,0,0)", None),
+            ("rgb(1,2)", None),
+            ("rgb(1,,2,3)", None),
+            ("rgb(-1,2,3)", None),
+            ("rgb(1.5,2,3)", None),
+            ("rgba(1,2,3,1)", None),
+            ("rgb(1,2,3", None),
+            ("", None),
+        ] {
+            assert_eq!(parse_color(raw).as_deref(), want, "{raw}");
+        }
+    }
+
+    #[test]
     fn scrubbed_urls_match_the_client() {
         for (posted, stored) in [
             (
@@ -1011,6 +1139,7 @@ mod tests {
             description: None,
             image_url: None,
             banner_removed: false,
+            color: None,
         };
         let count = |db: Db| async move {
             sqlx::query("SELECT COUNT(*) FROM message_embeds WHERE message_id = $1")

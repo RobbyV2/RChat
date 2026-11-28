@@ -141,6 +141,13 @@ export function textOnlyChannel(rules: unknown, channel: AclContent | undefined)
   return textOnlyRules(rules) && (channel?.kind ?? 'text') === 'text' && channel?.text_only === true
 }
 
+// Whether the rich embeds (`emb`) of P's messages in channel `ch` show: never in a text-only
+// channel, and from rules 5 only while P holds Embed links there. Embeds are read only when
+// shown, and admission does not look at them, so peers of every version keep the same events.
+export const embedsShow = (F: ChanFacts, P: string, ch: string) =>
+  !textOnlyChannel(F.rules, F.channels.get(ch)) &&
+  (rulesOf(F.rules) < RULES_NEXT || holdsIn(F, P, ch, 'EmbedLinks'))
+
 export function richMessage(c: Record<string, unknown>) {
   return (
     c.att !== undefined ||

@@ -85,6 +85,7 @@ import { type Sed, applySed, lastEditable } from '../sed'
 import { channelCan, scopeRule } from '../selectors'
 import { hashBlob } from '../sha256'
 import { slowWait } from '../slowmode'
+import { EMPTY_LEFT, cardsOf } from '../rich_embeds'
 import type { Focus, Outgoing, OutgoingStatus, RChatState } from '../store_types'
 import { isSystem, systemText } from '../system_messages'
 import { offsetOf, pushOffset } from '../trust/token'
@@ -97,6 +98,7 @@ import type {
   Message,
   MessageLocation,
   ReplyRef,
+  RichEmbed,
   SearchResult,
   UserRef,
   WsEvent,
@@ -835,7 +837,8 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     content: string,
     pending: PendingUpload | null,
     p2pExpiresIn: number | null,
-    reply: Replying | null = null
+    reply: Replying | null = null,
+    cards: RichEmbed[] = []
   ) => {
     home.ws.ensureConnected()
     const tempId = nextTempId()
@@ -866,11 +869,14 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         pinned_at: null,
         poll: null,
         webhook: null,
+        rich_embeds: cards,
       },
-      send: opts =>
-        view.kind === 'channel'
-          ? api.sendChannelMessage(view.channelId, content, { ...opts, ...sendReply(reply) })
-          : api.sendDmMessage(view.dmId, content, { ...opts, ...sendReply(reply) }),
+      send: opts => {
+        const extra = { ...opts, ...sendReply(reply), ...(cards.length ? { embeds: cards } : {}) }
+        return view.kind === 'channel'
+          ? api.sendChannelMessage(view.channelId, content, extra)
+          : api.sendDmMessage(view.dmId, content, extra)
+      },
     })
   }
 
@@ -1591,6 +1597,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     | 'saveEdit'
     | 'editLast'
     | 'sedEdit'
+    | 'removeEmbed'
     | 'toggleReplyMention'
     | 'setAtBottom'
     | 'retryOutgoing'
@@ -1698,18 +1705,18 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         }
       }),
 
-    sendMessage: (content, p2pExpiresIn, p2pRelay) => {
+    sendMessage: (content, p2pExpiresIn, p2pRelay, cards = []) => {
       const { view, me } = get()
       if (!view || !me) return
       const key = viewKey(view)
       const held = textOnlyDestination(get(), key) ? null : (get().pending[key] ?? null)
       const pending = held && p2pRelay !== undefined ? { ...held, relay: p2pRelay } : held
-      if (!content.trim() && !pending) return
+      if (!content.trim() && !pending && !cards.length) return
       const reply = get().replying[key] ?? null
       set(s => ({ pending: keyed(s.pending, key, null), replying: keyed(s.replying, key, null) }))
       clearAnchor(key)
       if (detached(key)) void get().jumpToPresent(key)
-      queueMessage(view, me, content, pending, p2pExpiresIn ?? null, reply)
+      queueMessage(view, me, content, pending, p2pExpiresIn ?? null, reply, cards)
     },
 
     startReply: (key, m) => {
@@ -2022,6 +2029,15 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       return get().editing?.id === m.id
     },
 
+    removeEmbed: (m, index) =>
+      act(async () => {
+        const list = cardsOf(m)
+        if (index < 0 || index >= list.length) return
+        const left = list.filter((_, i) => i !== index)
+        if (!left.length && !m.content.trim() && !attached(m)) throw new Error(EMPTY_LEFT)
+        applyUpdated(await live(api.editMessage(m.id, m.content, undefined, left)))
+      }),
+
     sedEdit: async (key, sed) => {
       const sending = (get().outbox[key] ?? []).at(-1)
       if (sending) {
@@ -2218,14 +2234,14 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         if (panel?.kind === 'thread') await loadNewerFor(threadKey(panel.root.id))
       }),
 
-    sendThreadMessage: (content, p2pExpiresIn, p2pRelay) => {
+    sendThreadMessage: (content, p2pExpiresIn, p2pRelay, cards = []) => {
       const { panel, me } = get()
       if (panel?.kind !== 'thread' || !me) return
       const rootId = panel.root.id
       const key = threadKey(rootId)
       const held = textOnlyDestination(get(), key) ? null : (get().pending[key] ?? null)
       const pending = held && p2pRelay !== undefined ? { ...held, relay: p2pRelay } : held
-      if (!content.trim() && !pending) return
+      if (!content.trim() && !pending && !cards.length) return
       const tempId = nextTempId()
       const reply = get().replying[key] ?? null
       set(s => ({ pending: keyed(s.pending, key, null), replying: keyed(s.replying, key, null) }))
@@ -2257,8 +2273,14 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           pinned_at: null,
           poll: null,
           webhook: null,
+          rich_embeds: cards,
         },
-        send: opts => api.sendThreadMessage(rootId, content, { ...opts, ...sendReply(reply) }),
+        send: opts =>
+          api.sendThreadMessage(rootId, content, {
+            ...opts,
+            ...sendReply(reply),
+            ...(cards.length ? { embeds: cards } : {}),
+          }),
       })
     },
 

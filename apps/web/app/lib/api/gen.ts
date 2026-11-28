@@ -620,6 +620,7 @@ export interface DmSummary {
 
 export interface EditReq {
   content: string
+  embeds?: RichEmbed[] | null
   media_alt?: string | null
 }
 
@@ -632,12 +633,18 @@ export interface EditStub {
 
 export interface Embed {
   banner_removed: boolean
+  color: string | null
   description: string | null
   image_url: string | null
   ord: number
   site_name: string | null
   title: string | null
   url: string
+}
+
+export interface EmbedAuthor {
+  name: string
+  url?: string | null
 }
 
 export interface EmbedField {
@@ -1203,6 +1210,7 @@ export interface Message {
   reactions?: Reaction[]
   reply_count: number
   reply_to: ReplyRef | null
+  rich_embeds?: RichEmbed[]
   thread_root_id: number | null
   unreadable?: boolean
   webhook: MessageWebhook | null
@@ -1783,10 +1791,12 @@ export interface Resolved {
 }
 
 export interface RichEmbed {
+  author?: EmbedAuthor | null
   color?: number | null
   description?: string | null
   fields?: EmbedField[]
   footer?: EmbedFooter | null
+  timestamp?: number | null
   title?: string | null
   url?: string | null
 }
@@ -2036,6 +2046,7 @@ export interface SeenReq {
 
 export interface SendReq {
   content: string
+  embeds?: RichEmbed[]
   forward_of?: number | null
   media_alt?: string | null
   media_id?: string | null
@@ -3161,6 +3172,7 @@ export interface Decoded {
   EditReq: EditReq
   EditStub: EditStub
   Embed: Embed
+  EmbedAuthor: EmbedAuthor
   EmbedField: EmbedField
   EmbedFooter: EmbedFooter
   EscalateBody: EscalateBody
@@ -3551,9 +3563,10 @@ export const decode: { readonly [K in keyof Decoded]: Schema<Decoded[K]> } = {
   DmCreation: ref((): Schema<DmCreation> => choice('everyone', 'friends', 'nobody') as Schema<DmCreation>),
   DmPolicy: ref((): Schema<DmPolicy> => choice('everyone', 'friends') as Schema<DmPolicy>),
   DmSummary: ref((): Schema<DmSummary> => obj({ closed: bool, friend: bool, id: int(), is_self: bool, last_message_at: orNull(int()), last_message_id: orNull(int()), other: ref(() => decode.UserRef), seal: ref(() => decode.SealView) }) as Schema<DmSummary>),
-  EditReq: ref((): Schema<EditReq> => obj({ content: str(), media_alt: opt(nullable(str())) }) as Schema<EditReq>),
+  EditReq: ref((): Schema<EditReq> => obj({ content: str(), embeds: opt(nullable(arr(ref(() => decode.RichEmbed)))), media_alt: opt(nullable(str())) }) as Schema<EditReq>),
   EditStub: ref((): Schema<EditStub> => obj({ edited_at: orNull(int()), id: int(), stub: bool, thread_root_id: orNull(int()) }) as Schema<EditStub>),
-  Embed: ref((): Schema<Embed> => obj({ banner_removed: bool, description: orNull(str()), image_url: orNull(str()), ord: int(), site_name: orNull(str()), title: orNull(str()), url: str() }) as Schema<Embed>),
+  Embed: ref((): Schema<Embed> => obj({ banner_removed: bool, color: orNull(str()), description: orNull(str()), image_url: orNull(str()), ord: int(), site_name: orNull(str()), title: orNull(str()), url: str() }) as Schema<Embed>),
+  EmbedAuthor: ref((): Schema<EmbedAuthor> => obj({ name: str(), url: opt(nullable(str())) }) as Schema<EmbedAuthor>),
   EmbedField: ref((): Schema<EmbedField> => obj({ inline: opt(bool), name: str(), value: str() }) as Schema<EmbedField>),
   EmbedFooter: ref((): Schema<EmbedFooter> => obj({ text: str() }) as Schema<EmbedFooter>),
   EscalateBody: ref((): Schema<EscalateBody> => obj({ note: opt(nullable(str())) }) as Schema<EscalateBody>),
@@ -3637,7 +3650,7 @@ export const decode: { readonly [K in keyof Decoded]: Schema<Decoded[K]> } = {
   MemberSort: ref((): Schema<MemberSort> => choice('name', 'joined_desc', 'joined_asc', 'created_desc', 'created_asc') as Schema<MemberSort>),
   MemberTimeout: ref((): Schema<MemberTimeout> => obj({ reason: orNull(str()), remaining: int(), until: int() }) as Schema<MemberTimeout>),
   MentionKind: ref((): Schema<MentionKind> => choice('users', 'roles', 'everyone') as Schema<MentionKind>),
-  Message: ref((): Schema<Message> => obj({ author: ref(() => decode.UserRef), call: orNull(ref(() => decode.CallLog)), channel_id: orNull(int()), content: str(), created_at: int(), dm_id: orNull(int()), edited_at: orNull(int()), embeds: arr(ref(() => decode.Embed)), forward: orNull(ref(() => decode.ForwardRef)), group_mentions: opt(arr(ref(() => decode.GroupMention))), id: int(), kind: str(), media: orNull(ref(() => decode.MediaRef)), no_previews: opt(bool), pin_message_id: orNull(int()), pinned_at: orNull(int()), poll: orNull(ref(() => decode.Poll)), reactions: opt(arr(ref(() => decode.Reaction))), reply_count: int(), reply_to: orNull(ref(() => decode.ReplyRef)), thread_root_id: orNull(int()), unreadable: opt(bool), webhook: orNull(ref(() => decode.MessageWebhook)) }) as Schema<Message>),
+  Message: ref((): Schema<Message> => obj({ author: ref(() => decode.UserRef), call: orNull(ref(() => decode.CallLog)), channel_id: orNull(int()), content: str(), created_at: int(), dm_id: orNull(int()), edited_at: orNull(int()), embeds: arr(ref(() => decode.Embed)), forward: orNull(ref(() => decode.ForwardRef)), group_mentions: opt(arr(ref(() => decode.GroupMention))), id: int(), kind: str(), media: orNull(ref(() => decode.MediaRef)), no_previews: opt(bool), pin_message_id: orNull(int()), pinned_at: orNull(int()), poll: orNull(ref(() => decode.Poll)), reactions: opt(arr(ref(() => decode.Reaction))), reply_count: int(), reply_to: orNull(ref(() => decode.ReplyRef)), rich_embeds: opt(arr(ref(() => decode.RichEmbed))), thread_root_id: orNull(int()), unreadable: opt(bool), webhook: orNull(ref(() => decode.MessageWebhook)) }) as Schema<Message>),
   MessageLocation: ref((): Schema<MessageLocation> => obj({ author: ref(() => decode.UserRef), channel_id: orNull(int()), content: str(), created_at: int(), dm_id: orNull(int()), forward: orNull(ref(() => decode.ForwardRef)), forwarded: bool, has_media: bool, id: int(), kind: str(), server: orNull(str()), thread_root_id: orNull(int()) }) as Schema<MessageLocation>),
   MessagePlace: ref((): Schema<MessagePlace> => obj({ channel_id: orNull(int()), dm_id: orNull(int()), server: orNull(str()), shown: orNull(ref(() => decode.ShownSource)), thread_root_id: orNull(int()) }) as Schema<MessagePlace>),
   MessageWebhook: ref((): Schema<MessageWebhook> => obj({ embeds: opt(arr(ref(() => decode.RichEmbed))), id: int() }) as Schema<MessageWebhook>),
@@ -3734,7 +3747,7 @@ export const decode: { readonly [K in keyof Decoded]: Schema<Decoded[K]> } = {
   RequireReq: ref((): Schema<RequireReq> => obj({ on: bool }) as Schema<RequireReq>),
   RequiredView: ref((): Schema<RequiredView> => obj({ on: bool, pinned: bool }) as Schema<RequiredView>),
   Resolved: ref((): Schema<Resolved> => obj({ count: int() }) as Schema<Resolved>),
-  RichEmbed: ref((): Schema<RichEmbed> => obj({ color: opt(nullable(int())), description: opt(nullable(str())), fields: opt(arr(ref(() => decode.EmbedField))), footer: opt(nullable(ref(() => decode.EmbedFooter))), title: opt(nullable(str())), url: opt(nullable(str())) }) as Schema<RichEmbed>),
+  RichEmbed: ref((): Schema<RichEmbed> => obj({ author: opt(nullable(ref(() => decode.EmbedAuthor))), color: opt(nullable(int())), description: opt(nullable(str())), fields: opt(arr(ref(() => decode.EmbedField))), footer: opt(nullable(ref(() => decode.EmbedFooter))), timestamp: opt(nullable(int())), title: opt(nullable(str())), url: opt(nullable(str())) }) as Schema<RichEmbed>),
   RingStatus: ref((): Schema<RingStatus> => obj({ backed_up_at: orNull(int()), data_keys: arr(ref(() => decode.AdminDataKey)), database_key: bool, fingerprints: arr(str()), kept: arr(str()), key_file: orNull(str()), kms: orNull(str()), secrets_reset: orNull(ref(() => decode.SecretsReset)), source: str() }) as Schema<RingStatus>),
   Role: ref((): Schema<Role> => obj({ color: str(), color_names: bool, display_position: orNull(int()), hoist: bool, icon: orNull(str()), id: int(), mentionable: bool, name: str(), perms: mask, position: int() }) as Schema<Role>),
   RoleDisplayFollowReq: ref((): Schema<RoleDisplayFollowReq> => obj({ version: int() }) as Schema<RoleDisplayFollowReq>),
@@ -3769,7 +3782,7 @@ export const decode: { readonly [K in keyof Decoded]: Schema<Decoded[K]> } = {
   SecretReset: ref((): Schema<SecretReset> => obj({ url: opt(nullable(str())) }) as Schema<SecretReset>),
   SecretsReset: ref((): Schema<SecretsReset> => obj({ at: int(), secrets: arr(str()) }) as Schema<SecretsReset>),
   SeenReq: ref((): Schema<SeenReq> => obj({ pings_until: opt(nullable(int())) }) as Schema<SeenReq>),
-  SendReq: ref((): Schema<SendReq> => obj({ content: str(), forward_of: opt(nullable(int())), media_alt: opt(nullable(str())), media_id: opt(nullable(str())), media_spoiler: opt(nullable(bool)), mention_reply: opt(bool), p2p: opt(nullable(ref(() => decode.P2pAttachment))), poll: opt(nullable(ref(() => decode.PollReq))), reply_to: opt(nullable(int())), show_source: opt(nullable(bool)) }) as Schema<SendReq>),
+  SendReq: ref((): Schema<SendReq> => obj({ content: str(), embeds: opt(arr(ref(() => decode.RichEmbed))), forward_of: opt(nullable(int())), media_alt: opt(nullable(str())), media_id: opt(nullable(str())), media_spoiler: opt(nullable(bool)), mention_reply: opt(bool), p2p: opt(nullable(ref(() => decode.P2pAttachment))), poll: opt(nullable(ref(() => decode.PollReq))), reply_to: opt(nullable(int())), show_source: opt(nullable(bool)) }) as Schema<SendReq>),
   Separator: ref((): Schema<Separator> => obj({ after: int(), category_id: orNull(int()), id: int(), label: str(), style: ref(() => decode.SeparatorStyle) }) as Schema<Separator>),
   SeparatorPatch: ref((): Schema<SeparatorPatch> => obj({ label: opt(nullable(str())), style: opt(nullable(ref(() => decode.SeparatorStyle))) }) as Schema<SeparatorPatch>),
   SeparatorPlace: ref((): Schema<SeparatorPlace> => obj({ after: int(), category_id: opt(nullable(int())), id: int() }) as Schema<SeparatorPlace>),

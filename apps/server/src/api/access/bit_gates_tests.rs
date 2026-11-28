@@ -182,6 +182,18 @@ async fn a_message_needs_the_permission_of_each_thing_it_carries() {
             "No permission to create polls in this channel",
             "a poll",
         );
+        says(
+            refusal(
+                c.send(
+                    "low",
+                    json!({ "content": "", "embeds": [{ "title": "Card" }] }),
+                )
+                .await,
+            ),
+            NO,
+            "No permission to embed links in this channel",
+            "a rich embed",
+        );
         exec(&state.db, "INSERT INTO media(id, filename, mime, size, data, uploader, uploaded_at) VALUES('f1', 'notes.txt', 'text/plain', 1, 'x', 'own', 1)").await;
         let filed = id_of(&state.db, &format!("INSERT INTO messages(channel_id, author, content, media_id, media_filename, created_at) VALUES({}, 'own', 'with a file', 'f1', 'notes.txt', 5) RETURNING id", c.channel)).await;
         let copy = c

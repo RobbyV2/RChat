@@ -27,6 +27,10 @@ import { EmojiPicker, SHEET_QUERY } from './emoji_picker'
 import { FormatToolbar, useFormatting } from './format_toolbar'
 import { useTextAssist } from './text_assist'
 import { Surface } from './layout'
+import { ComposerEmbeds, EmbedButton } from './embed_builder'
+import { EmbedsPreview } from './markdown_message'
+import { EMBEDS_MAX } from '../lib/rich_embeds'
+import { embedAsks } from '../lib/place/embed_ask'
 import { time } from '../lib/platform/time'
 import { type Label } from '../lib/names'
 
@@ -62,6 +66,7 @@ export function ComposerField({
   later,
   onSend,
   onPaste,
+  embedsAsked = false,
 }: {
   compose: Compose
   // The list whose people and messages the completions draw on.
@@ -81,8 +86,19 @@ export function ComposerField({
   onSend: () => void
   // Takes what was pasted; true when it took files and the text paste should not happen.
   onPaste?: (e: ClipboardEvent<HTMLTextAreaElement>) => boolean
+  // Opens the embed builder when the palette asks for one (the main list's field).
+  embedsAsked?: boolean
 }) {
   const { key, text, max, replying } = useLive(compose.state)
+  const cards = useLive(compose.embeds)
+  const [builder, setBuilder] = useState<number | 'new' | null>(null)
+  const asked = useLive(embedAsks)
+  const seenAsk = useRef(asked)
+  useEffect(() => {
+    if (asked === seenAsk.current) return
+    seenAsk.current = asked
+    if (embedsAsked && cards.can && cards.held.length < EMBEDS_MAX) setBuilder('new')
+  }, [asked, embedsAsked, cards])
   const sheet = useMedia(SHEET_QUERY)
   const [focused, setFocused] = useState(false)
   const [pickerFor, setPickerFor] = useState<string | null>(null)
@@ -158,6 +174,15 @@ export function ComposerField({
         <EmojiPicker anchor={emojiRef.current} onPick={insertEmoji} onClose={closePicker} />
       )}
       {bar}
+      {cards.can && (
+        <ComposerEmbeds
+          list={cards.held}
+          onChange={compose.setEmbeds}
+          builder={builder}
+          setBuilder={setBuilder}
+          preview={list => <EmbedsPreview embeds={list} />}
+        />
+      )}
       <Surface
         pad="md"
         inset="bar"
@@ -230,6 +255,12 @@ export function ComposerField({
           >
             {count > max || !tooLong ? max - count : 'Too long'}
           </span>
+        )}
+        {cards.can && (
+          <EmbedButton
+            disabled={cards.held.length >= EMBEDS_MAX}
+            onClick={() => setBuilder('new')}
+          />
         )}
         <IconButton
           ref={emojiRef}

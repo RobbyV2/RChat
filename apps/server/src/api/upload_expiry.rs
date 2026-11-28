@@ -968,6 +968,7 @@ mod tests {
             forward_of: None,
             show_source: None,
             poll: None,
+            embeds: Vec::new(),
         })
     }
 
@@ -2165,6 +2166,7 @@ mod tests {
             None,
             Vec::new(),
             None,
+            crate::api::rich_embeds::Cards::none(),
             false,
             None,
         )

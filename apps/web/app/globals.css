@@ -727,6 +727,11 @@ body {
   }
 }
 
+/* The left bar of a link preview: the color its card sets in `--embed-accent`, else primary. */
+@utility border-l-accent {
+  border-left-color: var(--embed-accent, var(--color-primary));
+}
+
 @utility h-app {
   height: calc(var(--app-height, 100dvh) - var(--safe-top));
 }

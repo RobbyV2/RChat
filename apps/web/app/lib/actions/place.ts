@@ -8,6 +8,7 @@ import { HostedServer } from '../place/place'
 import {
   AtSign,
   BarChart3,
+  PanelTop,
   Bell,
   BellOff,
   Check,
@@ -39,6 +40,7 @@ import {
   type NotifyScope,
 } from '../notify'
 import { openPollFromPalette } from '../palette_store'
+import { askEmbed } from '../place/embed_ask'
 import { sharing } from '../platform'
 import type { PollTarget } from '../polls_store'
 import { dayEndTs } from '../search'
@@ -541,6 +543,15 @@ export const placeActions: Action[] = [
       const target = pollTarget(ctx)
       if (target) openPollFromPalette(target, ctx.acct)
     },
+  },
+  {
+    id: 'embed',
+    title: 'Create embed',
+    scope: 'channel',
+    icon: PanelTop,
+    keywords: ['card', 'rich'],
+    available: ctx => pollTarget(ctx) !== null,
+    run: () => askEmbed(),
   },
   {
     id: 'call',

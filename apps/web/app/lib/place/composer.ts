@@ -21,7 +21,7 @@ import {
 import { displayName } from '../p2p/contacts'
 import { TRANSFERRED_TEXT } from '../p2p/flows'
 import { channelCan } from '../selectors'
-import type { UserRef } from '../types'
+import type { RichEmbed, UserRef } from '../types'
 import { viewKey } from '../view'
 import { textOnlyDestination } from '../channel_content'
 import {
@@ -202,6 +202,48 @@ export interface DraftFile {
     | null
 }
 
+// Rich embeds held with a draft until it is sent.
+export interface EmbedsState {
+  held: readonly RichEmbed[]
+  // Whether embeds can be added here.
+  can: boolean
+}
+
+const NO_EMBEDS: readonly RichEmbed[] = []
+
+// The embeds held with each draft of one owner's composers, by draft key.
+const heldEmbeds = () => {
+  let map: Record<string, readonly RichEmbed[]> = {}
+  const subs = new Set<() => void>()
+  return {
+    get: (key: string | null) => (key === null ? NO_EMBEDS : (map[key] ?? NO_EMBEDS)),
+    set: (key: string, list: readonly RichEmbed[]) => {
+      map = { ...map, [key]: list.length ? list : NO_EMBEDS }
+      for (const changed of subs) changed()
+    },
+    subscribe: (changed: () => void) => {
+      subs.add(changed)
+      return () => {
+        subs.delete(changed)
+      }
+    },
+  }
+}
+
+type HeldEmbeds = ReturnType<typeof heldEmbeds>
+
+// Calls `changed` when either source changes.
+const both =
+  (a: (changed: () => void) => () => void, b: (changed: () => void) => () => void) =>
+  (changed: () => void) => {
+    const offA = a(changed)
+    const offB = b(changed)
+    return () => {
+      offA()
+      offB()
+    }
+  }
+
 export interface FilesState {
   // How many files a draft takes at a time; null where none can be added.
   add: 'one' | 'many' | null
@@ -284,6 +326,8 @@ export interface Compose {
   toggleReplyMention: () => void
   typers: Live<Typers>
   files: Live<FilesState>
+  embeds: Live<EmbedsState>
+  setEmbeds: (list: readonly RichEmbed[]) => void
   // Adds files to the draft, as many as it takes.
   attach: (files: File[]) => void
   // Takes the files of a paste; false when none of them were taken.
@@ -323,8 +367,9 @@ const perList = (make: (list: ComposerList) => Compose): Composer => {
 
 const never = () => false
 
-const hosted = (account: AccountSession): Composer =>
-  perList(list => {
+const hosted = (account: AccountSession): Composer => {
+  const held = heldEmbeds()
+  return perList(list => {
     const { store } = account
     const keyOf = (initial: boolean) => {
       const s = initial ? store.getInitialState() : store.getState()
@@ -563,6 +608,22 @@ const hosted = (account: AccountSession): Composer =>
         })
       )
     const getFiles = files(false)
+    const embeds = (initial: boolean) =>
+      built(
+        () => {
+          const s = initial ? store.getInitialState() : store.getState()
+          const key = keyOf(initial)
+          const v = s.view
+          const server = v?.kind === 'channel' ? v.server : null
+          return [
+            held.get(key),
+            !textOnlyDestination(s, key) &&
+              (server === null || channelCan(s, server, channelOf(s)).embed),
+          ] as const
+        },
+        ([list, can]): EmbedsState => ({ held: list, can })
+      )
+    const getEmbeds = embeds(false)
     const onKey = (run: (key: string) => void) => {
       const { key } = get()
       if (key !== null) run(key)
@@ -572,9 +633,11 @@ const hosted = (account: AccountSession): Composer =>
       const { key, text } = get()
       if (key === null) return
       const sent = outgoing(s.linkPrefs, text)
-      if (list === 'thread') s.sendThreadMessage(sent, keep, relay)
-      else s.sendMessage(sent, keep, relay)
+      const cards = getEmbeds().can ? [...held.get(key)] : []
+      if (list === 'thread') s.sendThreadMessage(sent, keep, relay, cards)
+      else s.sendMessage(sent, keep, relay, cards)
       store.getState().setDraft(key, '')
+      held.set(key, [])
     }
     const later = (initial: boolean) =>
       built(
@@ -660,6 +723,12 @@ const hosted = (account: AccountSession): Composer =>
         initial: files(true),
         subscribe: changed => store.subscribe(changed),
       },
+      embeds: {
+        get: getEmbeds,
+        initial: embeds(true),
+        subscribe: both(changed => store.subscribe(changed), held.subscribe),
+      },
+      setEmbeds: cards => onKey(key => held.set(key, cards)),
       attach: added => {
         const file = added[0]
         if (file) onKey(key => store.getState().uploadFile(key, file))
@@ -733,9 +802,11 @@ const hosted = (account: AccountSession): Composer =>
         const s = store.getState()
         const { key, text, max, replying, slowUntil } = get()
         const pending = getFiles().held.length && key !== null ? s.pending[key] : undefined
-        if (key === null || (!text.trim() && !pending)) return
+        const cards = getEmbeds()
+        const carded = cards.can && cards.held.length > 0
+        if (key === null || (!text.trim() && !pending && !carded)) return
         if (charCount(text) > max || altError(pending?.alt ?? '')) return
-        const sed = pending ? null : parseSed(text)
+        const sed = pending || carded ? null : parseSed(text)
         if (sed) {
           void s.sedEdit(key, sed).then(
             account.lifetime.inSession(ok => {
@@ -748,6 +819,7 @@ const hosted = (account: AccountSession): Composer =>
         if (
           list === 'main' &&
           !pending &&
+          !carded &&
           !replying &&
           !forwarding &&
           s.view?.kind === 'channel' &&
@@ -791,7 +863,11 @@ const hosted = (account: AccountSession): Composer =>
           reply: reply ? { id: String(reply.message.id), mention: reply.mention } : null,
           blocked: laterBlocked({
             text,
-            rich: st.forwardClip !== null || ui.busy || st.pending[key]?.mode === 'p2p',
+            rich:
+              st.forwardClip !== null ||
+              ui.busy ||
+              st.pending[key]?.mode === 'p2p' ||
+              held.get(key).length > 0,
             files: !!st.pending[key],
             tooLong: charCount(text) > max,
             on: st.settings.scheduled_messages,
@@ -828,11 +904,20 @@ const hosted = (account: AccountSession): Composer =>
       },
     }
   })
+}
+
+const peerHeld = new WeakMap<object, HeldEmbeds>()
 
 const peer = (place: P2pRoom | P2pDm): Composer =>
   perList(list => {
     const { app, room } = place
     const { useP2p, p2pDm } = app
+    let held = peerHeld.get(app)
+    if (!held) {
+      held = heldEmbeds()
+      peerHeld.set(app, held)
+    }
+    const cardsHeld = held
     // The rows of the list the composer writes to, where the answered message is looked up.
     const shown = shownOf(
       place.kind === 'p2pRoom' ? P2pRoom.open(app, room, list) : P2pDm.open(app, room, list)
@@ -1051,6 +1136,23 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
         })
       )
     const getFiles = files(false)
+    const embeds = (initial: boolean) =>
+      built(
+        () => {
+          const s = initial ? useP2p.getInitialState() : useP2p.getState()
+          const key = keyOf(initial)
+          const ch = (list === 'thread' ? s.thread?.ch : s.chat?.ch) ?? null
+          const v = place.kind === 'p2pRoom' ? s.servers[room] : undefined
+          const mask = v && ch !== null ? p2pMask(v, ch) : null
+          return [
+            cardsHeld.get(key),
+            !(v && ch !== null && v.channels.find(c => c.id === ch)?.text_only === true) &&
+              (mask === null || canOf(mask).embed),
+          ] as const
+        },
+        ([cards, can]): EmbedsState => ({ held: cards, can })
+      )
+    const getEmbeds = embeds(false)
     const onFile = (id: string, run: (key: string, id: number) => void) => {
       const { key } = get()
       if (key !== null) run(key, Number(id))
@@ -1149,6 +1251,15 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
           return () => stops.forEach(stop => stop())
         },
       },
+      embeds: {
+        get: getEmbeds,
+        initial: embeds(true),
+        subscribe: both(changed => useP2p.subscribe(changed), cardsHeld.subscribe),
+      },
+      setEmbeds: cards => {
+        const { key } = get()
+        if (key !== null) cardsHeld.set(key, cards)
+      },
       attach: added => {
         const { key } = get()
         if (key !== null && added.length) app.p2pFiles.add(key, added)
@@ -1207,12 +1318,17 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
       sendAsGuest: async () => {},
       send: () => {
         const { key, text, max, slowUntil } = get()
-        const { held, stuck } = getFiles()
-        if (key === null || stuck || (!text.trim() && !held.length)) return
+        const { held: files, stuck } = getFiles()
+        const cards = getEmbeds()
+        const sent = cards.can ? cards.held : NO_EMBEDS
+        if (key === null || stuck || (!text.trim() && !files.length && !sent.length)) return
         if (charCount(text) > max || bodyTooLong(text)) return
         if (slowUntil > app.owner.time.now()) return
-        void p2pDm.send(key, outgoing(place.account.store.getState().linkPrefs, text)).then(ok => {
-          if (ok && get().text === text) p2pDm.setDraft(key, '')
+        const linked = outgoing(place.account.store.getState().linkPrefs, text)
+        void p2pDm.send(key, linked, sent).then(ok => {
+          if (!ok) return
+          if (get().text === text) p2pDm.setDraft(key, '')
+          if (cardsHeld.get(key) === sent) cardsHeld.set(key, [])
         })
         if (said.delete(key)) p2pDm.typing(key, false)
       },
@@ -1237,7 +1353,10 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
           blocked: laterBlocked({
             text,
             rich:
-              place.account.store.getState().forwardClip !== null || ui.busy || getFiles().stuck,
+              place.account.store.getState().forwardClip !== null ||
+              ui.busy ||
+              getFiles().stuck ||
+              cardsHeld.get(key).length > 0,
             files: (st.attaching[key]?.length ?? 0) > 0,
             tooLong: charCount(text) > max || bodyTooLong(text),
             on: app.p2pScheduled.here(),

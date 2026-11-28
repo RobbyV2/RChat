@@ -24,6 +24,7 @@ use crate::api::pings::{
     store_group_pings, stored_group_mentions, unseen_counts,
 };
 use crate::api::reactions::attach_reactions;
+use crate::api::rich_embeds::{Cards, RichEmbed};
 use crate::api::{
     ApiError, ApiErrorBody, Authed, CallLog, Embed, ForwardRef, LIST_MAX, LIST_PAGE, MaybeAuthed,
     MediaRef, Message, OkResp, Origin, Paged, ProfanityTarget, ReplyRef, Settings, UserRef,
@@ -129,6 +130,13 @@ pub struct SendReq {
     /// (`content` is ignored). It cannot have an attachment. Ignored with `forward_of`.
     #[serde(default)]
     pub(crate) poll: Option<crate::api::polls::PollReq>,
+    /// Optional rich embeds (cards, see `RichEmbed`), at most 5; the message may then have no
+    /// text. In server channels they need Embed links (`403 No permission to embed links in
+    /// this channel`), are refused in text-only channels (`400 This channel only accepts text`)
+    /// and pass the profanity filter. Not with `poll` (`400 Polls cannot have embeds`); ignored
+    /// with `forward_of`.
+    #[serde(default)]
+    pub(crate) embeds: Vec<RichEmbed>,
 }
 
 impl SendReq {
@@ -144,6 +152,7 @@ impl SendReq {
             forward_of: None,
             show_source: None,
             poll: None,
+            embeds: Vec::new(),
         }
     }
 }
@@ -511,8 +520,9 @@ fn row_message(
         poll: None,
         webhook: hook.map(|id| crate::api::webhooks::MessageWebhook {
             id,
-            embeds: crate::api::webhooks::parse_embeds(cards.as_deref()),
+            embeds: Cards::stored(cards.as_deref()).list().to_vec(),
         }),
+        rich_embeds: Cards::stored(cards.as_deref()).list().to_vec(),
     })
 }
 
@@ -943,7 +953,7 @@ pub(crate) async fn attach_embeds(db: &Db, msgs: &mut [Message]) -> Result<(), A
     }
     let ph: Vec<String> = (1..=msgs.len()).map(|n| format!("${n}")).collect();
     let sql = format!(
-        "SELECT me.message_id, me.ord, me.url, me.banner_removed, e.site_name, e.title, e.description, e.image_url FROM message_embeds me JOIN embeds e ON e.url = me.url WHERE me.removed = 0 AND me.message_id IN ({}) ORDER BY me.message_id, me.ord",
+        "SELECT me.message_id, me.ord, me.url, me.banner_removed, e.site_name, e.title, e.description, e.image_url, e.color FROM message_embeds me JOIN embeds e ON e.url = me.url WHERE me.removed = 0 AND me.message_id IN ({}) ORDER BY me.message_id, me.ord",
         ph.join(", ")
     );
     let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
@@ -967,6 +977,7 @@ pub(crate) async fn attach_embeds(db: &Db, msgs: &mut [Message]) -> Result<(), A
                 .filter(|_| !banner_removed)
                 .map(|source| crate::api::embeds::proxied_image(message_id, ord, &source)),
             banner_removed,
+            color: r.try_get(8)?,
         });
     }
     for m in msgs.iter_mut() {
@@ -1387,6 +1398,7 @@ pub(crate) async fn insert_message(
     quote: Option<&Quoted>,
     groups: Vec<GroupMention>,
     hook: Option<&crate::api::webhooks::HookPost>,
+    cards: Cards,
     plain: bool,
     claim: Option<&crate::api::scheduled::Claim>,
 ) -> Result<Message, ApiError> {
@@ -1401,12 +1413,16 @@ pub(crate) async fn insert_message(
         forward_of: _,
         show_source: _,
         poll,
+        embeds: _,
     } = req;
     let db = &state.db;
     let settings = Settings::cached(db).await;
     let poll = match poll {
         Some(_) if media_id.is_some() || p2p.is_some() => {
             return Err(ApiError::invalid("Polls cannot have attachments", "poll"));
+        }
+        Some(_) if !cards.is_empty() => {
+            return Err(ApiError::invalid("Polls cannot have embeds", "poll"));
         }
         Some(req) => Some(crate::api::polls::validate(
             req,
@@ -1425,10 +1441,7 @@ pub(crate) async fn insert_message(
         db,
         channel_id,
         dm_id,
-        media_id.is_some()
-            || p2p.is_some()
-            || poll.is_some()
-            || hook.is_some_and(|h| !h.embeds.is_empty()),
+        media_id.is_some() || p2p.is_some() || poll.is_some() || !cards.is_empty(),
     )
     .await?;
     let no_previews = text_only || plain;
@@ -1470,14 +1483,13 @@ pub(crate) async fn insert_message(
         media.is_some(),
         channel_id.is_some(),
     )?;
-    let has_cards = hook.is_some_and(|h| !h.embeds.is_empty());
-    if content.trim().is_empty() && media.is_none() && !has_cards && poll.is_none() {
+    if content.trim().is_empty() && media.is_none() && cards.is_empty() && poll.is_none() {
         return Err(ApiError::invalid("Message is empty", "content"));
     }
     let t = state.clock.unix();
     let parts = Parts {
         content: content.clone(),
-        embeds: hook.and_then(|h| crate::api::webhooks::stored_embeds(&h.embeds)),
+        embeds: cards.stored_form(),
         filename: media.as_ref().map(|m| m.filename.clone()),
         dropped: None,
         alt: alt.clone(),
@@ -1590,8 +1602,9 @@ pub(crate) async fn insert_message(
         poll: None,
         webhook: hook.map(|h| crate::api::webhooks::MessageWebhook {
             id: h.id,
-            embeds: h.embeds.clone(),
+            embeds: cards.list().to_vec(),
         }),
+        rich_embeds: cards.list().to_vec(),
     }];
     attach_quotes(db, &mut msgs, None).await?;
     crate::api::polls::attach(db, &mut msgs).await?;
@@ -1992,6 +2005,7 @@ async fn insert_forward(
         group_mentions: Vec::new(),
         poll: None,
         webhook: None,
+        rich_embeds: Vec::new(),
     }];
     attach_embeds(db, &mut msgs).await?;
     crate::api::polls::attach(db, &mut msgs).await?;
@@ -2057,7 +2071,7 @@ fn placed<'a>(dest: &'a Dest<'a>) -> (Place, PingScope<'a>) {
 async fn deliver(
     state: &AppState,
     user: &User,
-    req: SendReq,
+    mut req: SendReq,
     dest: Dest<'_>,
     claim: Option<&crate::api::scheduled::Claim>,
 ) -> Result<Message, ApiError> {
@@ -2121,6 +2135,8 @@ async fn deliver(
                 }
                 (_, _) => Vec::new(),
             };
+            let settings = Settings::cached(db).await;
+            let cards = Cards::member(std::mem::take(&mut req.embeds), rights.as_ref(), &settings)?;
             let message = insert_message(
                 state,
                 channel_id,
@@ -2131,6 +2147,7 @@ async fn deliver(
                 quote.as_ref(),
                 groups,
                 None,
+                cards,
                 plain,
                 claim,
             )
@@ -2893,31 +2910,40 @@ pub struct EditReq {
     #[serde(default, deserialize_with = "crate::api::auth::present")]
     #[schema(value_type = Option<String>, example = "A cat asleep on a red mat")]
     media_alt: Option<Option<String>>,
+    /// New rich embeds, replacing the message's own (checked like `embeds` of
+    /// `POST /api/v1/channels/{id}/messages`); `[]` removes them, omit to keep them.
+    #[serde(default)]
+    embeds: Option<Vec<RichEmbed>>,
 }
 
 /// Edit a message
 ///
-/// Replaces the text of your own message, and with `media_alt` the description of its image, and
-/// sets `edited_at`. Requires a bearer token. Only the
+/// Replaces the text of your own message, with `media_alt` the description of its image and
+/// with `embeds` its rich embeds, and sets `edited_at`. Requires a bearer token. Only the
 /// author can edit, only `user` messages (not call logs), and only while the author can still
 /// send there: in server channels, membership and the send permission (slow mode does not
 /// apply); in DMs, being a participant. The text is checked like a new message (length, blank
-/// text without attachment, profanity filter in server channels). The same text again changes
-/// nothing. Edits never ping and keep the reply quote, reactions and attachment. If the links
+/// text without attachment or embeds, profanity filter in server channels); new embeds need
+/// Embed links in server channels and are refused in text-only channels. The same text again
+/// changes nothing. Edits never ping and keep the reply quote, reactions and attachment. If the links
 /// change, old link previews are removed and new ones are fetched. In server channels, clients
 /// that can see the channel get a `message_updated` stub without content (`id`,
 /// `thread_root_id`, `edited_at`, `stub: true`; sent again when new previews are stored). They
 /// read the message again through the message list (`around=id`), which applies the
 /// read-history rules. In DMs, both participants get `message_updated` with the full message, and
 /// new previews as `embeds_resolved`. General rate-limit bucket.
-#[utoipa::path(patch, path = "/api/v1/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), request_body = EditReq, responses((status = 200, description = "The edited message", body = Message), (status = 400, description = "Blocked by the profanity filter, text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), blank text on a message without attachment (`Message is empty`), or not a user message (`Cannot edit this message`). A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not your message (`You can only edit your own messages`), no longer a member of the server, or no permission to send in the channel, or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket, or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/v1/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), request_body = EditReq, responses((status = 200, description = "The edited message", body = Message), (status = 400, description = "Blocked by the profanity filter, text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), blank text on a message without attachment or embeds (`Message is empty`), invalid embeds (`reason.field` `embeds`), embeds in a text-only channel (`This channel only accepts text`), or not a user message (`Cannot edit this message`). A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not your message (`You can only edit your own messages`), no longer a member of the server, or no permission to send in the channel, new embeds without Embed links (`No permission to embed links in this channel`), or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket, or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn edit_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Authed(user): Authed,
     Json(req): Json<EditReq>,
 ) -> Result<Json<Message>, ApiError> {
-    let EditReq { content, media_alt } = req;
+    let EditReq {
+        content,
+        media_alt,
+        embeds: new_cards,
+    } = req;
     let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
     message.edit_right(&state.db).await?;
     let row = sqlx::query("SELECT kind, media_removed, fwd_source_id FROM messages WHERE id = $1")
@@ -2933,14 +2959,27 @@ pub(crate) async fn edit_message(
         let mut conn = state.db.acquire().await?;
         crate::api::seal::stored_parts(crate::db::ring(&state.db), &mut conn, id).await?
     };
-    let (old, old_alt) = match stored {
-        Some((_, _, Opened { parts, unreadable })) if !unreadable => (parts.content, parts.alt),
+    let (old, old_alt, old_cards) = match stored {
+        Some((_, _, Opened { parts, unreadable })) if !unreadable => (
+            parts.content,
+            parts.alt,
+            Cards::stored(parts.embeds.as_deref()),
+        ),
         Some(_) => return Err(ApiError::invalid("Cannot edit this message", "id")),
         None => return Err(crate::api::access::not_found()),
     };
     check_len(&content, state.limits.message_max_chars, "Message")?;
     let attached = message.scope().media_id().is_some() && media_removed == 0;
-    if content.trim().is_empty() && !attached {
+    let rights = match message.channel() {
+        Some(channel) => Some(channel.member_rights(&state.db).await?),
+        None => None,
+    };
+    let cards = match new_cards {
+        Some(list) if list == old_cards.list() => old_cards.clone(),
+        Some(list) => Cards::member(list, rights.as_ref(), &Settings::cached(&state.db).await)?,
+        None => old_cards.clone(),
+    };
+    if content.trim().is_empty() && !attached && cards.is_empty() {
         return Err(ApiError::invalid("Message is empty", "content"));
     }
     if message.channel().is_some() {
@@ -2964,16 +3003,15 @@ pub(crate) async fn edit_message(
         Some(channel) => channel.read_since(&state.db).await?,
         None => None,
     };
-    if content != old || alt != old_alt {
+    if content != old || alt != old_alt || cards != old_cards {
         let relink = embeds::extract_urls(&content) != embeds::extract_urls(&old);
+        let rich = !cards.is_empty() && cards != old_cards;
         let edit = Edit {
             id,
             content: &content,
             alt: alt.as_deref(),
-            may_embed: match message.channel() {
-                Some(channel) => channel.member_rights(&state.db).await?.holds(held::EMBED),
-                None => true,
-            },
+            cards,
+            may_embed: rights.as_ref().is_none_or(|held| held.holds(held::EMBED)),
             relink,
             at: state.clock.unix(),
         };
@@ -2982,7 +3020,7 @@ pub(crate) async fn edit_message(
             &state.db,
             message.scope().channel_id(),
             message.scope().dm_id(),
-            false,
+            rich,
         )
         .await?;
         let text_only = store_edit(write, ring, edit).await?;
@@ -3036,6 +3074,7 @@ struct Edit<'a> {
     id: i64,
     content: &'a str,
     alt: Option<&'a str>,
+    cards: Cards,
     may_embed: bool,
     relink: bool,
     at: i64,
@@ -3053,6 +3092,7 @@ async fn store_edit(
         id,
         content,
         alt,
+        cards,
         may_embed,
         relink,
         at,
@@ -3067,6 +3107,7 @@ async fn store_edit(
     let parts = Parts {
         content: content.to_owned(),
         alt: alt.map(str::to_owned),
+        embeds: cards.stored_form(),
         ..parts
     };
     crate::api::seal::store_parts(&mut tx, writer.as_ref(), id, &author, &parts).await?;
@@ -5271,6 +5312,7 @@ mod tests {
                 forward_of: None,
                 show_source: None,
                 poll: None,
+                embeds: Vec::new(),
             }),
         )
         .await
@@ -5319,6 +5361,7 @@ mod tests {
                 forward_of: None,
                 show_source: None,
                 poll: None,
+                embeds: Vec::new(),
             }),
         )
         .await
@@ -5383,6 +5426,7 @@ mod tests {
                 forward_of: None,
                 show_source: None,
                 poll: None,
+                embeds: Vec::new(),
             }),
         )
         .await;
@@ -5500,6 +5544,7 @@ mod tests {
             forward_of: None,
             show_source: None,
             poll: None,
+            embeds: Vec::new(),
         }
     }
 
@@ -5896,6 +5941,7 @@ mod tests {
                     forward_of: None,
                     show_source: None,
                     poll: None,
+                    embeds: Vec::new(),
                 }),
             )
         };
@@ -5925,6 +5971,7 @@ mod tests {
                     forward_of: None,
                     show_source: None,
                     poll: None,
+                    embeds: Vec::new(),
                 }),
             )
         };
@@ -9921,6 +9968,7 @@ mod tests {
                         forward_of: None,
                         show_source: None,
                         poll: None,
+                        embeds: Vec::new(),
                     }),
                 )
                 .await
@@ -9983,6 +10031,7 @@ mod tests {
             forward_of: None,
             show_source: None,
             poll: None,
+            embeds: Vec::new(),
         };
         let user = Authed(mem_user(author, false));
         let sent = match to {
@@ -11997,6 +12046,7 @@ mod tests {
             Json(EditReq {
                 content: content.to_string(),
                 media_alt: None,
+                embeds: None,
             }),
         )
         .await
@@ -12203,6 +12253,7 @@ mod tests {
                     Json(EditReq {
                         content: format!("final {n} https://example.com/{n}"),
                         media_alt: None,
+                        embeds: None,
                     }),
                 )
                 .await
@@ -12716,6 +12767,7 @@ mod tests {
             forward_of: Some(source),
             show_source,
             poll: None,
+            embeds: Vec::new(),
         };
         let user = Authed(author);
         let sent = match to {
@@ -13545,6 +13597,7 @@ mod tests {
             Json(EditReq {
                 content: "forged".to_string(),
                 media_alt: None,
+                embeds: None,
             }),
         )
         .await;
@@ -14049,6 +14102,7 @@ mod tests {
             Json(EditReq {
                 content: "@everyone now".to_string(),
                 media_alt: None,
+                embeds: None,
             }),
         )
         .await
@@ -14158,6 +14212,7 @@ mod tests {
             forward_of: None,
             show_source: None,
             poll: None,
+            embeds: Vec::new(),
         };
         send_channel_message(State(state.clone()), Path(cid), Authed(user), Json(req))
             .await

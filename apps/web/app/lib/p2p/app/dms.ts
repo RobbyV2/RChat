@@ -1,7 +1,8 @@
 import { altError, altText, describableFile, editAltsFor } from '../../alt_text'
 import { resolve as resolveNotify } from '../../notify'
 import { applySed, parseSed } from '../../sed'
-import type { UserRef } from '../../types'
+import type { RichEmbed, UserRef } from '../../types'
+import { EMPTY_LEFT, embField, sentBody, shownBody } from '../../rich_embeds'
 import { dmRootOf, type RoomRecord } from '../db'
 import { displayName } from '../contacts'
 import { p2pAlert } from '../alerts'
@@ -354,10 +355,15 @@ export function createDmsPart(
   }
 
   // The message a draft key's place gets: `body`, a reply to `reply`, files `att`.
-  const messageFor = (t: Target, body: string, opts: { reply?: string; att?: Attachment[] }) => ({
-    body,
+  const messageFor = (
+    t: Target,
+    body: string,
+    opts: { reply?: string; att?: Attachment[]; emb?: readonly RichEmbed[] }
+  ) => ({
+    body: sentBody(body, opts.emb ?? []),
     reply: opts.reply,
     att: opts.att ?? [],
+    ...embField(opts.emb ?? []),
     ...(t.thread ? { thread: t.thread } : {}),
   })
 
@@ -603,12 +609,12 @@ export function createDmsPart(
 
     // Sends the draft: `s/old/new` edits the last own message, otherwise a new message (a reply
     // while the reply bar is open).
-    async send(room: string, text: string): Promise<boolean> {
+    async send(room: string, text: string, emb: readonly RichEmbed[] = []): Promise<boolean> {
       const current = currentSession()
       const body = text.trim()
       const files = useP2p.getState().attaching[room]?.length ?? 0
-      if (!body && !files) return false
-      const sed = files ? null : parseSed(text)
+      if (!body && !files && !emb.length) return false
+      const sed = files || emb.length ? null : parseSed(text)
       if (sed) {
         const last = lastEditable(room)
         const next = last ? applySed(last.body, sed) : null
@@ -618,11 +624,12 @@ export function createDmsPart(
           return false
         }
         const alts = editAltsFor(last.att)
+        const emb = last.emb?.length ? last.emb : undefined
         return (
           (await onTarget(
             room,
-            (d, r) => d.edit(r, last.id, next, alts),
-            (sv, r) => sv.edit(r, last.id, next, alts)
+            (d, r) => d.edit(r, last.id, next, alts, emb),
+            (sv, r) => sv.edit(r, last.id, next, alts, emb)
           )) !== null
         )
       }
@@ -630,7 +637,7 @@ export function createDmsPart(
       if (!current() || att === null) return false
       const st = useP2p.getState()
       const reply = st.replying?.room === room ? st.replying.id : undefined
-      const msg = messageFor(targetOf(room), text, { reply, att })
+      const msg = messageFor(targetOf(room), text, { reply, att, emb })
       const id = await onTarget(
         room,
         (d, r) => d.send(r, msg),
@@ -754,11 +761,33 @@ export function createDmsPart(
       const changed = !!e.alt && altText(e.alt.text) !== e.alt.was
       const alts = m ? editAltsFor(m.att, e.alt) : undefined
       p2pDm.cancelEdit(refocus)
-      if (!m || !body || (body === m.body.trim() && !changed)) return
+      const emb = m?.emb?.length ? m.emb : undefined
+      const was = m ? shownBody(m.body, m.emb ?? []) : ''
+      if (!m || (!body && !emb) || (body === was.trim() && !changed)) return
+      const text = sentBody(e.text, emb ?? [])
       await onTarget(
         e.room,
-        (d, r) => d.edit(r, e.id, e.text, alts),
-        (sv, r) => sv.edit(r, e.id, e.text, alts)
+        (d, r) => d.edit(r, e.id, text, alts, emb),
+        (sv, r) => sv.edit(r, e.id, text, alts, emb)
+      )
+    },
+
+    // Takes the embed at `index` off your message `id`; null when that would leave it empty.
+    removeEmbed(id: string, index: number) {
+      const key = openKey()
+      const m = findMessage(id)
+      if (!key || !m?.emb || index < 0 || index >= m.emb.length) return Promise.resolve(null)
+      const left = m.emb.filter((_, i) => i !== index)
+      const text = shownBody(m.body, m.emb)
+      if (!left.length && !text.trim() && !m.att.length) {
+        p2pHost.toast(EMPTY_LEFT)
+        return Promise.resolve(null)
+      }
+      const body = sentBody(text, left)
+      return onTarget(
+        key,
+        (d, r) => d.edit(r, id, body, undefined, left),
+        (sv, r) => sv.edit(r, id, body, undefined, left)
       )
     },
 

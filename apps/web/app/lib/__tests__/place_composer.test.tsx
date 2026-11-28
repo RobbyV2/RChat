@@ -303,10 +303,25 @@ placeContract(composer, (kind, world) => {
       await Promise.resolve()
       expect(calls).toEqual([
         hosted
-          ? [list === 'main' ? 'send' : 'reply', text, undefined, undefined]
-          : ['send', key, text],
+          ? [list === 'main' ? 'send' : 'reply', text, undefined, undefined, []]
+          : ['send', key, text, []],
         ['draft', key, ''],
       ])
+      calls.length = 0
+      const card = { title: 'Card' }
+      expect(here.embeds.get().can).toBe(true)
+      here.setEmbeds([card])
+      expect(here.embeds.get().held).toEqual([card])
+      calls.length = 0
+      here.send(() => calls.push(['keep']))
+      await Promise.resolve()
+      expect(calls[0]).toEqual(
+        hosted
+          ? [list === 'main' ? 'send' : 'reply', text, undefined, undefined, [card]]
+          : ['send', key, text, [card]]
+      )
+      await Promise.resolve()
+      expect(here.embeds.get().held).toEqual([])
       if (kind === 'hostedDm') continue
       calls.length = 0
       const until = Number.MAX_SAFE_INTEGER

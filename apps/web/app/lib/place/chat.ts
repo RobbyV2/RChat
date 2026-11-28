@@ -25,6 +25,8 @@ export interface Chat {
   toggleReaction: (m: Message, emoji: string, note?: boolean) => void
   loadReactors: (messageId: number, emoji: string) => Promise<UserRef[]>
   openReactPicker: (m: Message, anchor: HTMLElement | null) => void
+  // Takes the rich embed at `index` off your own message `m`.
+  removeEmbed: (m: Message, index: number) => void
   // Your own identity here, as authors carry it in `username`.
   self: Live<string | null>
   // The candidates that are people here, newline-joined.
@@ -58,6 +60,7 @@ const hosted = (
     toggleReaction: (m, emoji, note) => store.getState().toggleReaction(m, emoji, note),
     loadReactors: (id, emoji) => store.getState().loadReactors(id, emoji),
     openReactPicker: (m, anchor) => store.getState().openReactPicker(m, anchor),
+    removeEmbed: (m, index) => store.getState().removeEmbed(m, index),
     self: fromStore(store, s => s.me?.username ?? null),
     known: (m, candidates) => fromStore(store, s => knownMentions(s, m, candidates)),
     mention: username =>
@@ -97,6 +100,10 @@ const peer = (place: P2pRoom | P2pDm) => {
       return (stored?.reactions.find(r => r.key === emoji)?.by ?? []).map(list.user)
     },
     openReactPicker: (m, anchor) => reactPickOf(place).set({ m, anchor }),
+    removeEmbed: (m, index) => {
+      const id = shown.get().idOf(m.id)
+      if (id) void app.p2pDm.removeEmbed(id, index)
+    },
     self: derived(shown, s => s.me),
     known: (_m, candidates) =>
       derived(named, names => candidates.filter(c => names.has(c)).join('\n')),

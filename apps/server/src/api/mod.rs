@@ -53,6 +53,7 @@ pub mod reactions;
 pub mod reauth;
 pub mod recovery;
 pub mod reports;
+pub mod rich_embeds;
 pub mod scheduled;
 pub mod scim;
 pub mod seal;
@@ -965,6 +966,13 @@ pub struct Embed {
     pub image_url: Option<String>,
     /// The preview image was removed; the text part stays.
     pub banner_removed: bool,
+    /// The page's accent color as `#rrggbb` (lowercase), from its `theme-color` meta tag (the
+    /// first one without a `media` condition, else the first with one) or its
+    /// `msapplication-TileColor`; `null` when it has none. Clients pick a color of their own
+    /// for a known site, and keep the bar readable on their theme.
+    #[serde(default)]
+    #[schema(example = "#ff0000")]
+    pub color: Option<String>,
 }
 
 /// What happened to a direct-message call.
@@ -1097,6 +1105,10 @@ pub struct Message {
     /// `username` is `@webhook:<id>`, which no account can have). Clients show a WEBHOOK badge.
     #[serde(default)]
     pub webhook: Option<webhooks::MessageWebhook>,
+    /// Rich embeds (cards, see `RichEmbed`) the author attached, in order; empty when there are
+    /// none. A webhook message carries the same in `webhook.embeds`.
+    #[serde(default)]
+    pub rich_embeds: Vec<rich_embeds::RichEmbed>,
     /// The stored message can't be opened: its encryption key is missing or the stored record
     /// is damaged. `content` is empty then. Left out otherwise.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

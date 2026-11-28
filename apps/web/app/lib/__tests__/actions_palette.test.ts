@@ -391,6 +391,7 @@ const IDS = [
   'untimeout_s_bob',
   'leave_server',
   'poll',
+  'embed',
   'switch_account',
   'manage_accounts',
   'mark_all_read',
@@ -465,6 +466,7 @@ const LOOKS = [
   ['untimeout_s_bob', 'Remove timeout: Bob', 'commands', 'TimerOff', '', '', 'name'],
   ['leave_server', 'Leave this server', 'commands', 'LogOut', '', '', 'danger'],
   ['poll', 'Create poll', 'commands', 'ChartColumn', '', '', ''],
+  ['embed', 'Create embed', 'commands', 'PanelTop', '', '', ''],
   ['switch_account', 'Switch account', 'navigation', 'Command', '', 'Mod+Shift+L', ''],
   ['manage_accounts', 'Manage accounts', 'commands', 'Command', '', '', ''],
   ['mark_all_read', 'Mark everything as read', 'commands', 'CheckCheck', '', 'Shift+Escape', ''],
@@ -593,6 +595,7 @@ const KEYWORDS: Record<string, string[]> = {
   webhooks: ['integrations', 'bots'],
   timeout_member: ['mute', 'moderation'],
   poll: ['vote', 'survey'],
+  embed: ['card', 'rich'],
   start_dm: ['message', 'direct', 'chat'],
   join_server: ['invite'],
   palette_help: ['prefix', 'how'],
@@ -619,7 +622,7 @@ const ORDER: Record<string, string> = {
   channelState: [
     'home inbox mark_read_here jump_unread jump_present select pins open_threads copy_link_here',
     'search_channel jump_date mute_here level_here mark_server_read mute_server level_server server_settings',
-    'audit_log webhooks timeout_member untimeout_s_bob leave_server poll switch_account manage_accounts mark_all_read mark_dms_read',
+    'audit_log webhooks timeout_member untimeout_s_bob leave_server poll embed switch_account manage_accounts mark_all_read mark_dms_read',
     'start_dm create_server add_instance join_server palette_help logout friends add_friends block',
     'accept_carol deny_carol unfriend_dave unblock_erin theme streamer avatars typing animations motion profanity',
     'spoilers appear_offline settings_settings settings_profile settings_general settings_notifications settings_privacy settings_sync settings_palette settings_information apps.preview',
@@ -627,7 +630,7 @@ const ORDER: Record<string, string> = {
   ].join(' '),
   dmState: [
     'home inbox mark_read_here jump_unread jump_present select pins open_threads copy_link_here',
-    'mute_here level_here poll call video_call close_dm switch_account manage_accounts mark_all_read mark_dms_read',
+    'mute_here level_here poll embed call video_call close_dm switch_account manage_accounts mark_all_read mark_dms_read',
     'start_dm create_server add_instance join_server palette_help logout friends add_friends block',
     'accept_carol deny_carol unfriend_dave unblock_erin theme streamer avatars typing animations motion profanity',
     'spoilers appear_offline settings_settings settings_profile settings_general settings_notifications settings_privacy settings_sync settings_palette settings_information',
@@ -653,7 +656,7 @@ const ORDER: Record<string, string> = {
   mutedState: [
     'home inbox mark_read_here jump_unread jump_present select pins open_threads copy_link_here',
     'search_channel jump_date unmute_here level_here mark_server_read unmute_server level_server server_settings',
-    'audit_log webhooks timeout_member untimeout_s_bob poll switch_account manage_accounts mark_all_read mark_dms_read start_dm',
+    'audit_log webhooks timeout_member untimeout_s_bob poll embed switch_account manage_accounts mark_all_read mark_dms_read start_dm',
     'create_server add_instance join_server palette_help logout friends add_friends block accept_carol',
     'deny_carol unfriend_dave unblock_erin theme streamer avatars typing animations animation_style motion profanity spoilers',
     'appear_offline settings_settings settings_profile settings_general settings_notifications settings_privacy settings_sync settings_palette settings_information',
@@ -907,12 +910,21 @@ test('rows come in the pinned order in each state', () => {
   const mod = ['server_settings', 'audit_log', 'webhooks', 'timeout_member', 'untimeout_s_bob']
   expect(order(threadState())).toBe(ORDER.channelState)
   expect(order(voiceChannelState())).toBe(
-    without(channel, 'open_threads', 'search_channel', 'jump_date', 'poll')
+    without(channel, 'open_threads', 'search_channel', 'jump_date', 'poll', 'embed')
   )
-  expect(order(readOnlyState())).toBe(without(channel, 'poll'))
+  expect(order(readOnlyState())).toBe(without(channel, 'poll', 'embed'))
   expect(order(lobbyState())).toBe(without(channel, ...mod, 'leave_server'))
   expect(order(unloadedState())).toBe(
-    without(channel, 'search_channel', 'jump_date', ...mod, 'leave_server', 'poll', 'apps.preview')
+    without(
+      channel,
+      'search_channel',
+      'jump_date',
+      ...mod,
+      'leave_server',
+      'poll',
+      'embed',
+      'apps.preview'
+    )
   )
   expect(order(selfDmState())).toBe(without(dm, 'call', 'video_call', 'close_dm'))
   expect(order(blockedDmState())).toBe(without(dm, 'call', 'video_call'))

@@ -1,4 +1,5 @@
 import { readFwdSrc } from './content'
+import { shownBody } from '../rich_embeds'
 import type { P2pMessage } from './dm'
 import { plainLine } from '../replies'
 import { UNREADABLE_TEXT } from '../sealing'
@@ -41,7 +42,7 @@ const contentOf = (m: P2pMessage) => {
   if (m.system?.kind === 'storage') return m.system.on ? 'on' : 'off'
   if (m.unreadable) return `_${UNREADABLE_TEXT}_`
   if (m.unavailable) return '_Message unavailable_'
-  return m.fwd ? m.fwd.body : m.body
+  return m.fwd ? m.fwd.body : shownBody(m.body, m.emb ?? [])
 }
 
 export const asMessage = (
@@ -62,6 +63,7 @@ export const asMessage = (
   reply_count: m.replies ?? 0,
   media: null,
   embeds: [],
+  rich_embeds: m.emb ?? [],
   kind: m.system ? m.system.kind : m.call ? 'call' : 'user',
   call: callLogOf(m),
   reactions: m.reactions.map(r => ({
