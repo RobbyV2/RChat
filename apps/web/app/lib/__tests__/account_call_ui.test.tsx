@@ -302,7 +302,9 @@ test('a running timeout in a P2P room disables the mic and camera controls of it
       }
       const timed = controls(Date.now() + 60_000)
       for (const label of [TIMED_OUT_MIC, TIMED_OUT_CAMERA]) {
-        const off = new RegExp(`<button(?=[^>]* disabled="")[^>]* title="${label}" aria-label="${label}"`)
+        const off = new RegExp(
+          `<button(?=[^>]* disabled="")[^>]* title="${label}" aria-label="${label}"`
+        )
         expect(off.test(timed)).toBe(true)
       }
       expect(timed).not.toContain('aria-label="Mute"')
