@@ -24,7 +24,6 @@ import { newSince } from '../lib/lists'
 import { SELF_DM_TEXT, SELF_DM_TITLE } from '../lib/dm_list'
 import { dayStarts } from '../lib/date_dividers'
 import { escapeMarksRead } from '../lib/follow'
-import { mentionLookups } from '../lib/mentions'
 import { useChannelCan } from '../lib/place/use_rights'
 import { useHostedServer, useLive } from '../lib/place/react'
 import { slowTitle } from '../lib/slowmode'
@@ -66,6 +65,7 @@ import { MessageList, NewerOnSight } from './message_list'
 import { AuthorRow, GroupedRow, type RowHandlers } from './message_row'
 import { useFace } from '../lib/place/use_looks'
 import { useRows } from '../lib/place/use_rows'
+import { useLoadedPeople } from '../lib/place/use_looks'
 import { useMessages } from '../lib/place/use_messages'
 import { PinsButton, PinsWindow, useCanPin } from './pins'
 import { ListedRow, useRowFlags } from './listed_row'
@@ -118,30 +118,7 @@ export function DmPeer({ other }: { other: UserRef }) {
   )
 }
 
-const authorKey = (messages: Message[], extra: string[] = []) =>
-  [...new Set([...messages.map(m => m.author.username), ...extra])].sort().join('\n')
-
-const mentionedNames = (messages: Message[]) =>
-  messages.flatMap(m => [
-    ...(m.content.includes('@') ? mentionLookups(m.content) : []),
-    ...(m.reply_to?.author ? [m.reply_to.author.username] : []),
-  ])
-
-// Authors plus everyone the messages may mention, so mention pills can show display names.
-export const usePeopleKey = (messages: Message[], extra: string[] = []) => {
-  const mentioned = useMemo(() => mentionedNames(messages), [messages])
-  return authorKey(messages, [...extra, ...mentioned])
-}
-
-export function useAuthorMembers(server: string | null, key: string) {
-  const ensureMembers = useStore(s => s.ensureMembers)
-  const cached = useStore(s => (server ? s.memberInfo[server] !== undefined : false))
-  const trim = useStore(s => (server ? (s.memberInfoTrim[server] ?? 0) : 0))
-  useEffect(() => {
-    if (server && key) void ensureMembers(server, key.split('\n'))
-  }, [server, key, cached, trim, ensureMembers])
-}
-
+const NO_NAMES: string[] = []
 const unreadDivider = <UnreadDivider />
 
 // The new messages banner of a hosted list: counted from the loaded rows, or asked of the server
@@ -348,8 +325,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const stale = useStore(s => (s.view ? s.stale[viewKey(s.view)] === true : false))
   const focus = useStore(s => (s.view ? s.focus[viewKey(s.view)] : undefined))
   const menuPings = useStore(allPings)
-  const memberServer = view?.kind === 'channel' ? view.server : null
-  useAuthorMembers(memberServer, usePeopleKey(messages, me ? [me.username] : []))
+  useLoadedPeople(messages, me ? [me.username] : NO_NAMES)
   const jumpTo = useStore(s => s.jumpTo)
   const startReply = useStore(s => s.startReply)
   const startEdit = useStore(s => s.startEdit)

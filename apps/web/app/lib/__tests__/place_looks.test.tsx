@@ -98,6 +98,25 @@ placeContract(looks, (kind, world) => {
     expect(here.color(user('nobody')).get()).toBeUndefined()
   })
 
+  test('the people a list shows are loaded where the place keeps members, and again once dropped', () => {
+    seat(world())
+    const { ann, server } = world()
+    const asked: unknown[][] = []
+    ann.account.store.setState({
+      ensureMembers: async (...a: unknown[]) => void asked.push(a),
+    } as never)
+    const here = featureAt(looks, ann.place)
+    if (isUnsupported(here)) throw new Error(here.line)
+    const stop = here.load(['bob', 'cy'])
+    expect(asked).toEqual(kind === 'hostedServer' ? [[server, ['bob', 'cy']]] : [])
+    ann.account.store.setState(s => ({ memberInfoTrim: { ...s.memberInfoTrim, [server]: 1 } }))
+    expect(asked).toHaveLength(kind === 'hostedServer' ? 2 : 0)
+    stop()
+    ann.account.store.setState(s => ({ memberInfoTrim: { ...s.memberInfoTrim, [server]: 2 } }))
+    expect(asked).toHaveLength(kind === 'hostedServer' ? 2 : 0)
+    expect(typeof here.load([])).toBe('function')
+  })
+
   test('one row draws either author, and only an account opens a profile', () => {
     const { m, event } = seat(world())
     const { ann } = world()

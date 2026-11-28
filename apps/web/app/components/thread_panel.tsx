@@ -6,6 +6,7 @@ import { useAccount } from '../lib/client/react'
 import { useEffect, useMemo, useRef, type ReactNode, type RefObject } from 'react'
 import type { OpenThread, ThreadState } from '../lib/place/thread'
 import { useRows } from '../lib/place/use_rows'
+import { useLoadedPeople } from '../lib/place/use_looks'
 import { useRowFlags } from './listed_row'
 import { useThread } from '../lib/place/use_thread'
 import { MessageSquareText } from 'lucide-react'
@@ -19,7 +20,7 @@ import { findById } from '../lib/window'
 import { newSince } from '../lib/lists'
 import { Composer } from './composer'
 import { TypingLine } from './typing_indicator'
-import { OutboxRows, reactHeader, useAuthorMembers, usePeopleKey } from './message_pane'
+import { OutboxRows, reactHeader } from './message_pane'
 import { MessageRow, type RowHandlers } from './message_row'
 import { useMedia } from './context_menu'
 import {
@@ -283,7 +284,7 @@ export default function ThreadPanel() {
     return dm && s.blocked[dm.other.username] ? dm.other : null
   })
   const people = useMemo(() => (root ? [root, ...replies] : replies), [root, replies])
-  useAuthorMembers(server, usePeopleKey(people))
+  useLoadedPeople(people)
   const key = useStore(s => (s.panel?.kind === 'thread' ? threadKey(s.panel.root.id) : null))
   const thread = useThread()
   const state = useLive(thread.state)

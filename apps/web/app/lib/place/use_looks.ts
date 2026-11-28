@@ -1,6 +1,8 @@
 'use client'
 
+import { useEffect, useMemo } from 'react'
 import { useAccount } from '../client/react'
+import { mentionLookups } from '../mentions'
 import type { Message, UserRef } from '../types'
 import { isUnsupported } from './feature'
 import { accountLooks, looks, type Face, type Looks } from './looks'
@@ -32,3 +34,25 @@ export function useNameColor(user: UserRef | null | undefined): string | undefin
 }
 
 const NOBODY = { get: () => undefined, subscribe: () => () => {} }
+
+// Has `here` load the people called `names` while the component shows them.
+export function useLoaded(here: Looks, names: readonly string[]) {
+  const key = [...new Set(names)].sort().join('\n')
+  useEffect(() => (key ? here.load(key.split('\n')) : undefined), [here, key])
+}
+
+// Has the place around load the authors of `messages`, everyone they may mention or answer, and
+// `extra`, so their names and mention pills show as the place draws them.
+export function useLoadedPeople(messages: readonly Message[], extra: readonly string[] = []) {
+  const here = useLooks()
+  const names = useMemo(
+    () =>
+      messages.flatMap(m => [
+        m.author.username,
+        ...(m.content.includes('@') ? mentionLookups(m.content) : []),
+        ...(m.reply_to?.author ? [m.reply_to.author.username] : []),
+      ]),
+    [messages]
+  )
+  useLoaded(here, [...names, ...extra])
+}

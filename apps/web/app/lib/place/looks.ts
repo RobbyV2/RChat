@@ -34,7 +34,12 @@ export interface Looks {
   of: (user: UserRef) => Live<Face>
   // The color the roles of `user` give their name here.
   color: (user: UserRef) => Live<string | undefined>
+  // Loads what the place needs to draw the people called `names`, and again when what it keeps
+  // of them was dropped, until the returned function is called.
+  load: (names: readonly string[]) => () => void
 }
+
+const idle = () => {}
 
 const NO_ROLES: number[] = []
 
@@ -85,7 +90,24 @@ const hosted = (account: AccountSession, server: string | null): Looks => {
     )
     return { get, subscribe: changed => store.subscribe(changed) }
   }
+  const load = (names: readonly string[]) => {
+    if (server === null || !names.length) return idle
+    const kept = () => {
+      const s = store.getState()
+      return `${s.memberInfo[server] !== undefined} ${s.memberInfoTrim[server] ?? 0}`
+    }
+    const ask = () => void store.getState().ensureMembers(server, [...names])
+    let seen = kept()
+    ask()
+    return store.subscribe(() => {
+      const now = kept()
+      if (now === seen) return
+      seen = now
+      ask()
+    })
+  }
   return {
+    load,
     author: m => of(m.author),
     of,
     color: user => ({
@@ -148,6 +170,7 @@ const peer = (place: P2pRoom | P2pDm): Looks => {
       face(m.author, () => (event === undefined ? undefined : shown.get().message(event)?.sender)),
     of: user => face(user, () => undefined),
     color: () => NO_COLOR,
+    load: () => idle,
   }
 }
 

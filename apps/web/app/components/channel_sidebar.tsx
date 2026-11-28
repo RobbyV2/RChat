@@ -56,6 +56,7 @@ import { UserAvatar } from './user_avatar'
 import { ServerHeader } from './server_header'
 import { longPress } from './context_menu'
 import { ChannelList } from './channel_list'
+import { useLoaded, useLooks } from '../lib/place/use_looks'
 import { VoiceRow } from './voice_row'
 import { featureAt, isUnsupported } from '../lib/place/feature'
 import { channels as channelsFeature, noChannels, type ChannelEntry } from '../lib/place/channels'
@@ -65,7 +66,6 @@ import { VoiceDock } from './voice_grid'
 import { Button, IconButton, LinkButton, SideRow } from './controls'
 import { Row, Surface, Stack } from './layout'
 import { Sentinel, useOwnServer, renameFieldCls } from './ui'
-import { useAuthorMembers } from './message_pane'
 import { PingBadge } from './ping_badge'
 import { ChannelEnd, useHostedTypers } from './typing_indicator'
 import { scopePings } from '../lib/pings'
@@ -776,7 +776,10 @@ export function ChannelSidebar() {
       .filter(u => !isGuestName(u))
     return [...new Set(names)].sort().join('\n')
   })
-  useAuthorMembers(voiceServer, voiceKey)
+  useLoaded(
+    useLooks(),
+    useMemo(() => (voiceKey ? voiceKey.split('\n') : []), [voiceKey])
+  )
 
   const place = useHostedServer(view?.kind === 'channel' ? view.server : null)
   const list = place ? featureAt(channelsFeature, place) : null
