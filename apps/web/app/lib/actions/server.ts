@@ -15,6 +15,7 @@ import type { Action, ActionCtx } from './types'
 import { time } from '../platform/time'
 
 const copy = (text: string) => void sharing().copyText(text)
+const COPIED = 'Invite link copied'
 
 // The rail icon of a server you are in (or keep as a guest).
 export const railServer = ({ s, target }: ActionCtx): string | null =>
@@ -87,11 +88,17 @@ export const serverActions: Action[] = [
       const server = railServer(ctx)
       if (!server) return
       const mode = ctx.acct.store.getState().servers[server]?.join_mode
-      if (!sharedByCode(mode)) return copy(inviteUrl(server, null, ctx.acct.shareOrigin))
+      const copied = (url: string) =>
+        void sharing()
+          .copyText(url)
+          .then(
+            ctx.acct.lifetime.inSession(ok => ok && ctx.acct.store.getState().showToast(COPIED))
+          )
+      if (!sharedByCode(mode)) return copied(inviteUrl(server, null, ctx.acct.shareOrigin))
       void sendTo(ctx.acct, ask.standingInvite(server)).then(
         ctx.acct.lifetime.inSession(link => {
           const url = shareLink(server, mode, link, ctx.acct.shareOrigin)
-          if (url) copy(url)
+          if (url) copied(url)
           else
             ctx.acct.store
               .getState()
