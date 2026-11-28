@@ -129,6 +129,18 @@ export const page = (doc: Document, time: Time): Page & { close(): void } => {
       for (const [i, top] of scrolls) if (inside[i]) inside[i].scrollTop = top
       return copy
     },
+    twin(el, inner, ghost) {
+      const path: number[] = []
+      for (let n = inner; n !== el;) {
+        const up = n.parentElement
+        if (!up) return null
+        path.push(Array.prototype.indexOf.call(up.children, n))
+        n = up
+      }
+      let at: Element | undefined = ghost
+      for (let i = path.length - 1; at && i >= 0; i--) at = at.children[path[i]]
+      return at ?? null
+    },
     drop: ghost => ghost.remove(),
     mark(style, looks: readonly SlotId[]) {
       if (style === null) {

@@ -85,6 +85,7 @@ const world = (config: Config = SUBTLE, step: 0 | 1 | 2 | 3 = 0, frameMs?: numbe
     unshot: new Set<El>(),
     inside: new Map<El, El>(),
     ghosts: [] as El[],
+    twins: new Map<El, El>(),
     dropped: [] as El[],
     marks: [] as [string | null, readonly SlotId[]][],
     soon: [] as (() => void)[],
@@ -104,6 +105,11 @@ const world = (config: Config = SUBTLE, step: 0 | 1 | 2 | 3 = 0, frameMs?: numbe
       const ghost = el()
       state.ghosts.push(ghost)
       return dom(ghost)
+    },
+    twin: (_, inner) => {
+      const twin = el()
+      state.twins.set(inner as unknown as El, twin)
+      return dom(twin)
     },
     drop: g => void state.dropped.push(g as unknown as El),
     mark: (style, looks) => void state.marks.push([style, looks]),
@@ -279,6 +285,42 @@ describe('the engine', () => {
     settle()
     expect(state.ghosts).toHaveLength(1)
     expect(state.ghosts[0].played[0].keyframes).toEqual([{ opacity: 1 }, { opacity: 0 }])
+  })
+
+  test('a dialog that closes scales down inside the copy of its fading scrim', () => {
+    const { engine, state, settle } = world()
+    const scrim = el()
+    const panel = el()
+    state.inside.set(panel, scrim)
+    engine.leave(dom(panel), 'dialog')
+    engine.leave(dom(scrim), 'dialog', true)
+    panel.isConnected = false
+    scrim.isConnected = false
+    settle()
+    const twin = state.twins.get(panel)
+    expect(twin?.played).toHaveLength(1)
+    expect(twin?.played[0].keyframes).toEqual(leaving(PRESETS.subtle.dialog).keyframes)
+    expect(twin?.played[0].options.duration).toBe(DURATIONS.medium)
+    expect(twin?.played[0].options.fill).toBe('both')
+    expect(engine.count).toBe(2)
+    state.ghosts[0].played[0].finish()
+    expect(state.dropped).toEqual([state.ghosts[0]])
+  })
+
+  test('only the element of the scrim it lies on plays inside the copy', () => {
+    const { engine, state, settle } = world()
+    const scrim = el()
+    const menu = el()
+    const badge = el()
+    state.inside.set(menu, scrim)
+    state.inside.set(badge, scrim)
+    engine.leave(dom(menu), 'menu')
+    engine.leave(dom(badge), 'toast')
+    engine.leave(dom(scrim), 'dialog', true)
+    for (const e of [menu, badge, scrim]) e.isConnected = false
+    settle()
+    expect(state.ghosts).toHaveLength(1)
+    expect(state.twins.size).toBe(0)
   })
 
   test(`at most ${MAX_RUNNING} run at once; one more shows in its end state`, () => {

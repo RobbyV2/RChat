@@ -54,6 +54,8 @@ export interface Page {
   shoot(el: Element): Shot | null
   // A still copy of `el` where it was, over the page.
   ghost(el: Element, shot: Shot): Element | null
+  // What stands for `inner`, an element inside `el`, in `el`'s copy.
+  twin(el: Element, inner: Element, ghost: Element): Element | null
   drop(ghost: Element): void
   // What the style sheet reads: the style, the slots it moves, and whether backdrops blur.
   mark(style: 'subtle' | 'lively' | 'reduced' | null, looks: readonly SlotId[]): void
@@ -317,12 +319,20 @@ export class Engine implements Player {
     this.going = []
     if (this.stopped || going.length > MAX_LEAVING) return
     const removed = going.map(g => (g.el.isConnected ? null : this.page.removedWith(g.el)))
+    const copies = new Map<Element, Element>()
+    const held: { el: Element; slot: PlaySlot; a: Animation; holder: Element }[] = []
     for (const [i, { el, slot, back, shot }] of going.entries()) {
       const def = BY_ID.get(slot)
       const a = this.part(slot, back)
       if (!def || !a || !shot || el.isConnected) continue
-      // What leaves inside something that leaves goes with its copy.
-      if (going.some(g => g.el !== el && !g.el.isConnected && this.page.within(el, g.el))) continue
+      // What leaves inside something that leaves goes with its copy. A slot's element inside
+      // what lies behind it (a dialog in its scrim) plays its own exit there.
+      const holder = going.find(g => g.el !== el && !g.el.isConnected && this.page.within(el, g.el))
+      if (holder) {
+        if (holder.slot === slot && holder.back && !back && def.plays === 'both')
+          held.push({ el, slot, a, holder: holder.el })
+        continue
+      }
       const root = removed[i]
       const shared = going.some((o, j) => j !== i && o.slot === slot && removed[j] === root)
       if (def.solo && (!root || shared)) continue
@@ -333,7 +343,14 @@ export class Engine implements Player {
       const drop = () => {
         if (this.ghosts.delete(ghost)) this.page.drop(ghost)
       }
-      if (!this.run(ghost, slot, def.plays === 'exit' ? a : leaving(a), 'both', drop)) drop()
+      if (this.run(ghost, slot, def.plays === 'exit' ? a : leaving(a), 'both', drop))
+        copies.set(el, ghost)
+      else drop()
+    }
+    for (const { el, slot, a, holder } of held) {
+      const ghost = copies.get(holder)
+      const twin = ghost && this.page.twin(holder, el, ghost)
+      if (twin) this.run(twin, slot, leaving(a), 'both')
     }
   }
 
