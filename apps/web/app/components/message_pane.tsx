@@ -8,7 +8,7 @@ import { useP2pApp } from '../lib/client/p2p_react'
 
 import { useAccount, useStoreApi } from '../lib/client/react'
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef } from 'react'
 import {
   Clock,
   Hash,
@@ -24,8 +24,7 @@ import { newSince } from '../lib/lists'
 import { SELF_DM_TEXT, SELF_DM_TITLE } from '../lib/dm_list'
 import { dayStarts } from '../lib/date_dividers'
 import { escapeMarksRead } from '../lib/follow'
-import { useChannelCan } from '../lib/place/use_rights'
-import { useHostedServer, useLive } from '../lib/place/react'
+import { useLive } from '../lib/place/react'
 import { slowTitle } from '../lib/slowmode'
 import { openActionMenu } from '../lib/actions/menu'
 import { HeaderMore } from './header_more'
@@ -62,9 +61,9 @@ import { useMessages } from '../lib/place/use_messages'
 import { PinsButton, PinsWindow } from './pins'
 import { ListedRow } from './listed_row'
 import { useRowHandlers } from './row_handlers'
+import { useFileDrop } from './file_drop'
 import { useRowFlags } from './row_flags'
 import { ThreadsButton, ThreadsWindow } from './threads'
-import { useMyTimeoutEnds } from './timeout_dialog'
 import { hostedDmSeal } from '../lib/sealing'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 import { BlockedList } from './blocking'
@@ -314,22 +313,13 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   useLoadedPeople(messages, me ? [me.username] : NO_NAMES)
   const askMarkAllRead = useStore(s => s.askMarkAllRead)
   const openSearch = useStore(s => s.openSearch)
-  const uploadFile = useStore(s => s.uploadFile)
-  const attachmentsEnabled = useStore(s => s.settings.asset_uploads || s.settings.p2p_attachments)
   const call = useStore(s => s.call)
-  const [dragging, setDragging] = useState(false)
-  const dragDepth = useRef(0)
   const listRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const ownServer = useOwnServer(view?.kind === 'channel' ? view.server : null)
 
   const channel =
     view?.kind === 'channel' ? detail?.channels.find(c => c.id === view.channelId) : undefined
-  const can = useChannelCan(
-    useHostedServer(view?.kind === 'channel' ? view.server : null),
-    view?.kind === 'channel' ? view.channelId : null
-  )
-  const canAttach = attachmentsEnabled && !channel?.text_only && can.attach
   const channelName = channel?.name
   const isVoice = channel?.kind === 'voice'
   const scope = view && !isVoice ? viewKey(view) : null
@@ -395,40 +385,15 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
 
   const flags = useRowFlags(useRows('main'))
   const { on: rowHandlers, forwardShown, editing } = useRowHandlers('main')
-  const timedOutEnds = useMyTimeoutEnds(view?.kind === 'channel' ? view.server : null)
+
+  const drop = useFileDrop({ off: !view || isVoice })
 
   return (
     <main
       ref={playsOn('route', scope ?? '')}
       className="relative flex h-full min-w-0 flex-1 flex-col bg-surface"
       data-share-drop-pane
-      onDragEnter={e => {
-        e.preventDefault()
-        if (
-          guest ||
-          !view ||
-          isVoice ||
-          !canAttach ||
-          timedOutEnds !== null ||
-          !e.dataTransfer.types.includes('Files')
-        )
-          return
-        dragDepth.current += 1
-        setDragging(true)
-      }}
-      onDragOver={e => e.preventDefault()}
-      onDragLeave={() => {
-        dragDepth.current = Math.max(0, dragDepth.current - 1)
-        if (!dragDepth.current) setDragging(false)
-      }}
-      onDrop={e => {
-        e.preventDefault()
-        dragDepth.current = 0
-        setDragging(false)
-        if (guest || !view || isVoice || !canAttach || timedOutEnds !== null) return
-        const file = e.dataTransfer.files.item(0)
-        if (file) uploadFile(viewKey(view), file)
-      }}
+      {...drop.handlers}
     >
       <Inset
         as="header"
@@ -678,11 +643,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
       )}
       {scope && <OpenPins />}
       {scope && <ThreadsWindow />}
-      {dragging && (
-        <div className="pointer-events-none absolute inset-2 z-raised flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-surface/80 font-medium text-primary">
-          Drop file to attach
-        </div>
-      )}
+      {drop.note}
     </main>
   )
 }

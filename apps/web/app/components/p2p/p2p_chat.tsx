@@ -7,15 +7,7 @@ import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useAccount } from '../../lib/client/react'
 
-import {
-  Fragment,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-  type RefObject,
-} from 'react'
+import { Fragment, useEffect, useMemo, useRef, type ReactNode, type RefObject } from 'react'
 import { CircleAlert, History, X } from 'lucide-react'
 import { noticeOpen } from '../../lib/home'
 import { useHome } from '../../lib/home_store'
@@ -36,6 +28,7 @@ import { composeAt } from '../../lib/place/use_composer'
 import { ListedRow } from '../listed_row'
 import { ListReactPicker } from '../list_picker'
 import { useRowHandlers } from '../row_handlers'
+import { useFileDrop } from '../file_drop'
 import { useRowFlags } from '../row_flags'
 import { rowsAt } from '../../lib/place/use_rows'
 import { ThreadsWindow } from '../threads'
@@ -124,19 +117,16 @@ export interface ChatBodyProps {
 
 function IdentityChatBody(props: ChatBodyProps) {
   const identity = useP2pApp()!
-  const { p2pDm, p2pFiles } = identity
+  const { p2pDm } = identity
 
   const { chat } = props
   const key = chatKey(chat)
   const me = useP2p(s => s.me)
-  const movingAt = useP2p(s => s.movingAt)
   const focus = useP2p(s => (s.focus && s.focus.room === s.chat?.room ? s.focus : null))
   const pulling = useP2p(s => s.pulling)
   const storageFull = useP2p(s => s.storageFull)
   const listRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const [dragging, setDragging] = useState(false)
-  const dragDepth = useRef(0)
 
   const list = messagesAt(
     chat.ch ? P2pRoom.open(identity, chat.room) : P2pDm.open(identity, chat.room)
@@ -151,9 +141,7 @@ function IdentityChatBody(props: ChatBodyProps) {
   )
   const flags = useRowFlags(rowsAt(place, 'main'))
   const { on, forwardShown, editing } = useRowHandlers('main', place)
-  const { acts: canAct, timedOut } = flags
-  const takesFiles = useLive(composeAt(place, 'main').files).add !== null
-  const canDrop = canAct && !timedOut && takesFiles && movingAt === null
+  const drop = useFileDrop({ place })
 
   const lastNum = shared[shared.length - 1]?.id
   const ownCount = useMemo(() => messages.filter(m => m.sender === me).length, [messages, me])
@@ -212,23 +200,7 @@ function IdentityChatBody(props: ChatBodyProps) {
         {...props.dataAttr}
         className="relative flex h-full min-w-0 flex-1 flex-col bg-surface"
         data-share-drop-pane
-        onDragEnter={e => {
-          e.preventDefault()
-          if (!canDrop || !e.dataTransfer.types.includes('Files')) return
-          dragDepth.current += 1
-          setDragging(true)
-        }}
-        onDragOver={e => e.preventDefault()}
-        onDragLeave={() => {
-          dragDepth.current = Math.max(0, dragDepth.current - 1)
-          if (!dragDepth.current) setDragging(false)
-        }}
-        onDrop={e => {
-          e.preventDefault()
-          dragDepth.current = 0
-          setDragging(false)
-          if (canDrop) p2pFiles.add(key, Array.from(e.dataTransfer.files))
-        }}
+        {...drop.handlers}
       >
         {props.header}
         {props.above}
@@ -296,11 +268,7 @@ function IdentityChatBody(props: ChatBodyProps) {
         <PinsWindow />
         <ThreadsWindow />
         <ListReactPicker />
-        {dragging && (
-          <div className="pointer-events-none absolute inset-2 z-raised flex items-center justify-center rounded-2xl border-2 border-dashed border-tertiary bg-surface/80 font-medium text-tertiary">
-            Drop files to send peer-to-peer
-          </div>
-        )}
+        {drop.note}
       </main>
     </PlaceProvider>
   )

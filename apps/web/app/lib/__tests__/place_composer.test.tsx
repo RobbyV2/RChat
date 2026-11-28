@@ -12,6 +12,7 @@ import { msg, user } from './fixtures'
 import { NO_THREADS_TEXT } from '../channel_perms'
 import { ChannelPermBit } from '../types'
 import { ReplyBar } from '../../components/replies'
+import { useFileDrop } from '../../components/file_drop'
 import { ComposerGate } from '../../components/composer_gate'
 import { Composer } from '../../components/composer'
 import { TypingLine } from '../../components/typing_indicator'
@@ -440,6 +441,49 @@ placeContract(composer, (kind, world) => {
       </AccountProvider>
     )
   }
+
+  test('files dropped on a conversation go to its draft, and nowhere while its composer is shut', () => {
+    gated(() => {})
+    const { ann } = world()
+    const { account, app, place } = ann
+    const settings = { ...account.store.getState().settings }
+    const dropped: string[] = []
+    account.store.setState({
+      settings: { ...settings, asset_uploads: true, p2p_attachments: true },
+      uploadFile: (_key: string, file: File) => void dropped.push(file.name),
+    } as never)
+    if (app)
+      Object.assign(app.p2pFiles, {
+        add: (_key: string, files: File[]) => void dropped.push(...files.map(f => f.name)),
+      })
+    const drop = () => {
+      let handlers: ReturnType<typeof useFileDrop>['handlers'] | null = null
+      function Probe() {
+        handlers = useFileDrop({ place }).handlers
+        return null
+      }
+      Object.assign(account.store.getInitialState(), account.store.getState())
+      if (app) Object.assign(app.useP2p.getInitialState(), app.useP2p.getState())
+      renderToStaticMarkup(
+        <AccountProvider session={account}>
+          <P2pProvider identity={app}>
+            <Probe />
+          </P2pProvider>
+        </AccountProvider>
+      )
+      const files = [new File(['x'], 'cat.png', { type: 'image/png' })]
+      handlers!.onDrop({
+        preventDefault: () => {},
+        dataTransfer: { files, types: ['Files'] },
+      } as never)
+    }
+    drop()
+    expect(dropped).toEqual(['cat.png'])
+    if (hosted) account.store.setState({ guest: true } as never)
+    else app?.useP2p.setState({ elsewhere: true })
+    drop()
+    expect(dropped).toEqual(['cat.png'])
+  })
 
   test('the field says what it writes to, and one composer draws either side', () => {
     const thread = seat(world(), [], 'thread')
