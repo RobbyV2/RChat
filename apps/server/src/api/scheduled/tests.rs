@@ -1089,3 +1089,238 @@ async fn account_deletion_and_bans_drop_scheduled_rows() {
     );
     crate::api::test_util::done(state, path).await;
 }
+
+/// Turns encrypted storage on for the built-in server and the DM `dm`.
+async fn seal_places(state: &AppState, dm: i64) {
+    crate::api::seal::make_ready(state).await.expect("a key");
+    exec(
+        &state.db,
+        "UPDATE servers SET seal = 1 WHERE name = 'rchat'",
+    )
+    .await;
+    exec(
+        &state.db,
+        &format!("UPDATE dms SET seal = 1 WHERE id = {dm}"),
+    )
+    .await;
+    crate::api::seal::forget_site(&state.db);
+}
+
+/// The stored text column of row `id` and its record.
+async fn stored_text(db: &Db, id: i64) -> (String, Option<Vec<u8>>) {
+    let r = sqlx::query("SELECT content, body FROM scheduled_messages WHERE id = $1")
+        .bind(id)
+        .fetch_one(db)
+        .await
+        .expect("row");
+    (r.try_get(0).expect("content"), r.try_get(1).expect("body"))
+}
+
+fn holds(record: &[u8], text: &str) -> bool {
+    record.windows(text.len()).any(|w| w == text.as_bytes())
+}
+
+#[tokio::test]
+async fn a_sealed_place_stores_no_plain_scheduled_text() {
+    for (state, temp) in crate::api::test_util::each_db_keyed("scheduled_sealed").await {
+        let db = &state.db;
+        let Place { general, dm, root } = place(&state).await;
+        let alice = user(db, "alice").await;
+        seal_places(&state, dm).await;
+        let t = now();
+        let rows = [
+            due(&state, json!({"channel_id": general}), "channel secret", t).await,
+            due(&state, json!({"thread_root_id": root}), "thread secret", t).await,
+            due(&state, json!({"dm_id": dm}), "dm secret", t).await,
+        ];
+        for (row, text) in rows
+            .iter()
+            .zip(["channel secret", "thread secret", "dm secret"])
+        {
+            assert_eq!(row.content, text, "the author reads it back");
+            let (plain, record) = stored_text(db, row.id).await;
+            assert_eq!(plain, "", "{text}: the column is blank");
+            let record = record.expect("a record");
+            assert!(!holds(&record, text), "{text}: the record is not the text");
+        }
+        assert_eq!(
+            num(
+                db,
+                "SELECT COUNT(*) FROM scheduled_messages WHERE content <> '' OR body IS NULL"
+            )
+            .await,
+            0
+        );
+        let listed = list(
+            State(state.clone()),
+            Authed(alice.clone()),
+            Query(ScheduledQuery {
+                scope: None,
+                status: None,
+                after: None,
+                limit: None,
+            }),
+        )
+        .await
+        .expect("list")
+        .0;
+        let mut texts: Vec<_> = listed.items.iter().map(|m| m.content.clone()).collect();
+        texts.sort();
+        assert_eq!(texts, ["channel secret", "dm secret", "thread secret"]);
+
+        let patch = ScheduledPatch {
+            content: Some("edited secret".into()),
+            at: None,
+            remove_reply: false,
+        };
+        let edited = patch_at(&state, &alice, rows[0].id, patch, t)
+            .await
+            .map_err(refusal)
+            .expect("edit");
+        assert_eq!(edited.content, "edited secret");
+        let (plain, record) = stored_text(db, rows[0].id).await;
+        assert_eq!(plain, "");
+        assert!(!holds(&record.expect("a record"), "edited secret"));
+
+        let moved = "UPDATE scheduled_messages SET body = (SELECT body FROM scheduled_messages WHERE id = $1) WHERE id = $2";
+        sqlx::query(moved)
+            .bind(rows[0].id)
+            .bind(rows[1].id)
+            .execute(db)
+            .await
+            .expect("swap");
+        assert_eq!(run_due_at(&state, t + 61).await.expect("run"), 2);
+        let sent: Vec<String> = {
+            let ids: Vec<i64> = sqlx::query_scalar(
+                "SELECT sent_message_id FROM scheduled_messages WHERE status = 'sent' ORDER BY id",
+            )
+            .fetch_all(db)
+            .await
+            .expect("sent");
+            let mut out = Vec::new();
+            for id in ids {
+                let ring = crate::db::ring(db);
+                let mut conn = db.acquire().await.expect("conn");
+                let (_, _, opened) = crate::api::seal::stored_parts(ring, &mut conn, id)
+                    .await
+                    .expect("read")
+                    .expect("message");
+                drop(conn);
+                out.push(opened.parts.content);
+                assert_eq!(
+                    num(db, &format!("SELECT COUNT(*) FROM messages WHERE id = {id} AND content = '' AND body IS NOT NULL")).await,
+                    1,
+                    "the posted message is stored sealed"
+                );
+            }
+            out
+        };
+        assert_eq!(sent, ["edited secret", "dm secret"]);
+        assert_eq!(
+            status_of(db, rows[1].id).await,
+            (
+                "failed".to_string(),
+                Some(stored::UNREADABLE.to_string()),
+                None
+            ),
+            "a record of another row does not open, and nothing is sent"
+        );
+        temp.done(state).await;
+    }
+}
+
+#[tokio::test]
+async fn waiting_rows_follow_a_place_into_and_out_of_sealed_storage() {
+    for (state, temp) in crate::api::test_util::each_db_keyed("scheduled_pending").await {
+        let db = &state.db;
+        let Place {
+            general,
+            dm,
+            root: _,
+        } = place(&state).await;
+        let t = now();
+        let channel = due(
+            &state,
+            json!({"channel_id": general}),
+            "before the switch",
+            t,
+        )
+        .await;
+        let direct = due(&state, json!({"dm_id": dm}), "dm before the switch", t).await;
+        assert_eq!(
+            stored_text(db, channel.id).await,
+            ("before the switch".to_string(), None)
+        );
+        assert_eq!(seal_pending(db).await.map_err(refusal).expect("idle"), 0);
+        seal_places(&state, dm).await;
+        exec(
+            db,
+            &format!(
+                "UPDATE scheduled_messages SET status = 'failed' WHERE id = {}",
+                direct.id
+            ),
+        )
+        .await;
+        assert_eq!(seal_pending(db).await.map_err(refusal).expect("seal"), 2);
+        assert_eq!(seal_pending(db).await.map_err(refusal).expect("again"), 0);
+        for id in [channel.id, direct.id] {
+            let (plain, record) = stored_text(db, id).await;
+            assert_eq!(plain, "");
+            assert!(record.is_some());
+        }
+        let alice = user(db, "alice").await;
+        assert_eq!(
+            own_row(db, &alice, channel.id)
+                .await
+                .map_err(refusal)
+                .expect("row")
+                .content
+                .shown(),
+            "before the switch"
+        );
+        let server = crate::api::seal::jobs::Target::Server("rchat".to_string());
+        assert_eq!(
+            still_sealed(db, &server)
+                .await
+                .map_err(refusal)
+                .expect("count"),
+            1
+        );
+        let all = crate::api::seal::jobs::Target::All;
+        assert_eq!(
+            still_sealed(db, &all)
+                .await
+                .map_err(refusal)
+                .expect("count"),
+            2
+        );
+        assert_eq!(
+            unseal_pending(db, &server)
+                .await
+                .map_err(refusal)
+                .expect("unseal"),
+            1
+        );
+        assert_eq!(
+            stored_text(db, channel.id).await,
+            ("before the switch".to_string(), None)
+        );
+        assert!(
+            stored_text(db, direct.id).await.1.is_some(),
+            "another place stays"
+        );
+        let direct_place = crate::api::seal::jobs::Target::Dm(dm);
+        assert_eq!(
+            unseal_pending(db, &direct_place)
+                .await
+                .map_err(refusal)
+                .expect("unseal"),
+            1
+        );
+        assert_eq!(
+            stored_text(db, direct.id).await,
+            ("dm before the switch".to_string(), None)
+        );
+        temp.done(state).await;
+    }
+}

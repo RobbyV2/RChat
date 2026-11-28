@@ -40,7 +40,7 @@ pub const NEEDS_KEY: &str = "This site needs an encryption key first";
 pub const UPDATING: &str = "Not available while this site updates";
 pub const FORCED: &str = "Required by this site";
 
-pub(super) const SITE_SQL: &str =
+pub(crate) const SITE_SQL: &str =
     "COALESCE((SELECT CAST(value AS BIGINT) FROM settings WHERE key = 'seal_site_from'), 0)";
 
 /// Whether a server or DM stores new messages encrypted.

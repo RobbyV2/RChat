@@ -509,6 +509,11 @@ fn spawn_jobs(state: &AppState, held: &mut Held) {
                     tracing::warn!("the sweep for messages to encrypt failed: {e}");
                 }
                 if let Err(crate::api::ApiError(_, e, _)) =
+                    crate::api::scheduled::seal_pending(&sealing.db).await
+                {
+                    tracing::warn!("the sweep for scheduled messages to encrypt failed: {e}");
+                }
+                if let Err(crate::api::ApiError(_, e, _)) =
                     crate::api::media::sealed::sweep(&sealing).await
                 {
                     tracing::warn!("the sweep for files to encrypt failed: {e}");

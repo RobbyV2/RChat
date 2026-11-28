@@ -4,12 +4,15 @@ import { b64u, randomBytes } from '../p2p/canonical'
 import { P2pStore, type ScheduledRecord } from '../p2p/db'
 import { DmError } from '../p2p/dm'
 import {
+  CHECK_MS,
   DeviceSchedule,
   parseDraftKey,
   readScheduled,
   ScheduleError,
   type ScheduleDeps,
 } from '../p2p/scheduled'
+import { isSealedScheduled } from '../p2p/scheduled_rows'
+import { dropSealed } from '../p2p/sealed_drop'
 import { ServerError, SlowModeError } from '../p2p/server/types'
 import { EXCLUDED } from '../p2p/transfer'
 import { MISSED_MS, SLOW_FAILED, WAITING_SLOW } from '../scheduled'
@@ -282,6 +285,88 @@ describe('device schedule', () => {
     r.sch.poke()
     await settle()
     expect(r.posts).toEqual([])
+  })
+})
+
+describe('scheduled messages of sealed rooms', () => {
+  const dec = new TextDecoder()
+  const raw = (r: Rig) => r.store.sealing.stored.getAll('scheduled') as Promise<unknown[]>
+  const holds = (row: unknown, text: string) =>
+    JSON.stringify(row).includes(text) ||
+    Object.values(row as object).some(v => ArrayBuffer.isView(v) && dec.decode(v).includes(text))
+
+  test('a sealed room keeps the text and the reply in a device record', async () => {
+    const r = await rig()
+    await r.store.sealing.setRoom('room', true)
+    const at = r.clock.now() + 5 * MIN
+    await r.sch.add('room/ch', { body: 'quiet words', reply: EVENT, at })
+    await r.sch.add('other', { body: 'open words', at })
+    const stored = await raw(r)
+    const sealed = stored.filter(isSealedScheduled)
+    expect(sealed).toHaveLength(1)
+    expect(Object.keys(sealed[0]).sort()).toEqual([
+      'at',
+      'box',
+      'created',
+      'id',
+      'key',
+      'next',
+      'state',
+    ])
+    expect(stored.some(row => holds(row, 'quiet words') || holds(row, EVENT))).toBe(false)
+    expect(stored.some(row => holds(row, 'open words'))).toBe(true)
+    expect(
+      r.sch
+        .list()
+        .map(x => x.body)
+        .sort()
+    ).toEqual(['open words', 'quiet words'])
+
+    const id = r.sch.list().find(x => x.body === 'quiet words')!.id
+    await r.sch.edit(id, 'quieter words')
+    expect((await raw(r)).some(row => holds(row, 'quieter words'))).toBe(false)
+    await r.clock.advance(5 * MIN)
+    expect(r.posts.filter(x => x.key === 'room/ch')).toEqual([
+      { key: 'room/ch', body: 'quieter words', reply: EVENT },
+    ])
+    expect(await raw(r)).toEqual([])
+  })
+
+  test('one scheduled before the switch is sealed at the next look, and sends', async () => {
+    const r = await rig()
+    await r.sch.add('room', { body: 'early words', at: r.clock.now() + 5 * MIN })
+    expect((await raw(r)).some(isSealedScheduled)).toBe(false)
+    await r.store.sealing.setRoom('room', true)
+    await r.clock.advance(CHECK_MS)
+    const stored = await raw(r)
+    expect(stored.every(isSealedScheduled)).toBe(true)
+    expect(stored.some(row => holds(row, 'early words'))).toBe(false)
+    await r.clock.advance(4 * MIN)
+    expect(r.posts).toEqual([{ key: 'room', body: 'early words' }])
+  })
+
+  test('a record that does not open is never sent', async () => {
+    const r = await rig()
+    await r.store.sealing.setRoom('room', true)
+    await r.sch.add('room', { body: 'quiet words', at: r.clock.now() + 5 * MIN })
+    const [row] = (await raw(r)) as { id: string; box: Uint8Array }[]
+    const box = row.box.slice()
+    box[box.length - 1] ^= 1
+    await r.store.sealing.stored.put('scheduled', { ...row, box })
+    await r.clock.advance(6 * MIN)
+    expect(r.posts).toEqual([])
+    expect(r.sch.list()).toEqual([])
+  })
+
+  test('a device that lost its key drops the sealed ones and keeps the rest', async () => {
+    const r = await rig()
+    await r.store.sealing.setRoom('room', true)
+    const at = r.clock.now() + 5 * MIN
+    await r.sch.add('room', { body: 'quiet words', at })
+    await r.sch.add('other', { body: 'open words', at })
+    await dropSealed(r.store.db)
+    const left = (await raw(r)).map(row => readScheduled(row)?.body)
+    expect(left).toEqual(['open words'])
   })
 })
 

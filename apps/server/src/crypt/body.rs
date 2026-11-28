@@ -15,6 +15,7 @@ pub const MESSAGES: &str = "messages";
 pub const POLLS: &str = "polls";
 pub const OPTIONS: &str = "poll_options";
 pub const SNAPSHOTS: &str = "poll_snapshots";
+pub const SCHEDULED: &str = "scheduled_messages";
 pub const COLUMN: &str = "body";
 
 /// The channel or DM a row belongs to. It names the key and is bound into message records.
@@ -179,6 +180,15 @@ impl Writer {
         )
     }
 
+    /// The `scheduled_messages.body` of the scheduled message `id` of `author`.
+    pub fn scheduled(&self, id: i64, author: &str, parts: &Parts) -> Vec<u8> {
+        self.record(
+            SCHEDULED,
+            &message_binding(id, self.scope, author),
+            &encode(parts),
+        )
+    }
+
     /// The `body` of the row `id` of `table`, one of `POLLS` (by message id), `OPTIONS` (by
     /// option id) and `SNAPSHOTS` (by message id), holding `text`.
     pub fn text(&self, table: &str, id: i64, text: &str) -> Vec<u8> {
@@ -313,6 +323,25 @@ impl Opener {
         self.opened(
             scope,
             MESSAGES,
+            binding.as_deref().unwrap_or_default(),
+            body,
+            plain,
+        )
+    }
+
+    /// The text of the scheduled message `id`: its record opened, else its plain columns.
+    pub fn scheduled(
+        &self,
+        id: i64,
+        scope: Option<Scope>,
+        author: &str,
+        body: Option<&[u8]>,
+        plain: Parts,
+    ) -> Opened {
+        let binding = scope.map(|scope| message_binding(id, scope, author));
+        self.opened(
+            scope,
+            SCHEDULED,
             binding.as_deref().unwrap_or_default(),
             body,
             plain,

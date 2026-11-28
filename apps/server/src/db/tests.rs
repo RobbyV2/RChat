@@ -1486,6 +1486,46 @@ async fn profile_pictures_upgrade_keeps_accounts_and_server_profiles() {
     }).await;
 }
 
+#[tokio::test]
+async fn scheduled_messages_get_a_record_column() {
+    on_each_database("scheduled_body_upgrade", |url| async move {
+        let db = super::open(Some(&url)).await.unwrap();
+        for sql in [
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'x', 'text', 'identicon', 1)",
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('den', 'Den', 'alice', 1)",
+            "INSERT INTO channels(server, name, created_at) VALUES('den', 'hall', 1)",
+            "ALTER TABLE scheduled_messages DROP COLUMN body",
+            "INSERT INTO scheduled_messages(username, server, channel_id, content, due_at, next_at, status, error, created_at, updated_at) SELECT 'alice', 'den', id, 'later', 100, 130, 'failed', 'Slow mode kept it from sending', 5, 6 FROM channels WHERE server = 'den'",
+            "UPDATE settings SET value='70' WHERE key='schema_version'",
+        ] {
+            sqlx::query(sql).execute(&db).await.expect(sql);
+        }
+        close(&db).await;
+        for round in 0..2 {
+            let db = super::open(Some(&url)).await.unwrap();
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM scheduled_messages WHERE username = 'alice' AND server = 'den' AND content = 'later' AND body IS NULL AND due_at = 100 AND next_at = 130 AND status = 'failed' AND error = 'Slow mode kept it from sending' AND created_at = 5 AND updated_at = 6").await,
+                1,
+                "{round}: the old row keeps its text and has no record"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM scheduled_messages WHERE body IS NOT NULL").await,
+                round,
+                "{round}"
+            );
+            if round == 0 {
+                sqlx::query("INSERT INTO scheduled_messages(username, content, body, due_at, next_at, created_at, updated_at) VALUES('alice', '', $1, 200, 200, 7, 7)")
+                    .bind(vec![0x52u8, 1, 2, 3])
+                    .execute(&db)
+                    .await
+                    .unwrap();
+            }
+            close(&db).await;
+        }
+    }).await;
+}
+
 #[test]
 fn column_placeholders_fill_per_database() {
     let filled = |col: &str, sqlite: bool| match sqlite {

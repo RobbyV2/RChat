@@ -18,6 +18,7 @@ use crate::api::{
     check_len, check_profanity, cursor_int, decode_cursor, encode_cursor, ok, user_from, user_refs,
     yes,
 };
+use crate::crypt::body::Scope;
 use crate::db::{Db, User, get_user, is_sqlite};
 use crate::state::AppState;
 use crate::ws::WsEvent;
@@ -322,6 +323,15 @@ async fn gate(db: &Db, user: &User, to: SendTo) -> Result<Spot, ApiError> {
     }
 }
 
+mod stored;
+
+use stored::{Text, Texts, UNREADABLE};
+pub(crate) use stored::{seal_pending, still_sealed, unseal_pending};
+
+fn unreadable() -> ApiError {
+    ApiError::conflict(StatusCode::CONFLICT, UNREADABLE)
+}
+
 struct Entry {
     id: i64,
     username: String,
@@ -330,7 +340,7 @@ struct Entry {
     thread_root_id: Option<i64>,
     reply_to: Option<i64>,
     mention_reply: bool,
-    content: String,
+    content: Text,
     due_at: i64,
     next_at: i64,
     status: Stored,
@@ -340,23 +350,36 @@ struct Entry {
     updated_at: i64,
 }
 
-const ROW_COLS: &str = "id, username, channel_id, dm_id, thread_root_id, reply_to, mention_reply, content, due_at, next_at, status, error, attempts, created_at, updated_at";
+const ROW_COLS: &str = "id, username, channel_id, dm_id, thread_root_id, reply_to, mention_reply, content, due_at, next_at, status, error, attempts, created_at, updated_at, body";
+const BODY_AT: usize = 15;
 
 /// A stored row; `None` for one whose status this build doesn't know, which is never listed
 /// or sent.
-fn row_from(r: &AnyRow) -> sqlx::Result<Option<Entry>> {
+fn row_from(r: &AnyRow, texts: &Texts) -> sqlx::Result<Option<Entry>> {
     let Some(status) = Stored::parse(&r.try_get::<String, _>(10)?) else {
         return Ok(None);
     };
+    let id: i64 = r.try_get(0)?;
+    let username: String = r.try_get(1)?;
+    let channel_id: Option<i64> = r.try_get(2)?;
+    let dm_id: Option<i64> = r.try_get(3)?;
+    let body: Option<Vec<u8>> = r.try_get(BODY_AT)?;
+    let content = texts.open(
+        id,
+        Scope::of(channel_id, dm_id),
+        &username,
+        body.as_deref(),
+        r.try_get(7)?,
+    );
     Ok(Some(Entry {
-        id: r.try_get(0)?,
-        username: r.try_get(1)?,
-        channel_id: r.try_get(2)?,
-        dm_id: r.try_get(3)?,
+        id,
+        username,
+        channel_id,
+        dm_id,
         thread_root_id: r.try_get(4)?,
         reply_to: r.try_get(5)?,
         mention_reply: r.try_get::<i64, _>(6)? != 0,
-        content: r.try_get(7)?,
+        content,
         due_at: r.try_get(8)?,
         next_at: r.try_get(9)?,
         status,
@@ -395,7 +418,7 @@ impl Entry {
             thread_root_id: self.thread_root_id,
             reply_to: self.reply_to,
             mention_reply: self.mention_reply,
-            content: self.content.clone(),
+            content: self.content.shown(),
             at: self.due_at,
             next_at: self.next_at,
             status: self.status.shown()?,
@@ -409,12 +432,13 @@ impl Entry {
 
 async fn load(db: &Db, id: i64) -> sqlx::Result<Option<Entry>> {
     let sql = format!("SELECT {ROW_COLS} FROM scheduled_messages WHERE id = $1");
-    match sqlx::query(sqlx::AssertSqlSafe(sql))
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(id)
-        .fetch_optional(db)
-        .await?
-    {
-        Some(r) => row_from(&r),
+        .fetch_all(db)
+        .await?;
+    let texts = Texts::of_rows(db, &rows, BODY_AT).await?;
+    match rows.first() {
+        Some(r) => row_from(r, &texts),
         None => Ok(None),
     }
 }
@@ -650,9 +674,10 @@ pub(crate) async fn list(
         .bind(limit + 1)
         .fetch_all(db)
         .await?;
+    let texts = Texts::of_rows(db, &rows, BODY_AT).await?;
     let mut rows: Vec<Entry> = rows
         .iter()
-        .map(row_from)
+        .map(|r| row_from(r, &texts))
         .collect::<sqlx::Result<Vec<_>>>()?
         .into_iter()
         .flatten()
@@ -778,12 +803,14 @@ async fn insert(
         .bind(*thread_root_id)
         .bind(reply_to)
         .bind(i64::from(mention_reply))
-        .bind(content)
+        .bind("")
         .bind(at)
         .bind(t)
         .fetch_one(&mut *tx)
         .await?
         .try_get(0)?;
+    let scope = Scope::of(*channel_id, *dm_id);
+    stored::store(&state.db, &mut tx, id, scope, &user.username, content).await?;
     tx.commit().await?;
     Ok(id)
 }
@@ -842,10 +869,6 @@ pub(crate) async fn patch_at(
     }
     let mut sql = String::from("UPDATE scheduled_messages SET updated_at = $1");
     let mut n = 1;
-    if content.is_some() {
-        n += 1;
-        sql.push_str(&format!(", content = ${n}"));
-    }
     if remove_reply {
         sql.push_str(", reply_to = NULL");
     }
@@ -865,9 +888,6 @@ pub(crate) async fn patch_at(
         room_for(&mut tx, state, &user.username).await?;
     }
     let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(t);
-    if let Some(content) = &content {
-        query = query.bind(content.clone());
-    }
     if let Some(at) = at {
         query = query.bind(at);
     }
@@ -877,6 +897,10 @@ pub(crate) async fn patch_at(
         .execute(&mut *tx)
         .await?
         .rows_affected();
+    if let (Some(content), true) = (&content, changed > 0) {
+        let scope = Scope::of(row.channel_id, row.dm_id);
+        stored::store(db, &mut tx, id, scope, &user.username, content).await?;
+    }
     tx.commit().await?;
     let row = own_row(db, user, id).await?;
     if changed == 0 {
@@ -937,6 +961,7 @@ pub(crate) async fn send_now_at(
     let row = own_row(db, user, id).await?;
     changeable(&row)?;
     let to = row.to().ok_or_else(not_found)?;
+    let content = row.content.read().ok_or_else(unreadable)?.to_string();
     let token = crate::identity::random_id();
     let n = sqlx::query("UPDATE scheduled_messages SET status = 'sending', claim = $1, next_at = $2, attempts = attempts + 1, updated_at = $3 WHERE id = $4 AND username = $5 AND status = $6 AND next_at = $7 AND attempts = $8")
         .bind(&token)
@@ -956,7 +981,7 @@ pub(crate) async fn send_now_at(
     let claim = Claim { id, token };
     let req = SendReq {
         mention_reply: row.mention_reply,
-        ..SendReq::text(row.content.clone(), row.reply_to)
+        ..SendReq::text(content, row.reply_to)
     };
     match send_to(state, user, to, req, Some(&claim)).await {
         Ok(message) => {
@@ -1023,7 +1048,7 @@ struct Claimed {
     to: Option<SendTo>,
     reply_to: Option<i64>,
     mention_reply: bool,
-    content: String,
+    content: Text,
     due_at: i64,
     attempts: i64,
 }
@@ -1032,22 +1057,30 @@ struct Claimed {
 /// only one copy wins it.
 async fn claim_due(db: &Db, id: i64, from: Stored, t: i64) -> sqlx::Result<Option<Claimed>> {
     let token = crate::identity::random_id();
-    let row = sqlx::query("UPDATE scheduled_messages SET status = 'sending', claim = $1, next_at = $2, attempts = attempts + 1, updated_at = $3 WHERE id = $4 AND status = $5 AND next_at <= $3 RETURNING username, channel_id, dm_id, thread_root_id, reply_to, mention_reply, content, due_at, attempts")
+    let rows = sqlx::query("UPDATE scheduled_messages SET status = 'sending', claim = $1, next_at = $2, attempts = attempts + 1, updated_at = $3 WHERE id = $4 AND status = $5 AND next_at <= $3 RETURNING username, channel_id, dm_id, thread_root_id, reply_to, mention_reply, content, due_at, attempts, body")
         .bind(&token)
         .bind(t + LEASE_SECS)
         .bind(t)
         .bind(id)
         .bind(from.as_str())
-        .fetch_optional(db)
+        .fetch_all(db)
         .await?;
-    let Some(r) = row else {
+    let Some(r) = rows.first() else {
         return Ok(None);
     };
-    let to = match (
-        r.try_get::<Option<i64>, _>(3)?,
-        r.try_get::<Option<i64>, _>(1)?,
-        r.try_get::<Option<i64>, _>(2)?,
-    ) {
+    let texts = Texts::of_rows(db, &rows, 9).await?;
+    let username: String = r.try_get(0)?;
+    let channel_id: Option<i64> = r.try_get(1)?;
+    let dm_id: Option<i64> = r.try_get(2)?;
+    let body: Option<Vec<u8>> = r.try_get(9)?;
+    let content = texts.open(
+        id,
+        Scope::of(channel_id, dm_id),
+        &username,
+        body.as_deref(),
+        r.try_get(6)?,
+    );
+    let to = match (r.try_get::<Option<i64>, _>(3)?, channel_id, dm_id) {
         (Some(root), _, _) => Some(SendTo::Thread(root)),
         (None, Some(id), _) => Some(SendTo::Channel(id)),
         (None, None, Some(id)) => Some(SendTo::Dm(id)),
@@ -1055,11 +1088,11 @@ async fn claim_due(db: &Db, id: i64, from: Stored, t: i64) -> sqlx::Result<Optio
     };
     Ok(Some(Claimed {
         claim: Claim { id, token },
-        username: r.try_get(0)?,
+        username,
         to,
         reply_to: r.try_get(4)?,
         mention_reply: r.try_get::<i64, _>(5)? != 0,
-        content: r.try_get(6)?,
+        content,
         due_at: r.try_get(7)?,
         attempts: r.try_get(8)?,
     }))
@@ -1170,18 +1203,19 @@ async fn run_one(state: &AppState, claimed: Claimed, t: i64) -> sqlx::Result<boo
         temp: crate::db::temp_password(&state.db, &username).await?,
         ..user
     };
-    let outcome = match (to, user.suspended_at) {
-        (Some(_), None) if crate::api::restricted(&state.db, &user).await => {
+    let outcome = match (to, user.suspended_at, content.read()) {
+        (Some(_), None, _) if crate::api::restricted(&state.db, &user).await => {
             Err(crate::api::change_first())
         }
-        (Some(to), None) => {
+        (Some(_), None, None) => Err(unreadable()),
+        (Some(to), None, Some(content)) => {
             let req = SendReq {
                 mention_reply,
-                ..SendReq::text(content, reply_to)
+                ..SendReq::text(content.to_string(), reply_to)
             };
             send_to(state, &user, to, req, Some(&claim)).await
         }
-        (_, _) => Err(not_found()),
+        (_, _, _) => Err(not_found()),
     };
     let result = settle_of(&outcome, due_at, attempts, t);
     let sent = matches!(result, Settle::Sent(_));

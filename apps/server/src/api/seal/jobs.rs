@@ -589,8 +589,14 @@ async fn step(state: &AppState, id: i64) -> Result<bool, ApiError> {
         announce(state, id).await?;
         return Ok(true);
     }
-    if job.direction == Direction::Unseal {
-        sealed_files(state, id, &target).await?;
+    match job.direction {
+        Direction::Seal => {
+            crate::api::scheduled::seal_pending(db).await?;
+        }
+        Direction::Unseal => {
+            sealed_files(state, id, &target).await?;
+            crate::api::scheduled::unseal_pending(db, &target).await?;
+        }
     }
     if target == Target::All {
         extras(state, job.direction).await?;
@@ -870,7 +876,7 @@ pub(crate) async fn still_sealed(db: &Db, target: &Target) -> Result<i64, ApiErr
             "SELECT COUNT(*) FROM media WHERE seal_key IS NOT NULL AND id IN (SELECT media_id FROM messages WHERE media_kind = 'server' AND media_id IS NOT NULL AND {cond})"
         )),
     }
-    let mut left = 0;
+    let mut left = crate::api::scheduled::still_sealed(db, target).await?;
     for sql in sqls {
         let query = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql));
         let query = match (&bind, target) {

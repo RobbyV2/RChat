@@ -3,6 +3,7 @@ import { partRange } from './blobs'
 import { blankRoom, cacheKey, countOf, moveCounts, TOTAL, TOTAL_BYTES } from './dag'
 import type { P2pDatabase, RoomRecord, ServerCache } from './db'
 import { isSealedPing, logValue, parseLog, PING_LOG } from './inbox'
+import { isSealedScheduled } from './scheduled_rows'
 import { EARLIER_META } from './seal_earlier'
 import { isSealed, sealingOf } from './sealed_db'
 
@@ -13,14 +14,14 @@ const ASK = 32
 // events are emptied here (events, their links, outbox and index rows, counters), and their
 // records start over, so the device takes them from its peers again. The device's own chains in
 // servers stay, so what it signs later goes on from them. A server is asked of the members the
-// device last knew. The inbox keeps no row it sealed, and files stored sealed go. Returns the
-// rooms it emptied.
+// device last knew. The inbox keeps no row it sealed, and scheduled messages and files stored
+// sealed go. Returns the rooms it emptied.
 export async function dropSealed(db: P2pDatabase, now = time().now()): Promise<string[]> {
   const sealing = sealingOf(db)
   if (!sealing) return []
   const raw = sealing.stored as unknown as P2pDatabase
   const tx = raw.transaction(
-    ['rooms', 'events', 'children', 'outbox', 'meta', 'search', 'dropped'],
+    ['rooms', 'events', 'children', 'outbox', 'meta', 'search', 'dropped', 'scheduled'],
     'readwrite'
   )
   const events = tx.objectStore('events')
@@ -85,6 +86,9 @@ export async function dropSealed(db: P2pDatabase, now = time().now()): Promise<s
   const pings = parseLog(await meta.get(PING_LOG))
   const plain = pings.filter(p => !isSealedPing(p))
   if (plain.length < pings.length) await meta.put(logValue(plain), PING_LOG)
+  const scheduled = tx.objectStore('scheduled')
+  for (let c = await scheduled.openCursor(); c; c = await c.continue())
+    if (isSealedScheduled(c.value)) await c.delete()
   await tx.done
   await dropSealedFiles(raw)
   await sealing.reset()

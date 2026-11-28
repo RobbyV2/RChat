@@ -8,6 +8,7 @@ import { isEventId } from './content'
 import type { P2pDatabase, ScheduledRecord } from './db'
 import { bodyTooLong, DmError, TOO_LONG_TEXT } from './dm'
 import { ServerError, SlowModeError } from './server/types'
+import { ScheduledRows } from './scheduled_rows'
 import { realClock, type Clock } from './session'
 
 export const SCHEDULED_ID_LEN = 16
@@ -93,9 +94,12 @@ export class DeviceSchedule {
   private every: unknown = null
   private queue: Promise<unknown> = Promise.resolve()
   private stopped = true
+  // Every read and write of the store goes through it.
+  private readonly store: ScheduledRows
 
   constructor(private readonly deps: ScheduleDeps) {
     this.clock = deps.clock ?? realClock
+    this.store = new ScheduledRows(deps.db)
   }
 
   // A cut-off send is found among our messages or asks again; then the due rows go.
@@ -143,7 +147,7 @@ export class DeviceSchedule {
       state: 'waiting',
     }
     await this.serial(async () => {
-      await this.deps.db.put('scheduled', row)
+      await this.store.put(row)
       await this.refresh()
     })
     return row
@@ -175,10 +179,8 @@ export class DeviceSchedule {
 
   remove(id: string) {
     return this.serial(async () => {
-      const tx = this.deps.db.transaction('scheduled', 'readwrite')
-      const r = readScheduled(await tx.store.get(id))
-      if (r?.state !== 'sending') await tx.store.delete(id)
-      await tx.done
+      const r = await this.store.get(id)
+      if (r?.state !== 'sending') await this.store.delete(id)
       await this.refresh()
     })
   }
@@ -202,19 +204,16 @@ export class DeviceSchedule {
 
   private async change(id: string, fn: (r: ScheduledRecord) => ScheduledRecord | null) {
     return this.serial(async () => {
-      const tx = this.deps.db.transaction('scheduled', 'readwrite')
-      const r = readScheduled(await tx.store.get(id))
+      const r = await this.store.get(id)
       const next = r ? fn(r) : null
-      if (next) await tx.store.put(next)
-      await tx.done
+      if (next) await this.store.put(next)
       await this.refresh()
       return next !== null
     })
   }
 
   private async refresh() {
-    const all = await this.deps.db.getAll('scheduled')
-    this.rows = all.map(readScheduled).filter((r): r is ScheduledRecord => r !== null)
+    this.rows = await this.store.all()
     this.arm()
     this.deps.onChange()
   }
@@ -239,28 +238,29 @@ export class DeviceSchedule {
   }
 
   private async recover() {
-    for (const raw of await this.deps.db.getAll('scheduled')) {
-      const r = readScheduled(raw)
-      if (r?.state !== 'sending') continue
+    for (const r of await this.store.all()) {
+      if (r.state !== 'sending') continue
       const sent = await this.deps
         .sentSince(r.key, r.body, r.claimedAt ?? r.created)
         .catch(() => false)
-      if (sent) await this.deps.db.delete('scheduled', r.id)
-      else await this.deps.db.put('scheduled', { ...settled(r), state: 'missed' })
+      if (sent) await this.store.delete(r.id)
+      else await this.store.put({ ...settled(r), state: 'missed' })
     }
+    await this.store.reseal()
   }
 
   private async check() {
     if (this.stopped) return
     const now = this.clock.now()
-    const due = await this.deps.db.getAllFromIndex('scheduled', 'next', IDBKeyRange.upperBound(now))
-    let changed = false
-    for (const raw of due) {
+    await this.store.reseal()
+    const due = await this.store.due(now)
+    // A row that left the store, or stopped opening, leaves the list too.
+    let changed = due.length !== this.rows.filter(r => r.next <= now).length
+    for (const r of due) {
       if (this.stopped) break
-      const r = readScheduled(raw)
-      if (r?.state !== 'waiting') continue
+      if (r.state !== 'waiting') continue
       if (isLate(r.next, this.clock.now())) {
-        await this.deps.db.put('scheduled', { ...settled(r), state: 'missed' })
+        await this.store.put({ ...settled(r), state: 'missed' })
         changed = true
         continue
       }
@@ -270,15 +270,13 @@ export class DeviceSchedule {
     else this.arm()
   }
 
-  // Claims row `id` in one transaction, sends it through the normal send path and settles it.
+  // Claims row `id`, sends it through the normal send path and settles it.
   private async sendRow(id: string, forced: boolean): Promise<string | null> {
     const claim = b64u(randomBytes(SCHEDULED_ID_LEN))
     const at = this.clock.now()
-    const tx = this.deps.db.transaction('scheduled', 'readwrite')
-    const r = readScheduled(await tx.store.get(id))
+    const r = await this.store.get(id)
     const ok = r !== null && (r.state === 'waiting' || (forced && r.state !== 'sending'))
-    if (ok) await tx.store.put({ ...r, state: 'sending', claim, claimedAt: at })
-    await tx.done
+    if (ok) await this.store.put({ ...r, state: 'sending', claim, claimedAt: at })
     if (!r || !ok) return r?.state === 'sending' ? 'It is being sent' : null
     let error: string | null = null
     try {
@@ -308,12 +306,9 @@ export class DeviceSchedule {
 
   // Deletes a sent row or writes `next`, while the claim is ours.
   private async settle(id: string, claim: string, next: ScheduledRecord | null) {
-    const tx = this.deps.db.transaction('scheduled', 'readwrite')
-    const r = readScheduled(await tx.store.get(id))
-    if (r?.claim === claim) {
-      if (next) await tx.store.put(next)
-      else await tx.store.delete(id)
-    }
-    await tx.done
+    const r = await this.store.get(id)
+    if (r?.claim !== claim) return
+    if (next) await this.store.put(next)
+    else await this.store.delete(id)
   }
 }

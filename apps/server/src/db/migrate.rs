@@ -192,6 +192,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("users", "avatar_image TEXT"),
     ("member_profiles", "avatar_image TEXT"),
     ("servers", "icon_image TEXT"),
+    ("scheduled_messages", "body {BYTES}"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -338,7 +339,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// `member_profiles.avatar_image`, `servers.icon_image`).
 /// 70: the Change server profile permission, given to the stored @everyone permissions of every
 /// server.
-pub const SCHEMA_VERSION: i64 = 70;
+/// 71: sealed scheduled messages (`scheduled_messages.body`).
+pub const SCHEMA_VERSION: i64 = 71;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;

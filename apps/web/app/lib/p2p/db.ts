@@ -352,6 +352,12 @@ export interface ScheduledRecord {
   error?: string
 }
 
+// A scheduled message of a room or DM that stores its events sealed, as stored: its body and
+// reply are in the device record `box` (scheduled_rows.ts).
+export type SealedScheduled = Omit<ScheduledRecord, 'body' | 'reply'> & { box: Uint8Array }
+
+export type StoredScheduled = ScheduledRecord | SealedScheduled
+
 export interface P2pSchema extends DBSchema {
   self: { key: string; value: SelfRecord }
   contacts: { key: string; value: Contact; indexes: { state: string } }
@@ -385,7 +391,7 @@ export interface P2pSchema extends DBSchema {
   codes: { key: string; value: CodeRecord; indexes: { room: string } }
   dropped: { key: string; value: DroppedRecord; indexes: { room: string } }
   search: { key: SearchKey; value: string }
-  scheduled: { key: string; value: ScheduledRecord; indexes: { key: string; next: number } }
+  scheduled: { key: string; value: StoredScheduled; indexes: { key: string; next: number } }
 }
 
 export type P2pDatabase = IDBPDatabase<P2pSchema>
