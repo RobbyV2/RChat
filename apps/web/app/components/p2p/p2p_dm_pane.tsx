@@ -1,5 +1,5 @@
 'use client'
-import { IconButton } from '../controls'
+import { IconButton, CardButton } from '../controls'
 import { Name } from '../name'
 import { p2pName } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
@@ -32,7 +32,7 @@ import { IncomingCallBar, P2pCallButtons } from './p2p_call'
 import { P2pDm } from '../../lib/place/place'
 import { PlaceProvider } from '../../lib/place/react'
 import { P2pChatBody, P2pIntro } from './p2p_chat'
-import { Row, Surface, Inset } from '../layout'
+import { Row, Inset } from '../layout'
 
 const NONE: string[] = []
 
@@ -148,18 +148,12 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
       )}
       {/* Below 360 px the header has room for the avatar only: the shield sits on it, and the
           name stays the label. */}
-      <Surface
+      <CardButton
         title={streamer ? 'Contact' : peerName}
         aria-labelledby={peer ? `${nameId} ${shieldId} ${statusId}` : `${nameId} ${statusId}`}
         onClick={() => peer && p2p.openDialog({ kind: 'contact', ik: peer.ik })}
-        as="button"
-        row
-        pad="2xs"
-        gap="sm"
-        tone="plain"
-        radius="full"
-        look="hover:bg-surface-container-high"
         place="min-w-0"
+        pad="sm"
       >
         <span className="relative shrink-0">
           <KeyAvatar person={identityPerson(peerIk, 'contact')} size={28} />
@@ -198,7 +192,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
             </span>
           </Row>
         </span>
-      </Surface>
+      </CardButton>
       <span className="max-sm:hidden">
         <P2pBadge />
       </span>

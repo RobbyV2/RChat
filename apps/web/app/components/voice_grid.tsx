@@ -97,6 +97,7 @@ import { useHostedServer, useP2pRoom } from '../lib/place/react'
 import { useStable } from '../lib/stable_key'
 import { time } from '../lib/platform/time'
 import type { Cancel } from '../lib/clock'
+import { Button, CallButton, CardButton, Hotspot, IconButton, LinkButton } from './controls'
 
 const useAudioGate = create<{ blocked: boolean }>(() => ({ blocked: false }))
 const seenShares = new WeakMap<object, ReadonlySet<string>>()
@@ -241,24 +242,11 @@ function AudioUnblock() {
   }, [blocked])
   if (!blocked) return null
   return (
-    <Surface
-      onClick={unblockAudio}
-      as="button"
-      row
-      pad="lg"
-      inset="chip"
-      gap="sm"
-      tone="plain"
-      radius="full"
-      justify="center"
-      elevation={3}
-      text="sm"
-      look={`${ctlLook} top-below-bar bg-inverse-surface font-medium whitespace-nowrap text-inverse-on-surface hover:opacity-90`}
-      place="fixed left-1/2 z-top -translate-x-1/2 shrink-0"
-    >
-      <Volume2 size={16} />
-      Click to enable audio
-    </Surface>
+    <div className="fixed top-below-bar left-1/2 z-top -translate-x-1/2">
+      <Button onClick={unblockAudio} variant="inverse" size="md" raised icon={Volume2}>
+        Click to enable audio
+      </Button>
+    </div>
   )
 }
 
@@ -482,13 +470,13 @@ export function Tile({
           className="pointer-events-none absolute inset-0 rounded-xl inset-ring-3 inset-ring-status-green motion-safe:animate-speak"
         />
       )}
-      <button
+      <Hotspot
         data-tile={tile.key}
-        aria-label={`${focused ? 'Back to grid from' : 'Focus'} ${label}`}
-        aria-pressed={focused}
-        title={focused ? 'Back to grid' : 'Focus'}
         onClick={onToggle}
-        className="absolute inset-0 rounded-xl -outline-offset-3 transition-colors hover:bg-on-surface/5 focus-visible:outline-2 focus-visible:outline-primary"
+        tint
+        label={`${focused ? 'Back to grid from' : 'Focus'} ${label}`}
+        tooltip={focused ? 'Back to grid' : 'Focus'}
+        pressed={focused}
       />
       <Surface
         {...(tile.local || isGuestName(user.username) ? {} : profileTrigger(store, user, server))}
@@ -524,32 +512,24 @@ export function Tile({
         )}
       </Surface>
       {menu && (
-        <Inset
-          title="More"
-          aria-label={`More for ${name}`}
+        <IconButton
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           onClick={e => {
             const r = e.currentTarget.getBoundingClientRect()
             menu(r.right, r.bottom + 4)
           }}
-          as="button"
-          row
-          pad={compact ? '3xs' : '2xs'}
-          justify="center"
-          look="cursor-pointer rounded-full bg-scrim/70 text-white outline-offset-2 hover:bg-scrim/85 focus-visible:outline-2 focus-visible:outline-primary"
           place="absolute top-1.5 right-1.5"
-        >
-          <MoreVertical size={compact ? 12 : 16} />
-        </Inset>
+          icon={MoreVertical}
+          label={`More for ${name}`}
+          tooltip="More"
+          tone="overlay"
+          size={compact ? 'xs' : 'sm'}
+        ></IconButton>
       )}
     </div>
   )
 }
-
-const ctlLook =
-  'outline-offset-2 transition-colors focus-visible:outline-2 focus-visible:outline-primary'
-const ctlBase = `flex shrink-0 items-center justify-center rounded-full ${ctlLook}`
 
 function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
   const identity = useP2pApp()
@@ -597,16 +577,6 @@ function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
   const hangupCall = useStore(s => s.hangupCall)
   if (!connected) return null
   const lg = size === 'lg'
-  const dim = lg ? 'h-11 w-11 sm:h-12 sm:w-12' : 'h-8 flex-1'
-  const icon = lg ? 20 : 16
-  const tone = (state: 'idle' | 'on' | 'off') =>
-    state === 'on'
-      ? 'bg-on-surface text-surface hover:bg-on-surface/85'
-      : state === 'off'
-        ? 'bg-mute text-on-mute hover:bg-mute-hover'
-        : 'bg-surface-container-highest text-on-surface hover:bg-surface-bright'
-  const btn = (state: 'idle' | 'on' | 'off') =>
-    `${ctlBase} ${dim} ${lg ? tone(state) : smallTone(state)}`
   const leave = () =>
     voice
       ? leaveVoice()
@@ -618,56 +588,51 @@ function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
   const inVoice = voice !== null || roomVoice !== null
   return (
     <Row gap={lg ? 'md' : 'xs'} place={lg ? undefined : 'w-full'}>
-      <button
-        title={micTitle}
-        aria-label={micTitle}
-        aria-pressed={muted}
+      <CallButton
+        icon={muted ? MicOff : Mic}
+        tone={muted ? 'off' : 'idle'}
+        size={lg ? 'lg' : 'bar'}
+        label={micTitle}
+        pressed={muted}
         disabled={forced || hushed}
         onClick={toggleMute}
-        className={`${btn(muted ? 'off' : 'idle')} disabled:cursor-not-allowed disabled:opacity-60`}
-      >
-        {muted ? <MicOff size={icon} /> : <Mic size={icon} />}
-      </button>
-      <button
-        title={deafened ? 'Undeafen' : 'Deafen (others see you as muted)'}
-        aria-label={deafened ? 'Undeafen' : 'Deafen (others see you as muted)'}
-        aria-pressed={deafened}
+      />
+      <CallButton
+        icon={deafened ? HeadphoneOff : Headphones}
+        tone={deafened ? 'off' : 'idle'}
+        size={lg ? 'lg' : 'bar'}
+        label={deafened ? 'Undeafen' : 'Deafen (others see you as muted)'}
+        pressed={deafened}
         onClick={toggleDeafen}
-        className={btn(deafened ? 'off' : 'idle')}
-      >
-        {deafened ? <HeadphoneOff size={icon} /> : <Headphones size={icon} />}
-      </button>
-      <button
-        title={camTitle}
-        aria-label={camTitle}
-        aria-pressed={camera}
+      />
+      <CallButton
+        icon={camera ? Video : VideoOff}
+        tone={camera ? 'on' : 'idle'}
+        size={lg ? 'lg' : 'bar'}
+        label={camTitle}
+        pressed={camera}
         disabled={sightless}
         onClick={() => void toggleCamera()}
-        className={`${btn(camera ? 'on' : 'idle')} disabled:cursor-not-allowed disabled:opacity-60`}
-      >
-        {camera ? <Video size={icon} /> : <VideoOff size={icon} />}
-      </button>
+      />
       {canShareScreen() && (
-        <button
-          title={shareTitle}
-          aria-label={shareTitle}
-          aria-pressed={sharing}
+        <CallButton
+          icon={sharing ? ScreenShareOff : ScreenShare}
+          tone={sharing ? 'on' : 'idle'}
+          size={lg ? 'lg' : 'bar'}
+          label={shareTitle}
+          pressed={sharing}
           disabled={sightless}
           onClick={() => void toggleShare()}
-          className={`${btn(sharing ? 'on' : 'idle')} disabled:cursor-not-allowed disabled:opacity-60`}
-        >
-          {sharing ? <ScreenShareOff size={icon} /> : <ScreenShare size={icon} />}
-        </button>
+        />
       )}
       {lg && (
-        <button
-          title={inVoice ? 'Leave voice' : 'Leave call'}
-          aria-label={inVoice ? 'Leave voice' : 'Leave call'}
+        <CallButton
+          icon={PhoneOff}
+          tone="danger"
+          size="wide"
+          label={inVoice ? 'Leave voice' : 'Leave call'}
           onClick={leave}
-          className={`${ctlBase} h-11 w-16 bg-danger text-on-danger hover:brightness-110 sm:h-12 sm:w-18`}
-        >
-          <PhoneOff size={icon} />
-        </button>
+        />
       )}
     </Row>
   )
@@ -719,13 +684,6 @@ function StageHeader({
     </Surface>
   )
 }
-
-const smallTone = (state: 'idle' | 'on' | 'off') =>
-  state === 'on'
-    ? 'bg-primary text-on-primary hover:opacity-90'
-    : state === 'off'
-      ? 'bg-mute text-on-mute hover:bg-mute-hover'
-      : 'bg-surface-container-high text-on-surface hover:bg-surface-container-highest'
 
 const QUALITY: Record<LinkQuality, { label: string; cls: string; Icon: typeof Signal }> = {
   good: { label: 'Voice Connected', cls: 'text-status-green', Icon: Signal },
@@ -902,53 +860,52 @@ function VoiceDockBody() {
               <p className={`truncate text-sm leading-tight font-semibold ${status.cls}`}>
                 {status.label}
               </p>
-              <Row
-                as="button"
-                title={`Go to ${inVoice ? 'voice channel' : 'call'}`}
-                onClick={() => {
-                  if (identity && (roomVoice || roomCall)) {
-                    if (claim && account !== client.shown()) {
-                      client.calls.expand(claim)
-                      return
+              <span className="flex max-w-full min-w-0 text-xs leading-tight">
+                <LinkButton
+                  title={`Go to ${inVoice ? 'voice channel' : 'call'}`}
+                  onClick={() => {
+                    if (identity && (roomVoice || roomCall)) {
+                      if (claim && account !== client.shown()) {
+                        client.calls.expand(claim)
+                        return
+                      }
+                      account.identities.show(identity)
                     }
-                    account.identities.show(identity)
-                  }
-                  if ((voice || call) && account !== client.shown()) client.show(account, 'none')
-                  if (voice) void openChannel(voice.server, voice.channelId)
-                  else if (roomVoice) p2pServer?.open(roomVoice.room, roomVoice.ch)
-                  else if (roomCall) {
-                    p2pApp?.openHome()
-                    void p2pDm?.openDm(roomCall.peer)
-                  } else if (call) void openDm(call.dmId)
-                }}
-                gap="2xs"
-                text="xs"
-                ink="muted"
-                look="rounded-sm text-left leading-tight outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary"
-                place="max-w-full min-w-0"
-              >
-                {roomVoice && <P2pBadge />}
-                <span className={`truncate ${roomVoice ? 'max-w-3/5 shrink-0' : ''}`}>
-                  <DockPlace place={place} peer={dmPeer} />
-                </span>
-                {roomCall && <P2pBadge />}
-                {voice && detail && (
-                  <>
-                    <span className="shrink-0">/</span>
-                    <Name of={serverName(detail)} look="truncate" />
-                  </>
-                )}
-                {roomVoice && sv && (
-                  <>
-                    <span className="shrink-0">/</span>
-                    <Name of={roomName(sv.name, ownSv)} look="min-w-0 truncate" />
-                  </>
-                )}
-              </Row>
+                    if ((voice || call) && account !== client.shown()) client.show(account, 'none')
+                    if (voice) void openChannel(voice.server, voice.channelId)
+                    else if (roomVoice) p2pServer?.open(roomVoice.room, roomVoice.ch)
+                    else if (roomCall) {
+                      p2pApp?.openHome()
+                      void p2pDm?.openDm(roomCall.peer)
+                    } else if (call) void openDm(call.dmId)
+                  }}
+                  tone="muted"
+                >
+                  {roomVoice && <P2pBadge />}
+                  <span className={`truncate ${roomVoice ? 'max-w-3/5 shrink-0' : ''}`}>
+                    <DockPlace place={place} peer={dmPeer} />
+                  </span>
+                  {roomCall && <P2pBadge />}
+                  {voice && detail && (
+                    <>
+                      <span className="shrink-0">/</span>
+                      <Name of={serverName(detail)} look="truncate" />
+                    </>
+                  )}
+                  {roomVoice && sv && (
+                    <>
+                      <span className="shrink-0">/</span>
+                      <Name of={roomName(sv.name, ownSv)} look="min-w-0 truncate" />
+                    </>
+                  )}
+                </LinkButton>
+              </span>
             </div>
-            <button
-              title={inVoice ? 'Disconnect' : 'Leave call'}
-              aria-label={inVoice ? 'Disconnect' : 'Leave call'}
+            <CallButton
+              icon={PhoneOff}
+              tone="quiet"
+              size="sm"
+              label={inVoice ? 'Disconnect' : 'Leave call'}
               onClick={() =>
                 voice
                   ? leaveVoice()
@@ -958,10 +915,7 @@ function VoiceDockBody() {
                       ? peerCall?.hangup()
                       : hangupCall()
               }
-              className={`${ctlBase} h-8 w-8 text-on-surface-variant hover:bg-error/15 hover:text-error`}
-            >
-              <PhoneOff size={18} />
-            </button>
+            />
           </Row>
         </Surface>
         {roomVoice && <MeshNotice users={users} at="dock" />}
@@ -1065,24 +1019,15 @@ function SharePill() {
               </Row>
             )}
           </Stack>
-          <Surface
+          <Button
             title="Stop sharing"
             onClick={() => void toggleShare()}
-            as="button"
-            row
-            pad="md"
-            inset="sides"
-            gap="2xs"
-            tone="plain"
-            radius="full"
-            justify="center"
-            text="xs"
-            look={`${ctlLook} h-7 bg-danger font-semibold text-on-danger hover:brightness-110`}
             place="shrink-0"
+            variant="filled-danger"
+            icon={ScreenShareOff}
           >
-            <ScreenShareOff size={14} aria-hidden />
             Stop
-          </Surface>
+          </Button>
         </Row>
       </Surface>
     </Surface>
@@ -1488,26 +1433,18 @@ export function VoiceGrid({
             <CallControls />
           ) : forVoice ? (
             !p2pElsewhere && (
-              <Surface
+              <Button
                 data-p2p-voice-join
                 disabled={!here.connect}
                 title={here.connect ? undefined : NO_CONNECT}
                 onClick={() => void p2pVoice?.join(forVoice.room, forVoice.ch)}
-                as="button"
-                row
-                pad="xl"
-                inset="sides"
-                gap="sm"
-                tone="plain"
-                radius="full"
-                justify="center"
-                text="sm"
-                look={`${ctlLook} h-11 bg-status-green font-semibold text-surface hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60`}
                 place="shrink-0"
+                variant="accept"
+                size="md"
+                icon={Phone}
               >
-                <Phone size={18} />
                 Join voice
-              </Surface>
+              </Button>
             )
           ) : (
             channelId !== undefined &&
@@ -1528,27 +1465,19 @@ export function VoiceGrid({
                 </Surface>
               )
             ) : (
-              <Surface
+              <Button
                 disabled={!here.connect}
                 title={here.connect ? undefined : NO_CONNECT}
                 onClick={() => {
                   if (view?.kind === 'channel') void joinVoice(view.server, channelId)
                 }}
-                as="button"
-                row
-                pad="xl"
-                inset="sides"
-                gap="sm"
-                tone="plain"
-                radius="full"
-                justify="center"
-                text="sm"
-                look={`${ctlLook} h-11 bg-status-green font-semibold text-surface hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60`}
                 place="shrink-0"
+                variant="accept"
+                size="md"
+                icon={Phone}
               >
-                <Phone size={18} />
                 Join voice
-              </Surface>
+              </Button>
             ))
           )}
         </div>
@@ -1617,18 +1546,7 @@ function CallBannerBody() {
         place="pointer-events-auto shrink-0"
       >
         <Row gap="md">
-          <Surface
-            as="button"
-            title="Go to call"
-            onClick={go}
-            pad="none"
-            gap="md"
-            row
-            tone="plain"
-            radius="full"
-            look="outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary"
-            place="min-w-0"
-          >
+          <CardButton title="Go to call" onClick={go} place="min-w-0" pad="none">
             {avatar(28)}
             <span className="flex min-w-0 flex-col text-left">
               <span className="text-sm">
@@ -1645,15 +1563,14 @@ function CallBannerBody() {
               {!shown && <AccountLabel />}
               <CallType video={call.video} p2p={p2pCall} />
             </span>
-          </Surface>
-          <button
-            title="Cancel call"
-            aria-label="Cancel call"
+          </CardButton>
+          <CallButton
+            icon={PhoneOff}
+            tone="danger"
+            size="md"
+            label="Cancel call"
             onClick={hangupCall}
-            className={`${ctlBase} h-9 w-9 bg-danger text-on-danger hover:brightness-110`}
-          >
-            <PhoneOff size={16} />
-          </button>
+          />
         </Row>
       </Surface>
     )
@@ -1673,45 +1590,29 @@ function CallBannerBody() {
         />
         {!shown && <AccountLabel />}
         <CallType video={call.video} p2p={p2pCall} incoming />
-        <Row
-          as="button"
-          title="Go to DM"
-          onClick={go}
-          gap="2xs"
-          text="xs"
-          ink="muted"
-          look="rounded-sm outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary"
-          place="max-w-full min-w-0"
-        >
-          <MessageCircle size={12} aria-hidden className="shrink-0" />
-          <span className="shrink-0">DM with</span>
-          <Name
-            of={personName(asAccount(dm?.other ?? other, 'call'))}
-            withUsername
-            look="truncate"
-          />
-        </Row>
+        <span className="flex max-w-full min-w-0 text-xs">
+          <LinkButton title="Go to DM" onClick={go} tone="muted">
+            <MessageCircle size={12} aria-hidden className="shrink-0" />
+            <span className="shrink-0">DM with</span>
+            <Name
+              of={personName(asAccount(dm?.other ?? other, 'call'))}
+              withUsername
+              look="truncate"
+            />
+          </LinkButton>
+        </span>
       </div>
       <div className="call-card-actions">
-        <button
-          title="Decline"
-          aria-label="Decline"
-          onClick={declineCall}
-          className={`${ctlBase} h-12 w-12 bg-danger text-on-danger hover:brightness-110 max-sm:h-11 max-sm:w-11`}
-        >
-          <PhoneOff size={20} />
-        </button>
-        <button
-          title="Accept"
-          aria-label="Accept"
+        <CallButton icon={PhoneOff} tone="danger" label="Decline" onClick={declineCall} />
+        <CallButton
+          icon={Phone}
+          tone="accept"
+          label="Accept"
           onClick={() => {
             go()
             void acceptCall()
           }}
-          className={`${ctlBase} h-12 w-12 bg-status-green text-surface hover:brightness-110 max-sm:h-11 max-sm:w-11`}
-        >
-          <Phone size={20} />
-        </button>
+        />
       </div>
     </div>
   )
@@ -1802,18 +1703,7 @@ function ContactCallBanner() {
         place="pointer-events-auto shrink-0"
       >
         <Row gap="md">
-          <Surface
-            as="button"
-            title="Go to call"
-            onClick={go}
-            pad="none"
-            gap="md"
-            row
-            tone="plain"
-            radius="full"
-            look="outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary"
-            place="min-w-0"
-          >
+          <CardButton title="Go to call" onClick={go} place="min-w-0" pad="none">
             {avatar(28)}
             <span className="flex min-w-0 flex-col text-left">
               <span className="text-sm">
@@ -1824,15 +1714,14 @@ function ContactCallBanner() {
               </span>
               <CallType video={c.video} p2p chip={<P2pBadge />} />
             </span>
-          </Surface>
-          <button
-            title="Cancel call"
-            aria-label="Cancel call"
+          </CardButton>
+          <CallButton
+            icon={PhoneOff}
+            tone="danger"
+            size="md"
+            label="Cancel call"
             onClick={() => peerCall?.hangup()}
-            className={`${ctlBase} h-9 w-9 bg-danger text-on-danger hover:brightness-110`}
-          >
-            <PhoneOff size={16} />
-          </button>
+          />
         </Row>
       </Surface>
     )
@@ -1848,42 +1737,31 @@ function ContactCallBanner() {
       <div className="call-card-who">
         <Name of={p2pName(name)} look="w-full truncate text-base font-semibold" />
         <CallType video={c.video} p2p incoming chip={<P2pBadge />} />
-        <Row
-          as="button"
-          title="Go to conversation"
-          onClick={go}
-          gap="2xs"
-          text="xs"
-          ink="muted"
-          look="rounded-sm outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary"
-          place="max-w-full min-w-0"
-        >
-          <MessageCircle size={12} aria-hidden className="shrink-0" />
-          <span className="shrink-0">Conversation with</span>
-          <Name of={p2pName(name)} look="truncate" />
-        </Row>
+        <span className="flex max-w-full min-w-0 text-xs">
+          <LinkButton title="Go to conversation" onClick={go} tone="muted">
+            <MessageCircle size={12} aria-hidden className="shrink-0" />
+            <span className="shrink-0">Conversation with</span>
+            <Name of={p2pName(name)} look="truncate" />
+          </LinkButton>
+        </span>
       </div>
       <div className="call-card-actions">
-        <button
-          title="Decline"
-          aria-label="Decline"
+        <CallButton
+          icon={PhoneOff}
+          tone="danger"
+          label="Decline"
           onClick={() => peerCall?.decline()}
-          className={`${ctlBase} h-12 w-12 bg-danger text-on-danger hover:brightness-110 max-sm:h-11 max-sm:w-11`}
-        >
-          <PhoneOff size={20} />
-        </button>
-        <button
-          title="Accept"
-          aria-label="Accept"
+        />
+        <CallButton
+          icon={Phone}
+          tone="accept"
+          label="Accept"
           disabled={accepting}
           onClick={() => {
             go()
             void peerCall?.accept()
           }}
-          className={`${ctlBase} h-12 w-12 bg-status-green text-surface hover:brightness-110 disabled:opacity-60 max-sm:h-11 max-sm:w-11`}
-        >
-          <Phone size={20} />
-        </button>
+        />
       </div>
     </div>
   )

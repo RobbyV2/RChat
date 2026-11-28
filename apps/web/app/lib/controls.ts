@@ -529,7 +529,7 @@ const CARD_TONE: Record<CardTone, string> = {
 }
 
 const CARD_PAD: Record<CardPad, string> = {
-  none: '',
+  none: 'gap-3',
   sm: 'gap-2 p-2',
   md: 'gap-3 p-3',
   lg: 'gap-3 px-4 py-3',
