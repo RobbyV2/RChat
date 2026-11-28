@@ -1496,7 +1496,7 @@ mod reads {
 
     /// Each column that may be stored sealed: its table, the column and the column of its
     /// record.
-    const COLUMNS: [(&str, &str, &str); 20] = [
+    const COLUMNS: [(&str, &str, &str); 21] = [
         ("scheduled_messages", "content", "body"),
         ("scheduled_messages", "media_name", "body"),
         ("scheduled_messages", "media_alt", "body"),
@@ -1515,6 +1515,7 @@ mod reads {
         ("report_events", "detail", "detail_sealed"),
         ("webhook_deliveries", "payload", "payload_sealed"),
         ("users", "bio", "bio_sealed"),
+        ("member_profiles", "bio", "bio_sealed"),
         ("p2p_backups", "data", "data_sealed"),
         ("media", "filename", "name_sealed"),
     ];

@@ -133,6 +133,143 @@ async fn bios_follow_the_site_requirement() {
     }
 }
 
+async fn set_server_bio(state: &AppState, who: &str, bio: serde_json::Value) -> Option<String> {
+    crate::api::profiles::patch_profile(
+        State(state.clone()),
+        Authed(mem_user(who, false)),
+        Path("rchat".to_string()),
+        Json(serde_json::from_value(json!({ "bio": bio })).expect("patch")),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("patch: {}", e.1))
+    .0
+    .bio
+}
+
+async fn own_server_bio(state: &AppState, who: &str) -> Option<String> {
+    crate::api::profiles::get_profile(
+        State(state.clone()),
+        Authed(mem_user(who, false)),
+        Path("rchat".to_string()),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("read: {}", e.1))
+    .0
+    .bio
+}
+
+/// The stored server bio of `who`: its plain column and whether it has a record.
+async fn stored_server_bio(db: &Db, who: &str) -> (Option<String>, bool) {
+    let (plain, record): (Option<String>, Option<Vec<u8>>) = sqlx::query_as(
+        "SELECT bio, bio_sealed FROM member_profiles WHERE server = 'rchat' AND username = $1",
+    )
+    .bind(who)
+    .fetch_one(db)
+    .await
+    .expect("profile");
+    (plain, record.is_some())
+}
+
+#[tokio::test]
+async fn server_bios_follow_the_switch_of_their_server() {
+    for (state, temp) in each_db_keyed("seal_server_bios").await {
+        let db = &state.db;
+        users(db, &["alice", "bob"]).await;
+        staffed(db).await;
+        assert_eq!(
+            set_server_bio(&state, "bob", json!("plain here"))
+                .await
+                .as_deref(),
+            Some("plain here")
+        );
+        assert_eq!(
+            stored_server_bio(db, "bob").await,
+            (Some("plain here".into()), false)
+        );
+
+        switch(&state, "alice", true).await.expect("on");
+        assert_eq!(
+            stored_server_bio(db, "bob").await,
+            (Some("plain here".into()), false),
+            "what was stored before stays until it is written again"
+        );
+        assert_eq!(
+            set_server_bio(&state, "bob", json!("sealed here"))
+                .await
+                .as_deref(),
+            Some("sealed here")
+        );
+        assert_eq!(
+            stored_server_bio(db, "bob").await,
+            (None, true),
+            "only the record"
+        );
+        assert_eq!(
+            own_server_bio(&state, "bob").await.as_deref(),
+            Some("sealed here")
+        );
+        assert_eq!(
+            crate::api::profiles::bio_and_banner(db, "rchat", "bob")
+                .await
+                .unwrap_or_else(|e| panic!("card: {}", e.1))
+                .0
+                .as_deref(),
+            Some("sealed here")
+        );
+        crate::api::profiles::patch_profile(
+            State(state.clone()),
+            Authed(mem_user("bob", false)),
+            Path("rchat".to_string()),
+            Json(serde_json::from_value(json!({ "banner_color": "#112233" })).expect("patch")),
+        )
+        .await
+        .map(|_| ())
+        .unwrap_or_else(|e| panic!("banner: {}", e.1));
+        assert_eq!(
+            own_server_bio(&state, "bob").await.as_deref(),
+            Some("sealed here"),
+            "a change of another part keeps it"
+        );
+        assert_eq!(stored_server_bio(db, "bob").await, (None, true));
+
+        set_server_bio(&state, "alice", json!("alice here")).await;
+        sqlx::query("UPDATE member_profiles SET bio_sealed = (SELECT bio_sealed FROM member_profiles WHERE username = 'alice') WHERE username = 'bob'")
+            .execute(db)
+            .await
+            .expect("move");
+        assert_eq!(
+            own_server_bio(&state, "bob").await,
+            None,
+            "a record moved to another member does not open"
+        );
+
+        assert_eq!(set_server_bio(&state, "alice", json!(null)).await, None);
+        let left: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM member_profiles WHERE username = 'alice' AND (bio IS NOT NULL OR bio_sealed IS NOT NULL)",
+        )
+        .fetch_one(db)
+        .await
+        .expect("count");
+        assert_eq!(left, 0, "cleared");
+
+        switch(&state, "alice", false).await.expect("off");
+        set_server_bio(&state, "bob", json!("plain again")).await;
+        assert_eq!(
+            stored_server_bio(db, "bob").await,
+            (Some("plain again".into()), false)
+        );
+
+        require(&state, true).await;
+        set_server_bio(&state, "bob", json!("the site requires it")).await;
+        assert_eq!(stored_server_bio(db, "bob").await, (None, true));
+        assert_eq!(
+            own_server_bio(&state, "bob").await.as_deref(),
+            Some("the site requires it")
+        );
+        temp.done(state).await;
+    }
+}
+
 #[tokio::test]
 async fn a_copy_follows_its_server_its_dm_or_the_site() {
     for (state, temp) in each_db_keyed("seal_copy_place").await {

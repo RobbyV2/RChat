@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::ApiError;
 use crate::crypt::body::{OPTIONS, Opener, POLLS, Parts, SNAPSHOTS, Scope, Writer};
-use crate::crypt::copies::{self, BACKUPS, BIOS, Column, DELIVERIES, REPORT_EVENTS, REPORTS};
+use crate::crypt::copies::{
+    self, BACKUPS, BIOS, Column, DELIVERIES, REPORT_EVENTS, REPORTS, SERVER_BIOS,
+};
 use crate::crypt::{Purpose, header};
 use crate::db::{Db, is_sqlite, now, pool_key};
 use crate::state::AppState;
@@ -49,9 +51,10 @@ enum Step {
     Settings,
     Hooks,
     Grams,
+    ServerBios,
 }
 
-const STEPS: [Step; 13] = [
+const STEPS: [Step; 14] = [
     Step::Messages,
     Step::Polls,
     Step::Options,
@@ -65,6 +68,7 @@ const STEPS: [Step; 13] = [
     Step::Settings,
     Step::Hooks,
     Step::Grams,
+    Step::ServerBios,
 ];
 
 impl Step {
@@ -78,6 +82,7 @@ impl Step {
             | Step::ReportLines
             | Step::Deliveries
             | Step::Bios
+            | Step::ServerBios
             | Step::Backups => Purpose::Content,
             Step::Files => Purpose::Media,
             Step::Settings | Step::Hooks => Purpose::Secrets,
@@ -445,6 +450,7 @@ pub async fn names(db: &Db, id: u32, purpose: Purpose) -> Result<i64, ApiError> 
             ("report_events", "detail_sealed"),
             ("webhook_deliveries", "payload_sealed"),
             ("users", "bio_sealed"),
+            ("member_profiles", "bio_sealed"),
             ("p2p_backups", "data_sealed"),
         ],
         Purpose::Secrets => &[("outgoing_webhooks", "secret_sealed")],
@@ -574,6 +580,7 @@ async fn one(state: &AppState, step: Step, retiring: &[u32], at: &str) -> Result
         Step::ReportLines => numbered_copies(db, retiring, at, REPORT_EVENTS, "id").await,
         Step::Deliveries => numbered_copies(db, retiring, at, DELIVERIES, "id").await,
         Step::Bios => bios(db, retiring, at).await,
+        Step::ServerBios => server_bios(db, retiring, at).await,
         Step::Backups => backups(db, retiring, at).await,
         Step::Files => files(state, retiring, at).await,
         Step::Settings => crate::crypt::secrets::reseal_settings(db, retiring)
@@ -829,6 +836,42 @@ async fn bios(db: &Db, retiring: &[u32], at: &str) -> Result<Tally, ApiError> {
         tally.add(outcome);
     }
     tally.next = next_of(&rows, |r| r.0.clone());
+    Ok(tally)
+}
+
+async fn server_bios(db: &Db, retiring: &[u32], at: &str) -> Result<Tally, ApiError> {
+    let (server, username) = serde_json::from_str::<(String, String)>(at).unwrap_or_default();
+    let rows: Vec<(String, String, Vec<u8>)> = sqlx::query_as("SELECT server, username, bio_sealed FROM member_profiles WHERE bio_sealed IS NOT NULL AND (server > $1 OR (server = $1 AND username > $2)) ORDER BY server, username LIMIT $3")
+        .bind(&server)
+        .bind(&username)
+        .bind(BATCH)
+        .fetch_all(db)
+        .await?;
+    let opener = copies::Opener::of(db, rows.iter().map(|(.., r)| r.as_slice())).await?;
+    let mut tally = Tally::default();
+    for (server, username, record) in &rows {
+        if !under(record, retiring) {
+            continue;
+        }
+        let binding = copies::server_bio_binding(server, username);
+        let outcome = match opener.open(SERVER_BIOS, &binding, record) {
+            Some(plain) => {
+                let keys = vec![
+                    ("server", Bind::Text(server.clone())),
+                    ("username", Bind::Text(username.clone())),
+                ];
+                reseal_copy(db, retiring, SERVER_BIOS, &binding, &plain, record, keys).await?
+            }
+            None => Outcome::Lost,
+        };
+        tally.add(outcome);
+    }
+    tally.next = match rows.last() {
+        Some((s, u, _)) if rows.len() as i64 == BATCH => {
+            Some(serde_json::json!([s, u]).to_string())
+        }
+        _ => None,
+    };
     Ok(tally)
 }
 

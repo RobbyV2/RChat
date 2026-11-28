@@ -268,6 +268,87 @@ async fn earlier_messages_of_a_server_are_encrypted_and_back() {
     }
 }
 
+async fn server_bio(db: &Db, who: &str) -> (Option<String>, bool) {
+    let (plain, record): (Option<String>, Option<Vec<u8>>) = sqlx::query_as(
+        "SELECT bio, bio_sealed FROM member_profiles WHERE server = 'rchat' AND username = $1",
+    )
+    .bind(who)
+    .fetch_one(db)
+    .await
+    .expect("profile");
+    (plain, record.is_some())
+}
+
+#[tokio::test]
+async fn a_server_job_covers_the_descriptions_of_its_server_profiles() {
+    for (state, temp) in each_db_keyed("seal_jobs_server_bios").await {
+        let db = &state.db;
+        people(db).await;
+        sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('other', 'Other', 'alice', 1)")
+            .execute(db)
+            .await
+            .expect("server");
+        add_member(db, "other", "bob", 0, 0, 1).await;
+        for server in ["rchat", "other"] {
+            crate::api::profiles::patch_profile(
+                State(state.clone()),
+                Authed(mem_user("bob", false)),
+                Path(server.to_string()),
+                Json(
+                    serde_json::from_value(json!({"bio": format!("bob in {server}")}))
+                        .expect("patch"),
+                ),
+            )
+            .await
+            .map(|_| ())
+            .unwrap_or_else(|e| panic!("{server}: {}", e.1));
+        }
+        switch(&state, true).await;
+        assert_eq!(
+            server_bio(db, "bob").await,
+            (Some("bob in rchat".into()), false)
+        );
+
+        let job = start(&state, "alice", "s:rchat", Direction::Seal, PASSWORD)
+            .await
+            .expect("start");
+        assert_eq!(ended(&state, job.id).await.state, JobState::Done);
+        assert_eq!(
+            server_bio(db, "bob").await,
+            (None, true),
+            "stored encrypted"
+        );
+        let shown = crate::api::profiles::bio_and_banner(db, "rchat", "bob")
+            .await
+            .unwrap_or_else(|e| panic!("card: {}", e.1));
+        assert_eq!(shown.0.as_deref(), Some("bob in rchat"));
+        let other: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM member_profiles WHERE server = 'other' AND bio = 'bob in other' AND bio_sealed IS NULL",
+        )
+        .fetch_one(db)
+        .await
+        .expect("count");
+        assert_eq!(other, 1, "another server's stays as it is");
+        assert_eq!(
+            super::still_sealed(db, &Target::Server("rchat".to_string()))
+                .await
+                .unwrap_or_else(|e| panic!("count: {}", e.1)),
+            1,
+            "the description counts as stored encrypted"
+        );
+
+        let back = start(&state, "carol", "s:rchat", Direction::Unseal, PASSWORD)
+            .await
+            .expect("unseal");
+        assert_eq!(ended(&state, back.id).await.state, JobState::Done);
+        assert_eq!(
+            server_bio(db, "bob").await,
+            (Some("bob in rchat".into()), false)
+        );
+        temp.done(state).await;
+    }
+}
+
 #[tokio::test]
 async fn a_dm_job_is_for_its_participants() {
     for (state, temp) in each_db_keyed("seal_jobs_dm").await {

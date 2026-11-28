@@ -9553,6 +9553,50 @@ async fn seal_jobs_are_added_to_an_old_database() {
 }
 
 #[tokio::test]
+async fn sealed_server_profile_descriptions_are_added_to_an_old_database() {
+    on_each_database("server_bios_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        for sql in [
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', 'alice', 7)",
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('club', 'bob', 0, 0, 5)",
+            "INSERT INTO member_profiles(server, username, name, bio, banner_color, updated_at) VALUES('club', 'bob', 'Robert', 'kept bio', '#112233', 6)",
+            "ALTER TABLE member_profiles DROP COLUMN bio_sealed",
+        ] {
+            sqlx::query(sql).execute(&db).await.expect(sql);
+        }
+        sqlx::query("UPDATE settings SET value = $1 WHERE key = 'schema_version'")
+            .bind((super::migrate::SERVER_BIOS_VERSION - 1).to_string())
+            .execute(&db)
+            .await
+            .expect("version");
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM member_profiles WHERE server = 'club' AND username = 'bob' AND name = 'Robert' AND bio = 'kept bio' AND banner_color = '#112233' AND updated_at = 6 AND bio_sealed IS NULL").await,
+                i64::from(round == 0),
+                "{round}: the old row keeps its values and has no record"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM member_profiles WHERE server = 'club' AND username = 'bob' AND bio IS NULL AND bio_sealed IS NOT NULL").await,
+                i64::from(round == 1),
+                "{round}: a record written after the upgrade survives a restart"
+            );
+            if round == 0 {
+                sqlx::query("UPDATE member_profiles SET bio = NULL, bio_sealed = $1 WHERE username = 'bob'")
+                    .bind(vec![0x52u8, 0x01, 0x00])
+                    .execute(&db)
+                    .await
+                    .expect("record");
+            }
+            close(&db).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn change_server_profile_is_given_to_stored_everyone_permissions() {
     on_each_database("change_profile_upgrade", |url| async move {
         let db = open_started(Some(&url)).await.expect("open");

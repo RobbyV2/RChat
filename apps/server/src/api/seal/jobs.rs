@@ -2,7 +2,7 @@
 //! encrypted kept plain from before ("Also encrypt earlier messages"), and the site's own way
 //! back, storing encrypted messages plain again before keys are removed.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -19,7 +19,7 @@ use crate::api::access::{Proof, not_found, resolve_dm, resolve_server};
 use crate::api::reauth::{AuthedSession, Purpose, ReAuth, ReAuthBody, check};
 use crate::api::{ApiError, ApiErrorBody, Authed, bad};
 use crate::crypt::body::{OPTIONS, Opener, POLLS, Parts, SNAPSHOTS, Scope};
-use crate::crypt::copies::{self, BACKUPS, BIOS, DELIVERIES};
+use crate::crypt::copies::{self, BACKUPS, BIOS, DELIVERIES, SERVER_BIOS};
 use crate::db::{Db, User, is_sqlite, now, pool_key};
 use crate::state::AppState;
 use crate::ws::WsEvent;
@@ -598,6 +598,7 @@ async fn step(state: &AppState, id: i64) -> Result<bool, ApiError> {
             crate::api::scheduled::unseal_pending(db, &target).await?;
         }
     }
+    server_bios(db, &target, job.direction).await?;
     if target == Target::All {
         extras(state, job.direction).await?;
     }
@@ -865,6 +866,7 @@ pub(crate) async fn still_sealed(db: &Db, target: &Target) -> Result<i64, ApiErr
             [
                 "SELECT COUNT(*) FROM media WHERE seal_key IS NOT NULL",
                 "SELECT COUNT(*) FROM users WHERE bio_sealed IS NOT NULL",
+                "SELECT COUNT(*) FROM member_profiles WHERE bio_sealed IS NOT NULL",
                 "SELECT COUNT(*) FROM reports WHERE sealed IS NOT NULL",
                 "SELECT COUNT(*) FROM report_events WHERE detail_sealed IS NOT NULL",
                 "SELECT COUNT(*) FROM webhook_deliveries WHERE payload_sealed IS NOT NULL",
@@ -875,6 +877,12 @@ pub(crate) async fn still_sealed(db: &Db, target: &Target) -> Result<i64, ApiErr
         Target::Server(_) | Target::Dm(_) => sqls.push(format!(
             "SELECT COUNT(*) FROM media WHERE seal_key IS NOT NULL AND id IN (SELECT media_id FROM messages WHERE media_kind = 'server' AND media_id IS NOT NULL AND {cond})"
         )),
+    }
+    if let Target::Server(_) = target {
+        sqls.push(
+            "SELECT COUNT(*) FROM member_profiles WHERE bio_sealed IS NOT NULL AND server = $1"
+                .to_string(),
+        );
     }
     let mut left = crate::api::scheduled::still_sealed(db, target).await?;
     for sql in sqls {
@@ -888,6 +896,91 @@ pub(crate) async fn still_sealed(db: &Db, target: &Target) -> Result<i64, ApiErr
         left += query.fetch_one(db).await?;
     }
     Ok(left)
+}
+
+/// The servers whose profile descriptions a job over `target` covers, as a condition on
+/// `member_profiles` with its bind at `$3`. A DM has none.
+fn profile_servers(target: &Target) -> Option<(&'static str, Option<&str>)> {
+    match target {
+        Target::Server(name) => Some(("server = $3", Some(name))),
+        Target::All => Some(("$3 = ''", None)),
+        Target::Dm(_) => None,
+    }
+}
+
+/// A server profile's server, username, plain description and its record.
+type BioRow = (String, String, Option<String>, Option<Vec<u8>>);
+
+const BIO_KEYSET: &str = "(server > $1 OR (server = $1 AND username > $2))";
+
+/// What a job does to the descriptions of the server profiles of its place once its messages
+/// are done: encrypts the plain ones of the servers that are stored encrypted, or stores the
+/// encrypted ones plain again. One that does not open stays.
+async fn server_bios(db: &Db, target: &Target, direction: Direction) -> Result<(), ApiError> {
+    let Some((cond, name)) = profile_servers(target) else {
+        return Ok(());
+    };
+    let form = match direction {
+        Direction::Seal => "bio IS NOT NULL AND bio_sealed IS NULL",
+        Direction::Unseal => "bio_sealed IS NOT NULL",
+    };
+    let sql = format!(
+        "SELECT server, username, bio, bio_sealed FROM member_profiles WHERE {form} AND {cond} AND {BIO_KEYSET} ORDER BY server, username LIMIT $4"
+    );
+    let mut after = (String::new(), String::new());
+    let mut sealers: HashMap<String, Option<copies::Sealer>> = HashMap::new();
+    loop {
+        let rows: Vec<BioRow> = sqlx::query_as(sqlx::AssertSqlSafe(sql.clone()))
+            .bind(&after.0)
+            .bind(&after.1)
+            .bind(name.unwrap_or(""))
+            .bind(COPIES_BATCH)
+            .fetch_all(db)
+            .await?;
+        let opener = copies::Opener::of(db, rows.iter().filter_map(|(.., r)| r.as_deref())).await?;
+        for (server, username, bio, record) in &rows {
+            let binding = copies::server_bio_binding(server, username);
+            match (direction, bio, record) {
+                (Direction::Seal, Some(bio), None) => {
+                    if !sealers.contains_key(server) {
+                        let mut conn = db.acquire().await?;
+                        let source = super::Source::Server(server);
+                        let sealer = super::copy_sealer_of(db, &mut conn, source).await?;
+                        sealers.insert(server.clone(), sealer);
+                    }
+                    let Some(Some(sealer)) = sealers.get(server) else {
+                        continue;
+                    };
+                    sqlx::query("UPDATE member_profiles SET bio = NULL, bio_sealed = $1 WHERE server = $2 AND username = $3 AND bio = $4 AND bio_sealed IS NULL")
+                        .bind(sealer.seal(SERVER_BIOS, &binding, bio.as_bytes()))
+                        .bind(server)
+                        .bind(username)
+                        .bind(bio)
+                        .execute(db)
+                        .await?;
+                }
+                (Direction::Unseal, _, Some(record)) => {
+                    let Some(bio) = opener.text(SERVER_BIOS, &binding, record) else {
+                        continue;
+                    };
+                    sqlx::query("UPDATE member_profiles SET bio = $1, bio_sealed = NULL WHERE server = $2 AND username = $3 AND bio_sealed = $4")
+                        .bind(bio)
+                        .bind(server)
+                        .bind(username)
+                        .bind(record)
+                        .execute(db)
+                        .await?;
+                }
+                (Direction::Seal | Direction::Unseal, _, _) => {}
+            }
+        }
+        match rows.last() {
+            Some((server, username, ..)) if rows.len() as i64 == COPIES_BATCH => {
+                after = (server.clone(), username.clone());
+            }
+            _ => return Ok(()),
+        }
+    }
 }
 
 /// What a job over every place does once its messages are done: account descriptions, and on

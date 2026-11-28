@@ -14,11 +14,13 @@ use crate::api::access::{
 };
 use crate::api::audit::{self, Details, Entry, Target};
 use crate::api::auth::{check_avatar, check_banner, clean_bio, clean_name_for, present};
+use crate::api::seal;
 use crate::api::timeouts::REASON_MAX;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, OkResp, ProfanityTarget, Settings, UserRef, bad, check_len,
     check_profanity, ok, placeholders,
 };
+use crate::crypt::copies::{self, SERVER_BIOS, server_bio_binding};
 use crate::db::{AvatarKind, Db, User, now};
 use crate::state::AppState;
 use crate::ws::WsEvent;
@@ -261,43 +263,85 @@ impl Stored {
 }
 
 const COLUMNS: &str =
-    "name, bio, avatar_kind, avatar_color, banner_color, locked_until, avatar_image";
+    "name, bio, avatar_kind, avatar_color, banner_color, locked_until, avatar_image, bio_sealed";
 
-fn stored_row(r: &sqlx::any::AnyRow, at: usize) -> sqlx::Result<Stored> {
+/// The look in a row of `COLUMNS` that starts at `at`.
+fn look_row(r: &sqlx::any::AnyRow, at: usize) -> sqlx::Result<MemberLook> {
     let avatar_kind = r
         .try_get::<Option<String>, _>(at + 2)?
         .map(|k| AvatarKind::parse(&k))
         .transpose()?;
-    Ok(Stored {
-        look: MemberLook {
-            name: r.try_get(at)?,
-            avatar_kind,
-            avatar_color: match avatar_kind {
-                Some(_) => r.try_get(at + 3)?,
-                None => None,
-            },
-            avatar_image: r.try_get(at + 6)?,
+    Ok(MemberLook {
+        name: r.try_get(at)?,
+        avatar_kind,
+        avatar_color: match avatar_kind {
+            Some(_) => r.try_get(at + 3)?,
+            None => None,
         },
-        bio: r.try_get(at + 1)?,
-        banner_color: r.try_get(at + 4)?,
-        locked_until: r.try_get(at + 5)?,
+        avatar_image: r.try_get(at + 6)?,
     })
 }
 
-async fn stored<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(
-    ex: E,
+/// The stored profile in a row of `COLUMNS`: its description is the sealed record opened,
+/// else the plain column. A record that does not open reads as no description.
+fn stored_row(
+    r: &sqlx::any::AnyRow,
+    server: &str,
+    username: &str,
+    opener: &copies::Opener,
+) -> sqlx::Result<Stored> {
+    let record: Option<Vec<u8>> = r.try_get(7)?;
+    Ok(Stored {
+        look: look_row(r, 0)?,
+        bio: copies::text_or(
+            opener,
+            SERVER_BIOS,
+            &server_bio_binding(server, username),
+            record.as_deref(),
+            r.try_get(1)?,
+        ),
+        banner_color: r.try_get(4)?,
+        locked_until: r.try_get(5)?,
+    })
+}
+
+fn stored_sql() -> String {
+    format!("SELECT {COLUMNS} FROM member_profiles WHERE server = $1 AND username = $2")
+}
+
+async fn stored(db: &Db, server: &str, username: &str) -> Result<Stored, ApiError> {
+    let row = sqlx::query(sqlx::AssertSqlSafe(stored_sql()))
+        .bind(server)
+        .bind(username)
+        .fetch_optional(db)
+        .await?;
+    Ok(match row {
+        Some(r) => {
+            let opener = copies::Opener::of_rows(db, std::slice::from_ref(&r), 7).await?;
+            stored_row(&r, server, username, &opener)?
+        }
+        None => Stored::default(),
+    })
+}
+
+/// `stored` on the connection of a transaction.
+async fn stored_on(
+    db: &Db,
+    conn: &mut sqlx::AnyConnection,
     server: &str,
     username: &str,
 ) -> Result<Stored, ApiError> {
-    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT {COLUMNS} FROM member_profiles WHERE server = $1 AND username = $2"
-    )))
-    .bind(server)
-    .bind(username)
-    .fetch_optional(ex)
-    .await?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(stored_sql()))
+        .bind(server)
+        .bind(username)
+        .fetch_optional(&mut *conn)
+        .await?;
     Ok(match row {
-        Some(r) => stored_row(&r, 0)?,
+        Some(r) => {
+            let record: Option<Vec<u8>> = r.try_get(7)?;
+            let opener = copies::Opener::on(db, conn, record.as_deref()).await?;
+            stored_row(&r, server, username, &opener)?
+        }
         None => Stored::default(),
     })
 }
@@ -405,7 +449,7 @@ pub(crate) async fn looks_of(
         query = query.bind(name);
     }
     for r in &query.fetch_all(db).await? {
-        if let Some(look) = shown.look(stored_row(r, 1)?.look) {
+        if let Some(look) = shown.look(look_row(r, 1)?) {
             out.insert(r.try_get(0)?, look);
         }
     }
@@ -494,7 +538,10 @@ pub(crate) async fn forget(
     Ok(())
 }
 
+/// Writes the profile of `username` in `server`. Its description follows what seals the server
+/// at this write: a record in `bio_sealed` with the plain column empty, or the plain column.
 async fn store(
+    db: &Db,
     conn: &mut sqlx::AnyConnection,
     server: &str,
     username: &str,
@@ -516,22 +563,47 @@ async fn store(
         banner_color,
         locked_until,
     } = profile;
+    let sealer = match bio {
+        Some(_) => seal::copy_sealer_of(db, conn, seal::Source::Server(server)).await?,
+        None => None,
+    };
+    let (plain, record) = match (bio, &sealer) {
+        (Some(text), Some(sealer)) => (
+            None,
+            Some(sealer.seal(
+                SERVER_BIOS,
+                &server_bio_binding(server, username),
+                text.as_bytes(),
+            )),
+        ),
+        (text, _) => (text.as_deref(), None),
+    };
     sqlx::query(
-        "INSERT INTO member_profiles(server, username, name, bio, avatar_kind, avatar_color, banner_color, locked_until, updated_at, avatar_image) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT(server, username) DO UPDATE SET name = excluded.name, bio = excluded.bio, avatar_kind = excluded.avatar_kind, avatar_color = excluded.avatar_color, banner_color = excluded.banner_color, locked_until = excluded.locked_until, updated_at = excluded.updated_at, avatar_image = excluded.avatar_image",
+        "INSERT INTO member_profiles(server, username, name, bio, avatar_kind, avatar_color, banner_color, locked_until, updated_at, avatar_image, bio_sealed) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT(server, username) DO UPDATE SET name = excluded.name, bio = excluded.bio, avatar_kind = excluded.avatar_kind, avatar_color = excluded.avatar_color, banner_color = excluded.banner_color, locked_until = excluded.locked_until, updated_at = excluded.updated_at, avatar_image = excluded.avatar_image, bio_sealed = excluded.bio_sealed",
     )
     .bind(server)
     .bind(username)
     .bind(name.as_deref())
-    .bind(bio.as_deref())
+    .bind(plain)
     .bind(avatar_kind.map(AvatarKind::as_str))
     .bind(avatar_color.as_deref())
     .bind(banner_color.as_deref())
     .bind(*locked_until)
     .bind(now())
     .bind(avatar_image.as_deref())
+    .bind(record)
     .execute(&mut *conn)
     .await?;
     Ok(())
+}
+
+/// `user` with their account description opened, for an answer that falls back to it.
+async fn opened(db: &Db, user: &User) -> Result<User, ApiError> {
+    Ok(User {
+        bio: copies::bio_of(db, user).await?,
+        bio_sealed: None,
+        ..user.clone()
+    })
 }
 
 fn answer(user: &User, profile: Stored, mode: ProfilesMode, shown: Shown) -> ServerProfile {
@@ -588,6 +660,7 @@ pub(crate) async fn mine(
         (Some(user), true) if Settings::cached(db).await.server_profiles => user,
         (_, _) => return Ok(None),
     };
+    let user = &opened(db, user).await?;
     let key = access.name();
     Ok(Some(answer(
         user,
@@ -630,7 +703,7 @@ async fn own(state: &AppState, user: &User, name: &str) -> Result<(User, ServerA
     let user = acting_on(user, &user.username);
     let access = resolve_server(&state.db, name, Some(&user), &Proof::none()).await?;
     access.require_member()?;
-    Ok((user, access))
+    Ok((opened(&state.db, &user).await?, access))
 }
 
 /// Applies `change` to the stored profile of `user` in `key` as it is under the membership row
@@ -649,7 +722,7 @@ async fn save(
     if before == next {
         return Ok(next);
     }
-    store(&mut tx, key, username, &next).await?;
+    store(&state.db, &mut tx, key, username, &next).await?;
     if before.look.name != next.look.name {
         audit::record(
             &mut tx,
@@ -1035,7 +1108,7 @@ async fn open_member<'a>(
     if member.is_none() {
         return Ok(None);
     }
-    let profile = stored(&mut *tx, server, username).await?;
+    let profile = stored_on(db, &mut tx, server, username).await?;
     Ok(Some((tx, profile)))
 }
 
@@ -1114,7 +1187,7 @@ pub(crate) async fn reset_member_profile(
         .filter(|f| fields.contains(f))
         .map(ProfileField::as_str)
         .collect();
-    store(&mut tx, &key, &target, &next).await?;
+    store(&state.db, &mut tx, &key, &target, &next).await?;
     let details = Details::new().set("fields", reset).set(
         "old_name",
         before
@@ -1185,7 +1258,7 @@ pub(crate) async fn unlock_member_profile(
         ..before.clone()
     };
     if before != next {
-        store(&mut tx, &key, &target, &next).await?;
+        store(&state.db, &mut tx, &key, &target, &next).await?;
     }
     let lifted = before.locked(t);
     if let Some(until) = lifted {

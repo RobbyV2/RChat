@@ -191,6 +191,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("servers", "hide_members {INT} NOT NULL DEFAULT 0"),
     ("users", "avatar_image TEXT"),
     ("member_profiles", "avatar_image TEXT"),
+    ("member_profiles", "bio_sealed {BYTES}"),
     ("servers", "icon_image TEXT"),
     ("scheduled_messages", "body {BYTES}"),
     ("scheduled_messages", "media_id TEXT"),
@@ -350,7 +351,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 71: sealed scheduled messages (`scheduled_messages.body`).
 /// 72: files and polls of scheduled messages (`scheduled_messages.media_id`, `media_spoiler`,
 /// `media_name`, `media_alt`, `poll`).
-pub const SCHEMA_VERSION: i64 = 72;
+/// 73: sealed descriptions of server profiles (`member_profiles.bio_sealed`).
+pub const SCHEMA_VERSION: i64 = 73;
 
 /// The schema version that has the Reset server profiles permission.
 pub(super) const MANAGE_PROFILES_SINCE: i64 = 48;
@@ -372,6 +374,9 @@ pub(super) const VIEW_MEMBERS_VERSION: i64 = 68;
 /// The schema version whose init gives Change server profile to the stored @everyone
 /// permissions.
 pub(super) const CHANGE_PROFILE_VERSION: i64 = 70;
+/// The schema version that adds sealed descriptions of server profiles.
+#[cfg(test)]
+pub(super) const SERVER_BIOS_VERSION: i64 = 73;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 24] {

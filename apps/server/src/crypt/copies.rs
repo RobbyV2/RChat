@@ -1,5 +1,5 @@
 //! Copies of content kept beside messages: report text and notes, webhook delivery payloads,
-//! account bios and P2P backups. Each is sealed under the `content` data key in the instance
+//! account bios, the descriptions of server profiles and P2P backups. Each is sealed under the `content` data key in the instance
 //! scope `i`, bound to its table, the column of its record and its row.
 
 use std::collections::BTreeSet;
@@ -42,11 +42,22 @@ pub const BIOS: Column = Column {
     table: "users",
     column: "bio_sealed",
 };
+/// `member_profiles.bio_sealed`: the description of a server profile, by
+/// `<server>/<username>`.
+pub const SERVER_BIOS: Column = Column {
+    table: "member_profiles",
+    column: "bio_sealed",
+};
 /// `p2p_backups.data_sealed`: a backup version, by `<username>/<ik>/<version>`.
 pub const BACKUPS: Column = Column {
     table: "p2p_backups",
     column: "data_sealed",
 };
+
+/// The binding of the server profile of `username` in `server`.
+pub fn server_bio_binding(server: &str, username: &str) -> String {
+    format!("{server}/{username}")
+}
 
 /// The binding of a P2P backup version.
 pub fn backup_binding(username: &str, ik: &str, version: i64) -> String {
