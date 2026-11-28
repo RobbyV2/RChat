@@ -177,6 +177,109 @@ export const typeOf = (schema: Node, depth = 0): string => {
   return nullable ? union([core, 'null']) : core
 }
 
+// The decoder of a schema, as an expression over the combinators of `lib/schema.ts`.
+const decoderOf = (schema: Node, name = ''): string => {
+  if (typeof schema.$ref === 'string') {
+    return schema.$ref.startsWith(REF)
+      ? `ref(() => decode.${typeName(schema.$ref.slice(REF.length))})`
+      : 'anything'
+  }
+  if ('const' in schema) return `lit(${literal(schema.const)})`
+  const named = schema.type
+  const types = (Array.isArray(named) ? named : [named]).filter(t => typeof t === 'string')
+  const own = types.filter(t => t !== 'null')
+  const nullOption = [...nodes(schema.oneOf), ...nodes(schema.anyOf)].some(o => o.type === 'null')
+  const nullable = types.includes('null') || nullOption
+  const core = coreDecoder(schema, own, name)
+  return nullable ? `nullable(${core})` : core
+}
+
+const tagOf = (schema: Node): string | undefined => {
+  const at = resolved(schema)
+  const own = isNode(at.properties) && isNode(at.properties.type) ? at.properties.type : undefined
+  if (own && Array.isArray(own.enum) && own.enum.length === 1 && typeof own.enum[0] === 'string')
+    return own.enum[0]
+  for (const part of nodes(at.allOf)) {
+    const t = tagOf(part)
+    if (t !== undefined) return t
+  }
+  return undefined
+}
+
+const coreDecoder = (schema: Node, own: string[], name: string): string => {
+  const parts: string[] = nodes(schema.allOf).map(p => decoderOf(p))
+  const options = [...nodes(schema.oneOf), ...nodes(schema.anyOf)].filter(o => o.type !== 'null')
+  if (options.length) {
+    const tags = options.map(tagOf)
+    if (options.length > 1 && tags.every(t => t !== undefined))
+      parts.push(
+        `tagged('type', {\n${options.map((o, i) => `    ${key(tags[i] as string)}: ${decoderOf(o)},`).join('\n')}\n  })`
+      )
+    else
+      parts.push(
+        options.length === 1
+          ? decoderOf(options[0])
+          : `union(${options.map(o => decoderOf(o)).join(', ')})`
+      )
+  }
+  const shaped = isNode(schema.properties) || schema.additionalProperties !== undefined
+  if (own.length === 1 || (!own.length && (shaped || Array.isArray(schema.enum)))) {
+    const kind = own[0] ?? (shaped ? 'object' : 'string')
+    if (!(kind === 'object' && !shaped && parts.length)) parts.push(single_(schema, kind, name))
+  } else if (own.length > 1) parts.push('anything')
+  if (!parts.length) return 'anything'
+  return parts.length === 1 ? parts[0] : `merged(${parts.join(', ')})`
+}
+
+const single_ = (schema: Node, kind: string, name: string): string => {
+  if (Array.isArray(schema.enum)) {
+    const values = schema.enum.filter(v => typeof v === 'string')
+    return values.length === schema.enum.length
+      ? `choice(${values.map(literal).join(', ')})`
+      : 'anything'
+  }
+  switch (kind) {
+    case 'string':
+      return 'str()'
+    case 'integer':
+      return MASKS.has(name) ? 'mask' : 'int()'
+    case 'number':
+      return 'num()'
+    case 'boolean':
+      return 'bool'
+    case 'array': {
+      if (nodes(schema.prefixItems).length) return 'anything'
+      return `arr(${decoderOf(isNode(schema.items) ? schema.items : {})})`
+    }
+    case 'object':
+      return objectDecoder(schema)
+    default:
+      return 'anything'
+  }
+}
+
+const objectDecoder = (schema: Node): string => {
+  const props = isNode(schema.properties) ? schema.properties : {}
+  const required = new Set(Array.isArray(schema.required) ? schema.required : [])
+  const extra = schema.additionalProperties
+  const names = Object.keys(props)
+  if (!names.length) {
+    if (isNode(extra)) return `record(${decoderOf(extra)})`
+    return 'jsonObject'
+  }
+  const fields = names.map(n => {
+    const node = isNode(props[n]) ? (props[n] as Node) : {}
+    const inner = decoderOf(node, n)
+    const field = required.has(n)
+      ? inner
+      : received && admitsNull(node)
+        ? `orNull(${inner.startsWith('nullable(') ? inner.slice(9, -1) : inner})`
+        : `opt(${inner})`
+    return `${key(n)}: ${field}`
+  })
+  return `obj({ ${fields.join(', ')} })`
+}
+
 const plainObject = (schema: Node) =>
   schema.type === 'object' &&
   isNode(schema.properties) &&
@@ -236,6 +339,40 @@ export const sentSchemas = (doc: Json, schemas: Node): Set<string> => {
   return sent
 }
 
+// The combinators the decoders may use, as `lib/schema.ts` names them.
+const COMBINATORS = [
+  'anything',
+  'arr',
+  'bool',
+  'choice',
+  'int',
+  'jsonObject',
+  'lit',
+  'mask',
+  'merged',
+  'nullable',
+  'num',
+  'obj',
+  'opt',
+  'orNull',
+  'record',
+  'str',
+  'tagged',
+  'union',
+]
+
+const importsFor = (code: string) =>
+  `import {\n${COMBINATORS.filter(c => new RegExp(`\\b${c}\\b`).test(code))
+    .map(c => `  ${c},\n`)
+    .join('')}  lazy as ref,\n  type Schema,\n} from '../schema'\n`
+
+// Every schema's decoder: what a body or event of that shape reads as. A field the client only
+// receives that may be null reads as null when it is left out; a value of a newer server (a kind
+// this build has no name for) reads as \`unknown\` (see \`lib/schema.ts\`).
+const DECODE_HEAD = `// The decoder of every schema, by name.
+export const decode: { readonly [K in keyof Decoded]: Schema<Decoded[K]> } = {
+`
+
 const HEADER = `// Generated by scripts/gen_api.ts from assets/openapi.json. Do not edit: change the server's
 // document and run \`bun scripts/gen_api.ts\`.
 `
@@ -257,8 +394,18 @@ export const generate = (doc: Json): string => {
     const schema = schemas[name]
     return declaration(name, isNode(schema) ? schema : {}, sent.has(name))
   })
+  const decoders = names.map(name => {
+    const schema = schemas[name]
+    received = !sent.has(name)
+    try {
+      const id = typeName(name)
+      return `  ${id}: ref((): Schema<${id}> => ${decoderOf(isNode(schema) ? schema : {})} as Schema<${id}>),`
+    } finally {
+      received = false
+    }
+  })
   const extras = EXTENDED.map(id => `${id}Extra`).join(', ')
-  return `${HEADER}\nimport type { ${extras} } from './extend'\n\n${out.join('\n\n')}\n`
+  return `${HEADER}\n${importsFor(decoders.join('\n'))}import type { ${extras} } from './extend'\n\n${out.join('\n\n')}\n\n// Every schema by name.\nexport interface Decoded {\n${names.map(n => `  ${typeName(n)}: ${typeName(n)}`).join('\n')}\n}\n\n${DECODE_HEAD}${decoders.join('\n')}\n}\n`
 }
 
 if (import.meta.main) {

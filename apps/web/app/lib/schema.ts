@@ -205,6 +205,29 @@ export const nullable = <T>(inner: Schema<T>): Schema<T | null> =>
 
 export const lazy = <T>(get: () => Schema<T>): Schema<T> => new Schema(made, x => get()[run](x))
 
+// A field a server may leave out where it means null: a missing one reads as null.
+export const orNull = <T>(inner: Schema<T>): Schema<T | null> =>
+  new Schema(made, x => (x === undefined || x === null ? good(null) : inner[run](x)))
+
+// A permission mask: a whole number on the wire, a `bigint` once read (`readJson` already turns
+// the known mask fields into `bigint`s).
+export const mask: Schema<bigint> = new Schema(made, x => {
+  if (typeof x === 'bigint') return good(x)
+  return typeof x === 'number' && Number.isSafeInteger(x) ? good(BigInt(x)) : bad('a whole number')
+})
+
+// Every shape read from one value, their fields together (a shape with the fields of others).
+export const merged = <T>(...shapes: readonly Schema<object>[]): Schema<T> =>
+  new Schema(made, x => {
+    const out: Record<string, unknown> = {}
+    for (const shape of shapes) {
+      const r = shape[run](x)
+      if (!r.ok) return r
+      Object.assign(out, r.value)
+    }
+    return good(out as T)
+  })
+
 type Variants = Record<string, Schema<object>>
 
 export type TaggedOf<K extends string, V extends Variants> = {
