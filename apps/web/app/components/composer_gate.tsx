@@ -108,9 +108,9 @@ function JoinBar({ name, compose }: { name: string; compose: Compose }) {
           gap="sm"
           wrap
         >
-          <Row as="p" gap="sm" place="min-w-0 flex-1">
+          <Row as="p" gap="sm" place="min-w-48 flex-1">
             <Eye size={16} className="shrink-0 text-primary" />
-            <span className="min-w-48 text-sm text-on-surface-variant">
+            <span className="min-w-0 text-sm text-on-surface-variant">
               You&apos;re previewing{' '}
               <Name of={serverCalled(name)} look="font-medium text-on-surface" />
             </span>
