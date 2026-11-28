@@ -343,7 +343,7 @@ export default function ThreadPanel() {
         data-flash={flash === m.id ? '' : undefined}
         data-mentioned={mentioned ? '' : undefined}
         {...longPress(rowMenu(m))}
-        className={`group relative px-4 ${groupPadCls(first, last)} ${mentioned ? mentionRowCls : 'hover:bg-surface-container'}`}
+        className={`group relative ${groupPadCls(first, last)} ${mentioned ? mentionRowCls : 'hover:bg-surface-container'}`}
       >
         {quote && (
           <ReplyPreview

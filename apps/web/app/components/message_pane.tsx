@@ -114,7 +114,7 @@ import { RoleIcon } from './role_icon'
 import { MessageTime, ShortTime } from './timestamp'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 import { BlockedComposer, BlockedList } from './blocking'
-import { Row, Stack, Surface } from './layout'
+import { Row, Stack, Surface, Inset } from './layout'
 import {
   BulkJobBar,
   SelectButton,
@@ -123,6 +123,7 @@ import {
   openSelectionMenu,
   useSelectionKeys,
 } from './selection'
+import { Button, IconButton } from './controls'
 
 export { groupPadCls } from './grouped_row'
 
@@ -183,36 +184,62 @@ function CallLogRow({ message }: { message: Message }) {
       live={
         tone === 'active' &&
         call.answered_at !== null && (
-          <span className="flex items-center gap-1 rounded-full bg-status-green/15 px-2 py-0.5 text-xs font-medium text-status-green tabular-nums">
+          <Surface
+            as="span"
+            row
+            pad="sm"
+            inset="chip"
+            gap="2xs"
+            tone="plain"
+            radius="full"
+            text="xs"
+            look="bg-status-green/15 font-medium text-status-green tabular-nums"
+          >
             <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-status-green" />
             <CallDuration from={call.answered_at} />
-          </span>
+          </Surface>
         )
       }
     >
       {tone === 'ringing' && incoming && (
         <Row as="span" gap="xs">
-          <button
+          <Surface
             title="Accept"
             aria-label="Accept"
             onClick={() => {
               if (message.dm_id !== null) void openDm(message.dm_id)
               void acceptCall()
             }}
-            className="flex items-center gap-1 rounded-full bg-status-green px-2.5 py-1 text-xs font-medium text-surface outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary"
+            as="button"
+            row
+            pad="md"
+            inset="chip"
+            gap="2xs"
+            tone="plain"
+            radius="full"
+            text="xs"
+            look="bg-status-green font-medium text-surface outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11"
           >
             <Phone size={12} />
             Accept
-          </button>
-          <button
+          </Surface>
+          <Surface
             title="Decline"
             aria-label="Decline"
             onClick={declineCall}
-            className="flex items-center gap-1 rounded-full bg-danger px-2.5 py-1 text-xs font-medium text-on-danger outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary"
+            as="button"
+            row
+            pad="md"
+            inset="chip"
+            gap="2xs"
+            tone="plain"
+            radius="full"
+            text="xs"
+            look="bg-danger font-medium text-on-danger outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11"
           >
             <PhoneOff size={12} />
             Decline
-          </button>
+          </Surface>
         </Row>
       )}
     </CallLogLine>
@@ -251,7 +278,7 @@ export function CallLogLine({
       : 'text-on-surface-variant'
   const direction = `${incoming ? 'Incoming' : 'Outgoing'} ${info.label.toLowerCase()}`
   return (
-    <div data-call-row className="flex items-center gap-3 px-4 py-1 hover:bg-surface-container-low">
+    <Inset data-call-row row pad="lg" inset="line" gap="md" look="hover:bg-surface-container-low">
       <span
         role="img"
         title={direction}
@@ -279,7 +306,7 @@ export function CallLogLine({
         <MessageTime ts={time} className="text-xs opacity-70" />
         {children}
       </Row>
-    </div>
+    </Inset>
   )
 }
 
@@ -316,7 +343,7 @@ export function AuthorRow({
   const shown = useShown(author, server)
   return (
     <Row gap="md" align="stretch">
-      <div className="shrink-0 pt-0.5">
+      <div className="shrink-0">
         <span
           {...profileTrigger(store, author, server, false)}
           title="View profile"
@@ -385,15 +412,23 @@ const gutterStatusCls =
 export function DmPeer({ other }: { other: UserRef }) {
   const store = useStoreApi()
   return (
-    <span
+    <Surface
       {...profileTrigger(store, other, null)}
-      className="-ml-1.5 flex min-w-0 cursor-pointer items-center gap-2 rounded-full py-1 pr-2.5 pl-1.5 outline-offset-2 hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary"
+      as="span"
+      row
+      pad="sm"
+      inset="chip"
+      gap="sm"
+      tone="plain"
+      radius="full"
+      look="cursor-pointer outline-offset-2 hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary"
+      place="min-w-0"
     >
       <span className={`flex shrink-0 ${showsUsername(other) ? 'max-sm:hidden' : ''}`.trim()}>
         <UserAvatar person={asAccount(other, 'dm')} size={24} />
       </span>
       <Name of={personName(asAccount(other, 'dm'))} withUsername look="truncate" />
-    </span>
+    </Surface>
   )
 }
 
@@ -595,14 +630,23 @@ const MessageRow = memo(function MessageRow({
       )}
       <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
       {m.reply_count > 0 && (
-        <button
+        <Surface
           title="Open thread"
           onClick={() => void openThread(m)}
-          className="mt-1 flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1 text-xs font-medium text-primary hover:bg-surface-container-high"
+          as="button"
+          row
+          pad="md"
+          inset="chip"
+          gap="xs"
+          tone="base"
+          radius="full"
+          text="xs"
+          fit
+          look="msg-part font-medium text-primary hover:bg-surface-container-high"
         >
           <MessageSquareText size={12} />
           {m.reply_count} {m.reply_count === 1 ? 'reply' : 'replies'}
-        </button>
+        </Surface>
       )}
     </>
   )
@@ -613,7 +657,7 @@ const MessageRow = memo(function MessageRow({
         {...longPress((x, y) => onMenu(m, x, y))}
         data-flash={flash ? '' : undefined}
         data-mentioned={mentioned ? '' : undefined}
-        className={`group relative px-4 ${groupPadCls(first, last)} ${mentioned ? mentionRowCls : 'hover:bg-surface-container-low'}`}
+        className={`group relative ${groupPadCls(first, last)} ${mentioned ? mentionRowCls : 'hover:bg-surface-container-low'}`}
       >
         {m.reply_to && (
           <ReplyPreview quote={m.reply_to} avatar={36} color={quoteColor} onJump={onJump} />
@@ -687,20 +731,20 @@ export function OutgoingRow({
       )}
       {o.pending && <span className="text-xs text-on-surface-variant">{o.pending.file.name}</span>}
       {failed && (
-        <div className="mt-1 flex items-center gap-3 text-xs font-medium">
+        <Row gap="md" text="xs" look="msg-part font-medium">
           <button onClick={onRetry} className="text-primary">
             Retry
           </button>
           <button onClick={onCancel} className="text-error">
             Delete
           </button>
-        </div>
+        </Row>
       )}
     </>
   )
   return (
     <div
-      className={`group relative px-4 ${groupPadCls(place.first, place.last)} ${failed ? '' : 'opacity-50'}`}
+      className={`group relative ${groupPadCls(place.first, place.last)} ${failed ? '' : 'opacity-50'}`}
     >
       {o.msg.reply_to && <ReplyPreview quote={o.msg.reply_to} avatar={size} onJump={onJump} />}
       {place.first ? (
@@ -816,19 +860,19 @@ export function HeaderMore({ scope, search }: { scope: string | null; search: bo
   const has = useHasMenu(target)
   if (!has) return null
   return (
-    <button
-      title="More"
-      aria-label="More"
+    <IconButton
+      icon={MoreVertical}
+      label="More"
       aria-haspopup="menu"
       aria-expanded={open}
       onClick={e => {
         const r = e.currentTarget.getBoundingClientRect()
         openActionMenu(r.right, r.bottom + 4, target, { owner: HEADER_MORE }, acct)
       }}
-      className="rounded-full p-1.5 hover:bg-surface-container-high @sm:hidden"
-    >
-      <MoreVertical size={20} />
-    </button>
+      size="lg"
+      tone="inherit"
+      place="@sm:hidden"
+    />
   )
 }
 
@@ -846,13 +890,9 @@ function StaffShut({ channel }: { channel: number }) {
         <span className="text-center text-lg font-semibold text-on-surface-variant">
           Confirm to open this channel
         </span>
-        <button
-          type="button"
-          onClick={() => ask(channel)}
-          className="rounded-full bg-primary px-4 py-2 text-sm font-medium text-on-primary hover:opacity-90"
-        >
+        <Button onClick={() => ask(channel)} variant="filled" size="md">
           Open channel
-        </button>
+        </Button>
       </Stack>
     </Surface>
   )
@@ -1110,25 +1150,37 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         if (file) uploadFile(viewKey(view), file)
       }}
     >
-      <header className="@container flex h-14 shrink-0 items-center gap-3 border-b border-outline-variant px-4 max-md:has-[[data-view-actor]]:gap-1 max-md:has-[[data-view-actor]]:px-2">
-        <button
-          title={menuPings ? `Menu, ${pingLabel(menuPings)}` : 'Menu'}
-          aria-label="Menu"
+      <Inset
+        as="header"
+        row
+        pad="lg"
+        inset="sides"
+        gap="md"
+        border="bottom"
+        look="@container h-14"
+        place="shrink-0"
+      >
+        <IconButton
+          icon={Menu}
+          label="Menu"
+          tooltip={menuPings ? `Menu, ${pingLabel(menuPings)}` : 'Menu'}
           onClick={onMenu}
-          className="relative rounded-full p-1.5 hover:bg-surface-container-high md:hidden"
+          size="lg"
+          tone="inherit"
+          place="relative md:hidden"
         >
-          <Menu size={20} />
           <PingBadge
             count={menuPings}
             className="absolute -top-1 -right-1.5 border-2 border-surface"
           />
-        </button>
+        </IconButton>
         {view?.kind === 'channel' && (
-          <div className="flex min-w-0 flex-1 flex-col md:flex-row md:items-center md:gap-3">
-            <span
-              className={`flex max-w-full min-w-0 shrink-0 items-center gap-1.5 font-medium ${
-                !isVoice && channel?.topic?.trim() ? 'md:max-w-1/2' : ''
-              }`}
+          <Stack gap="none" rowFrom="md" place="min-w-0 flex-1">
+            <Row
+              as="span"
+              gap="xs"
+              look={`font-medium ${!isVoice && channel?.topic?.trim() ? 'md:max-w-1/2' : ''}`}
+              place="max-w-full min-w-0 shrink-0"
             >
               {isVoice ? (
                 <Volume2 size={18} className="shrink-0 text-on-surface-variant" />
@@ -1158,26 +1210,41 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                   <Clock size={16} />
                 </span>
               )}
-            </span>
+            </Row>
             {channel && !isVoice && (
-              <span className="flex min-w-0 md:flex-1 md:border-l md:border-outline-variant md:pl-3">
+              <Inset
+                as="span"
+                row
+                pad="md"
+                inset="sides"
+                look="md:border-l md:border-outline-variant"
+                place="min-w-0 md:flex-1 max-md:hidden"
+              >
                 <ChannelTopic channel={channel} />
-              </span>
+              </Inset>
             )}
-          </div>
+          </Stack>
         )}
         {dm && (
-          <span className="flex min-w-20 items-center gap-2 font-medium max-md:[&:has(+[data-view-actor])]:min-w-0">
+          <Row as="span" gap="sm" look="font-medium" place="min-w-0">
             <DmPeer other={dm.other} />
             {dm.is_self && (
-              <span className="shrink-0 rounded-full bg-secondary-container px-2 py-0.5 text-xs text-on-secondary-container">
+              <Surface
+                as="span"
+                pad="sm"
+                inset="chip"
+                tone="secondary"
+                radius="full"
+                text="xs"
+                place="shrink-0"
+              >
                 yourself
-              </span>
+              </Surface>
             )}
-          </span>
+          </Row>
         )}
         <ViewActorTag header />
-        <div className="ml-auto flex shrink-0 items-center gap-2 @max-sm:gap-1">
+        <Row gap="2xs" place="ml-auto shrink-0">
           {dm && !dm.is_self && !guest && !otherBlocked && <CallButtons dm={dm} />}
           <StatusClock timeCls="@max-lg:hidden" />
           {scope && <SelectButton scope={scope} className="@max-sm:hidden" />}
@@ -1185,26 +1252,28 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           {scope && <ThreadsButton className="@max-sm:hidden" />}
           {!guest && <InboxButton />}
           {view?.kind === 'channel' && !isVoice && (
-            <button
-              title="Search"
+            <IconButton
+              icon={Search}
+              label="Search"
               onClick={() => openSearch()}
-              className="rounded-full p-1.5 hover:bg-surface-container-high @max-sm:hidden"
-            >
-              <Search size={20} />
-            </button>
+              size="lg"
+              tone="inherit"
+              place="@max-sm:hidden"
+            />
           )}
           <HeaderMore scope={scope} search={view?.kind === 'channel' && !isVoice} />
           {view?.kind === 'channel' && (
-            <button
-              title="Members"
+            <IconButton
+              icon={Users}
+              label="Members"
               onClick={onMembers}
-              className="rounded-full p-1.5 hover:bg-surface-container-high lg:hidden"
-            >
-              <Users size={20} />
-            </button>
+              size="lg"
+              tone="inherit"
+              place="lg:hidden"
+            />
           )}
-        </div>
-      </header>
+        </Row>
+      </Inset>
       {shut && view?.kind === 'channel' ? (
         <StaffShut channel={view.channelId} />
       ) : isVoice && view?.kind === 'channel' ? (

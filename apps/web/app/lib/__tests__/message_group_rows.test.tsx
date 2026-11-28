@@ -69,10 +69,10 @@ describe('a grouped instance row', () => {
 })
 
 test('rows of one group have no gap between them', () => {
-  expect(groupPadCls(true, true)).toBe('pt-1.5 pb-1.5')
-  expect(groupPadCls(true, false)).toBe('pt-1.5 pb-0.5')
-  expect(groupPadCls(false, false)).toBe('pt-0.5 pb-0.5')
-  expect(groupPadCls(false, true)).toBe('pt-0.5 pb-1.5')
+  expect(groupPadCls(true, true)).toBe('px-(--space-lg) pt-(--space-xs) pb-(--space-xs)')
+  expect(groupPadCls(true, false)).toBe('px-(--space-lg) pt-(--space-xs) pb-(--space-3xs)')
+  expect(groupPadCls(false, false)).toBe('px-(--space-lg) pt-(--space-3xs) pb-(--space-3xs)')
+  expect(groupPadCls(false, true)).toBe('px-(--space-lg) pt-(--space-3xs) pb-(--space-xs)')
 })
 
 const barCls = (html: string) =>
@@ -150,7 +150,7 @@ describe('a P2P row', () => {
     const html = p2pRow(true, false)
     expect(srName(html) === null).toBe(true)
     expect(html).toContain('Bobby</span>')
-    expect(html).toContain('pt-1.5 pb-0.5')
+    expect(html).toContain('px-(--space-lg) pt-(--space-xs) pb-(--space-3xs)')
   })
 
   test('a later one shows the time in the gutter and names the sender for screen readers', () => {
@@ -158,7 +158,7 @@ describe('a P2P row', () => {
     expect(srName(html)).toBe('Bobby')
     expect(html).toContain('data-grouped')
     expect(html).toContain(`>${formatStamp(ms, 't', ms)}</time>`)
-    expect(html).toContain('pt-0.5 pb-1.5')
+    expect(html).toContain('px-(--space-lg) pt-(--space-3xs) pb-(--space-xs)')
     expect(html).toContain('hello there')
   })
 
@@ -235,7 +235,7 @@ describe('a send on its way to the server', () => {
     const html = outgoingRow('sending', false)
     expect(html).toContain('data-grouped')
     expect(html).toContain('opacity-50')
-    expect(html).toContain('pt-0.5 pb-1.5')
+    expect(html).toContain('px-(--space-lg) pt-(--space-3xs) pb-(--space-xs)')
     expect(srName(html)).toBe('Ally(alice)')
     expect(html).toContain('<span class="sr-only">Sending</span>')
     expect(html.includes('View profile')).toBe(false)
@@ -247,7 +247,7 @@ describe('a send on its way to the server', () => {
     expect(html.includes('data-grouped')).toBe(false)
     expect(html).toContain('View profile')
     expect(html).toContain('>Queued</span>')
-    expect(html).toContain('pt-1.5 pb-1.5')
+    expect(html).toContain('px-(--space-lg) pt-(--space-xs) pb-(--space-xs)')
   })
 
   test('a failed one shows its header with Retry and Delete, not dimmed', () => {

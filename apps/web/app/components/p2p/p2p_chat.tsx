@@ -345,7 +345,7 @@ export const P2pRow = memo(function P2pRow({
         {...longPress((x, y) => onMenu(p, m, x, y))}
         data-flash={flash ? '' : undefined}
         data-mentioned={mentioned ? '' : undefined}
-        className={`group relative px-4 ${groupPadCls(first, last)} ${mentioned ? mentionRowCls : 'hover:bg-surface-container-low'}`}
+        className={`group relative ${groupPadCls(first, last)} ${mentioned ? mentionRowCls : 'hover:bg-surface-container-low'}`}
       >
         {m.reply_to && <ReplyPreview quote={m.reply_to} avatar={36} local onJump={onJump} />}
         {first ? (

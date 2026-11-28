@@ -47,7 +47,7 @@ import { Button, IconButton, LinkButton, Tab } from './controls'
 import { Dialog, fieldCls, FieldError, Masked, Sentinel } from './ui'
 import { ShownAvatar, ShownName, useViewServer } from './shown_user'
 import { MessageTime } from './timestamp'
-import { Row, Stack } from './layout'
+import { Row, Stack, Surface } from './layout'
 import { time } from '../lib/platform/time'
 
 const nowSec = () => Math.floor(time().now() / 1000)
@@ -122,7 +122,7 @@ function ChoiceList({
   const winner = poll.closed ? (r?.winner ?? null) : null
   const ranked = poll.kind === 'ranked'
   return (
-    <ul className="mt-2 flex flex-col gap-1.5">
+    <Stack as="ul" gap="xs">
       {poll.options.map(o => {
         const count = countOf(poll, o.id)
         const share = r ? percent(count, total) : 0
@@ -195,7 +195,7 @@ function ChoiceList({
           </Row>
         )
       })}
-    </ul>
+    </Stack>
   )
 }
 
@@ -210,7 +210,7 @@ function RankOrder({
 }) {
   if (order.length < 2) return null
   return (
-    <ol className="mt-2 flex flex-col gap-1 rounded-xl bg-surface-container-high p-2 text-sm">
+    <Surface as="ol" pad="sm" gap="2xs" tone="high" radius="lg" text="sm">
       {order.map((id, i) => {
         const o = poll.options.find(x => x.id === id)
         if (!o) return null
@@ -241,14 +241,14 @@ function RankOrder({
           </Row>
         )
       })}
-    </ol>
+    </Surface>
   )
 }
 
 function Rounds({ poll }: { poll: Poll }) {
   const rounds = runoffRows(poll)
   return (
-    <div data-poll-rounds className="mt-2 flex flex-col gap-3">
+    <Stack data-poll-rounds gap="md">
       {rounds.map(round => (
         <Stack key={round.n} gap="2xs">
           <p className="text-xs font-medium text-on-surface-variant">
@@ -258,11 +258,20 @@ function Rounds({ poll }: { poll: Poll }) {
           <Stack as="ul" gap="2xs">
             {round.rows.map(row =>
               row.option ? (
-                <li
+                <Surface
                   key={row.option.id}
-                  className={`relative flex items-center gap-2 overflow-hidden rounded-lg px-2 py-1 text-xs ${
+                  as="li"
+                  row
+                  pad="sm"
+                  inset="chip"
+                  gap="sm"
+                  tone="plain"
+                  radius="md"
+                  text="xs"
+                  look={
                     round.eliminated === row.option.id ? 'text-on-surface-variant line-through' : ''
-                  }`}
+                  }
+                  place="relative overflow-hidden"
                 >
                   <Bar
                     share={row.share}
@@ -275,13 +284,13 @@ function Rounds({ poll }: { poll: Poll }) {
                   <span className="relative shrink-0 tabular-nums">
                     {row.count} · {row.share}%
                   </span>
-                </li>
+                </Surface>
               ) : null
             )}
           </Stack>
         </Stack>
       ))}
-    </div>
+    </Stack>
   )
 }
 
@@ -291,7 +300,7 @@ function RunoffSummary({ poll, closed }: { poll: Poll; closed: boolean }) {
   if (!r || !winner) return null
   const n = r.rounds.length
   return (
-    <p className="mt-2 flex items-center gap-1.5 text-xs text-on-surface">
+    <Row as="p" gap="xs" text="xs" ink="strong">
       <Trophy size={12} className="shrink-0 text-primary" />
       <span className="min-w-0 break-words">
         <span className="font-medium">
@@ -299,7 +308,7 @@ function RunoffSummary({ poll, closed }: { poll: Poll; closed: boolean }) {
         </span>{' '}
         {closed ? 'won' : 'leads'} after {n} {n === 1 ? 'round' : 'rounds'}
       </span>
-    </p>
+    </Row>
   )
 }
 
@@ -317,33 +326,36 @@ function Rating({
   const top = Math.max(1, ...(r?.distribution ?? [0]))
   const scores = Array.from({ length: scale }, (_, i) => i + 1)
   return (
-    <div className="mt-2">
+    <Stack gap="md">
       {onPick && (
         <Row role="radiogroup" aria-label="Score" gap="xs" align="stretch" wrap>
           {scores.map(v => {
             const on = picked[0] === v
             return (
-              <button
+              <Surface
                 key={v}
                 type="button"
                 role="radio"
                 aria-checked={on}
                 data-poll-score={v}
                 onClick={() => onPick(v)}
-                className={`min-w-9 rounded-full border px-2.5 py-1.5 text-sm font-medium tabular-nums ${
-                  on
-                    ? 'border-primary bg-primary text-on-primary'
-                    : 'border-outline-variant hover:border-outline'
-                }`}
+                as="button"
+                pad="md"
+                inset="chip"
+                tone="plain"
+                radius="full"
+                align="center"
+                text="sm"
+                look={`min-w-9 border font-medium tabular-nums ${on ? 'border-primary bg-primary text-on-primary' : 'border-outline-variant hover:border-outline'}`}
               >
                 {v}
-              </button>
+              </Surface>
             )
           })}
         </Row>
       )}
       {r && (
-        <div className="mt-3 flex items-end gap-3">
+        <Row gap="md" align="end">
           <div className="shrink-0">
             <p className="text-2xl font-medium tabular-nums" data-poll-average>
               {r.average === null ? '-' : r.average.toFixed(1)}
@@ -364,9 +376,9 @@ function Rating({
               </Stack>
             ))}
           </Row>
-        </div>
+        </Row>
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -387,7 +399,7 @@ function AddOption({ id, onDone }: { id: number; onDone: () => void }) {
     else onDone()
   }
   return (
-    <div className="mt-2">
+    <Stack gap="md">
       <Row gap="xs">
         <button
           ref={emojiRef}
@@ -413,7 +425,7 @@ function AddOption({ id, onDone }: { id: number; onDone: () => void }) {
           }}
           placeholder="New option"
           aria-label="New option"
-          className={`${fieldCls} py-1.5`}
+          className={fieldCls}
         />
         <Button onClick={() => void submit()} disabled={!text.trim() || busy}>
           Add
@@ -431,7 +443,7 @@ function AddOption({ id, onDone }: { id: number; onDone: () => void }) {
           onClose={() => setPicker(false)}
         />
       )}
-    </div>
+    </Stack>
   )
 }
 
@@ -445,11 +457,11 @@ export function PollVotersDialog() {
 export function VoterRow({ v }: { v: PollVoter }) {
   const server = useViewServer()
   return (
-    <li className="flex items-center gap-3 py-1.5">
+    <Row as="li" gap="md">
       <ShownAvatar user={v.user} server={server} size={28} />
       <ShownName user={v.user} server={server} look="min-w-0 flex-1 truncate text-sm" />
       <MessageTime ts={v.voted_at} className="shrink-0 text-xs text-on-surface-variant" />
-    </li>
+    </Row>
   )
 }
 
@@ -597,9 +609,14 @@ export function PollCard({ m, canVote = false }: { m: Message; canVote?: boolean
     (poll.allow_add || m.author.username === me)
   return (
     <OwnPoll.Provider value={ownPoll(m, me)}>
-      <div
+      <Surface
         data-poll={m.id}
-        className="mt-1 max-w-120 min-w-0 rounded-2xl border border-outline-variant bg-surface-container p-3"
+        pad="md"
+        gap="sm"
+        tone="base"
+        border
+        look="msg-part"
+        place="max-w-120 min-w-0"
       >
         <Row gap="sm" wrap lineGap="3xs" text="xs" ink="muted">
           <Row as="span" gap="2xs" ink="primary" look="font-medium">
@@ -617,7 +634,7 @@ export function PollCard({ m, canVote = false }: { m: Message; canVote?: boolean
             {closed ? 'Closed' : static_ ? null : (left ?? 'Open')}
           </span>
         </Row>
-        <p className="mt-1.5 text-base font-medium break-words text-on-surface">
+        <p className="text-base font-medium break-words text-on-surface">
           <PollText text={poll.question} />
         </p>
         {live && <p className="text-xs text-on-surface-variant">{hint}</p>}
@@ -645,15 +662,15 @@ export function PollCard({ m, canVote = false }: { m: Message; canVote?: boolean
           />
         )}
         {poll.results === null && (
-          <p className="mt-2 flex items-center gap-1.5 text-xs text-on-surface-variant">
+          <Row as="p" gap="xs" text="xs" ink="muted">
             <EyeOff size={12} />
             {hiddenHint(poll)}
-          </p>
+          </Row>
         )}
         {poll.kind === 'ranked' && poll.results && poll.results.rounds.length > 0 && (
           <>
             <RunoffSummary poll={poll} closed={closed} />
-            <span className="mt-2 block text-xs">
+            <span className="block text-xs">
               <LinkButton aria-expanded={rounds} onClick={() => setRounds(r => !r)}>
                 {rounds ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                 {rounds ? 'Hide rounds' : `Show ${poll.results.rounds.length} rounds`}
@@ -663,7 +680,7 @@ export function PollCard({ m, canVote = false }: { m: Message; canVote?: boolean
           </>
         )}
         {adding && <AddOption id={m.id} onDone={() => setAdding(false)} />}
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-on-surface-variant">
+        <Row gap="md" lineGap="2xs" wrap text="xs" ink="muted">
           <span data-poll-voters-count className="tabular-nums">
             {votersLabel(poll.voters)}
           </span>
@@ -709,8 +726,8 @@ export function PollCard({ m, canVote = false }: { m: Message; canVote?: boolean
               {voted ? 'Update vote' : 'Vote'}
             </Button>
           )}
-        </div>
-      </div>
+        </Row>
+      </Surface>
     </OwnPoll.Provider>
   )
 }
