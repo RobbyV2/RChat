@@ -1,5 +1,6 @@
 'use client'
-import { Button, IconButton } from '../controls'
+import { Button } from '../controls'
+import { CallSplit } from '../call_buttons'
 import { Name } from '../name'
 import { p2pName } from '../../lib/names'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -7,12 +8,12 @@ import { withP2pIdentity } from '../../lib/client/p2p_react'
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useState } from 'react'
-import { ChevronDown, Phone, PhoneOff, Video } from 'lucide-react'
+import { Phone, PhoneOff, Video } from 'lucide-react'
 import { useAccount } from '../../lib/client/react'
 import { openActionMenu } from '../../lib/actions/menu'
 import { useStore } from '../../lib/store'
 import { CALL_ELSEWHERE } from '../../lib/p2p/app'
-import { Row, Surface, Inset } from '../layout'
+import { Row, Surface } from '../layout'
 
 // Call and Video for a P2P contact. A call with a contact is always direct; the chevron offers
 // a relay of the user's own for this call only, as in instance DMs.
@@ -24,9 +25,6 @@ function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: st
   const [shown, setShown] = useState<object | null>(null)
   const open = useStore(s => shown !== null && s.contextMenu === shown)
   const kind = video ? 'Video call' : 'Call'
-  const Icon = video ? Video : Phone
-  const off = why !== null
-  const title = why ?? `${kind}, direct (P2P)`
   const menu = (x: number, y: number) => {
     openActionMenu(
       x,
@@ -47,42 +45,15 @@ function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: st
     setShown(account.store.getState().contextMenu)
   }
   return (
-    <div
-      data-call-split={video ? 'video' : 'voice'}
-      className={`flex items-center rounded-full ${off ? 'opacity-40' : ''}`}
-    >
-      <IconButton
-        icon={Icon}
-        label={title}
-        tone="inherit"
-        size="lg"
-        disabled={off}
-        onClick={() => void p2pCall.start(peer, video)}
-      >
-        <Inset
-          aria-hidden
-          as="span"
-          pad="3xs"
-          inset="sides"
-          look="rounded bg-tertiary-container text-3xs leading-tight font-bold text-on-tertiary-container"
-          place="absolute -bottom-0.5 left-3"
-        >
-          P2P
-        </Inset>
-      </IconButton>
-      <IconButton
-        icon={ChevronDown}
-        label={`${kind} options`}
-        size="sm"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        disabled={off}
-        onClick={e => {
-          const r = e.currentTarget.getBoundingClientRect()
-          menu(r.left - 24, r.bottom + 4)
-        }}
-      />
-    </div>
+    <CallSplit
+      video={video}
+      title={why ?? `${kind}, direct (P2P)`}
+      p2p
+      off={why !== null}
+      open={open}
+      onStart={() => void p2pCall.start(peer, video)}
+      onMenu={menu}
+    />
   )
 }
 

@@ -6,11 +6,12 @@ import { ChevronDown, Phone, Video } from 'lucide-react'
 import { useAccount } from '../lib/client/react'
 import { openActionMenu } from '../lib/actions/menu'
 import { p2pCallOk } from '../lib/actions/voice'
-import { ROUTE_LABEL, routeFor, type CallRoute } from '../lib/call_choice'
+import { ROUTE_LABEL, routeFor } from '../lib/call_choice'
 import { fmtDuration } from '../lib/voice_layout'
 import { useStore } from '../lib/store'
 import type { DmSummary } from '../lib/types'
 import { Row, Inset } from './layout'
+import { longPress } from './context_menu'
 import { time } from '../lib/platform/time'
 
 export function DirectBadge({ label = 'Direct' }: { label?: string }) {
@@ -78,53 +79,42 @@ export function CallType({
   )
 }
 
-function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
-  const chosen = useStore(s => s.callRoute)
-  const busy = useStore(s => !s.canStartCall(dm.id))
-  const startCall = useStore(s => s.startCall)
-  const startP2pCall = useStore(s => s.startP2pCall)
-  const p2pOk = useStore(s => p2pCallOk(s, dm))
-  const account = useAccount()
-  const [shown, setShown] = useState<object | null>(null)
-  const open = useStore(s => shown !== null && s.contextMenu === shown)
-  const route = routeFor(chosen, p2pOk)
+// One call button with a chevron beside it that offers how it connects (`onMenu`, with the place
+// to show it). A right-click or a long press on the button offers the same; a touch screen shows
+// no chevron.
+export function CallSplit({
+  video,
+  title,
+  p2p,
+  off,
+  open,
+  onStart,
+  onMenu,
+}: {
+  video: boolean
+  title: string
+  p2p: boolean
+  off: boolean
+  open: boolean
+  onStart: () => void
+  onMenu: (x: number, y: number) => void
+}) {
   const kind = video ? 'Video call' : 'Call'
-  const Icon = video ? Video : Phone
-  const start = (r: CallRoute) => {
-    if (r === 'p2p') void startP2pCall(dm.id, video)
-    else void startCall(dm.id, video)
-  }
-  const title = route === 'p2p' ? `${kind}, direct (P2P)` : kind
-  const menu = (x: number, y: number) => {
-    openActionMenu(
-      x,
-      y,
-      { kind: 'call', dm, video },
-      {
-        header: (
-          <span className="text-xs font-medium text-on-surface-variant">
-            {video ? 'Start a video call' : 'Start a call'}
-          </span>
-        ),
-      },
-      account
-    )
-    setShown(account.store.getState().contextMenu)
-  }
   return (
     <div
       data-call-split={video ? 'video' : 'voice'}
-      className={`flex items-center rounded-full ${busy ? 'opacity-40' : ''}`}
+      className={`flex items-center rounded-full ${off ? 'opacity-40' : ''}`}
     >
       <IconButton
-        icon={Icon}
+        icon={video ? Video : Phone}
         label={title}
         tone="inherit"
         size="lg"
-        disabled={busy}
-        onClick={() => start(route)}
+        disabled={off}
+        onClick={onStart}
+        {...longPress(onMenu)}
       >
-        {route === 'p2p' && (
+        {p2p && (
           <Inset
             aria-hidden
             as="span"
@@ -143,13 +133,57 @@ function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
         size="sm"
         aria-haspopup="menu"
         aria-expanded={open}
-        disabled={busy}
+        disabled={off}
         onClick={e => {
           const r = e.currentTarget.getBoundingClientRect()
-          menu(r.left - 24, r.bottom + 4)
+          onMenu(r.left - 24, r.bottom + 4)
         }}
+        place="pointer-coarse:hidden"
       />
     </div>
+  )
+}
+
+function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
+  const chosen = useStore(s => s.callRoute)
+  const busy = useStore(s => !s.canStartCall(dm.id))
+  const startCall = useStore(s => s.startCall)
+  const startP2pCall = useStore(s => s.startP2pCall)
+  const p2pOk = useStore(s => p2pCallOk(s, dm))
+  const account = useAccount()
+  const [shown, setShown] = useState<object | null>(null)
+  const open = useStore(s => shown !== null && s.contextMenu === shown)
+  const route = routeFor(chosen, p2pOk)
+  const kind = video ? 'Video call' : 'Call'
+  const menu = (x: number, y: number) => {
+    openActionMenu(
+      x,
+      y,
+      { kind: 'call', dm, video },
+      {
+        header: (
+          <span className="text-xs font-medium text-on-surface-variant">
+            {video ? 'Start a video call' : 'Start a call'}
+          </span>
+        ),
+      },
+      account
+    )
+    setShown(account.store.getState().contextMenu)
+  }
+  return (
+    <CallSplit
+      video={video}
+      title={route === 'p2p' ? `${kind}, direct (P2P)` : kind}
+      p2p={route === 'p2p'}
+      off={busy}
+      open={open}
+      onStart={() => {
+        if (route === 'p2p') void startP2pCall(dm.id, video)
+        else void startCall(dm.id, video)
+      }}
+      onMenu={menu}
+    />
   )
 }
 
