@@ -203,7 +203,7 @@ async fn a_replaced_bus_key_stops_sealing_and_opens_until_it_is_destroyed() {
         assert!(late.text(Stream::Jobs, "", old.clone()).await.is_err());
         let missed = late.misses.lock().expect("misses").get(&gone).copied();
         assert!(missed.is_some());
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        crate::api::test_util::skip(Duration::from_millis(20)).await;
         assert!(late.text(Stream::Jobs, "", old.clone()).await.is_err());
         assert_eq!(
             late.misses.lock().expect("misses").get(&gone).copied(),

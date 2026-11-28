@@ -5930,7 +5930,7 @@ mod tests {
             .await
             .expect("another account has its own count");
         let state = state.with_limits(message_rate(3, 60_000));
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        crate::api::test_util::skip(std::time::Duration::from_millis(20)).await;
         let _ = send(&state, cid, "alice")
             .await
             .expect("passes again after the refill");

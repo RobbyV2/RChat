@@ -2978,6 +2978,14 @@ pub(crate) mod test_util {
         kept.join("\n")
     }
 
+    /// Moves `tokio::time` forward by `by` at once, for a test that waits for a bucket to refill
+    /// or a hold to run out. The test's own task must not be waiting on a timer meanwhile.
+    pub(crate) async fn skip(by: std::time::Duration) {
+        tokio::time::pause();
+        tokio::time::advance(by).await;
+        tokio::time::resume();
+    }
+
     pub(crate) async fn temp_state(tag: &str) -> (AppState, PathBuf) {
         let path = crate::db::temp_db_path(tag);
         let db = open_started(path.to_str()).await.expect("open db");

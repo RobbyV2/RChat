@@ -1043,7 +1043,7 @@ async fn the_identity_routes_work_over_http() {
     .expect("delete");
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(read(res).await["error"], "Confirm with your password");
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    crate::api::test_util::skip(std::time::Duration::from_secs(3)).await;
     let res = send(
         client.delete(&url),
         alice,

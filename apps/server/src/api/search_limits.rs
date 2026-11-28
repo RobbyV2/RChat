@@ -495,7 +495,7 @@ mod tests {
         let held = burst(600) as usize;
         let taken = admitted(&state, "alice", 10 * held).await;
         assert!((held..2 * held).contains(&taken), "{taken}");
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        crate::api::test_util::skip(Duration::from_millis(300)).await;
         assert_eq!(
             run(&state, Some("alice"), "q=hello")
                 .await

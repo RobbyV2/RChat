@@ -442,7 +442,7 @@ mod tests {
                 .count();
             assert!((held..2 * held).contains(&taken), "{class:?}: {taken}");
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        crate::api::test_util::skip(Duration::from_millis(300)).await;
         for class in LookupClass::ALL {
             assert!(take(&fast, class, Some(&bob)).is_ok(), "{class:?} refills");
             let more = (0..class.burst(600))
