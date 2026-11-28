@@ -112,6 +112,7 @@ test('the actions marked as danger', () => {
     'embed_remove_all',
     'file_remove',
     'channel_delete',
+    'channel_separator_delete',
     'category_delete',
     'voice_guest_disconnect',
     'p2p_contact_block',
@@ -128,6 +129,7 @@ test('the actions marked as danger', () => {
     'p2p_member_timeout',
     'p2p_role_delete',
     'p2p_category_delete',
+    'p2p_channel_separator_delete',
     'p2p_message_delete',
     'scheduled_delete',
   ])
