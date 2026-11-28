@@ -75,6 +75,7 @@ const seated = (world: ContractWorld, seat: Seat, calls: Calls): Chat => {
           ...s.servers[place.room],
           id: place.room,
           members: [member('A', 'Ann'), member('B', 'Bob')],
+          memberList: { hide: false, roles: null, channels: [] },
         } as unknown as (typeof s.servers)[string],
       },
     }))
@@ -176,7 +177,7 @@ placeContract(chat, (kind, world) => {
       expect(people.find.get()).toBe(before)
       return
     }
-    expect(asked).toEqual([[server, 'bob']])
+    expect(asked).toEqual([[server, 'bob', null]])
     expect(changes).toBeGreaterThan(0)
     const found = people.find.get()('bob')
     expect(found.map(u => u.username)).toEqual(['bobbin', 'bob'])
