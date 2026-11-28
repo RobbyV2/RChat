@@ -177,7 +177,11 @@ fn error_frames_carry_the_reason_of_rest_errors() {
         wire(Refused::NoSharedVoice),
         r#"{"type":"error","message":"No shared voice session"}"#
     );
-    let off = ApiError::off_site(StatusCode::NOT_FOUND, "Calls are off", "calls");
+    let off = ApiError::off_site(
+        StatusCode::NOT_FOUND,
+        "Calls are off",
+        &rchat_settings::items::FEATURE_CALLS,
+    );
     assert_eq!(
         wire(off.into()),
         r#"{"type":"error","message":"Calls are off","reason":{"kind":"off_site","control":"calls"}}"#

@@ -148,7 +148,7 @@ pub async fn admit(state: &AppState, caller: Option<&User>) -> Result<Admitted, 
             ApiError::capacity(
                 StatusCode::SERVICE_UNAVAILABLE,
                 FULL,
-                CONCURRENT,
+                &rchat_settings::items::MESSAGE_SEARCH_CONCURRENT_LIMIT,
                 Some(FULL_WAIT_SECS),
             )
         })?;

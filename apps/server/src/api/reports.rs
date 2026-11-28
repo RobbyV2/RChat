@@ -643,7 +643,7 @@ pub(crate) async fn create_report(
     let settings = Settings::cached(&state.db).await;
     let feature = req.to.feature();
     if !settings.on(feature) {
-        return Err(crate::api::policy::refused(feature.key(), not_found()));
+        return Err(crate::api::policy::refused(feature.item(), not_found()));
     }
     let held = lookup::unmissed(&state, Some(&user))?;
     lookup::counted(
@@ -1624,7 +1624,7 @@ pub(crate) async fn escalate(
 ) -> Result<Json<ReportDetail>, ApiError> {
     let feature = Feature::InstanceReports;
     if !Settings::cached(&state.db).await.on(feature) {
-        return Err(crate::api::policy::refused(feature.key(), not_found()));
+        return Err(crate::api::policy::refused(feature.item(), not_found()));
     }
     let note = note.as_deref().map(str::trim).filter(|n| !n.is_empty());
     if note.is_some_and(|n| n.chars().count() > NOTE_MAX) {

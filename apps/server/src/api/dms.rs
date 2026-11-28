@@ -508,7 +508,10 @@ pub(crate) async fn open_dm(
                     DmCreation::Nobody => false,
                 };
             if !allowed {
-                return Err(crate::api::policy::refused(DmCreation::KEY, unknown()));
+                return Err(crate::api::policy::refused(
+                    &rchat_settings::items::DM_CREATION,
+                    unknown(),
+                ));
             }
             if a != b && crate::api::friends::dm_refused(&state.db, &user.username, &target).await?
             {

@@ -143,11 +143,13 @@ pub(super) async fn switched_on(state: &AppState, kind: CallKind) -> Result<(), 
         crate::api::ApiError(axum::http::StatusCode::FORBIDDEN, text.to_string(), None)
     };
     match kind {
-        CallKind::Rtc if !allowed.calls() => {
-            Err(crate::api::policy::refused(crate::api::policy::CALLS, forbidden(CALLS_OFF)).into())
-        }
+        CallKind::Rtc if !allowed.calls() => Err(crate::api::policy::refused(
+            &rchat_settings::items::FEATURE_CALLS,
+            forbidden(CALLS_OFF),
+        )
+        .into()),
         CallKind::P2p if !allowed.p2p() => Err(crate::api::policy::refused(
-            crate::api::features::Feature::P2p.key(),
+            crate::api::features::Feature::P2p.item(),
             forbidden(P2P_OFF),
         )
         .into()),

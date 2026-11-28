@@ -420,7 +420,7 @@ pub fn check_image(kind: Asset, bytes: &[u8]) -> Result<(), ApiError> {
         return Err(ApiError::limit(
             StatusCode::PAYLOAD_TOO_LARGE,
             "The image is over 1 MiB",
-            "brand_image_bytes",
+            crate::api::error::Cap::BrandImageBytes,
         ));
     }
     let Some((width, height)) = png_size(bytes) else {

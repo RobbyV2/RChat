@@ -69,7 +69,7 @@ fn busy() -> ApiError {
     ApiError::capacity(
         StatusCode::SERVICE_UNAVAILABLE,
         "Too many preview images right now, try again in a moment",
-        "preview_images",
+        crate::api::error::Cap::PreviewImages,
         None,
     )
 }

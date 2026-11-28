@@ -705,7 +705,7 @@ async fn room_for(
         false => Err(ApiError::limit(
             StatusCode::BAD_REQUEST,
             cap_text(most),
-            "scheduled_per_account",
+            &rchat_settings::items::SCHEDULED_PER_ACCOUNT,
         )),
     }
 }
@@ -945,7 +945,7 @@ pub(crate) async fn create_at(
         return Err(ApiError::off_site(
             StatusCode::FORBIDDEN,
             TURNED_OFF,
-            Feature::ScheduledMessages.key(),
+            Feature::ScheduledMessages.item(),
         ));
     }
     check_at(at, t)?;

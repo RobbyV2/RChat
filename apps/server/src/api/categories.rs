@@ -564,7 +564,7 @@ pub(crate) async fn create_category(
         return Err(ApiError::limit(
             StatusCode::BAD_REQUEST,
             format!("A server can have at most {most} categories"),
-            "server_categories_max",
+            &rchat_settings::items::SERVER_CATEGORIES_MAX,
         ));
     }
     let style = req.style.unwrap_or_default();

@@ -194,6 +194,8 @@ describe('the words in a line', () => {
 
   test('a control key reads as words', () => {
     expect(controlLabel('guest_chat')).toBe('Guest chat')
+    expect(controlLabel('registration')).toBe('New accounts')
+    expect(controlLabel('instance_name')).toBe('Instance name')
     expect(controlLabel('p2p.attachments')).toBe('P2p attachments')
     expect(controlLabel(null)).toBeNull()
     expect(controlLabel('')).toBeNull()

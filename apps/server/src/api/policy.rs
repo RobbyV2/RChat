@@ -7,6 +7,7 @@ use sqlx::Row;
 use utoipa::ToSchema;
 
 use crate::api::access::perms::{held_roles, role_named};
+use crate::api::error::Control;
 use crate::api::reports::forms::{self, ReportForms};
 use crate::api::{ApiError, SETTINGS_TTL, Settings};
 use crate::db::{Db, User, pool_key};
@@ -477,16 +478,18 @@ impl Policy {
 /// The answer to a request that the control `control` refuses because it is off for the whole
 /// site: `answer` with that reason. Every refusal by an instance control is built here or in
 /// `left_out`.
-pub(crate) fn refused(control: &'static str, answer: ApiError) -> ApiError {
-    tracing::debug!("refused by the {control} setting");
+pub(crate) fn refused(control: impl Into<Control>, answer: ApiError) -> ApiError {
+    let control = control.into();
+    tracing::debug!("refused by the {} setting", control.name());
     let ApiError(status, error, _) = answer;
     ApiError::off_site(status, error, control)
 }
 
 /// The answer to a request that the control `control` refuses because it leaves the caller
 /// out while others may: `answer` with that reason.
-pub(crate) fn left_out(control: &'static str, answer: ApiError) -> ApiError {
-    tracing::debug!("left out by the {control} setting");
+pub(crate) fn left_out(control: impl Into<Control>, answer: ApiError) -> ApiError {
+    let control = control.into();
+    tracing::debug!("left out by the {} setting", control.name());
     let ApiError(status, error, _) = answer;
     ApiError::off_account(status, error, control)
 }

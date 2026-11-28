@@ -2221,7 +2221,11 @@ async fn token_row(
 pub const CHANGE_FIRST: &str = "Change your password first";
 
 pub(crate) fn change_first() -> ApiError {
-    ApiError::off_account(StatusCode::FORBIDDEN, CHANGE_FIRST, TempChange::KEY)
+    ApiError::off_account(
+        StatusCode::FORBIDDEN,
+        CHANGE_FIRST,
+        &rchat_settings::items::TEMP_PASSWORD_CHANGE,
+    )
 }
 
 /// Whether the sessions of `user` may only change the password, read the account and sign

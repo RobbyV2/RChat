@@ -632,7 +632,11 @@ async fn befriend(state: &AppState, me: &User, other: &User) -> Result<Friend, A
             .await?
             .try_get(0)?;
         if n >= most {
-            return Err(ApiError::limit(StatusCode::BAD_REQUEST, msg, "friends_max"));
+            return Err(ApiError::limit(
+                StatusCode::BAD_REQUEST,
+                msg,
+                &rchat_settings::items::FRIENDS_MAX,
+            ));
         }
     }
     sqlx::query("DELETE FROM friend_requests WHERE sender = $1 AND recipient = $2")
@@ -848,7 +852,7 @@ pub(crate) async fn send_request(
         .friend_requests();
     if !on && !requested(&state.db, &target, &user.username).await? {
         return Err(crate::api::policy::refused(
-            crate::api::policy::FRIEND_REQUESTS,
+            &rchat_settings::items::FEATURE_FRIEND_REQUESTS,
             refused(),
         ));
     }
@@ -889,7 +893,7 @@ pub(crate) async fn send_request(
         return match befriend(&state, &user, &other).await {
             Ok(_) => outcome(RequestStatus::Accepted),
             Err(ApiError(StatusCode::NOT_FOUND, _, _)) => Err(crate::api::policy::refused(
-                crate::api::policy::FRIEND_REQUESTS,
+                &rchat_settings::items::FEATURE_FRIEND_REQUESTS,
                 refused(),
             )),
             Err(e) => Err(e),

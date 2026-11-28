@@ -1,3 +1,4 @@
+import { ADMIN_ROWS, BRAND_ROWS } from './admin/rows.gen'
 import { ApiError } from './api'
 import { cause, label, logWarn } from './log'
 
@@ -154,8 +155,11 @@ export const waitText = (seconds: number): string => {
   return minutes === 1 ? 'about a minute' : `about ${minutes} minutes`
 }
 
-// What a control's key is called in a line: its words, the first one capitalized.
+// What a control is called in a line: its admin page row's label, else its words, the first one
+// capitalized.
 export const controlLabel = (control: string | null): string | null => {
+  const row = [...ADMIN_ROWS, ...BRAND_ROWS].find(r => r.key === control)
+  if (row) return row.label
   const words = (control ?? '').replace(/[._-]+/g, ' ').trim()
   return words ? words[0].toUpperCase() + words.slice(1) : null
 }

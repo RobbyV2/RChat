@@ -106,6 +106,14 @@ impl Setting {
         self
     }
 
+    /// The name a refusal gives for this setting: its key, or its env name in lower case.
+    pub fn control(&self) -> String {
+        match self.key {
+            Some(key) => key.to_string(),
+            None => self.env.to_ascii_lowercase(),
+        }
+    }
+
     /// The smallest and largest value, for a number.
     pub const fn range(&self) -> Option<(i64, i64)> {
         match self.kind {
@@ -330,6 +338,38 @@ macro_rules! scoped {
     )*};
 }
 scoped!(Number<T>, Switch, Choice, Value, Secret);
+
+/// A setting's item: its handle, or the setting itself.
+pub trait Handle {
+    fn setting(&'static self) -> &'static Setting;
+}
+
+impl Handle for Setting {
+    fn setting(&'static self) -> &'static Setting {
+        self
+    }
+}
+
+macro_rules! handles {
+    ($($name:ident$(<$t:ident>)?),*) => {$(
+        impl$(<$t>)? Handle for $name$(<$t>)? {
+            fn setting(&'static self) -> &'static Setting {
+                &self.setting
+            }
+        }
+    )*};
+}
+handles!(
+    Number<T>,
+    OptNumber<T>,
+    Switch,
+    Choice,
+    Text,
+    Form,
+    Item,
+    Value,
+    Secret
+);
 
 macro_rules! live {
     ($($name:ident$(<$t:ident>)?),*) => {$(

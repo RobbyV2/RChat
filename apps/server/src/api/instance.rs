@@ -337,7 +337,7 @@ pub(crate) async fn p2p_binding(
         .p2p()
     {
         return Err(crate::api::policy::refused(
-            crate::api::features::Feature::P2p.key(),
+            crate::api::features::Feature::P2p.item(),
             not_found(),
         ));
     }

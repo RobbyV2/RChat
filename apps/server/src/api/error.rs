@@ -75,6 +75,68 @@ pub struct Reason {
     pub channel: Option<i64>,
 }
 
+/// What a refusal names as its control: a setting of the registry, or a fixed cap that is not
+/// one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Control {
+    Setting(&'static rchat_settings::Setting),
+    Cap(Cap),
+}
+
+/// The caps refusals name that are fixed, not settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cap {
+    UploadsPerAccount,
+    UploadBufferShare,
+    PreviewImages,
+    P2pIdentityRecords,
+    P2pIdentityRecordBytes,
+    P2pBackupIdentities,
+    JsonMaxMib,
+    GuestGrants,
+    BulkDeleteJobs,
+    BrandImageBytes,
+}
+
+impl Cap {
+    pub fn name(self) -> &'static str {
+        match self {
+            Cap::UploadsPerAccount => "uploads_per_account",
+            Cap::UploadBufferShare => "upload_buffer_share",
+            Cap::PreviewImages => "preview_images",
+            Cap::P2pIdentityRecords => "p2p_identity_records",
+            Cap::P2pIdentityRecordBytes => "p2p_identity_record_bytes",
+            Cap::P2pBackupIdentities => "p2p_backup_identities",
+            Cap::JsonMaxMib => "json_max_mib",
+            Cap::GuestGrants => "guest_grants",
+            Cap::BulkDeleteJobs => "bulk_delete_jobs",
+            Cap::BrandImageBytes => "brand_image_bytes",
+        }
+    }
+}
+
+impl Control {
+    /// The name the refusal carries.
+    pub fn name(self) -> String {
+        match self {
+            Control::Setting(setting) => setting.control(),
+            Control::Cap(cap) => cap.name().to_string(),
+        }
+    }
+}
+
+impl<H: rchat_settings::Handle> From<&'static H> for Control {
+    fn from(item: &'static H) -> Control {
+        Control::Setting(item.setting())
+    }
+}
+
+impl From<Cap> for Control {
+    fn from(cap: Cap) -> Control {
+        Control::Cap(cap)
+    }
+}
+
 impl Reason {
     fn of(kind: ReasonKind) -> Reason {
         Reason {
@@ -92,6 +154,10 @@ impl Reason {
             control: Some(control.to_string()),
             ..Reason::of(kind)
         }
+    }
+
+    fn named(kind: ReasonKind, control: Control) -> Reason {
+        Reason::by(kind, &control.name())
     }
 }
 
@@ -132,13 +198,29 @@ impl ApiError {
     }
 
     /// Refused because the setting `control` is off for the whole site.
-    pub fn off_site(status: StatusCode, error: impl Into<String>, control: &str) -> ApiError {
-        ApiError::because(status, error, Reason::by(ReasonKind::OffSite, control))
+    pub fn off_site(
+        status: StatusCode,
+        error: impl Into<String>,
+        control: impl Into<Control>,
+    ) -> ApiError {
+        ApiError::because(
+            status,
+            error,
+            Reason::named(ReasonKind::OffSite, control.into()),
+        )
     }
 
     /// Refused because the setting `control` leaves this account out.
-    pub fn off_account(status: StatusCode, error: impl Into<String>, control: &str) -> ApiError {
-        ApiError::because(status, error, Reason::by(ReasonKind::OffAccount, control))
+    pub fn off_account(
+        status: StatusCode,
+        error: impl Into<String>,
+        control: impl Into<Control>,
+    ) -> ApiError {
+        ApiError::because(
+            status,
+            error,
+            Reason::named(ReasonKind::OffAccount, control.into()),
+        )
     }
 
     /// Refused because the server's own setting `control` is off. Only for callers who can
@@ -158,20 +240,28 @@ impl ApiError {
     }
 
     /// The caller reached the limit `control`.
-    pub fn limit(status: StatusCode, error: impl Into<String>, control: &str) -> ApiError {
-        ApiError::because(status, error, Reason::by(ReasonKind::Limit, control))
+    pub fn limit(
+        status: StatusCode,
+        error: impl Into<String>,
+        control: impl Into<Control>,
+    ) -> ApiError {
+        ApiError::because(
+            status,
+            error,
+            Reason::named(ReasonKind::Limit, control.into()),
+        )
     }
 
     /// `control` is full right now, for everyone.
     pub fn capacity(
         status: StatusCode,
         error: impl Into<String>,
-        control: &str,
+        control: impl Into<Control>,
         retry_after: Option<u64>,
     ) -> ApiError {
         let reason = Reason {
             retry_after,
-            ..Reason::by(ReasonKind::Capacity, control)
+            ..Reason::named(ReasonKind::Capacity, control.into())
         };
         ApiError::because(status, error, reason)
     }
@@ -313,6 +403,39 @@ impl From<anyhow::Error> for ApiError {
 #[cfg(test)]
 mod tests {
     use axum::http::{StatusCode, header};
+
+    #[test]
+    fn controls_name_the_setting_key_or_the_limit_and_caps_are_not_settings() {
+        use super::{Cap, Control};
+        use rchat_settings::items as st;
+        let name = |c: Control| c.name();
+        assert_eq!(name((&st::FEATURE_CALLS).into()), "calls");
+        assert_eq!(name((&st::UPLOAD_MAX_MIB).into()), "upload_max_mib");
+        assert_eq!(
+            name((&st::MESSAGE_SEARCH_CONCURRENT_LIMIT).into()),
+            crate::api::search_limits::CONCURRENT
+        );
+        for cap in [
+            Cap::UploadsPerAccount,
+            Cap::UploadBufferShare,
+            Cap::PreviewImages,
+            Cap::P2pIdentityRecords,
+            Cap::P2pIdentityRecordBytes,
+            Cap::P2pBackupIdentities,
+            Cap::JsonMaxMib,
+            Cap::GuestGrants,
+            Cap::BulkDeleteJobs,
+            Cap::BrandImageBytes,
+        ] {
+            assert!(
+                rchat_settings::ALL
+                    .iter()
+                    .all(|s| s.control() != cap.name()),
+                "{} is a setting",
+                cap.name()
+            );
+        }
+    }
     use axum::response::IntoResponse;
     use serde_json::json;
 
@@ -386,7 +509,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_reason_only_adds_a_field_after_the_error() {
-        let refused = ApiError::off_site(StatusCode::NOT_FOUND, "Not found", "server_search");
+        let refused = ApiError::off_site(
+            StatusCode::NOT_FOUND,
+            "Not found",
+            &rchat_settings::items::SERVER_SEARCH,
+        );
         assert_eq!(
             sent(refused).await,
             (
@@ -399,7 +526,7 @@ mod tests {
         let full = ApiError::capacity(
             StatusCode::SERVICE_UNAVAILABLE,
             "Full",
-            "upload_buffer_mib",
+            &rchat_settings::items::UPLOAD_BUFFER_MIB,
             Some(120),
         );
         assert_eq!(
@@ -425,20 +552,32 @@ mod tests {
     fn every_kind_has_its_constructor() {
         let (not_found, forbidden) = (StatusCode::NOT_FOUND, StatusCode::FORBIDDEN);
         let made = [
-            (ApiError::off_site(not_found, "a", "calls"), "off_site"),
             (
-                ApiError::off_account(not_found, "a", "calls"),
+                ApiError::off_site(not_found, "a", &rchat_settings::items::FEATURE_CALLS),
+                "off_site",
+            ),
+            (
+                ApiError::off_account(not_found, "a", &rchat_settings::items::FEATURE_CALLS),
                 "off_account",
             ),
             (ApiError::off_server(forbidden, "a", "calls"), "off_server"),
             (ApiError::off_app(forbidden, "a", "calls"), "off_app"),
             (ApiError::app(forbidden, "a"), "app"),
             (
-                ApiError::limit(StatusCode::PAYLOAD_TOO_LARGE, "a", "calls"),
+                ApiError::limit(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "a",
+                    &rchat_settings::items::FEATURE_CALLS,
+                ),
                 "limit",
             ),
             (
-                ApiError::capacity(StatusCode::SERVICE_UNAVAILABLE, "a", "calls", None),
+                ApiError::capacity(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "a",
+                    &rchat_settings::items::FEATURE_CALLS,
+                    None,
+                ),
                 "capacity",
             ),
             (ApiError::invalid("a", "name"), "invalid"),

@@ -116,7 +116,7 @@ pub async fn handler(
             return crate::api::ApiError::capacity(
                 StatusCode::SERVICE_UNAVAILABLE,
                 REALTIME_BUSY,
-                "ws_sockets_max",
+                &rchat_settings::items::WS_SOCKETS_MAX,
                 Some(BUSY_RETRY_SECS),
             )
             .into_response();

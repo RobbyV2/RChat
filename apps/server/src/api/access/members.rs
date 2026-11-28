@@ -47,7 +47,7 @@ pub fn refusal(why: Hidden, lite: &ServerSummaryLite) -> Option<ApiError> {
         Hidden::Site => Some(ApiError::off_site(
             StatusCode::FORBIDDEN,
             SITE_OFF,
-            crate::api::features::Feature::MemberLists.key(),
+            crate::api::features::Feature::MemberLists.item(),
         )),
         Hidden::Server if lite.hide_members => Some(ApiError::off_server(
             StatusCode::FORBIDDEN,

@@ -59,8 +59,8 @@ pub const URL_MAX: usize = 2048;
 /// The refusal past `CHANNEL_WEBHOOKS_MAX` (`channel_full`) or `SERVER_WEBHOOKS_MAX`.
 fn hooks_full(limits: &crate::limits::Limits, channel_full: bool) -> ApiError {
     let control = match channel_full {
-        true => "channel_webhooks_max",
-        false => "server_webhooks_max",
+        true => &rchat_settings::items::CHANNEL_WEBHOOKS_MAX,
+        false => &rchat_settings::items::SERVER_WEBHOOKS_MAX,
     };
     ApiError::limit(
         StatusCode::BAD_REQUEST,
@@ -390,7 +390,7 @@ async fn switched_on(db: &Db) -> Result<(), ApiError> {
     {
         true => Ok(()),
         false => Err(crate::api::policy::refused(
-            crate::api::policy::INCOMING_WEBHOOKS,
+            &rchat_settings::items::FEATURE_INCOMING_WEBHOOKS,
             crate::api::access::not_found(),
         )),
     }
@@ -914,7 +914,7 @@ pub(crate) async fn update_webhook(
                 "A channel can have at most {} webhooks",
                 state.limits.channel_webhooks_max
             ),
-            "channel_webhooks_max",
+            &rchat_settings::items::CHANNEL_WEBHOOKS_MAX,
         ));
     }
     if details.has_changes() {
@@ -2232,7 +2232,7 @@ pub(crate) async fn create_outgoing(
                     "A server can have at most {} outgoing webhooks",
                     state.limits.server_outgoing_webhooks_max
                 ),
-                "server_outgoing_webhooks_max",
+                &rchat_settings::items::SERVER_OUTGOING_WEBHOOKS_MAX,
             )
         })?;
     let id: i64 = row.try_get(0)?;

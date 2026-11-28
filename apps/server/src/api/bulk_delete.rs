@@ -962,7 +962,7 @@ async fn start_all(
         return Err(ApiError::limit(
             StatusCode::TOO_MANY_REQUESTS,
             TOO_MANY_JOBS,
-            "bulk_delete_jobs",
+            crate::api::error::Cap::BulkDeleteJobs,
         ));
     }
     let t = state.clock.unix();

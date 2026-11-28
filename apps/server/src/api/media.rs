@@ -268,7 +268,7 @@ pub(crate) fn reading_slot(db: &Db, account: &str) -> Result<crate::api::budget:
             ApiError::limit(
                 StatusCode::TOO_MANY_REQUESTS,
                 format!("Too many uploads at once: up to {UPLOADS_PER_ACCOUNT} per account"),
-                "uploads_per_account",
+                crate::api::error::Cap::UploadsPerAccount,
             )
         })
 }
@@ -285,7 +285,7 @@ fn too_large(max: usize) -> ApiError {
     ApiError::limit(
         StatusCode::PAYLOAD_TOO_LARGE,
         format!("File exceeds {}MB limit", max / (1024 * 1024)),
-        "upload_max_mib",
+        &rchat_settings::items::UPLOAD_MAX_MIB,
     )
 }
 
@@ -294,7 +294,7 @@ pub(crate) fn json_over(max: usize) -> ApiError {
     ApiError::limit(
         StatusCode::PAYLOAD_TOO_LARGE,
         format!("JSON exceeds {}MB limit", max / (1024 * 1024)),
-        "json_max_mib",
+        crate::api::error::Cap::JsonMaxMib,
     )
 }
 
@@ -351,7 +351,7 @@ async fn take_room(
                     "Too many uploads at once: up to {} per account",
                     fmt_bytes(u64::from(room.share) * 1024)
                 ),
-                "upload_buffer_share",
+                crate::api::error::Cap::UploadBufferShare,
             )
         })?;
     let held = match wait.is_zero() {
@@ -365,7 +365,7 @@ async fn take_room(
         ApiError::capacity(
             StatusCode::SERVICE_UNAVAILABLE,
             "Too many uploads right now, try again in a moment",
-            "upload_buffer_mib",
+            &rchat_settings::items::UPLOAD_BUFFER_MIB,
             None,
         )
     })?;
@@ -891,7 +891,7 @@ fn over_budget(budget: u64, charge: Charge<'_>) -> ApiError {
             "Upload limit reached: {who} can upload up to {} a day. Space frees up 1 day after each upload, or sooner when a file is removed. The site admin sets this limit",
             fmt_bytes(budget)
         ),
-        "upload_budget_mib",
+        &rchat_settings::items::UPLOAD_BUDGET_MIB,
     )
 }
 

@@ -32,7 +32,7 @@ pub(crate) async fn passwords_on(state: &AppState) -> Result<Settings, ApiError>
         false => Err(ApiError::off_site(
             StatusCode::BAD_REQUEST,
             PASSWORDS_OFF,
-            Feature::PasswordLogin.key(),
+            Feature::PasswordLogin.item(),
         )),
     }
 }

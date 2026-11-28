@@ -65,7 +65,7 @@ fn turned_off() -> ApiError {
     ApiError::off_site(
         StatusCode::FORBIDDEN,
         "Profile pictures are turned off on this site",
-        Feature::ProfilePictures.key(),
+        Feature::ProfilePictures.item(),
     )
 }
 
@@ -73,7 +73,7 @@ fn over(max: usize) -> ApiError {
     ApiError::limit(
         StatusCode::PAYLOAD_TOO_LARGE,
         format!("Picture exceeds {}MB limit", max / (1024 * 1024)),
-        "avatar_upload_max_mib",
+        &rchat_settings::items::AVATAR_UPLOAD_MAX_MIB,
     )
 }
 
@@ -81,12 +81,12 @@ fn over_unsized() -> ApiError {
     ApiError::limit(
         StatusCode::PAYLOAD_TOO_LARGE,
         "Picture exceeds the size limit",
-        "avatar_upload_max_mib",
+        &rchat_settings::items::AVATAR_UPLOAD_MAX_MIB,
     )
 }
 
 fn refused(why: Refused, bounds: &Bounds) -> ApiError {
-    let limit = |error: String, control: &str| {
+    let limit = |error: String, control: &'static rchat_settings::Number<u64>| {
         ApiError::limit(StatusCode::PAYLOAD_TOO_LARGE, error, control)
     };
     match why {
@@ -104,28 +104,28 @@ fn refused(why: Refused, bounds: &Bounds) -> ApiError {
         ),
         Refused::Frames => limit(
             format!("The animation has too many frames: up to {}", bounds.frames),
-            "avatar_animation_max_frames",
+            &rchat_settings::items::AVATAR_ANIMATION_MAX_FRAMES,
         ),
         Refused::Duration => limit(
             format!(
                 "The animation is too long: up to {} seconds",
                 bounds.millis / 1000
             ),
-            "avatar_animation_max_secs",
+            &rchat_settings::items::AVATAR_ANIMATION_MAX_SECS,
         ),
         Refused::AnimationPixels => limit(
             format!(
                 "The animation is too large: up to {} megapixels over all its frames",
                 bounds.pixels / 1_000_000
             ),
-            "avatar_animation_max_megapixels",
+            &rchat_settings::items::AVATAR_ANIMATION_MAX_MEGAPIXELS,
         ),
         Refused::AnimationBytes => limit(
             format!(
                 "The animation is over {}MB once made smaller: use fewer frames",
                 bounds.bytes / (1024 * 1024)
             ),
-            "avatar_upload_max_mib",
+            &rchat_settings::items::AVATAR_UPLOAD_MAX_MIB,
         ),
     }
 }

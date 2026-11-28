@@ -189,7 +189,7 @@ fn too_large() -> ApiError {
     ApiError::limit(
         StatusCode::PAYLOAD_TOO_LARGE,
         "Backup too large",
-        "p2p_backup_max_mib",
+        &rchat_settings::items::P2P_BACKUP_MAX_MIB,
     )
 }
 
@@ -197,7 +197,7 @@ fn full() -> ApiError {
     ApiError::limit(
         StatusCode::PAYLOAD_TOO_LARGE,
         "Backup storage full",
-        "p2p_backup_total_mib",
+        &rchat_settings::items::P2P_BACKUP_TOTAL_MIB,
     )
 }
 
@@ -205,7 +205,7 @@ fn too_many() -> ApiError {
     ApiError::limit(
         StatusCode::CONFLICT,
         "Too many P2P backups",
-        "p2p_backup_identities",
+        crate::api::error::Cap::P2pBackupIdentities,
     )
 }
 

@@ -80,7 +80,7 @@ async fn on(state: &AppState, user: &User) -> Result<(), ApiError> {
     if state.limits.p2p_backup_bytes() > 0 || effective(&state.db, Some(user)).await.p2p() {
         return Ok(());
     }
-    Err(refused(Feature::P2p.key(), not_found()))
+    Err(refused(Feature::P2p.item(), not_found()))
 }
 
 fn check_ik(ik: &str) -> Result<(), ApiError> {
@@ -97,7 +97,7 @@ fn too_large() -> ApiError {
     ApiError::limit(
         StatusCode::PAYLOAD_TOO_LARGE,
         "Identity record too large",
-        "p2p_identity_record_bytes",
+        crate::api::error::Cap::P2pIdentityRecordBytes,
     )
 }
 
@@ -105,7 +105,7 @@ fn too_many() -> ApiError {
     ApiError::limit(
         StatusCode::CONFLICT,
         "Too many P2P identity records",
-        "p2p_identity_records",
+        crate::api::error::Cap::P2pIdentityRecords,
     )
 }
 

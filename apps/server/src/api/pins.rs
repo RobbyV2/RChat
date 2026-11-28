@@ -137,7 +137,7 @@ pub(crate) async fn pin_message(
             false => Err(ApiError::limit(
                 StatusCode::CONFLICT,
                 full,
-                "channel_pins_max",
+                &rchat_settings::items::CHANNEL_PINS_MAX,
             )),
         };
     }

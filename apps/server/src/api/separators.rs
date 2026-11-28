@@ -198,7 +198,7 @@ pub(crate) async fn create_separator(
         return Err(ApiError::limit(
             StatusCode::BAD_REQUEST,
             format!("A server can have at most {most} separators"),
-            "server_separators_max",
+            &rchat_settings::items::SERVER_SEPARATORS_MAX,
         ));
     }
     let sql = format!(

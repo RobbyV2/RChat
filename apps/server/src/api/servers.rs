@@ -2173,9 +2173,11 @@ pub(crate) async fn create_server(
     if !allowed.can_create_servers().await? {
         let answer = crate::api::access::not_found();
         return Err(match allowed.server_creation() {
-            ServerCreation::Some => crate::api::policy::left_out(ServerCreation::KEY, answer),
+            ServerCreation::Some => {
+                crate::api::policy::left_out(&rchat_settings::items::SERVER_CREATION, answer)
+            }
             ServerCreation::Everyone | ServerCreation::Nobody => {
-                crate::api::policy::refused(ServerCreation::KEY, answer)
+                crate::api::policy::refused(&rchat_settings::items::SERVER_CREATION, answer)
             }
         });
     }
@@ -2235,7 +2237,7 @@ fn needs_invites(joining: ServerJoining, join: Option<JoinMode>) -> Result<(), A
         (ServerJoining::Invites, Some(JoinMode::Name)) => Err(ApiError::off_site(
             StatusCode::BAD_REQUEST,
             NEEDS_INVITES,
-            ServerJoining::KEY,
+            &rchat_settings::items::SERVER_JOINING,
         )),
         (ServerJoining::Everyone | ServerJoining::Invites | ServerJoining::Nobody, _) => Ok(()),
     }
@@ -2302,7 +2304,7 @@ async fn check_new_server(
     needs_invites(allowed.server_joining(), join)?;
     if public_read == Some(true) && !allowed.public_reading() {
         return Err(crate::api::policy::refused(
-            crate::api::policy::PUBLIC_READING,
+            &rchat_settings::items::PUBLIC_READING,
             forbidden(PUBLIC_READING_OFF),
         ));
     }
@@ -2617,7 +2619,7 @@ pub(crate) async fn search_servers(
         .server_search()
     {
         return Err(crate::api::policy::refused(
-            crate::api::policy::SERVER_SEARCH,
+            &rchat_settings::items::SERVER_SEARCH,
             crate::api::access::not_found(),
         ));
     }
@@ -2746,7 +2748,7 @@ pub(crate) async fn guest_access(
         return Err(ApiError::capacity(
             StatusCode::TOO_MANY_REQUESTS,
             TOO_MANY_GUESTS,
-            "guest_grants",
+            crate::api::error::Cap::GuestGrants,
             None,
         ));
     }
@@ -3114,7 +3116,7 @@ fn account_full(most: i64) -> ApiError {
     ApiError::limit(
         StatusCode::BAD_REQUEST,
         format!("An account can be in at most {most} servers"),
-        "servers_per_account",
+        &rchat_settings::items::SERVERS_PER_ACCOUNT,
     )
 }
 
@@ -3179,7 +3181,7 @@ async fn room_in_server(
         false => Err(ApiError::capacity(
             StatusCode::BAD_REQUEST,
             "This server is full",
-            "server_members_max",
+            &rchat_settings::items::SERVER_MEMBERS_MAX,
             None,
         )),
     }
@@ -3585,7 +3587,7 @@ pub(crate) async fn update_server(
     let allowed = crate::api::policy::effective(&state.db, Some(&user)).await;
     if public_read == Some(Some(true)) && !allowed.public_reading() {
         return Err(crate::api::policy::refused(
-            crate::api::policy::PUBLIC_READING,
+            &rchat_settings::items::PUBLIC_READING,
             forbidden(PUBLIC_READING_OFF),
         ));
     }
@@ -3761,7 +3763,7 @@ pub(crate) async fn update_server(
                 return Err(ApiError::off_site(
                     StatusCode::FORBIDDEN,
                     refusal,
-                    feature.key(),
+                    feature.item(),
                 ));
             }
         }
@@ -4344,7 +4346,7 @@ pub(crate) async fn create_channel(
         return Err(ApiError::limit(
             StatusCode::BAD_REQUEST,
             format!("A server can have at most {most} channels"),
-            "server_channels_max",
+            &rchat_settings::items::SERVER_CHANNELS_MAX,
         ));
     }
     let sql = match req.category_id {
@@ -5946,7 +5948,7 @@ pub(crate) async fn create_role(
         ApiError::limit(
             StatusCode::BAD_REQUEST,
             format!("A server can have at most {most} roles"),
-            "server_roles_max",
+            &rchat_settings::items::SERVER_ROLES_MAX,
         )
     })?
     .try_get(0)?;

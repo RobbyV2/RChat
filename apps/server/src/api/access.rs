@@ -848,7 +848,10 @@ pub async fn resolve_join(
         ServerJoining::Everyone | ServerJoining::Invites => {
             resolve_server(db, name, viewer, &proof).await
         }
-        ServerJoining::Nobody => Err(crate::api::policy::refused(ServerJoining::KEY, denied())),
+        ServerJoining::Nobody => Err(crate::api::policy::refused(
+            &rchat_settings::items::SERVER_JOINING,
+            denied(),
+        )),
     }
 }
 
