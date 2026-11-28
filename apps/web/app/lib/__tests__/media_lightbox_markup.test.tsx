@@ -381,7 +381,7 @@ describe('the viewer', () => {
 
   test('it sits under menus, confirms and the call banner, over dialogs and drawers', () => {
     const html = render([one()], 0)
-    expect(html).toContain('fixed inset-x-0 top-app z-[45]')
+    expect(html).toContain('fixed inset-x-0 top-app z-lightbox')
     expect(html.includes('z-50')).toBe(false)
   })
 

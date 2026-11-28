@@ -24,7 +24,7 @@ import { ShownAvatar, useShown, useViewServer } from './shown_user'
 import { CloseButton, Masked, Sheet, useOwnCheck } from './ui'
 import { centerEmoji } from '../lib/emoji_center'
 import { useChat } from '../lib/place/use_chat'
-import { Surface } from './layout'
+import { Surface, Row, Inset } from './layout'
 import { time } from '../lib/platform/time'
 
 const EMPTY: Reaction[] = []
@@ -109,14 +109,22 @@ function ReactionTooltip({
   }, [anchor, names?.length, code])
 
   return createPortal(
-    <div
+    <Surface
       ref={ref}
       id={id}
       role="tooltip"
       data-reaction-tooltip
       aria-label={reactionLabel(r.emoji, code, names, r.count, streamer)}
-      style={pos ?? { top: -9999, left: -9999 }}
-      className="pointer-events-none fixed z-top flex max-w-64 items-center gap-3 rounded-lg bg-inverse-surface px-3 py-2 text-inverse-on-surface shadow-elevation-2"
+      row
+      pad="md"
+      inset="bar"
+      gap="md"
+      tone="plain"
+      radius="md"
+      elevation={2}
+      at={pos ?? { top: -9999, left: -9999 }}
+      look="max-w-64 bg-inverse-surface text-inverse-on-surface"
+      place="pointer-events-none fixed z-top"
     >
       <span aria-hidden className="shrink-0 font-emoji text-3xl leading-none">
         {r.emoji}
@@ -130,7 +138,7 @@ function ReactionTooltip({
           <span className="streamer">{reactorsText(names, r.count)}</span>
         )}
       </span>
-    </div>,
+    </Surface>,
     document.body
   )
 }
@@ -248,7 +256,7 @@ export function ReactionBar({
   useEffect(centerEmoji, [])
   if (!list.length) return null
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-1" data-reactions>
+    <Row data-reactions gap="2xs" wrap look="msg-part">
       {list.map(r => (
         <ReactionChip
           key={r.emoji}
@@ -261,7 +269,7 @@ export function ReactionBar({
       ))}
       {canReact && <AddReactionChip m={m} />}
       {sheet !== null && <ReactorsSheet m={m} start={sheet} onClose={() => setSheet(null)} />}
-    </div>
+    </Row>
   )
 }
 
@@ -318,18 +326,21 @@ function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClo
       aria-labelledby={titleId}
       data-popover=""
     >
-      <div
-        className={`flex shrink-0 items-center justify-between px-4 pb-2${coarse ? '' : ' pt-4'}`}
-      >
+      <Inset row pad="lg" inset="bar" justify="between" place="shrink-0">
         <h2 id={titleId} className="text-base font-medium text-on-surface">
           Reactions
         </h2>
         {!coarse && <CloseButton onClick={onClose} />}
-      </div>
-      <div
+      </Inset>
+      <Inset
         role="tablist"
         aria-label="Reactions"
-        className="flex shrink-0 gap-1.5 overflow-x-auto px-4 pb-3"
+        row
+        pad="lg"
+        inset="bar"
+        gap="xs"
+        align="stretch"
+        place="shrink-0 overflow-x-auto"
       >
         {list.map(r => (
           <button
@@ -349,16 +360,20 @@ function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClo
             <span aria-hidden>{r.count}</span>
           </button>
         ))}
-      </div>
-      <ul
+      </Inset>
+      <Inset
         role="tabpanel"
         aria-label={`${current.emoji} reacted by ${peopleText(current.count)}`}
-        className={`min-h-24 overflow-y-auto overscroll-contain border-t border-outline-variant px-2 pt-2${
-          coarse ? '' : ' mb-4'
-        }`}
+        as="ul"
+        pad="sm"
+        border="top"
+        look="min-h-24"
+        place="overflow-y-auto overscroll-contain"
       >
         {users === null && (
-          <li className="px-2 py-3 text-sm text-on-surface-variant">Loading reactions</li>
+          <Inset as="li" pad="sm" text="sm" ink="muted">
+            Loading reactions
+          </Inset>
         )}
         {users?.map(u => (
           <Surface as="li" key={u.username} pad="sm" gap="md" row tone="plain" radius="lg">
@@ -374,8 +389,12 @@ function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClo
             </span>
           </Surface>
         ))}
-        {more > 0 && <li className="px-2 py-2 text-xs text-on-surface-variant">And {more} more</li>}
-      </ul>
+        {more > 0 && (
+          <Inset as="li" pad="sm" text="xs" ink="muted">
+            And {more} more
+          </Inset>
+        )}
+      </Inset>
     </Sheet>,
     document.body
   )
@@ -389,7 +408,7 @@ export function QuickReactions({ m, anchor }: { m: Message; anchor: HTMLElement 
   const size = coarse ? 'h-12 w-12 text-2xl' : 'h-9 w-9 text-xl'
   const full = reactionsFull(m)
   return (
-    <div className={`flex items-center gap-1 ${coarse ? 'justify-around' : ''}`}>
+    <Row gap="2xs" justify={coarse ? 'around' : 'start'}>
       {top.map(e => {
         const on = reacted(m, e)
         const blocked = !on && !canAddEmoji(m, e)
@@ -436,7 +455,7 @@ export function QuickReactions({ m, anchor }: { m: Message; anchor: HTMLElement 
       >
         <SmilePlus size={coarse ? 24 : 18} />
       </button>
-    </div>
+    </Row>
   )
 }
 

@@ -1,4 +1,10 @@
-import { createElement, type AllHTMLAttributes, type ReactNode, type Ref } from 'react'
+import {
+  createElement,
+  type AllHTMLAttributes,
+  type CSSProperties,
+  type ReactNode,
+  type Ref,
+} from 'react'
 import { placed, type LayoutPlace, type Look } from '../../lib/controls'
 import {
   dockLook,
@@ -22,6 +28,7 @@ import {
   type SurfaceBorder,
   type SurfaceInset,
   type SurfaceRadius,
+  type SurfaceSafe,
   type SurfaceTone,
 } from '../../lib/layout'
 
@@ -66,12 +73,32 @@ type Tag =
   | 'button'
   | 'a'
 
+// Where and how large a measured box is (a popover placed by script, a grid whose columns are
+// counted): position and size only, never space inside or around it.
+export type BoxAt = Pick<
+  CSSProperties,
+  | 'top'
+  | 'right'
+  | 'bottom'
+  | 'left'
+  | 'width'
+  | 'height'
+  | 'minWidth'
+  | 'maxWidth'
+  | 'maxHeight'
+  | 'transform'
+  | 'gridTemplateColumns'
+  | 'contentVisibility'
+  | 'containIntrinsicHeight'
+>
+
 type Box<S extends string, L extends string> = Omit<
   AllHTMLAttributes<HTMLElement>,
   'className' | 'style' | 'as' | 'wrap' | 'cols'
 > & {
   as?: Tag
   place?: LayoutPlace<S>
+  at?: BoxAt
   look?: Look<L>
   text?: BoxText
   ink?: BoxInk
@@ -82,10 +109,10 @@ type Box<S extends string, L extends string> = Omit<
 function render<S extends string, L extends string>(
   display: string,
   box: string,
-  { as = 'div', place, look, text, ink, ...rest }: Box<S, L>
+  { as = 'div', place, at, look, text, ink, ...rest }: Box<S, L>
 ) {
   const own = [box, typeLook(text, ink), look].filter(Boolean).join(' ')
-  return createElement(as, { ...rest, className: placed(display, own, place) })
+  return createElement(as, { ...rest, style: at, className: placed(display, own, place) })
 }
 
 // Children one under the other, `gap` apart; `divided` draws a line between them; `rowFrom`
@@ -158,7 +185,7 @@ export function Surface<const S extends string = never, const L extends string =
   align?: StackAlign
   elevation?: Elevation
   justify?: Justify
-  safe?: boolean
+  safe?: SurfaceSafe
 }) {
   return render(
     'flex',

@@ -78,7 +78,7 @@ import { AltBadge } from './alt_text'
 import { longPress } from './context_menu'
 import { useFileMenu } from './file_card'
 import { Masked, useCopied, useEscape } from './ui'
-import { Row, Surface } from './layout'
+import { Row, Surface, Inset } from './layout'
 
 // An image as the viewer shows it. `src` is the address its message shows it from, held while it
 // is on screen; `w` and `h` the size its sender gave, until the image tells its own; `placeholder`
@@ -278,7 +278,7 @@ export function ViewableImage({
       {...(open ? longPress(open) : {})}
       {...data}
       data-image-attachment=""
-      className="mt-1 w-fit max-w-full"
+      className="msg-part w-fit max-w-full"
     >
       <span className="relative block w-fit max-w-full">
         <button
@@ -838,7 +838,7 @@ export function LightboxView({
         <div
           aria-hidden
           data-lightbox-blur=""
-          className="pointer-events-none fixed inset-x-0 top-app z-[45] h-app animate-lightbox-fade backdrop-blur-md"
+          className="pointer-events-none fixed inset-x-0 top-app z-lightbox h-app animate-lightbox-fade backdrop-blur-md"
         />
       )}
       <div
@@ -856,11 +856,19 @@ export function LightboxView({
           const keyed = e.clientX === 0 && e.clientY === 0
           openMenu?.(keyed ? r.left + r.width / 2 : e.clientX, keyed ? r.top : e.clientY)
         }}
-        className={`fixed inset-x-0 top-app z-[45] flex h-app flex-col text-on-surface outline-none ${
+        className={`fixed inset-x-0 top-app z-lightbox flex h-app flex-col text-on-surface outline-none ${
           moves ? 'animate-lightbox-fade bg-scrim/80' : 'bg-scrim/85'
         }`}
       >
-        <div className="flex h-14 shrink-0 items-center gap-2 border-b border-outline-variant/40 bg-surface-container-lowest/95 pl-safe-4 pr-safe-1 md:hidden">
+        <Inset
+          row
+          pad="sm"
+          inset="sides"
+          gap="sm"
+          safe="sides"
+          look="h-14 border-b border-outline-variant/40 bg-surface-container-lowest/95"
+          place="shrink-0 md:hidden"
+        >
           <div className="min-w-0 flex-1">
             <p aria-live="polite" className="truncate text-sm font-medium" title={shown}>
               {counter && <span className="sr-only">{counter} </span>}
@@ -873,7 +881,7 @@ export function LightboxView({
           {outward}
           {moreButton('')}
           <BarButton icon={X} label="Close" onClick={close} />
-        </div>
+        </Inset>
         <div
           ref={stageRef}
           data-lightbox-stage=""
@@ -911,13 +919,20 @@ export function LightboxView({
               </Surface>
             )}
             {broken ? (
-              <div
+              <Inset
                 role="alert"
-                className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-on-surface"
+                pad="2xl"
+                gap="sm"
+                align="center"
+                justify="center"
+                text="sm"
+                ink="strong"
+                look="text-center"
+                place="absolute inset-0"
               >
                 <ImageOff size={32} aria-hidden className="text-on-surface-variant" />
                 Couldn&apos;t load this image
-              </div>
+              </Inset>
             ) : (
               <div
                 ref={imageRef}
@@ -948,7 +963,7 @@ export function LightboxView({
               title="Previous image"
               aria-label="Previous image"
               onClick={() => go('prev')}
-              className={`${arrowBtn} left-[max(0.5rem,env(safe-area-inset-left))]`}
+              className={`${arrowBtn} left-safe-2`}
             >
               <ChevronLeft size={24} aria-hidden />
             </button>
@@ -959,21 +974,29 @@ export function LightboxView({
               title="Next image"
               aria-label="Next image"
               onClick={() => go('next')}
-              className={`${arrowBtn} right-[max(0.5rem,env(safe-area-inset-right))]`}
+              className={`${arrowBtn} right-safe-2`}
             >
               <ChevronRight size={24} aria-hidden />
             </button>
           )}
           <AltBadge key={`alt ${key}`} alt={item.alt} own={item.own} up />
         </div>
-        <div className="flex shrink-0 items-center gap-3 border-t border-outline-variant/40 bg-surface-container-lowest/95 pb-[env(safe-area-inset-bottom)] px-safe-2 md:h-12 md:px-safe-3">
-          <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto py-1 max-md:justify-center-safe">
+        <Inset
+          row
+          pad="sm"
+          inset="sides"
+          gap="md"
+          safe="all"
+          look="border-t border-outline-variant/40 bg-surface-container-lowest/95 md:h-12"
+          place="shrink-0"
+        >
+          <Row gap="3xs" look="max-md:justify-center-safe" place="min-w-0 flex-1 overflow-x-auto">
             <Row gap="3xs" place="max-md:hidden">
               <BarButton icon={X} label="Close" onClick={close} />
               {outward}
             </Row>
             {tools}
-          </div>
+          </Row>
           <Row
             gap="sm"
             text="xs"
@@ -989,7 +1012,7 @@ export function LightboxView({
             </Row>
             <span className="shrink-0">{detail}</span>
           </Row>
-        </div>
+        </Inset>
       </div>
     </>
   )

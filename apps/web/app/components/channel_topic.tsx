@@ -19,7 +19,7 @@ import { useMedia } from './context_menu'
 import { SHEET_QUERY } from './emoji_picker'
 import { MessageLink } from './markdown_message'
 import { CloseButton, fieldCls, FieldError, Masked, Sheet, useOwnServer } from './ui'
-import { Row, Surface } from './layout'
+import { Row, Surface, Stack, Inset } from './layout'
 
 const topicFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
@@ -173,13 +173,13 @@ function TopicWindow({
   const Icon = channel.kind === 'voice' ? Volume2 : Hash
   const body = (
     <>
-      <div className="flex shrink-0 items-center gap-2 px-4 pb-2">
+      <Inset row pad="lg" inset="bar" gap="sm" place="shrink-0">
         <Icon size={18} className="shrink-0 text-on-surface-variant" />
         <h2 id={titleId} className="min-w-0 flex-1 truncate text-base font-medium text-on-surface">
           <Masked text={channel.name} own={ownServer} />
         </h2>
         {!sheet && <CloseButton onClick={onClose} />}
-      </div>
+      </Inset>
       <Surface
         tone="plain"
         radius="none"
@@ -219,7 +219,7 @@ function TopicWindow({
       tabIndex={-1}
       data-popover
       style={at ? { top: at.top, left: at.left } : { visibility: 'hidden' }}
-      className="fixed z-popover flex max-h-[min(28rem,calc(100dvh-6rem))] outline-none w-112 max-w-screen-inset flex-col overflow-hidden rounded-2xl bg-surface-container-high pt-3 shadow-elevation-3"
+      className="fixed z-popover flex max-h-float w-112 max-w-screen-inset flex-col overflow-hidden rounded-2xl bg-surface-container-high shadow-elevation-3 outline-none"
     >
       {body}
     </div>,
@@ -270,7 +270,7 @@ export function TopicEditor({
   }
 
   return (
-    <div className="flex flex-col gap-2 pt-2">
+    <Stack gap="sm">
       <label htmlFor={id} className="text-xs text-on-surface-variant">
         Topic
       </label>
@@ -293,14 +293,14 @@ export function TopicEditor({
       <Row gap="md" align="start" justify="between">
         <div className="min-w-0">
           <FieldError id={`${id}-error`} message={error} />
-          {done && !error && <p className="pt-1.5 text-xs text-on-surface-variant">Saved</p>}
+          {done && !error && <p className="text-xs text-on-surface-variant">Saved</p>}
         </div>
         <span aria-live="polite" className="sr-only">
           {topicAnnouncement(count, done && !error)}
         </span>
         <span
           id={`${id}-count`}
-          className={`shrink-0 pt-1.5 text-xs tabular-nums ${over ? 'text-error' : 'text-on-surface-variant'}`}
+          className={`shrink-0 text-xs tabular-nums ${over ? 'text-error' : 'text-on-surface-variant'}`}
         >
           {count}/{TOPIC_MAX}
         </span>
@@ -326,6 +326,6 @@ export function TopicEditor({
           Save
         </Button>
       </Row>
-    </div>
+    </Stack>
   )
 }

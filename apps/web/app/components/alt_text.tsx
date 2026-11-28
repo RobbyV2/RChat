@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import { charCount } from '../lib/rules'
 import { ALT_MAX, altAnnouncement, altError, cleanAlt } from '../lib/alt_text'
-import { Masked } from './ui'
-import { Stack } from './layout'
+import { Masked, smallFieldCls } from './ui'
+import { Stack, Surface, Inset } from './layout'
 
 // The ALT pill in the bottom-right corner of an image that has a description; pressing it shows
 // the description over the image, below the pill or, with `up`, above it where there is no room
@@ -39,7 +39,7 @@ export function AltBadge({
   if (!alt) return null
   return (
     <span ref={box} data-alt-badge className="contents">
-      <button
+      <Inset
         type="button"
         title="Image description"
         aria-label="ALT, image description"
@@ -49,19 +49,34 @@ export function AltBadge({
           e.stopPropagation()
           setOpen(o => !o)
         }}
-        className="absolute right-2 bottom-2 rounded bg-scrim/80 px-1.5 py-0.5 text-3xs font-bold tracking-wider text-white uppercase hover:bg-scrim"
+        as="button"
+        pad="xs"
+        inset="chip"
+        look="rounded bg-scrim/80 text-3xs font-bold tracking-wider text-white uppercase hover:bg-scrim"
+        place="absolute right-2 bottom-2"
       >
         Alt
-      </button>
+      </Inset>
       {open && (
-        <span
+        <Surface
           role="note"
           data-alt-text
           data-popover
-          className={`absolute z-20 ${up ? 'right-2 bottom-9' : 'top-full left-0 mt-1'} max-h-60 w-max max-w-[min(20rem,calc(100vw-5rem))] min-w-40 overflow-y-auto rounded-xl bg-surface-container-highest p-3 pr-8 text-xs break-words whitespace-pre-line text-on-surface shadow-elevation-2`}
+          as="span"
+          pad="md"
+          tone="highest"
+          radius="lg"
+          elevation={2}
+          text="xs"
+          look="max-h-60 w-max max-w-float min-w-40 break-words whitespace-pre-line"
+          place={
+            up
+              ? 'absolute z-float right-2 bottom-9 overflow-y-auto'
+              : 'absolute z-float top-full left-0 translate-y-1 overflow-y-auto'
+          }
         >
           <Masked text={alt} own={own} />
-          <button
+          <Inset
             type="button"
             title="Close"
             aria-label="Close"
@@ -70,11 +85,14 @@ export function AltBadge({
               e.stopPropagation()
               setOpen(false)
             }}
-            className="absolute top-1.5 right-1.5 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high"
+            as="button"
+            pad="2xs"
+            look="rounded-full text-on-surface-variant hover:bg-surface-container-high"
+            place="absolute top-1.5 right-1.5"
           >
             <X size={12} />
-          </button>
-        </span>
+          </Inset>
+        </Surface>
       )}
     </span>
   )
@@ -100,7 +118,7 @@ export function AltField({
         placeholder="Describe this image"
         aria-label="Describe this image"
         aria-invalid={tooLong !== null}
-        className="min-w-0 rounded-lg border border-outline-variant bg-transparent px-2 py-1 text-base outline-none placeholder:text-on-surface-variant focus:border-primary md:text-xs"
+        className={`${smallFieldCls} min-w-0`}
       />
       {(tooLong || count > ALT_MAX - 50) && (
         <span

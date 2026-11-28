@@ -18,7 +18,7 @@ import {
 import { useHighlight, type CodeNode } from '../lib/highlight'
 import { sharing } from '../lib/platform'
 import { useChat } from '../lib/place/use_chat'
-import { Row, Surface } from './layout'
+import { Row, Surface, Inset } from './layout'
 import { time } from '../lib/platform/time'
 
 const CLASS = /^[a-z][\w-]*$/i
@@ -72,12 +72,21 @@ export function CodeBlock({ code, tag }: { code: string; tag: string | null }) {
   const hl = useHighlight(head, named, tag === null || named !== null, fetches)
   const label = hl ? LANGS[hl.lang] : named ? LANGS[named] : tag || 'Text'
   return (
-    <div data-code-block="" className="my-1 max-w-full rounded-lg bg-surface-container-high">
-      <div className="flex h-7 items-center justify-between gap-2 pr-1 pl-3 text-2xs text-on-surface-variant">
+    <div data-code-block="" className="msg-block max-w-full rounded-lg bg-surface-container-high">
+      <Inset
+        row
+        pad="md"
+        inset="sides"
+        gap="sm"
+        justify="between"
+        text="2xs"
+        ink="muted"
+        look="h-7"
+      >
         <span className="truncate font-medium">{label}</span>
         <CopyButton text={code} />
-      </div>
-      <pre className="code-hl overflow-x-auto px-3 pb-2 font-mono text-xs leading-5">
+      </Inset>
+      <pre className="code-hl code-body overflow-x-auto font-mono text-xs leading-5">
         <code>
           {hl ? toReact(hl.nodes, 0) : head}
           {tail}
@@ -139,7 +148,7 @@ export function CodePreviewLoading({ filename }: { filename: string }) {
   return (
     <div
       aria-label={`Loading ${filename}`}
-      className="mt-1 h-40 w-2xl max-w-full motion-safe:animate-pulse rounded-xl bg-surface-container"
+      className="msg-part h-40 w-2xl max-w-full motion-safe:animate-pulse rounded-xl bg-surface-container"
     />
   )
 }
@@ -174,9 +183,9 @@ export function CodePreview({
   return (
     <div
       data-code-preview=""
-      className="mt-1 w-2xl max-w-full overflow-hidden rounded-xl border border-outline-variant bg-surface-container"
+      className="msg-part w-2xl max-w-full overflow-hidden rounded-xl border border-outline-variant bg-surface-container"
     >
-      <div className="flex items-center gap-2 py-1.5 pr-1.5 pl-3">
+      <Inset row pad="md" inset="chip" gap="sm">
         <FileCode size={18} className="shrink-0 text-primary" />
         <span className="min-w-0 truncate text-sm">{filename}</span>
         {bytes !== null && (
@@ -184,11 +193,21 @@ export function CodePreview({
             {fmtSize(bytes)}
           </span>
         )}
-        <span className="shrink-0 rounded bg-surface-container-highest px-1.5 py-0.5 text-2xs text-on-surface-variant">
+        <Surface
+          as="span"
+          pad="xs"
+          inset="chip"
+          tone="highest"
+          radius="none"
+          text="2xs"
+          ink="muted"
+          look="rounded"
+          place="shrink-0"
+        >
           {LANGS[lang]}
-        </span>
+        </Surface>
         <span className="ml-auto flex shrink-0 items-center">{actions}</span>
-      </div>
+      </Inset>
       <div
         role="region"
         aria-label={`Preview of ${filename}`}
@@ -197,11 +216,11 @@ export function CodePreview({
       >
         <pre
           aria-hidden
-          className="sticky left-0 shrink-0 bg-surface-container-high py-2 pr-3 pl-3 text-right text-outline select-none"
+          className="code-gutter sticky left-0 shrink-0 bg-surface-container-high text-right text-outline select-none"
         >
           {gutter}
         </pre>
-        <pre className="min-w-0 flex-1 py-2 pr-3">
+        <pre className="code-lines min-w-0 flex-1">
           <code>
             {hl ? toReact(hl.nodes, 0) : head}
             {tail}

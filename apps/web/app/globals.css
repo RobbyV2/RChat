@@ -74,6 +74,7 @@
   --z-index-float: 20;
   --z-index-popover: 30;
   --z-index-page: 40;
+  --z-index-lightbox: 45;
   --z-index-top: 50;
   --z-index-palette: 55;
   --z-index-banner: 60;
@@ -612,6 +613,19 @@ body {
   font-weight: 500;
 }
 
+/* A code block: its text under the header line, and the numbered lines of a file. */
+.code-body {
+  padding: 0 var(--space-md) var(--space-sm);
+}
+
+.code-gutter {
+  padding: var(--space-sm) var(--space-md);
+}
+
+.code-lines {
+  padding: var(--space-sm) var(--space-md) var(--space-sm) 0;
+}
+
 /* The parts of a message under its text (a picture, a file, a card, a note). */
 .msg-part {
   margin-top: var(--space-2xs);
@@ -670,6 +684,24 @@ body {
 
 @utility max-w-screen-inset {
   max-width: calc(100vw - 2rem);
+}
+
+/* An edge offset that clears the screen's own inset. */
+@utility left-safe-* {
+  left: max(--spacing(--value(integer)), env(safe-area-inset-left));
+}
+
+@utility right-safe-* {
+  right: max(--spacing(--value(integer)), env(safe-area-inset-right));
+}
+
+/* A floating card that stays inside the screen. */
+@utility max-h-float {
+  max-height: min(28rem, calc(100dvh - 6rem));
+}
+
+@utility max-w-float {
+  max-width: min(20rem, calc(100vw - 5rem));
 }
 
 /* A panel hung under a pane's header: inside the pane, under the header line. */

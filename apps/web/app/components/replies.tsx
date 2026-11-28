@@ -18,7 +18,7 @@ import { IconButton } from './controls'
 import { Masked, useOwn } from './ui'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
-import { Row } from './layout'
+import { Row, Surface, Inset } from './layout'
 
 // A small marker for forwarded messages where only a line of them is shown (search, quotes).
 export function ForwardedTag() {
@@ -110,48 +110,35 @@ export function ReplyPreview({
       style={{ left: avatar / 2 - 1, width: avatar / 2 + 6, height: 'calc(50% + 4px)' }}
     />
   )
-  const indent = { paddingLeft: avatar + 12 }
+  const gutter = <span aria-hidden className="shrink-0" style={{ width: avatar + 12 }} />
   if (quote.partial)
     return (
-      <div
-        data-reply-to={quote.id}
-        data-reply-loading
-        className="relative mb-0.5 flex h-5 items-center"
-        style={indent}
-      >
+      <Row data-reply-to={quote.id} data-reply-loading gap="none" look="h-5" place="relative">
         {connector}
+        {gutter}
         <span className="h-2 w-32 rounded-full bg-surface-container-highest" />
-      </div>
+      </Row>
     )
   if (quote.deleted || !author)
     return (
-      <div
-        data-reply-to={quote.id}
-        className="relative mb-0.5 flex h-5 items-center text-xs text-on-surface-variant"
-        style={indent}
-      >
+      <Row data-reply-to={quote.id} gap="none" text="xs" ink="muted" look="h-5" place="relative">
         {connector}
+        {gutter}
         <span className="truncate italic">Original message was deleted</span>
-      </div>
+      </Row>
     )
   if (blocked && shown !== authorKey)
     return (
-      <div
-        data-reply-to={quote.id}
-        className="relative mb-0.5 flex h-5 items-center text-xs text-on-surface-variant"
-        style={indent}
-      >
+      <Row data-reply-to={quote.id} gap="none" text="xs" ink="muted" look="h-5" place="relative">
         {connector}
+        {gutter}
         <BlockedQuote onShow={() => setShown(authorKey)} />
-      </div>
+      </Row>
     )
   return (
-    <div
-      data-reply-to={quote.id}
-      className="relative mb-0.5 flex min-h-5 min-w-0 items-center text-xs"
-      style={indent}
-    >
+    <Row data-reply-to={quote.id} gap="none" text="xs" look="min-h-5" place="relative min-w-0">
       {connector}
+      {gutter}
       <PreviewRow
         title="Jump to message"
         onOpen={() => onJump(quote.id)}
@@ -184,7 +171,7 @@ export function ReplyPreview({
           copy.target && <RevealChannelPreview target={copy.target} />
         )}
       </PreviewRow>
-    </div>
+    </Row>
   )
 }
 
@@ -202,14 +189,22 @@ export function ComposerBar({
   closeLabel: string
 }) {
   return (
-    <div
+    <Surface
       data-composer-bar
-      className="@container flex min-h-9 items-center gap-2 rounded-t-2xl bg-surface-container px-4 py-1 text-sm text-on-surface-variant"
+      row
+      pad="lg"
+      inset="line"
+      gap="sm"
+      tone="base"
+      radius="none"
+      text="sm"
+      ink="muted"
+      look="@container min-h-9 rounded-t-2xl"
     >
       <div className="min-w-0 flex-1 truncate">{children}</div>
       {actions}
       <IconButton icon={X} label={closeLabel} size="sm" onClick={onClose} />
-    </div>
+    </Surface>
   )
 }
 
@@ -227,21 +222,23 @@ export function ReplyBar({ draftKey, onClose }: { draftKey: string; onClose: () 
       closeLabel="Cancel reply"
       actions={
         author.username !== me && (
-          <button
+          <Inset
             type="button"
             aria-pressed={mention}
             title={
               mention ? 'The author will be pinged. Click to turn off' : 'Click to ping the author'
             }
             onClick={() => toggle(draftKey)}
-            className={`shrink-0 rounded-md px-1.5 py-0.5 text-xs font-bold focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-10 pointer-coarse:min-w-12 ${
-              mention
-                ? 'text-primary hover:bg-primary/10'
-                : 'text-on-surface-variant hover:bg-surface-container-highest'
-            }`}
+            as="button"
+            pad="xs"
+            inset="chip"
+            align="center"
+            text="xs"
+            look={`rounded-md font-bold focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-10 pointer-coarse:min-w-12 ${mention ? 'text-primary hover:bg-primary/10' : 'text-on-surface-variant hover:bg-surface-container-highest'}`}
+            place="shrink-0"
           >
             @ {mention ? 'ON' : 'OFF'}
-          </button>
+          </Inset>
         )
       }
     >

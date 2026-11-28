@@ -59,7 +59,7 @@ import { useInstanceLabel } from './instance_badge'
 import { ServerGlyph } from './server_rail'
 import { useStableSelector } from '../lib/stable_key'
 import type { P2pState } from '../lib/p2p/app/store'
-import { Row, Stack } from './layout'
+import { Row, Stack, Surface } from './layout'
 
 const DELETED_USER = 'Deleted user'
 
@@ -181,22 +181,28 @@ export function ForwardBar({
       actions={
         <>
           {show !== null && (
-            <button
+            <Surface
               type="button"
               role="switch"
               aria-checked={show}
               title={SHOW_SOURCE}
               aria-label={SHOW_SOURCE}
               onClick={() => setShowSource(draftKey, !show)}
-              className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:min-h-10 pointer-coarse:min-w-10 pointer-coarse:justify-center ${
-                show
-                  ? 'bg-secondary-container text-on-secondary-container hover:opacity-90'
-                  : 'text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface'
-              }`}
+              as="button"
+              row
+              pad="sm"
+              inset="chip"
+              gap="2xs"
+              tone="plain"
+              radius="full"
+              justify="center"
+              text="xs"
+              look={`font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:min-h-10 pointer-coarse:min-w-10 ${show ? 'bg-secondary-container text-on-secondary-container hover:opacity-90' : 'text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface'}`}
+              place="shrink-0"
             >
               <MapPin size={12} aria-hidden className="shrink-0" />
               <span className="@max-sm:hidden">{SHOW_SOURCE}</span>
-            </button>
+            </Surface>
           )}
           <Button
             variant="filled"
@@ -622,9 +628,9 @@ export function ForwardCard({
     return (
       <Stack gap="2xs" data-forward={fwd.source_id}>
         {head}
-        <div className="max-w-160 min-w-0 rounded-xl border border-outline-variant bg-surface-container px-3 py-2">
+        <Surface pad="md" inset="bar" tone="base" radius="lg" border place="max-w-160 min-w-0">
           <BlockedQuote onShow={() => setShown(true)} />
-        </div>
+        </Surface>
       </Stack>
     )
   if (!local && access !== 'open')
@@ -644,7 +650,7 @@ export function ForwardCard({
   return (
     <Stack gap="2xs" data-forward={fwd.source_id}>
       {head}
-      <div className="max-w-160 min-w-0 rounded-xl border border-outline-variant bg-surface-container px-3 py-2">
+      <Surface pad="md" inset="bar" tone="base" radius="lg" border place="max-w-160 min-w-0">
         <Row gap="sm" wrap place="min-w-0">
           <Row as="span" gap="sm" place="max-w-full" data-forward-author>
             {author ? (
@@ -689,7 +695,7 @@ export function ForwardCard({
           <MarkdownMessage message={m} canDelete={canDelete} />
         )}
         {fwd.dropped && (
-          <p className="mt-1 text-xs text-on-surface-variant italic">
+          <p className="msg-part text-xs text-on-surface-variant italic">
             File not forwarded: {fwd.dropped}
           </p>
         )}
@@ -698,7 +704,7 @@ export function ForwardCard({
         ) : (
           <HostedSourcePill m={m} when={when} active={!sending} />
         )}
-      </div>
+      </Surface>
     </Stack>
   )
 }

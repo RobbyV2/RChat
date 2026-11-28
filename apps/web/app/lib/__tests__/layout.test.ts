@@ -182,3 +182,13 @@ test('a line surface keeps a hair above and below; a lifted box overlaps by a st
   has(surface({ pad: 'lg', inset: 'line' }), 'px-(--space-lg)', 'py-(--space-2xs)')
   has(liftLook('2xl'), 'relative', '-mt-(--space-2xl)')
 })
+
+test('a surface safe at its sides pads them by its own step or the screen inset', () => {
+  has(
+    surface({ pad: 'sm', safe: 'all' }),
+    'pl-[max(var(--space-sm),env(safe-area-inset-left))]',
+    'pr-[max(var(--space-sm),env(safe-area-inset-right))]',
+    'pb-[max(var(--space-sm),env(safe-area-inset-bottom))]'
+  )
+  expect(surface({ pad: 'sm', safe: 'sides' }).includes('inset-bottom')).toBe(false)
+})

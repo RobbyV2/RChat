@@ -85,6 +85,37 @@ const PAD_SAFE_BOTTOM: Record<Space, string> = {
   '3xl': 'pb-[max(var(--space-3xl),env(safe-area-inset-bottom))]',
 }
 
+// The same at the left and right edges (a notch, a rounded corner).
+const PAD_SAFE_LEFT: Record<Space, string> = {
+  none: 'pl-[env(safe-area-inset-left)]',
+  '3xs': 'pl-[max(var(--space-3xs),env(safe-area-inset-left))]',
+  '2xs': 'pl-[max(var(--space-2xs),env(safe-area-inset-left))]',
+  xs: 'pl-[max(var(--space-xs),env(safe-area-inset-left))]',
+  sm: 'pl-[max(var(--space-sm),env(safe-area-inset-left))]',
+  md: 'pl-[max(var(--space-md),env(safe-area-inset-left))]',
+  lg: 'pl-[max(var(--space-lg),env(safe-area-inset-left))]',
+  xl: 'pl-[max(var(--space-xl),env(safe-area-inset-left))]',
+  '2xl': 'pl-[max(var(--space-2xl),env(safe-area-inset-left))]',
+  '3xl': 'pl-[max(var(--space-3xl),env(safe-area-inset-left))]',
+}
+
+const PAD_SAFE_RIGHT: Record<Space, string> = {
+  none: 'pr-[env(safe-area-inset-right)]',
+  '3xs': 'pr-[max(var(--space-3xs),env(safe-area-inset-right))]',
+  '2xs': 'pr-[max(var(--space-2xs),env(safe-area-inset-right))]',
+  xs: 'pr-[max(var(--space-xs),env(safe-area-inset-right))]',
+  sm: 'pr-[max(var(--space-sm),env(safe-area-inset-right))]',
+  md: 'pr-[max(var(--space-md),env(safe-area-inset-right))]',
+  lg: 'pr-[max(var(--space-lg),env(safe-area-inset-right))]',
+  xl: 'pr-[max(var(--space-xl),env(safe-area-inset-right))]',
+  '2xl': 'pr-[max(var(--space-2xl),env(safe-area-inset-right))]',
+  '3xl': 'pr-[max(var(--space-3xl),env(safe-area-inset-right))]',
+}
+
+// Which edges of a surface keep clear of the screen's own insets: the lower edge (`true` or
+// `bottom`), the sides, or all three.
+export type SurfaceSafe = boolean | 'bottom' | 'sides' | 'all'
+
 // The step below `s` on the scale (`none` stays `none`).
 export const smaller = (s: Space): Space => SPACES[Math.max(0, SPACES.indexOf(s) - 1)]
 
@@ -260,12 +291,13 @@ export const surfaceLook = ({
   row?: boolean
   elevation?: Elevation
   justify?: Justify
-  safe?: boolean
+  safe?: SurfaceSafe
 }) =>
   [
     row ? 'min-w-0 flex-row' : 'min-w-0 flex-col',
     inset === 'even' ? PAD[pad] : `${PAD_X[pad]} ${PAD_Y[above(pad, inset)]}`,
-    safe ? PAD_SAFE_BOTTOM[above(pad, inset)] : '',
+    safe === true || safe === 'bottom' || safe === 'all' ? PAD_SAFE_BOTTOM[above(pad, inset)] : '',
+    safe === 'sides' || safe === 'all' ? `${PAD_SAFE_LEFT[pad]} ${PAD_SAFE_RIGHT[pad]}` : '',
     GAP[gap],
     ITEMS[align],
     JUSTIFY[justify],
