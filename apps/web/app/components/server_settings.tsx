@@ -117,6 +117,7 @@ import {
   headerColors,
 } from '../lib/server_colors'
 import { Row, Stack, Surface, Inset } from './layout'
+import { serverCalled } from '../lib/names'
 import { Dialog, FieldError, Sentinel, fieldCls, sectionCls, useOwnServer } from './ui'
 import { LabelText } from './instance_badge'
 import { endsText } from '../lib/durations'
@@ -840,6 +841,7 @@ export function ServerAppearance({
   }
   if (!detail) return null
   const rchat = server === 'rchat'
+  const own = useOwnServer(server)
   const dirty = banner !== savedBanner || (!rchat && name !== savedName)
   const warning = rchat ? null : contrastWarning(banner, name)
   const auto = headerColors(banner, null)?.fg
@@ -860,11 +862,17 @@ export function ServerAppearance({
         >
           <ServerHeader
             preview
-            showGear={showGear}
-            server={server}
-            displayName={detail.display_name}
-            bannerColor={banner}
-            nameColor={rchat ? null : name}
+            head={{
+              name: serverCalled(detail.display_name, own),
+              logo: rchat,
+              banner,
+              nameColor: rchat ? null : name,
+              peer: false,
+              stored: false,
+              line: null,
+              canInvite: false,
+              canSet: showGear,
+            }}
           />
           <Surface pad="sm" gap="3xs" tone="plain" radius="none" aria-hidden>
             {preview.map(c => (

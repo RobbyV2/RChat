@@ -2,7 +2,6 @@
 import { Name, useNameLabel, useNameLabels } from '../name'
 import { labelList, labelWith, roomName, p2pName } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
-import { StoredLock } from '../storage_settings'
 import { PeerActorTag } from '../view_actor'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
@@ -15,9 +14,10 @@ import { ChannelCanContext, useChannelCan } from '../../lib/place/use_rights'
 import { PlaceProvider, useLive, useP2pRoom } from '../../lib/place/react'
 import { featureAt, isUnsupported } from '../../lib/place/feature'
 import { channels as channelsFeature, noChannels } from '../../lib/place/channels'
+import { PlaceHeader } from '../server_header'
 import { ChannelList } from '../channel_list'
 import { VoiceRow } from '../voice_row'
-import { Button, IconButton, LinkButton, Tile, CardButton } from '../controls'
+import { Button, IconButton, LinkButton, Tile } from '../controls'
 import MemberSidebar from '../member_sidebar'
 
 import { useMemo, type CSSProperties } from 'react'
@@ -30,7 +30,6 @@ import {
   Menu,
   Plus,
   Search,
-  UserPlus,
   Users,
   Volume2,
   Waypoints,
@@ -40,7 +39,6 @@ import { allPings } from '../../lib/selectors'
 import { P2P_SERVER_INTRO } from '../../lib/home'
 import { serverScope } from '../../lib/p2p/app'
 import { displayName } from '../../lib/p2p/contacts'
-import { P } from '../../lib/p2p/state'
 import { serverPings, serverUnread } from '../../lib/p2p/alerts'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
@@ -86,9 +84,6 @@ import { ChannelListSkeleton, Held, MessageListSkeleton, ServerRailSkeleton } fr
 export { serverPings, serverUnread }
 
 // Unread channels that show it: muted channels (or a muted server) don't.
-
-const can = (v: ServerView | undefined, bit: number) =>
-  !!v && v.me === 'join' && (v.perms & bit) !== 0
 
 // ----- Rail -----
 
@@ -376,60 +371,6 @@ const useOpen = () => {
   return { room, v }
 }
 
-function ServerHead({ v }: { v: ServerView }) {
-  const identity = useP2pApp()!
-  const { p2p } = identity
-
-  const acct = useAccount()
-
-  const own = useP2p(s => ownsP2pServer(v, s.me))
-  const sealAll = useP2p(s => s.seal.everything)
-  const open = (x: number, y: number) =>
-    openActionMenu(x, y, { kind: 'p2p_server', v, folder: null, at: 0 }, undefined, acct, identity)
-  return (
-    <Surface
-      pad="md"
-      inset="sides"
-      gap="sm"
-      row
-      tone="plain"
-      radius="none"
-      border="bottom"
-      look="h-14"
-      place="shrink-0"
-    >
-      <CardButton
-        {...longPress(open)}
-        onClick={e => {
-          const r = e.currentTarget.getBoundingClientRect()
-          open(r.left + 12, r.bottom)
-        }}
-        place="min-w-0 flex-1"
-        pad="sm"
-      >
-        <span className="flex min-w-0 flex-col items-start">
-          <Row as="span" gap="xs" place="w-full">
-            <Name data-p2p-server-name of={roomName(v.name, own)} look="truncate font-medium" />
-            <P2pBadge />
-            {(v.store.on || sealAll) && <StoredLock />}
-          </Row>
-          <span data-p2p-online-count className="truncate text-xs text-on-surface-variant">
-            {v.online} of {v.joined} online
-          </span>
-        </span>
-      </CardButton>
-      {can(v, P.Invite) && (
-        <IconButton
-          icon={UserPlus}
-          label="Invite people"
-          size="lg"
-          onClick={() => p2p.openDialog({ kind: 'server_invite', room: v.id })}
-        />
-      )}
-    </Surface>
-  )
-}
-
 function P2pServerSidebarBody() {
   const identity = useP2pApp()!
 
@@ -450,7 +391,7 @@ function P2pServerSidebarBody() {
       data-p2p-sidebar
       className="flex h-full w-60 shrink-0 flex-col border-r border-dashed border-tertiary/40 bg-surface-container-low"
     >
-      <ServerHead v={v} />
+      <PlaceHeader channels={listed} />
       <PlaceProvider place={place ?? P2pRoom.open(identity, v.id)}>
         <ChannelList
           channels={listed}

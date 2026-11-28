@@ -5,7 +5,9 @@ import type { P2pApp } from '../p2p/app/runtime'
 import { viewCan } from '../p2p/roles'
 import { ownsP2pServer } from '../p2p/server/types'
 import { P } from '../p2p/state'
-import { badgePings, myPerms, scopeMuted, scopeUnread } from '../selectors'
+import { roomName, serverCalled, type ServerName } from '../names'
+import { hostedServerSeal } from '../sealing'
+import { badgePings, myPerms, scopeMuted, scopeUnread, serverAdminPerms } from '../selectors'
 import { levelOf, mutedOf, type NotifyScope } from '../notify'
 import { channelScope, serverScope } from '../p2p/app'
 import { scopePings } from '../pings'
@@ -46,6 +48,24 @@ export interface CategoryEntry {
   channels: ChannelEntry[]
   // The channels with the separators between them.
   rows: ListEntry[]
+}
+
+// What heads a server's sidebar: what the server is called and how, and what its header offers.
+export interface PlaceHead {
+  name: ServerName
+  // The app's own server shows the logo in place of its name.
+  logo: boolean
+  banner: string | null
+  nameColor: string | null
+  // The server lives on its members' devices.
+  peer: boolean
+  // What it keeps is stored sealed.
+  stored: boolean
+  // The line under the name; null without one.
+  line: string | null
+  canInvite: boolean
+  // Whether the reader may open the server's settings.
+  canSet: boolean
 }
 
 export interface ChannelsState {
@@ -110,6 +130,11 @@ export type ChannelDraft = {
 
 export interface Channels {
   state: Live<ChannelsState>
+  // Null while the server is not here yet.
+  head: Live<PlaceHead | null>
+  headMenu: (x: number, y: number) => void
+  openSettings: () => void
+  invite: () => void
   ends: Live<EndingsState>
   draft: Live<ChannelDraft | null>
   // Opens the field that names a new channel in `category` (null: outside any).
@@ -268,6 +293,38 @@ const hosted = (account: AccountSession, server: string): Channels => {
               max: null,
             }
   )
+  const head = (initial: boolean) =>
+    built(
+      () => {
+        const s = initial ? store.getInitialState() : store.getState()
+        const detail = s.servers[server]
+        const me = s.me?.username ?? null
+        return [
+          detail?.display_name,
+          detail?.banner_color ?? null,
+          detail?.name_color ?? null,
+          detail !== undefined &&
+            me !== null &&
+            (s.me?.servers.find(x => x.name === server)?.creator ?? detail.creator) === me,
+          hostedServerSeal(detail?.seal, false, s.settings).on,
+          serverAdminPerms(s, server) !== 0n,
+        ] as const
+      },
+      ([name, banner, nameColor, own, stored, canSet]): PlaceHead | null =>
+        name === undefined
+          ? null
+          : {
+              name: serverCalled(name, own),
+              logo: server === 'rchat',
+              banner,
+              nameColor,
+              peer: false,
+              stored,
+              line: null,
+              canInvite: false,
+              canSet,
+            }
+    )
   const detail = () => store.getState().servers[server]
   return {
     draft: { get: draft, subscribe: changed => edit.subscribe(changed) },
@@ -307,6 +364,15 @@ const hosted = (account: AccountSession, server: string): Channels => {
       initial: state(true),
       subscribe: changed => store.subscribe(changed),
     },
+    head: {
+      get: head(false),
+      initial: head(true),
+      subscribe: changed => store.subscribe(changed),
+    },
+    headMenu: (x, y) =>
+      openActionMenu(x, y, { kind: 'server', server, folder: null, at: 0 }, undefined, account),
+    openSettings: () => store.getState().openDialog({ kind: 'server_settings', server }),
+    invite: () => {},
     addCategory: () => store.getState().openDialog({ kind: 'category', server }),
     open: key => void store.getState().openChannel(server, Number(key)),
     setOpen: (category, open) =>
@@ -449,6 +515,27 @@ const peer = (app: P2pApp, room: string): Channels => {
     shut = next
     for (const changed of [...listeners]) changed()
   }
+  const head = (initial: boolean) =>
+    built(
+      () => {
+        const s = initial ? useP2p.getInitialState() : useP2p.getState()
+        return [s.servers[room], s.me, s.seal.everything] as const
+      },
+      ([v, me, sealAll]): PlaceHead | null =>
+        v === undefined
+          ? null
+          : {
+              name: roomName(v.name, ownsP2pServer(v, me)),
+              logo: false,
+              banner: null,
+              nameColor: null,
+              peer: true,
+              stored: v.store.on || sealAll,
+              line: `${v.online} of ${v.joined} online`,
+              canInvite: viewCan(v, P.Invite),
+              canSet: v.me === 'join',
+            }
+    )
   const view = () => useP2p.getState().servers[room]
   return {
     draft: {
@@ -510,6 +597,25 @@ const peer = (app: P2pApp, room: string): Channels => {
         }
       },
     },
+    head: {
+      get: head(false),
+      initial: head(true),
+      subscribe: changed => useP2p.subscribe(changed),
+    },
+    headMenu: (x, y) => {
+      const v = view()
+      if (v)
+        openActionMenu(
+          x,
+          y,
+          { kind: 'p2p_server', v, folder: null, at: 0 },
+          undefined,
+          app.owner,
+          app
+        )
+    },
+    openSettings: () => app.p2p.openDialog({ kind: 'server_settings', room }),
+    invite: () => app.p2p.openDialog({ kind: 'server_invite', room }),
     addCategory: (x, y) => {
       const v = view()
       if (v)

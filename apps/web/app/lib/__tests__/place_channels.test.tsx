@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ChannelList } from '../../components/channel_list'
+import { PlaceHeader } from '../../components/server_header'
 import { AccountProvider } from '../client/react'
 import type { ServerView } from '../p2p/server'
 import { P } from '../p2p/state'
@@ -58,6 +59,9 @@ const seat = (world: ContractWorld, calls: unknown[][]) => {
         { id: 'c3', name: 'c3', kind: 'voice', pos: 1, cat: 'k9', restrict_view: true },
       ],
       categories: [{ id: 'k9', name: 'Deck', pos: 0 }],
+      store: { on: false },
+      online: 1,
+      joined: 2,
     } as unknown as ServerView
     const state = { servers: { [world.room]: view }, server: { room: world.room, ch: 'c1' } }
     place.app.useP2p.setState(state as never)
@@ -232,6 +236,23 @@ placeContract(channels, (kind, world) => {
     expect(html).toContain('>Channels<')
     expect(html).toContain('aria-label="Create category"')
     expect(html).toContain('aria-label="Create channel"')
+  })
+
+  test('the header says what the server is called and what it offers, and one header draws it', () => {
+    const calls: unknown[][] = []
+    const here = listed(calls)
+    const head = here.head.get()
+    expect(here.head.get()).toBe(head)
+    expect(head).toMatchObject({ logo: false, peer: !hosted, canSet: true })
+    expect(head?.line === null).toBe(hosted)
+    const html = renderToStaticMarkup(
+      <AccountProvider session={world().ann.account}>
+        <PlaceHeader channels={here} />
+      </AccountProvider>
+    )
+    expect(html).toContain('data-server-name')
+    expect(html).toContain('aria-label="Server settings"')
+    expect(html.includes('online')).toBe(!hosted)
   })
 
   test('a new category is asked for on the side of the place', () => {

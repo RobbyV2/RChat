@@ -1,15 +1,23 @@
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ServerHeader } from '../../components/server_header'
+import { serverCalled } from '../names'
 import { GEAR_CHIP_CSS } from '../server_colors'
 
 const header = (bannerColor: string | null, preview = false) =>
   renderToStaticMarkup(
     <ServerHeader
-      server="lounge"
-      displayName="Lounge"
-      bannerColor={bannerColor}
-      nameColor={null}
+      head={{
+        name: serverCalled('Lounge'),
+        logo: false,
+        banner: bannerColor,
+        nameColor: null,
+        peer: false,
+        stored: false,
+        line: null,
+        canInvite: false,
+        canSet: true,
+      }}
       onSettings={() => {}}
       preview={preview}
     />

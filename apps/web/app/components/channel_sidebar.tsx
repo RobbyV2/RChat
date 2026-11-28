@@ -7,14 +7,7 @@ import { useP2pApp, useP2p, P2pProvider } from '../lib/client/p2p_react'
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { ChevronDown, ListFilter, Pin, Plus, UserPlus } from 'lucide-react'
-import {
-  badgePings,
-  myPerms,
-  scopeMuted,
-  scopeUnread,
-  serverAdminPerms,
-  useStore,
-} from '../lib/store'
+import { badgePings, myPerms, scopeMuted, scopeUnread, useStore } from '../lib/store'
 import { openActionMenu } from '../lib/actions/menu'
 import { isGuestName } from '../lib/guest_voice'
 import { dmSections, type DmSections } from '../lib/nav_layout'
@@ -53,7 +46,7 @@ import {
   zoneOf,
 } from '../lib/categories'
 import { UserAvatar } from './user_avatar'
-import { ServerHeader } from './server_header'
+import { PlaceHeader } from './server_header'
 import { longPress } from './context_menu'
 import { ChannelList } from './channel_list'
 import { useLoaded, useLooks } from '../lib/place/use_looks'
@@ -744,14 +737,10 @@ export function ChannelSidebar() {
   const view = useStore(s => s.view)
   const ownServer = useOwnServer(view?.kind === 'channel' ? view.server : null)
   const perms = useStore(s => (s.view?.kind === 'channel' ? myPerms(s, s.view.server) : 0n))
-  const panelPerms = useStore(s =>
-    s.view?.kind === 'channel' ? serverAdminPerms(s, s.view.server) : 0
-  )
   const servers = useStore(s => s.servers)
   const layout = useStore(s => s.layout)
   const dragGroup = useDrag(s => s.group)
   const dropZone = useDrag(s => s.zone)
-  const openDialog = useStore(s => s.openDialog)
   const moveChannel = useStore(s => s.moveChannel)
   const moveSeparator = useStore(s => s.moveSeparator)
   const moveCategory = useStore(s => s.moveCategory)
@@ -871,18 +860,7 @@ export function ChannelSidebar() {
   const channelOf = (entry: ChannelEntry) => byKey.get(entry.key)
   return (
     <aside className={base}>
-      <ServerHeader
-        server={server}
-        displayName={detail.display_name}
-        bannerColor={detail.banner_color}
-        nameColor={detail.name_color}
-        onSettings={
-          panelPerms !== 0 ? () => openDialog({ kind: 'server_settings', server }) : undefined
-        }
-        onMenu={(x, y) =>
-          openActionMenu(x, y, { kind: 'server', server, folder: null, at: 0 }, undefined, acct)
-        }
-      />
+      <PlaceHeader channels={listed} />
       <ChannelList
         channels={listed}
         state={listState}
