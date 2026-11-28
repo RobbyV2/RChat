@@ -613,6 +613,21 @@ body {
   font-weight: 500;
 }
 
+/* A column of a page that has two side by side on wide screens; on narrow ones its cards join the
+   page's single column. */
+.split-column {
+  display: contents;
+}
+
+@media (width >= 64rem) {
+  .split-column {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--space-lg);
+  }
+}
+
 /* A code block: its text under the header line, and the numbered lines of a file. */
 .code-body {
   padding: 0 var(--space-md) var(--space-sm);

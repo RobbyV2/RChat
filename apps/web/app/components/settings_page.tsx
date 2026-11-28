@@ -26,7 +26,7 @@ import { searchRows, type SearchHit, type SearchRow } from '../lib/settings_sear
 import type { EscapeLayer } from '../lib/escape_layers'
 import { useMotionPlays } from '../lib/motion/use_motion'
 import { IconButton, ListRow } from './controls'
-import { Row, Stack, Surface } from './layout'
+import { Row, Stack, Surface, Inset } from './layout'
 import { Dialog } from './ui'
 import { time } from '../lib/platform/time'
 
@@ -99,7 +99,7 @@ export function PageRow({
 // A titled group of rows in a section.
 export function PageGroup({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <section aria-label={label} className="pb-5">
+    <section aria-label={label}>
       <Stack gap="sm">
         <h2 className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
           {label}
@@ -445,98 +445,100 @@ export function SettingsPage({
             </Surface>
           )}
           {header !== undefined && (
-            <div
-              className={`shrink-0 px-3 pt-3 md:px-4 md:pb-3 ${search ? 'md:pt-0' : 'md:pt-4'} ${results ? 'hidden md:block' : ''}`}
-            >
+            <Inset pad="lg" inset="bar" place={results ? 'shrink-0 hidden md:flex' : 'shrink-0'}>
               {header}
-            </div>
+            </Inset>
           )}
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] md:px-4 md:pt-0">
-            {results && <div className="md:hidden">{results}</div>}
-            <Stack gap="md" place={results ? 'hidden md:flex' : undefined}>
-              {summary && <div className="md:hidden">{summary}</div>}
-              <Stack
-                as="nav"
-                gap="lg"
-                aria-label={title}
-                onKeyDown={e => {
-                  const buttons = [...e.currentTarget.querySelectorAll('button')].filter(shows)
-                  const to = navKey(
-                    e.key,
-                    buttons.indexOf(document.activeElement as HTMLButtonElement),
-                    buttons.length
-                  )
-                  if (to === null) return
-                  e.preventDefault()
-                  buttons[to]?.focus()
-                }}
-              >
-                {navRuns(sections).map(run => (
-                  <Stack key={run.entries[0].id} gap="2xs">
-                    {run.heading !== undefined && (
-                      <Surface pad="md" inset="bar" tone="plain">
-                        <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
-                          {run.heading}
-                        </p>
-                      </Surface>
-                    )}
-                    {run.entries.map(({ id, label, icon: Icon, rows, outline }) => {
-                      const parts = outline && shown === id ? (rows ?? []) : []
-                      const open = parts.length > 1 && folded !== id
-                      const entry = (
-                        <ListRow
-                          data-settings-section={id}
-                          tone="muted"
-                          icon={Icon}
-                          label={label}
-                          chevron="narrow"
-                          current={currentEntry(id, { shown, active, wide }) && 'page'}
-                          onClick={() => onSection(id)}
-                          place="flex-1"
-                        />
-                      )
-                      const fold = open
-                        ? `Hide the parts of ${label}`
-                        : `Show the parts of ${label}`
-                      return (
-                        <Fragment key={id}>
-                          {parts.length > 1 ? (
-                            <Row gap="2xs">
-                              {entry}
-                              <IconButton
-                                icon={open ? ChevronUp : ChevronDown}
-                                label={fold}
-                                data-icon-only
-                                aria-expanded={open}
-                                onClick={() => setFolded(open ? id : null)}
-                                place="hidden md:inline-flex"
-                              />
-                            </Row>
-                          ) : (
-                            entry
-                          )}
-                          {open && (
-                            <div className="ml-5 hidden border-l border-outline-variant md:block">
-                              <Surface pad="2xs" gap="3xs" tone="plain">
-                                {parts.map(part => (
-                                  <ListRow
-                                    key={part.id}
-                                    data-settings-part={part.id}
-                                    tone="muted"
-                                    label={part.label}
-                                    onClick={() => jump(id, part.id)}
-                                  />
-                                ))}
-                              </Surface>
-                            </div>
-                          )}
-                        </Fragment>
-                      )
-                    })}
-                  </Stack>
-                ))}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <Inset pad="lg" inset="bar" safe>
+              {results && <div className="md:hidden">{results}</div>}
+              <Stack gap="md" place={results ? 'hidden md:flex' : undefined}>
+                {summary && <div className="md:hidden">{summary}</div>}
+                <Stack
+                  as="nav"
+                  gap="lg"
+                  aria-label={title}
+                  onKeyDown={e => {
+                    const buttons = [...e.currentTarget.querySelectorAll('button')].filter(shows)
+                    const to = navKey(
+                      e.key,
+                      buttons.indexOf(document.activeElement as HTMLButtonElement),
+                      buttons.length
+                    )
+                    if (to === null) return
+                    e.preventDefault()
+                    buttons[to]?.focus()
+                  }}
+                >
+                  {navRuns(sections).map(run => (
+                    <Stack key={run.entries[0].id} gap="2xs">
+                      {run.heading !== undefined && (
+                        <Surface pad="md" inset="bar" tone="plain">
+                          <p className="text-xs font-medium tracking-wide text-on-surface-variant uppercase">
+                            {run.heading}
+                          </p>
+                        </Surface>
+                      )}
+                      {run.entries.map(({ id, label, icon: Icon, rows, outline }) => {
+                        const parts = outline && shown === id ? (rows ?? []) : []
+                        const open = parts.length > 1 && folded !== id
+                        const entry = (
+                          <ListRow
+                            data-settings-section={id}
+                            tone="muted"
+                            icon={Icon}
+                            label={label}
+                            chevron="narrow"
+                            current={currentEntry(id, { shown, active, wide }) && 'page'}
+                            onClick={() => onSection(id)}
+                            place="flex-1"
+                          />
+                        )
+                        const fold = open
+                          ? `Hide the parts of ${label}`
+                          : `Show the parts of ${label}`
+                        return (
+                          <Fragment key={id}>
+                            {parts.length > 1 ? (
+                              <Row gap="2xs">
+                                {entry}
+                                <IconButton
+                                  icon={open ? ChevronUp : ChevronDown}
+                                  label={fold}
+                                  data-icon-only
+                                  aria-expanded={open}
+                                  onClick={() => setFolded(open ? id : null)}
+                                  place="hidden md:inline-flex"
+                                />
+                              </Row>
+                            ) : (
+                              entry
+                            )}
+                            {open && (
+                              <Inset pad="lg" inset="sides" place="hidden md:flex">
+                                <div className="border-l border-outline-variant">
+                                  <Surface pad="2xs" gap="3xs" tone="plain">
+                                    {parts.map(part => (
+                                      <ListRow
+                                        key={part.id}
+                                        data-settings-part={part.id}
+                                        tone="muted"
+                                        label={part.label}
+                                        onClick={() => jump(id, part.id)}
+                                      />
+                                    ))}
+                                  </Surface>
+                                </div>
+                              </Inset>
+                            )}
+                          </Fragment>
+                        )
+                      })}
+                    </Stack>
+                  ))}
+                </Stack>
               </Stack>
-            </Stack>
+            </Inset>
           </div>
         </div>
         <div
@@ -579,27 +581,37 @@ export function SettingsPage({
               />
             </Surface>
           )}
-          <div className="hidden h-16 shrink-0 items-center gap-3 border-b border-outline-variant pr-3 pl-6 md:flex lg:pl-10">
+          <Inset
+            row
+            pad="xl"
+            inset="sides"
+            gap="md"
+            border="bottom"
+            look="h-16"
+            place="hidden shrink-0 md:flex"
+          >
             <h1 className={`min-w-0 flex-1 truncate text-xl font-medium ${named}`}>
               {heading ?? section?.label}
             </h1>
             {actor}
             {closeButton}
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:px-6 md:pt-6 md:pb-10 lg:px-10">
-            <Stack gap="lg" place="mx-auto max-w-3xl">
-              {results}
-              <div>
-                {lead}
-                {sections
-                  .filter(s => kept.includes(s.id))
-                  .map(s => (
-                    <div key={s.id} data-section-body={s.id} hidden={s.id !== shown}>
-                      {s.render()}
-                    </div>
-                  ))}
-              </div>
-            </Stack>
+          </Inset>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <Inset pad="lg" safe>
+              <Stack gap="lg" place="mx-auto max-w-3xl">
+                {results}
+                <div>
+                  {lead}
+                  {sections
+                    .filter(s => kept.includes(s.id))
+                    .map(s => (
+                      <Stack key={s.id} data-section-body={s.id} hidden={s.id !== shown} gap="xl">
+                        {s.render()}
+                      </Stack>
+                    ))}
+                </div>
+              </Stack>
+            </Inset>
           </div>
         </div>
       </div>

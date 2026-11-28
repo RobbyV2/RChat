@@ -75,7 +75,7 @@ import { UserAvatar } from './user_avatar'
 import { Button, IconButton, ListRow, LinkButton } from './controls'
 import { Masked, fieldCls, useOwnServer } from './ui'
 import { RowsSkeleton } from './skeletons'
-import { Row, Stack, Surface } from './layout'
+import { Row, Stack, Surface, Inset, Grid } from './layout'
 import { type P2pState } from '../lib/p2p/app'
 import type { P2pDialog } from '../lib/p2p/app/store'
 import { cardRows, homeCard, onlineText, p2pEntry, type CardState } from '../lib/p2p/home_card'
@@ -369,9 +369,7 @@ function QuickActions({
   return (
     <Stack as="section" gap="sm" aria-label="Quick actions">
       {as}
-      <div
-        className={`grid grid-cols-2 gap-2 ${palette && !p2pOn ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}
-      >
+      <Grid cols={palette && !p2pOn ? { base: 2, lg: 4 } : { base: 2, lg: 3 }} gap="sm">
         <button
           type="button"
           onClick={() => {
@@ -414,9 +412,15 @@ function QuickActions({
           >
             <Command size={18} className="shrink-0 text-primary" />
             <span className="min-w-0 leading-tight">Command palette</span>
-            <kbd className="ml-auto shrink-0 rounded-md border border-outline-variant px-1.5 font-sans text-xs text-on-surface-variant max-sm:hidden">
+            <Inset
+              as="kbd"
+              pad="xs"
+              inset="sides"
+              look="rounded-md border border-outline-variant font-sans text-xs text-on-surface-variant"
+              place="ml-auto shrink-0 max-sm:hidden"
+            >
               {paletteShortcut(isMac())}
-            </kbd>
+            </Inset>
           </button>
         )}
         {p2pOn && (
@@ -441,7 +445,7 @@ function QuickActions({
             </button>
           </>
         )}
-      </div>
+      </Grid>
       {asking && problem && (
         <p role="alert">
           {problem.error}{' '}
@@ -1356,7 +1360,7 @@ function GuestHome() {
         <h1 className="text-2xl font-semibold text-on-surface sm:text-3xl">Welcome</h1>
         <p className="text-sm text-on-surface-variant">{line}</p>
       </Surface>
-      <div className="grid gap-4 md:grid-cols-2">
+      <Grid cols={{ base: 1, md: 2 }} gap="lg">
         <Card title="Browse servers" icon={<Compass size={18} />}>
           <Line>
             <p className="text-sm text-on-surface-variant">
@@ -1393,7 +1397,7 @@ function GuestHome() {
             </Button>
           </Controls>
         </Card>
-      </div>
+      </Grid>
     </Stack>
   )
 }
@@ -1428,15 +1432,22 @@ function ActorChips({
   return (
     <Row aria-label="Account" gap="2xs" align="stretch" wrap place="max-w-full">
       {accounts.map(actor => (
-        <button
+        <Surface
           key={actor.key}
           type="button"
           aria-pressed={actor === active}
           onClick={() => onPick(actor.key)}
-          className="flex items-center gap-1 rounded-full px-2 py-1 outline-offset-2 hover-idle:bg-on-surface/8 focus-visible:outline-2 focus-visible:outline-primary pressed:bg-secondary-container pointer-coarse:min-h-11"
+          as="button"
+          row
+          pad="sm"
+          inset="chip"
+          gap="2xs"
+          tone="plain"
+          radius="full"
+          look="outline-offset-2 hover-idle:bg-on-surface/8 focus-visible:outline-2 focus-visible:outline-primary pressed:bg-secondary-container pointer-coarse:min-h-11"
         >
           <HomeActorLabel actor={actor} />
-        </button>
+        </Surface>
       ))}
     </Row>
   )
@@ -1536,7 +1547,18 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
     actor.peer ?? peers.list().find(app => app.useP2p.getState().enabled) ?? peers.get() ?? null
   const identity = useSyncExternalStore(peers.subscribe, quickIdentity, quickIdentity)
   const picker = (
-    <label className="inline-flex w-fit items-center gap-2 rounded-full bg-surface-container px-3 py-1 text-sm">
+    <Surface
+      as="label"
+      row
+      pad="md"
+      inset="chip"
+      gap="sm"
+      tone="base"
+      radius="full"
+      fit
+      text="sm"
+      place="inline-flex"
+    >
       As <ActorAvatar row={actor.row} size={20} />
       <select
         aria-label="As"
@@ -1558,7 +1580,7 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
           </option>
         ))}
       </select>
-    </label>
+    </Surface>
   )
   const total = accounts.reduce((n, a) => n + a.account.counts.value(), 0)
   return (
@@ -1605,7 +1627,7 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
           </>
         )}
       </AccountProvider>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
+      <Grid cols={{ base: 1, lg: 2 }} gap="lg" align="start">
         <Card title="Unread" icon={<Bell size={18} />}>
           <Stack gap="2xs">
             {actors.map(a => (
@@ -1613,9 +1635,9 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
                 <GroupUnread actor={a} />
               </ActorScope>
             ))}
-            <p className="hidden px-2 py-3 text-sm text-on-surface-variant only:block">
+            <Inset as="p" pad="sm" text="sm" ink="muted" look="only:flex" place="hidden">
               Nothing unread.
-            </p>
+            </Inset>
           </Stack>
         </Card>
         <Stack gap="md">
@@ -1624,14 +1646,21 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
               {identities.length < 3 ? (
                 <P2pCard actor={a} />
               ) : (
-                <details className="rounded-xl border border-dashed border-tertiary p-2">
-                  <summary className="cursor-pointer">
-                    <Row as="span" gap="2xs" place="inline-flex">
-                      <HomeActorLabel actor={a} />
-                    </Row>
-                  </summary>
-                  <P2pCard actor={a} />
-                </details>
+                <Surface
+                  pad="sm"
+                  tone="plain"
+                  radius="lg"
+                  look="border border-dashed border-tertiary"
+                >
+                  <details>
+                    <summary className="cursor-pointer">
+                      <Row as="span" gap="2xs" place="inline-flex">
+                        <HomeActorLabel actor={a} />
+                      </Row>
+                    </summary>
+                    <P2pCard actor={a} />
+                  </details>
+                </Surface>
               )}
             </ActorScope>
           ))}
@@ -1642,7 +1671,7 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
         <Card title="Friends" icon={<Users size={18} />} className="lg:col-span-2">
           <FriendsSection max={5} />
         </Card>
-      </div>
+      </Grid>
     </Stack>
   )
 }
@@ -1696,27 +1725,27 @@ function MemberHome() {
       {p2pOn ? (
         <>
           {fresh && <GetStarted />}
-          <div className="flex flex-col gap-4 lg:grid lg:grid-cols-2 lg:items-start">
-            <div className="contents lg:order-2 lg:flex lg:min-w-0 lg:flex-col lg:gap-4">
+          <Grid cols={{ base: 1, lg: 2 }} gap="lg" align="start">
+            <div className="split-column lg:order-2">
               {showUnread && <UnreadSummary />}
               <P2pCard />
             </div>
-            <div className="contents lg:flex lg:min-w-0 lg:flex-col lg:gap-4">
+            <div className="split-column">
               {!fresh && <JumpBackIn recents={recents} />}
               {inbox}
               {!fresh && <PinnedDms />}
               {friends}
             </div>
-          </div>
+          </Grid>
         </>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <Grid cols={{ base: 1, lg: 2 }} gap="lg">
           {fresh ? <GetStarted className="lg:col-span-2" /> : <JumpBackIn recents={recents} />}
           {showUnread && <UnreadSummary />}
           {inbox}
           {!fresh && <PinnedDms />}
           {friends}
-        </div>
+        </Grid>
       )}
     </Stack>
   )
@@ -1729,7 +1758,16 @@ export function HomePage({ onMenu }: { onMenu: () => void }) {
   const menuPings = useStore(allPings)
   return (
     <main data-home className="relative flex h-full min-w-0 flex-1 flex-col bg-surface">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-outline-variant px-4 max-[360px]:has-[[data-view-actor]]:gap-1 max-[360px]:has-[[data-view-actor]]:px-2">
+      <Inset
+        as="header"
+        row
+        pad="lg"
+        inset="sides"
+        gap="md"
+        border="bottom"
+        look="h-14"
+        place="shrink-0"
+      >
         <IconButton
           icon={Menu}
           label="Menu"
@@ -1752,11 +1790,11 @@ export function HomePage({ onMenu }: { onMenu: () => void }) {
           {signedIn && !guest && <InboxButton />}
           <PaletteButton />
         </Row>
-      </header>
+      </Inset>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-5xl flex-col px-4 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-6">
+        <Inset pad="lg" safe place="mx-auto w-full max-w-5xl">
           <HomeContent member={signedIn && !guest} />
-        </div>
+        </Inset>
       </div>
     </main>
   )

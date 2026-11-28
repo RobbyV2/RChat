@@ -290,7 +290,7 @@ test('the section header and close button sit above the content, which scrolls a
   const after = html.slice(html.indexOf('<h1'))
   expect(after).toContain('title="Close grouped" aria-label="Close grouped"')
   expect(
-    /overflow-y-auto[^"]*"><div class="[^"]*mx-auto max-w-3xl"><div><div data-section-body="one"><p>One body/.test(
+    /overflow-y-auto[^"]*"><div class="[^"]*"><div class="[^"]*mx-auto max-w-3xl"><div><div data-section-body="one" class="[^"]*"><p>One body/.test(
       after
     )
   ).toBe(true)
