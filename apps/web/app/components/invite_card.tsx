@@ -1,7 +1,7 @@
 'use client'
 
 import { asAccount } from '../lib/people'
-import { instanceAddress, personName, serverCalled } from '../lib/names'
+import { instanceAddress, instanceName, personName, serverCalled } from '../lib/names'
 import { Name } from './name'
 import {
   useCallback,
@@ -18,24 +18,22 @@ import {
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { ExternalLink, Globe, Hash, Link2Off, Lock, Paperclip } from 'lucide-react'
-import { missing, statusOf } from '../lib/api_errors'
+import { background, statusOf } from '../lib/api_errors'
 import type { InviteAccess } from '../lib/remote_invite'
 import { accountPath } from '../lib/view'
 import { knownLinkOrigin, routeInstanceLink, linkChoice } from '../lib/client/instance_links'
 import { client } from '../lib/client/client'
 import { routeOwnerFor } from '../lib/client/account_paths'
 import { useAccount, useStoreApi } from '../lib/client/react'
-import { InstanceError, type InstanceConnection } from '../lib/instances'
+import type { InstanceConnection } from '../lib/instances'
 import { useForwardAccess } from '../lib/forward_access'
 import { carriedTarget } from '../lib/forward_viewing'
 import { errorText, useStore, type Nav } from '../lib/store'
 import {
   autoStep,
   hostParts,
-  pinnedPreview,
   previewParts,
   remoteInviteUrl,
-  keepsPreview,
   refreshDelay,
   remoteKey,
   sharedByCode,
@@ -65,45 +63,24 @@ import { InstanceChip } from './instance_badge'
 import { UserAvatar } from './user_avatar'
 import { profileTrigger } from './profile_card'
 import { time } from '../lib/platform/time'
+import type { Load } from '../lib/load'
+import {
+  INVITE_FRESH,
+  INVITE_TTL,
+  afterRefusal,
+  fetchInvite,
+  fetchPreview,
+  fetchRemoteInvite,
+  tryInvitePassword,
+  type InviteView,
+  type PreviewAsk,
+  type PreviewChange,
+  type RemoteView,
+} from '../lib/invite_load'
+import { Loaded, useAccountSource, useRequest } from './loaded'
+import { ErrorNotice } from './notices'
 
 type InviteVariant = 'embed' | 'page'
-
-const TTL = 30_000
-const FRESH = 1_000
-const CACHE_MAX = 100
-type InviteResults = Map<string, { at: number; promise: Promise<Invite> }>
-const results = new WeakMap<object, InviteResults>()
-
-const fetchInvite = (
-  owner: ReturnType<typeof useAccount>,
-  key: string,
-  server: string,
-  password: string | null,
-  code: string | null,
-  maxAge: number
-) => {
-  const mark = owner.lifetime.sessionMark()
-  const cache = results.get(mark) ?? new Map<string, { at: number; promise: Promise<Invite> }>()
-  results.set(mark, cache)
-  const api = owner.api
-  const hit = cache.get(key)
-  if (hit && time().now() - hit.at < maxAge) return hit.promise
-  const promise = code ? api.inviteByCode(code) : api.getInvite(server, password, 'metadata')
-  cache.delete(key)
-  cache.set(key, { at: time().now(), promise })
-  const oldest = cache.keys().next().value
-  if (cache.size > CACHE_MAX && oldest !== undefined) cache.delete(oldest)
-  promise.catch(() => {
-    if (cache.get(key)?.promise === promise) cache.delete(key)
-  })
-  return promise
-}
-
-interface Loaded {
-  key: string
-  data: Invite | null
-  error: unknown
-}
 
 function useVisible(ref: RefObject<HTMLElement | null>, always: boolean) {
   const [visible, setVisible] = useState(true)
@@ -145,23 +122,23 @@ function useSettledVersion(version: number, visible: boolean) {
   return settled
 }
 
-const transient = (error: unknown) => keepsPreview(statusOf(error))
-
-function useInvite(
+// The invite as a load, asked again when the instance says it changed (while the card is on
+// screen) and by `reload`.
+function useInviteLoad(
   server: string,
   password: string | null,
   code: string | null,
   root: RefObject<HTMLElement | null>,
   always: boolean
-) {
+): [Load<InviteView>, () => void] {
   const owner = useAccount()
   const { watchInvites, inviteVersion } = owner.inviteUpdates
   const viewer = useStore(s => s.me?.username ?? '')
   const epoch = useStore(s => s.channelLabelEpoch)
   const scope = `${owner.renderKey}\n${owner.conn.origin}\n${epoch}\n${viewer}`
   const key = code ? `${scope}\n\n\n${code}` : `${scope}\n${server}\n${password ?? ''}`
-  const [loaded, setLoaded] = useState<Loaded | null>(null)
-  const watched = code ? (loaded?.data?.server.name ?? '') : server
+  const [named, setNamed] = useState('')
+  const watched = code ? named : server
   const bumped = useSyncExternalStore(
     watchInvites,
     () => inviteVersion(watched),
@@ -169,36 +146,43 @@ function useInvite(
   )
   const visible = useVisible(root, always)
   const version = useSettledVersion(bumped, visible)
-  const [tick, setTick] = useState(0)
-  const maxAge = useRef(TTL)
+  const asked = useRef({ version, maxAge: INVITE_TTL })
+  const shown = useRef<{ key: string; view: InviteView } | null>(null)
+  const last = useRef<{ source: unknown; version: number } | null>(null)
   useEffect(() => {
-    let live = true
-    const mark = owner.lifetime.sessionMark()
-    const current = () => live && mark === owner.lifetime.sessionMark()
-    fetchInvite(owner, `${key}\n${version}`, server, password, code, maxAge.current).then(
-      data => {
-        if (current()) setLoaded({ key, data, error: null })
-      },
-      (error: unknown) => {
-        if (!current()) return
-        setLoaded(prev =>
-          prev?.key === key && prev.data && transient(error)
-            ? { key, data: prev.data, error: null }
-            : { key, data: null, error }
-        )
-      }
+    asked.current.version = version
+  }, [version])
+  const [load, source] = useAccountSource<InviteView>(() => {
+    const maxAge = asked.current.maxAge
+    asked.current.maxAge = INVITE_TTL
+    return fetchInvite(
+      owner,
+      { key: `${key}\n${asked.current.version}`, server, password, code },
+      maxAge
     )
-    maxAge.current = TTL
-    return () => {
-      live = false
-    }
-  }, [owner, key, server, password, code, tick, version])
+      .then(
+        (invite): InviteView => {
+          if (code) setNamed(invite.server.name)
+          return { kind: 'here', invite }
+        },
+        (error: unknown) =>
+          afterRefusal(shown.current?.key === key ? shown.current.view : null, error, !!code)
+      )
+      .then(view => {
+        shown.current = { key, view }
+        return view
+      })
+  }, [key])
+  useEffect(() => {
+    const before = last.current
+    last.current = { source, version }
+    if (before && before.source === source && before.version !== version) source.refresh()
+  }, [source, version])
   const reload = useCallback(() => {
-    maxAge.current = FRESH
-    setTick(t => t + 1)
-  }, [])
-  const current = loaded?.key === key ? loaded : null
-  return { data: current?.data ?? null, error: current?.error ?? null, reload }
+    asked.current.maxAge = INVITE_FRESH
+    source.refresh()
+  }, [source])
+  return [load, reload]
 }
 
 const pins = new Map<HTMLElement, { ro: ResizeObserver; heights: Map<Element, number> }>()
@@ -514,40 +498,14 @@ function Preview({
       conn
     )
   const allowed = !!target && canView(target)
-  const key = JSON.stringify([target && target.key, password, label])
-  const [loaded, setLoaded] = useState<{
-    key: string
-    access?: InviteAccess
-    data: Message[]
-  } | null>(null)
   useEffect(() => {
     if (!remote && local === null)
       void owner.store
         .getState()
         .discoverChannels(server)
-        .catch(() => {})
-    if (!allowed || !conn) {
-      setLoaded(null)
-      return
-    }
-    let live = true
-    const revision = { revision: `${id}.${label ? 1 : 0}` }
-    const messages = access
-      ? access.read(conn, server, password, revision)
-      : conn.api.getInvite(server, password, revision)
-    void messages
-      .then(data => {
-        if (!live || (access && !access.current())) return
-        const answer = pinnedPreview({ id, label }, data)
-        if (answer.changed) setSeen({ of: invite, ...answer.changed })
-        else setLoaded({ key, access, data: answer.messages })
-      })
-      .catch(() => {})
-    return () => {
-      live = false
-    }
-  }, [allowed, conn, id, label, key, server, password, remote, local, invite, owner, access])
-  if (!target || !preview_channel) return null
+        .catch(background('invite preview channels'))
+  }, [owner, remote, local, server])
+  if (!target || !conn || !preview_channel) return null
   if (!allowed)
     return (
       <Button
@@ -558,34 +516,72 @@ function Preview({
         Open channel preview
       </Button>
     )
-  if (!loaded || loaded.key !== key || loaded.access !== access) return null
-  const preview = loaded.data
-  if (preview_channel === null || (preview.length === 0 && !big)) return null
   return (
-    <Surface tone="high" radius="lg" pad={big ? 'md' : 'sm'} gap={big ? 'sm' : 'xs'}>
-      <p className="min-w-0 text-xs font-medium text-on-surface-variant">
-        <Row as="span" gap="2xs">
-          <Hash size={12} className="shrink-0" />
-          <span className="truncate">{preview_channel}</span>
-        </Row>
-      </p>
-      {preview.length ? (
-        <Stack gap={big ? 'sm' : '2xs'}>
-          {preview.map(m => (
-            <PreviewLine
-              key={m.id}
-              message={m}
-              big={big}
-              host={host}
-              server={server}
-              remote={remote}
-            />
-          ))}
-        </Stack>
-      ) : (
-        <p className="text-left text-xs text-on-surface-variant">No messages yet</p>
-      )}
-    </Surface>
+    <PreviewMessages
+      ask={{ conn, server, password, id, label: label === true, access }}
+      of={target.key}
+      channel={preview_channel}
+      big={big}
+      host={host}
+      remote={remote}
+      onChanged={changed => setSeen({ of: invite, ...changed })}
+    />
+  )
+}
+
+function PreviewMessages({
+  ask,
+  of,
+  channel,
+  big,
+  host,
+  remote,
+  onChanged,
+}: {
+  ask: PreviewAsk
+  of: string
+  channel: string
+  big: boolean
+  host?: string
+  remote?: InstanceConnection
+  onChanged: (to: PreviewChange) => void
+}) {
+  const { conn, server, password, id, label, access } = ask
+  const load = useRequest(
+    () => fetchPreview(ask, onChanged),
+    [conn, server, password, id, label, access, of]
+  )
+  return (
+    <Loaded load={load} skeleton={null} what="the channel preview">
+      {preview =>
+        preview.length === 0 && !big ? null : (
+          <Surface tone="high" radius="lg" pad={big ? 'md' : 'sm'} gap={big ? 'sm' : 'xs'}>
+            <p className="min-w-0 text-xs font-medium text-on-surface-variant">
+              <Row as="span" gap="2xs">
+                <Hash size={12} className="shrink-0" />
+                <span className="truncate">{channel}</span>
+              </Row>
+            </p>
+            {preview.length ? (
+              <Stack gap={big ? 'sm' : '2xs'}>
+                {preview.map(m => (
+                  <PreviewLine
+                    key={m.id}
+                    message={m}
+                    big={big}
+                    host={host}
+                    server={server}
+                    remote={remote}
+                  />
+                ))}
+              </Stack>
+            ) : (
+              <p className="text-left text-xs text-on-surface-variant">No messages yet</p>
+            )}
+          </Surface>
+        )
+      }
+    </Loaded>
   )
 }
 
@@ -597,18 +593,24 @@ interface Body {
   extra?: ReactNode
 }
 
+const INVITED = "You've been invited to join a server"
+
+function Heading({ children }: { children: ReactNode }) {
+  return (
+    <p className="text-2xs font-semibold tracking-wide text-on-surface-variant uppercase">
+      {children}
+    </p>
+  )
+}
+
 function Frame({
   big,
-  invalid,
   ref,
   children,
-  heading,
 }: {
   big: boolean
-  invalid: boolean
   ref: Ref<HTMLDivElement>
   children: ReactNode
-  heading?: ReactNode
 }) {
   if (big)
     return (
@@ -621,10 +623,6 @@ function Frame({
   return (
     <div ref={ref} className="@container msg-part w-full max-w-md">
       <Surface tone="base" border pad="md" gap="sm">
-        <p className="text-2xs font-semibold tracking-wide text-on-surface-variant uppercase">
-          {heading ??
-            (invalid ? "You've received an invite, but…" : "You've been invited to join a server")}
-        </p>
         {children}
       </Surface>
     </div>
@@ -744,14 +742,69 @@ export function InviteCard({
   variant: InviteVariant
   autoJoin?: boolean
 }) {
-  const router = useRouter()
   const root = useRef<HTMLDivElement>(null)
-  const owner = useAccount()
-  const mark = owner.lifetime.sessionMark()
   const big = variant === 'page'
   const [unlocked, setUnlocked] = useState<string | null>(null)
   const given = code ?? unlocked ?? password
-  const { data, error, reload } = useInvite(named, given, code, root, big)
+  const [load, reload] = useInviteLoad(named, given, code, root, big)
+  useKeepBottom(root, !big)
+  return (
+    <Frame ref={root} big={big}>
+      <Loaded
+        load={load}
+        what="this invite"
+        hold={false}
+        skeleton={
+          <>
+            {!big && <Heading>{INVITED}</Heading>}
+            <Skeleton big={big} />
+          </>
+        }
+      >
+        {view => (
+          <InviteBody
+            view={view}
+            named={named}
+            password={password}
+            given={given}
+            code={code}
+            big={big}
+            autoJoin={autoJoin}
+            reload={reload}
+            onUnlocked={setUnlocked}
+          />
+        )}
+      </Loaded>
+    </Frame>
+  )
+}
+
+// The card of an invite that answered, in every state the answer can be.
+export function InviteBody({
+  view: answer,
+  named,
+  password,
+  given,
+  code,
+  big,
+  autoJoin,
+  reload,
+  onUnlocked,
+}: {
+  view: InviteView
+  named: string
+  password: string | null
+  given: string | null
+  code: string | null
+  big: boolean
+  autoJoin: boolean
+  reload: () => void
+  onUnlocked: (password: string) => void
+}) {
+  const router = useRouter()
+  const owner = useAccount()
+  const mark = owner.lifetime.sessionMark()
+  const data = answer.kind === 'here' ? answer.invite : null
   const server = code ? (data?.server.name ?? '') : named
   const me = useStore(s => s.me)
   const guest = useStore(s => s.guest)
@@ -774,7 +827,6 @@ export function InviteCard({
   const nav: Nav = big ? 'replace' : 'push'
   const authed = me !== null || guest
   const status: InviteStatus | null = data ? (joined ? 'member' : data.status) : null
-  useKeepBottom(root, !big)
 
   useEffect(() => {
     if (seen.current === joined) return
@@ -846,14 +898,11 @@ export function InviteCard({
   }
 
   const unlock = async (pw: string) => {
-    try {
-      await owner.api.getInvite(server, pw, 'metadata')
-      setUnlocking(false)
-      setUnlocked(pw)
-      return null
-    } catch (e) {
-      return needsPassword(e) ? 'Enter the server password' : errorText(e)
-    }
+    const refused = await tryInvitePassword(owner, server, pw)
+    if (refused !== null) return refused
+    setUnlocking(false)
+    onUnlocked(pw)
+    return null
   }
 
   useEffect(() => {
@@ -866,15 +915,14 @@ export function InviteCard({
 
   const btn = big ? 'w-full' : 'shrink-0'
   const fit = big ? 'break-words' : 'truncate'
-  const errorCode = statusOf(error)
   const ticketEnds = data?.password_expires_at ?? null
   const now = useNow(
     ticketEnds === null ? 60_000 : tickMs(ticketEnds - Math.floor(time().now() / 1000))
   )
   const ticketGone = ticketEnds !== null && ticketEnds <= now
-  const hidden = !code && (needsPassword(error) || deniedAccess(error) || ticketGone)
-  const invalid = (errorCode === 404 || (code !== null && ticketGone)) && !hidden
-  const locked = !authed && errorCode === 401 && !hidden
+  const hidden = !code && (answer.kind === 'hidden' || ticketGone)
+  const invalid = (answer.kind === 'gone' || (code !== null && ticketGone)) && !hidden
+  const locked = !authed && answer.kind === 'locked' && !hidden
   const label = code ? 'Server invite' : server
 
   const body = (): Body | null => {
@@ -901,9 +949,9 @@ export function InviteCard({
             )}
           </>
         ),
-        extra: deniedAccess(error) && given && (
+        extra: answer.kind === 'hidden' && answer.denied !== null && given && (
           <p role="alert" className="text-xs text-error">
-            {errorText(error)}
+            {answer.denied}
           </p>
         ),
       }
@@ -947,21 +995,6 @@ export function InviteCard({
         actions: (
           <Button variant="filled" size="md" onClick={() => logIn(true)} place={btn}>
             Log in to join
-          </Button>
-        ),
-      }
-    if (error !== null)
-      return {
-        icon: (
-          <Tile big={big} tone="bg-surface-container-highest text-on-surface-variant">
-            <Link2Off size={big ? 36 : 22} />
-          </Tile>
-        ),
-        title: "Couldn't load this invite",
-        sub: <p className="text-xs text-on-surface-variant">{errorText(error)}</p>,
-        actions: (
-          <Button size="md" onClick={reload} place={btn}>
-            Retry
           </Button>
         ),
       }
@@ -1051,8 +1084,16 @@ export function InviteCard({
     }
   }
 
+  if (answer.kind === 'locked' && !locked && !hidden)
+    return (
+      <>
+        {!big && <Heading>{INVITED}</Heading>}
+        <ErrorNotice refusal={answer.refusal} lead="Could not load this invite." retry={reload} />
+      </>
+    )
   const view = body()
-  if (!big && view && !invalid) {
+  if (!view) return null
+  if (!big && !invalid) {
     const { choice } = linkChoice(owner, owner.conn.origin)
     if (choice.kind !== 'open' || choice.owner !== me?.username)
       view.actions = (
@@ -1074,9 +1115,8 @@ export function InviteCard({
   }
   return (
     <>
-      <Frame ref={root} big={big} invalid={invalid}>
-        {view ? <Layout big={big} invalid={invalid} {...view} /> : <Skeleton big={big} />}
-      </Frame>
+      {!big && <Heading>{invalid ? "You've received an invite, but…" : INVITED}</Heading>}
+      <Layout big={big} invalid={invalid} {...view} />
       {asking && data && (
         <PasswordDialog
           name={data.server.display_name}
@@ -1099,109 +1139,35 @@ export function InviteCard({
 }
 
 function RemoteOrigin({ host, name }: { host: string; name?: string }) {
-  const streamer = useStore(s => s.streamer)
   return (
     <Row as="span" gap="xs" wrap lineGap="3xs" place="max-w-full min-w-0">
       <InstanceChip host={host} />
       {name && name !== host && (
-        <span
-          title={streamer ? 'The name this site gives itself' : `${host} calls itself ${name}`}
-          className="streamer max-w-full min-w-0 truncate text-2xs text-on-surface-variant"
-        >
-          {name}
-        </span>
+        <Name
+          of={instanceName(name)}
+          titled={`${host} calls itself ${name}`}
+          place="max-w-full min-w-0"
+          look="truncate text-2xs text-on-surface-variant"
+        />
       )}
     </Row>
   )
 }
 
-function useRemoteInvite(invite: RemoteInvite, enabled: boolean) {
-  const owner = useAccount()
-  const { remoteConnection } = owner.invites
-  const { origin, server, password } = invite
-  const observer = useMemo(() => owner.invites.watch(origin), [owner, origin])
-  const access = useSyncExternalStore(observer.subscribe, observer.snapshot, observer.snapshot)
-  const key = `${owner.renderKey}:${origin}\n${server}\n${password ?? ''}`
-  const [loaded, setLoaded] = useState<{
-    key: string
-    access: InviteAccess
-    data: Invite | null
-    error: unknown
-    connection: InstanceConnection | null
-  } | null>(null)
-  const [tick, setTick] = useState(0)
-  useEffect(() => {
-    if (!enabled) return
-    let live = true
-    remoteConnection(origin).then(
-      conn =>
-        access.read(conn, server, password ?? null, 'metadata', tick > 0).then(
-          data =>
-            live &&
-            access.current() &&
-            setLoaded({ key, access, data, error: null, connection: conn }),
-          (error: unknown) =>
-            live &&
-            access.current() &&
-            setLoaded({ key, access, data: null, error, connection: conn })
-        ),
-      (error: unknown) =>
-        live && access.current() && setLoaded({ key, access, data: null, error, connection: null })
-    )
-    return () => {
-      live = false
-    }
-  }, [enabled, key, origin, server, password, tick, remoteConnection, access])
-  const current = enabled && loaded?.key === key && loaded.access === access ? loaded : null
-  return {
-    access,
-    ready: current !== null,
-    instance: current?.connection?.info ?? null,
-    connection: current?.connection,
-    data: current?.data ?? null,
-    error: current?.error ?? null,
-    reload: () => setTick(t => t + 1),
-  }
-}
+const remoteHost = (invite: RemoteInvite) => hostOf(invite.origin) ?? new URL(invite.origin).host
 
-export function RemoteInviteCard({
-  invite,
-  onResolved,
-}: {
-  invite: RemoteInvite
-  onResolved?: (key: string, ok: boolean) => void
-}) {
-  const previews = useStore(s => s.settings.asset_previews)
-  const streamer = useStore(s => s.streamer)
-  const key = remoteKey(invite)
+// The way to the invite on its own site: inside the app for one of these sites, else a new tab.
+function OpenRemote({ invite, site }: { invite: RemoteInvite; site: boolean }) {
   const owner = useAccount()
-  const cache = owner.invites
-  const [, refreshRequest] = useState(0)
-  const wanted = previews && cache.previewRequested(key)
-  const { access, ready, connection, instance, data, error, reload } = useRemoteInvite(
-    invite,
-    wanted
-  )
-  const root = useRef<HTMLDivElement>(null)
-  const rchat = instance !== null
-  useKeepBottom(root, ready)
-  useEffect(() => {
-    if (ready) onResolved?.(key, rchat)
-  }, [ready, rchat, key, onResolved])
-  if (!previews) return null
-  const host = hostOf(invite.origin) ?? new URL(invite.origin).host
-  const where = <RemoteOrigin host={host} name={instance?.name} />
-  const load = () => {
-    cache.requestPreview(key)
-    refreshRequest(n => n + 1)
-  }
-  const internal = knownLinkOrigin(invite.origin) || rchat
+  const streamer = useStore(s => s.streamer)
+  const host = remoteHost(invite)
+  const internal = knownLinkOrigin(invite.origin) || site
   const path = invite.url.slice(invite.origin.length)
   const open = () =>
     internal
       ? void routeInstanceLink(owner, { origin: invite.origin, path })
       : openMessageLink(owner, remoteInviteUrl(invite), null, false)
-  const openBtn = (
+  return (
     <Button
       variant="filled"
       size="md"
@@ -1221,46 +1187,32 @@ export function RemoteInviteCard({
       {!internal && <ExternalLink size={14} className="shrink-0" />}
     </Button>
   )
-  const hidden = needsPassword(error) || deniedAccess(error)
-  const invalid = missing(error) && !hidden
-  const heading = (
-    <>
-      Invite on <Name of={instanceAddress(host)} look="normal-case" />
-    </>
+}
+
+const brokenTile = (
+  <Tile big={false} tone="bg-surface-container-highest text-on-surface-variant">
+    <Link2Off size={22} />
+  </Tile>
+)
+
+// The card of an invite on another site, once that site answered or turned out not to be one.
+export function RemoteBody({
+  view,
+  invite,
+  access,
+}: {
+  view: RemoteView
+  invite: RemoteInvite
+  access?: InviteAccess
+}) {
+  const streamer = useStore(s => s.streamer)
+  const host = remoteHost(invite)
+  const openBtn = <OpenRemote invite={invite} site={view.kind !== 'foreign'} />
+  const where = (
+    <RemoteOrigin host={host} name={view.kind === 'foreign' ? undefined : view.info?.name} />
   )
-  const body = (): Body | null => {
-    if (!wanted)
-      return {
-        icon: (
-          <Tile big={false} tone="bg-surface-container-highest text-on-surface-variant">
-            <Globe size={22} />
-          </Tile>
-        ),
-        title: <span className="min-w-0 truncate">Server invite</span>,
-        sub: (
-          <p className="text-xs text-on-surface-variant">
-            Loading the preview contacts <Name of={instanceAddress(host)} />.
-          </p>
-        ),
-        actions: (
-          <>
-            {internal && openBtn}
-            <Button
-              variant="filled"
-              size="md"
-              onClick={load}
-              title={
-                streamer ? 'Fetch this invite from its site' : `Fetch this invite from ${host}`
-              }
-              place="shrink-0"
-            >
-              Load preview
-            </Button>
-          </>
-        ),
-      }
-    if (!ready) return null
-    if (hidden)
+  const body = (): Body => {
+    if (view.kind === 'hidden')
       return {
         icon: (
           <Tile big={false} tone="bg-primary-container text-on-primary-container">
@@ -1278,51 +1230,48 @@ export function RemoteInviteCard({
         ),
         actions: openBtn,
       }
-    if (invalid || (error !== null && !data))
+    if (view.kind === 'gone')
       return {
-        icon: (
-          <Tile big={false} tone="bg-surface-container-highest text-on-surface-variant">
-            <Link2Off size={22} />
-          </Tile>
-        ),
-        title: invalid ? 'Invalid invite' : "Couldn't load this invite",
+        icon: brokenTile,
+        title: 'Invalid invite',
         sub: (
           <Stack gap="2xs" align="start">
             {where}
             <p className="text-xs text-on-surface-variant">
-              {invalid
-                ? 'This invite may have expired, or the server no longer exists.'
-                : rchat
-                  ? errorText(error)
-                  : error instanceof InstanceError
-                    ? hostParts(errorText(error), host).map((p, i) =>
-                        p.host ? (
-                          <span key={i} className="streamer">
-                            {p.text}
-                          </span>
-                        ) : (
-                          p.text
-                        )
-                      )
-                    : 'This link is not an RChat invite, or that site could not be reached.'}
+              This invite may have expired, or the server no longer exists.
             </p>
           </Stack>
         ),
-        actions:
-          invalid || !rchat ? (
-            openBtn
-          ) : (
-            <Button onClick={reload} place="shrink-0">
-              Retry
-            </Button>
-          ),
+        actions: openBtn,
       }
-    if (!data) return null
-    const { name, display_name, has_password } = data.server
+    if (view.kind === 'foreign')
+      return {
+        icon: brokenTile,
+        title: "Couldn't load this invite",
+        sub: (
+          <Stack gap="2xs" align="start">
+            {where}
+            <p className="text-xs text-on-surface-variant">
+              {view.line === null
+                ? 'This link is not an RChat invite, or that site could not be reached.'
+                : hostParts(view.line, host).map((p, i) =>
+                    p.host ? <Name key={i} of={instanceAddress(p.text)} /> : p.text
+                  )}
+            </p>
+          </Stack>
+        ),
+        actions: openBtn,
+      }
+    const { name, display_name, has_password } = view.invite.server
     return {
       icon: (
         <span title={streamer ? 'Server icon' : `${display_name} on ${host}`}>
-          <ServerTile name={name} displayName={display_name} big={false} look={data.server} />
+          <ServerTile
+            name={name}
+            displayName={display_name}
+            big={false}
+            look={view.invite.server}
+          />
         </span>
       ),
       title: (
@@ -1338,30 +1287,122 @@ export function RemoteInviteCard({
       sub: (
         <Stack gap="2xs" align="start">
           {where}
-          <AboutLine text={aboutText(data.server.description)} />
-          <Counts invite={data} center={false} />
+          <AboutLine text={aboutText(view.invite.server.description)} />
+          <Counts invite={view.invite} center={false} />
         </Stack>
       ),
       actions: openBtn,
       extra: (
         <Preview
-          invite={data}
+          invite={view.invite}
           big={false}
           host={host}
           password={invite.password ?? null}
-          remote={connection ?? undefined}
+          remote={view.conn}
           access={access}
         />
       ),
     }
   }
-  const view = body()
+  return <Layout big={false} invalid={view.kind === 'gone'} stack {...body()} />
+}
+
+function RemoteLoaded({
+  invite,
+  onResolved,
+}: {
+  invite: RemoteInvite
+  onResolved?: (key: string, ok: boolean) => void
+}) {
+  const owner = useAccount()
+  const { origin, server, password } = invite
+  const key = remoteKey(invite)
+  const observer = useMemo(() => owner.invites.watch(origin), [owner, origin])
+  const access = useSyncExternalStore(observer.subscribe, observer.snapshot, observer.snapshot)
+  const run = useMemo(() => {
+    let again = false
+    return (signal: AbortSignal) => {
+      const fresh = again
+      again = true
+      return fetchRemoteInvite(
+        owner,
+        { origin, server, password: password ?? null, access },
+        fresh,
+        site => {
+          if (!signal.aborted) onResolved?.(key, site)
+        }
+      )
+    }
+  }, [owner, origin, server, password, access, key, onResolved])
+  const load = useRequest(run, [run])
   return (
-    <Frame ref={root} big={false} invalid={invalid} heading={heading}>
-      {view ? (
-        <Layout big={false} invalid={invalid} stack={wanted} {...view} />
+    <Loaded load={load} what="this invite" hold={false} skeleton={<Skeleton big={false} />}>
+      {view => <RemoteBody view={view} invite={invite} access={access} />}
+    </Loaded>
+  )
+}
+
+export function RemoteInviteCard({
+  invite,
+  onResolved,
+}: {
+  invite: RemoteInvite
+  onResolved?: (key: string, ok: boolean) => void
+}) {
+  const previews = useStore(s => s.settings.asset_previews)
+  const streamer = useStore(s => s.streamer)
+  const key = remoteKey(invite)
+  const owner = useAccount()
+  const cache = owner.invites
+  const [, refreshRequest] = useState(0)
+  const wanted = previews && cache.previewRequested(key)
+  const root = useRef<HTMLDivElement>(null)
+  useKeepBottom(root, wanted)
+  if (!previews) return null
+  const host = remoteHost(invite)
+  const load = () => {
+    cache.requestPreview(key)
+    refreshRequest(n => n + 1)
+  }
+  return (
+    <Frame ref={root} big={false}>
+      <Heading>
+        Invite on <Name of={instanceAddress(host)} look="normal-case" />
+      </Heading>
+      {wanted ? (
+        <RemoteLoaded invite={invite} onResolved={onResolved} />
       ) : (
-        <Skeleton big={false} />
+        <Layout
+          big={false}
+          invalid={false}
+          icon={
+            <Tile big={false} tone="bg-surface-container-highest text-on-surface-variant">
+              <Globe size={22} />
+            </Tile>
+          }
+          title={<span className="min-w-0 truncate">Server invite</span>}
+          sub={
+            <p className="text-xs text-on-surface-variant">
+              Loading the preview contacts <Name of={instanceAddress(host)} />.
+            </p>
+          }
+          actions={
+            <>
+              {knownLinkOrigin(invite.origin) && <OpenRemote invite={invite} site={false} />}
+              <Button
+                variant="filled"
+                size="md"
+                onClick={load}
+                title={
+                  streamer ? 'Fetch this invite from its site' : `Fetch this invite from ${host}`
+                }
+                place="shrink-0"
+              >
+                Load preview
+              </Button>
+            </>
+          }
+        />
       )}
     </Frame>
   )

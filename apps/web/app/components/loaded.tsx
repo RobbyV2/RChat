@@ -132,18 +132,21 @@ function Loading({
   overdueAt,
   retry,
   skeleton,
+  hold,
   what,
 }: {
   overdueAt: number
   retry: (() => void) | null
   skeleton: ReactNode
+  hold: boolean
   what: string
 }) {
   const now = useElapsed(overdueAt)
-  if (overdueIn(overdueAt, now) > 0)
-    return skeleton === null ? null : (
-      <Held>{skeleton ?? <RowsSkeleton rows={3} label={`Loading ${what}`} />}</Held>
-    )
+  if (overdueIn(overdueAt, now) > 0) {
+    if (skeleton === null) return null
+    const drawn = skeleton ?? <RowsSkeleton rows={3} label={`Loading ${what}`} />
+    return hold ? <Held>{drawn}</Held> : <>{drawn}</>
+  }
   return <Notice line={`Still loading ${what}.`} icon="none" retry={retry} />
 }
 
@@ -188,18 +191,21 @@ export function More<T>({
 }
 
 // Draws what a load holds: `children` with the value once it is here, and every other state
-// itself. While loading it shows `skeleton` (rows by default, nothing for null), and past the deadline a line with
-// a way to ask again. `empty` is the line for nothing to show; `what` names the thing in the
-// lines ("pins", "the member list").
+// itself. While loading it shows `skeleton` (rows by default, nothing for null), and past the
+// deadline a line with a way to ask again. The skeleton appears after a moment, or at once with
+// `hold` false, for a thing whose room on screen is already taken. `empty` is the line for
+// nothing to show; `what` names the thing in the lines ("pins", "the member list").
 export function Loaded<T>({
   load,
   skeleton,
+  hold = true,
   empty = 'Nothing here yet.',
   what = 'this',
   children,
 }: {
   load: Load<T>
   skeleton?: ReactNode
+  hold?: boolean
   empty?: ReactNode
   what?: string
   children: (value: T) => ReactNode
@@ -221,7 +227,13 @@ export function Loaded<T>({
       )
     case 'loading':
       return (
-        <Loading overdueAt={view.overdueAt} retry={load.retry} skeleton={skeleton} what={what} />
+        <Loading
+          overdueAt={view.overdueAt}
+          retry={load.retry}
+          skeleton={skeleton}
+          hold={hold}
+          what={what}
+        />
       )
     case 'empty':
       return typeof empty === 'string' ? (
