@@ -96,6 +96,13 @@ pub enum Cap {
     GuestGrants,
     BulkDeleteJobs,
     BrandImageBytes,
+    PollOptions,
+    MessageReactions,
+    ChannelPermRules,
+    ServerPasswords,
+    FriendRequestsOut,
+    Blocks,
+    ConfigShares,
 }
 
 impl Cap {
@@ -111,6 +118,13 @@ impl Cap {
             Cap::GuestGrants => "guest_grants",
             Cap::BulkDeleteJobs => "bulk_delete_jobs",
             Cap::BrandImageBytes => "brand_image_bytes",
+            Cap::PollOptions => "poll_options",
+            Cap::MessageReactions => "message_reactions",
+            Cap::ChannelPermRules => "channel_perm_rules",
+            Cap::ServerPasswords => "server_passwords",
+            Cap::FriendRequestsOut => "friend_requests_out",
+            Cap::Blocks => "blocks",
+            Cap::ConfigShares => "config_shares",
         }
     }
 }

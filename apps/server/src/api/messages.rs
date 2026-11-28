@@ -27,8 +27,8 @@ use crate::api::reactions::attach_reactions;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, CallLog, Embed, ForwardRef, LIST_MAX, LIST_PAGE, MaybeAuthed,
     MediaRef, Message, OkResp, Origin, Paged, ProfanityTarget, ReplyRef, Settings, UserRef,
-    allowed, bad, check_len, check_profanity, cursor_int, decode_cursor, dms, embeds,
-    encode_cursor, ok, placeholders, require_guest_ok, unique_capped, user_from, user_refs, yes,
+    allowed, check_len, check_profanity, cursor_int, decode_cursor, dms, embeds, encode_cursor, ok,
+    placeholders, require_guest_ok, unique_capped, user_from, user_refs, yes,
 };
 use crate::crypt::body::{Opened, Opener, Parts, Scope as SealScope, Writer};
 use crate::db::{
@@ -220,7 +220,10 @@ pub struct SearchQuery {
 
 impl SearchQuery {
     fn parse(raw: &str) -> Result<SearchQuery, ApiError> {
-        let int = |v: &str| v.parse::<i64>().map_err(|_| bad("Invalid number"));
+        let int = |v: &str| {
+            v.parse::<i64>()
+                .map_err(|_| ApiError::invalid("Invalid number", "q"))
+        };
         let mut sq = SearchQuery::default();
         for (key, value) in url::form_urlencoded::parse(raw.as_bytes()) {
             match key.as_ref() {
@@ -1142,7 +1145,7 @@ async fn claim_media(
             r.try_get(4)?,
         ),
         None => {
-            return Err(bad("Unknown media"));
+            return Err(ApiError::invalid("Unknown media", "media_id"));
         }
     };
     let filename = crate::api::media::sealed::facts_on(
@@ -1169,7 +1172,10 @@ async fn claim_media(
             .await?
             .is_some();
     if attached {
-        return Err(bad("This file is already attached to a message"));
+        return Err(ApiError::conflict(
+            StatusCode::BAD_REQUEST,
+            "This file is already attached to a message",
+        ));
     }
     Ok(MediaRef::server(
         id.to_string(),
@@ -1227,7 +1233,7 @@ async fn p2p_media(
     let valid_id = p2p_id.len() == 32 && p2p_id.chars().all(|c| c.is_ascii_hexdigit());
     let p2p_id = p2p_id.to_ascii_lowercase();
     if !valid_id {
-        return Err(bad("Invalid p2p_id"));
+        return Err(ApiError::invalid("Invalid p2p_id", "p2p_id"));
     }
     let valid = (0..=P2P_SIZE_MAX).contains(&size)
         && mime.chars().count() <= P2P_MIME_MAX
@@ -1235,7 +1241,7 @@ async fn p2p_media(
         && sha256.as_deref().is_none_or(valid_sha256)
         && expires_in_seconds.is_none_or(|s| s > 0);
     if !valid {
-        return Err(bad("Invalid P2P attachment"));
+        return Err(ApiError::invalid("Invalid P2P attachment", "p2p"));
     }
     let taken = sqlx::query("SELECT 1 FROM media WHERE id = $1")
         .bind(&p2p_id)
@@ -1250,7 +1256,7 @@ async fn p2p_media(
         .await?
         .is_some();
     if taken || foreign {
-        return Err(bad("Invalid p2p_id"));
+        return Err(ApiError::invalid("Invalid p2p_id", "p2p_id"));
     }
     Ok(MediaRef {
         id: p2p_id,
@@ -1284,7 +1290,7 @@ pub(crate) struct Quoted {
 }
 
 pub(crate) fn cannot_reply() -> ApiError {
-    bad("Cannot reply to that message")
+    ApiError::invalid("Cannot reply to that message", "reply_to")
 }
 
 /// Checks `reply_to` of a new message going to `place`: the sender must be able to read it
@@ -1360,7 +1366,11 @@ pub(crate) async fn begin_message_write(
         ),
     };
     if text_only && rich {
-        return Err(bad("This channel only accepts text"));
+        return Err(ApiError::off_server(
+            StatusCode::BAD_REQUEST,
+            "This channel only accepts text",
+            "text_only",
+        ));
     }
     let writer = crate::api::seal::writer(db, &mut tx, scope, floors).await?;
     Ok((tx, text_only, writer))
@@ -1396,7 +1406,7 @@ pub(crate) async fn insert_message(
     let settings = Settings::cached(db).await;
     let poll = match poll {
         Some(_) if media_id.is_some() || p2p.is_some() => {
-            return Err(bad("Polls cannot have attachments"));
+            return Err(ApiError::invalid("Polls cannot have attachments", "poll"));
         }
         Some(req) => Some(crate::api::polls::validate(
             req,
@@ -1424,7 +1434,10 @@ pub(crate) async fn insert_message(
     let no_previews = text_only || plain;
     let media = match (&media_id, p2p) {
         (Some(_), Some(_)) => {
-            return Err(bad("Choose server or P2P attachment, not both"));
+            return Err(ApiError::invalid(
+                "Choose server or P2P attachment, not both",
+                "media_id",
+            ));
         }
         (Some(id), None) => {
             let keep = match channel_id {
@@ -1459,7 +1472,7 @@ pub(crate) async fn insert_message(
     )?;
     let has_cards = hook.is_some_and(|h| !h.embeds.is_empty());
     if content.trim().is_empty() && media.is_none() && !has_cards && poll.is_none() {
-        return Err(bad("Message is empty"));
+        return Err(ApiError::invalid("Message is empty", "content"));
     }
     let t = state.clock.unix();
     let parts = Parts {
@@ -1587,7 +1600,7 @@ pub(crate) async fn insert_message(
 }
 
 fn cannot_forward() -> ApiError {
-    bad("Cannot forward that message")
+    ApiError::invalid("Cannot forward that message", "forward_of")
 }
 
 /// A message to forward, checked and read. `media` is the server-hosted attachment to share;
@@ -2034,7 +2047,10 @@ async fn deliver(
     claim: Option<&crate::api::scheduled::Claim>,
 ) -> Result<Message, ApiError> {
     if claim.is_some() && req.forward_of.is_some() {
-        return Err(bad("A scheduled message cannot be a forward"));
+        return Err(ApiError::invalid(
+            "A scheduled message cannot be a forward",
+            "forward_of",
+        ));
     }
     message_rate(state, user).await?;
     let thread_root_id = match place {
@@ -2524,7 +2540,7 @@ pub(crate) async fn locations(
 ) -> Result<Json<Vec<MessageLocation>>, ApiError> {
     let LocateBatchReq { ids, expected } = req;
     if ids.len() > LOCATE_BATCH_MAX || expected.len() > LOCATE_BATCH_MAX {
-        return Err(bad("Too many messages"));
+        return Err(ApiError::invalid("Too many messages", "ids"));
     }
     require_guest_ok(db, user).await?;
     let caller = match (user, crate::api::budget::client()) {
@@ -2924,7 +2940,7 @@ pub(crate) async fn edit_message(
         .ok_or_else(crate::api::access::not_found)?;
     let (kind, media_removed): (String, i64) = (row.try_get(0)?, row.try_get(1)?);
     if kind != "user" || row.try_get::<Option<i64>, _>(2)?.is_some() {
-        return Err(bad("Cannot edit this message"));
+        return Err(ApiError::invalid("Cannot edit this message", "id"));
     }
     let stored = {
         let mut conn = state.db.acquire().await?;
@@ -2932,19 +2948,24 @@ pub(crate) async fn edit_message(
     };
     let (old, old_alt) = match stored {
         Some((_, _, Opened { parts, unreadable })) if !unreadable => (parts.content, parts.alt),
-        Some(_) => return Err(bad("Cannot edit this message")),
+        Some(_) => return Err(ApiError::invalid("Cannot edit this message", "id")),
         None => return Err(crate::api::access::not_found()),
     };
     check_len(&content, state.limits.message_max_chars, "Message")?;
     let attached = message.scope().media_id.is_some() && media_removed == 0;
     if content.trim().is_empty() && !attached {
-        return Err(bad("Message is empty"));
+        return Err(ApiError::invalid("Message is empty", "content"));
     }
     if message.channel().is_some() {
         check_profanity(&state.db, ProfanityTarget::Messages, &content).await?;
     }
     let alt = match media_alt {
-        Some(_) if !attached => return Err(bad(crate::api::alt_text::NOTHING_TO_DESCRIBE)),
+        Some(_) if !attached => {
+            return Err(ApiError::invalid(
+                crate::api::alt_text::NOTHING_TO_DESCRIBE,
+                "media_alt",
+            ));
+        }
         Some(text) => crate::api::alt_text::clean_alt(
             &Settings::cached(&state.db).await,
             text.as_deref(),
@@ -3057,7 +3078,7 @@ async fn store_edit(
     let text_only = text_only || !may_embed;
     let (author, parts) = match crate::api::seal::stored_parts(ring, &mut tx, id).await? {
         Some((_, author, Opened { parts, unreadable })) if !unreadable => (author, parts),
-        Some(_) => return Err(bad("Cannot edit this message")),
+        Some(_) => return Err(ApiError::invalid("Cannot edit this message", "id")),
         None => return Err(crate::api::access::not_found()),
     };
     let parts = Parts {
@@ -3214,7 +3235,7 @@ impl SearchCursor {
         if let Ok(parts) = decode_cursor(raw, 2) {
             let skip = cursor_int(&parts[1])?;
             if !(1..=SEARCH_OFFSET_MAX).contains(&skip) {
-                return Err(bad("Invalid cursor"));
+                return Err(ApiError::invalid("Invalid cursor", "cursor"));
             }
             return Ok(Self {
                 before: Some(cursor_int(&parts[0])?),
@@ -3222,7 +3243,7 @@ impl SearchCursor {
                 pass: None,
             });
         }
-        let invalid = || bad("Invalid cursor");
+        let invalid = || ApiError::invalid("Invalid cursor", "cursor");
         let text = hex::decode(raw.trim())
             .ok()
             .and_then(|bytes| String::from_utf8(bytes).ok())
@@ -4148,7 +4169,10 @@ fn check_nul(texts: [&Option<String>; 4], servers: &Option<Vec<String>>) -> Resu
         .any(|t| t.as_deref().is_some_and(|v| v.contains('\0')))
         || servers.iter().flatten().any(|v| v.contains('\0'));
     match nul {
-        true => Err(bad("Search text cannot contain NUL characters")),
+        true => Err(ApiError::invalid(
+            "Search text cannot contain NUL characters",
+            "q",
+        )),
         false => Ok(()),
     }
 }
@@ -4769,7 +4793,9 @@ pub(crate) async fn unread_count(
             resolve_dm(db, id, &user).await?;
             (id, DM_TOP, None, format!("d{id}"))
         }
-        Some(ReadTarget::Thread(_)) | None => return Err(bad("Invalid scope")),
+        Some(ReadTarget::Thread(_)) | None => {
+            return Err(ApiError::invalid("Invalid scope", "scope"));
+        }
     };
     let after = match q.after {
         Some(after) => after,
@@ -4835,7 +4861,8 @@ pub(crate) async fn mark_read(
         last_read,
         pings_until,
     } = req;
-    let target = ReadTarget::parse(&scope).ok_or_else(|| bad("Invalid scope"))?;
+    let target =
+        ReadTarget::parse(&scope).ok_or_else(|| ApiError::invalid("Invalid scope", "scope"))?;
     let last_read = read_scope(
         &state,
         &user,
@@ -5115,12 +5142,13 @@ pub(crate) async fn mark_read_batch(
 ) -> Result<Json<OkResp>, ApiError> {
     let ReadBatchReq { scopes } = req;
     if scopes.len() > READ_BATCH_MAX {
-        return Err(bad("Too many scopes"));
+        return Err(ApiError::invalid("Too many scopes", "scopes"));
     }
     let mut targets = Vec::with_capacity(scopes.len());
     let mut seen = std::collections::HashSet::with_capacity(scopes.len());
     for scope in scopes {
-        let target = ReadTarget::parse(&scope).ok_or_else(|| bad("Invalid scope"))?;
+        let target =
+            ReadTarget::parse(&scope).ok_or_else(|| ApiError::invalid("Invalid scope", "scope"))?;
         if seen.insert(scope.clone()) {
             targets.push((scope, target));
         }

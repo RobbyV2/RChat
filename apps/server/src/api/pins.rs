@@ -9,7 +9,7 @@ use crate::api::access::{
 use crate::api::audit;
 use crate::api::messages::{Quotes, load_broadcast, load_message, moderated, pinned_messages};
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, MaybeAuthed, Message, OkResp, bad, now_ms, ok, require_guest_ok,
+    ApiError, ApiErrorBody, Authed, MaybeAuthed, Message, OkResp, now_ms, ok, require_guest_ok,
 };
 use crate::db::{Db, User, is_sqlite};
 use crate::state::AppState;
@@ -69,7 +69,7 @@ fn place_of(scope: &MsgScope) -> Result<Place, ApiError> {
 }
 
 fn cannot_pin() -> ApiError {
-    bad("Cannot pin this message")
+    ApiError::invalid("Cannot pin this message", "id")
 }
 
 /// Pin a message

@@ -17,8 +17,8 @@ use crate::api::audit;
 use crate::api::reactions::canonical_emoji;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, MaybeAuthed, Message, Paged, ProfanityTarget, Settings,
-    UserRef, bad, check_len, cursor_int, decode_cursor, encode_cursor, placeholders,
-    require_guest_ok, user_from, user_refs,
+    UserRef, check_len, cursor_int, decode_cursor, encode_cursor, placeholders, require_guest_ok,
+    user_from, user_refs,
 };
 use crate::crypt::body::{OPTIONS, Opener, POLLS, SNAPSHOTS, Scope, Writer};
 use crate::db::{Db, User, is_sqlite, now, pool_key};
@@ -348,7 +348,7 @@ impl PollSpec {
 fn option_text(text: &str) -> Result<String, ApiError> {
     let text = text.trim();
     if text.is_empty() {
-        return Err(bad("Options cannot be empty"));
+        return Err(ApiError::invalid("Options cannot be empty", "options"));
     }
     check_len(text, OPTION_MAX, "An option")?;
     Ok(text.to_string())
@@ -358,7 +358,7 @@ fn option_emoji(emoji: Option<String>) -> Result<Option<String>, ApiError> {
     match emoji.as_deref().map(str::trim).filter(|e| !e.is_empty()) {
         Some(e) => canonical_emoji(e)
             .map(|e| Some(e.to_string()))
-            .ok_or_else(|| bad("Not an emoji")),
+            .ok_or_else(|| ApiError::invalid("Not an emoji", "emoji")),
         None => Ok(None),
     }
 }
@@ -381,26 +381,34 @@ pub(crate) fn validate(req: PollReq, settings: Option<&Settings>) -> Result<Poll
     } = req;
     let question = question.trim().to_string();
     if question.is_empty() {
-        return Err(bad("The question cannot be empty"));
+        return Err(ApiError::invalid(
+            "The question cannot be empty",
+            "question",
+        ));
     }
     check_len(&question, QUESTION_MAX, "The question")?;
     let options = match kind.written() {
         true => {
             if options.len() < OPTIONS_MIN || options.len() > OPTIONS_MAX {
-                return Err(bad("A poll needs 2 to 20 options"));
+                return Err(ApiError::invalid("A poll needs 2 to 20 options", "options"));
             }
             let mut seen = HashSet::with_capacity(options.len());
             let mut out = Vec::with_capacity(options.len());
             for PollOptionReq { text, emoji } in options {
                 let text = option_text(&text)?;
                 if !seen.insert(text.to_lowercase()) {
-                    return Err(bad("Options must be different"));
+                    return Err(ApiError::invalid("Options must be different", "options"));
                 }
                 out.push((text, option_emoji(emoji)?));
             }
             out
         }
-        false if !options.is_empty() => return Err(bad("This kind of poll has no options")),
+        false if !options.is_empty() => {
+            return Err(ApiError::invalid(
+                "This kind of poll has no options",
+                "options",
+            ));
+        }
         false => match kind {
             PollKind::YesNo => ["Yes", "No", "Abstain"]
                 .iter()
@@ -415,7 +423,10 @@ pub(crate) fn validate(req: PollReq, settings: Option<&Settings>) -> Result<Poll
             let min = min_choices.unwrap_or(1);
             let max = max_choices.unwrap_or(n);
             if min < 1 || min > n || max < min || max > n {
-                return Err(bad("Invalid number of choices"));
+                return Err(ApiError::invalid(
+                    "Invalid number of choices",
+                    "max_choices",
+                ));
             }
             (min, max)
         }
@@ -424,16 +435,24 @@ pub(crate) fn validate(req: PollReq, settings: Option<&Settings>) -> Result<Poll
     let scale = match (kind, scale) {
         (PollKind::Rating, None) => Some(5),
         (PollKind::Rating, Some(s)) if s == 5 || s == 10 => Some(s),
-        (PollKind::Rating, Some(_)) => return Err(bad("The scale must be 5 or 10")),
+        (PollKind::Rating, Some(_)) => {
+            return Err(ApiError::invalid("The scale must be 5 or 10", "scale"));
+        }
         (_, _) => None,
     };
     if allow_add && !kind.written() {
-        return Err(bad("Options cannot be added to this kind of poll"));
+        return Err(ApiError::invalid(
+            "Options cannot be added to this kind of poll",
+            "allow_add",
+        ));
     }
     if let Some(d) = duration_seconds
         && !(DURATION_MIN..=DURATION_MAX).contains(&d)
     {
-        return Err(bad("The deadline must be 1 minute to 30 days away"));
+        return Err(ApiError::invalid(
+            "The deadline must be 1 minute to 30 days away",
+            "duration_seconds",
+        ));
     }
     if let Some(settings) = settings {
         settings.check_profanity(ProfanityTarget::Messages, &question)?;
@@ -1456,11 +1475,11 @@ async fn bump(conn: &mut sqlx::AnyConnection, id: i64) -> sqlx::Result<()> {
 }
 
 fn invalid_vote() -> ApiError {
-    bad("Invalid vote")
+    ApiError::invalid("Invalid vote", "options")
 }
 
 fn closed_error() -> ApiError {
-    bad("This poll is closed")
+    ApiError::conflict(StatusCode::BAD_REQUEST, "This poll is closed")
 }
 
 /// The rows of a vote, checked against the poll.
@@ -1579,7 +1598,10 @@ pub(crate) async fn vote(
         return Ok(Json(view_for(db, id, Some(&user)).await?));
     }
     if !before.is_empty() && !def.allow_change {
-        return Err(bad("You already voted"));
+        return Err(ApiError::conflict(
+            StatusCode::BAD_REQUEST,
+            "You already voted",
+        ));
     }
     sqlx::query("DELETE FROM poll_votes WHERE message_id = $1 AND voter = $2")
         .bind(id)
@@ -1635,7 +1657,10 @@ pub(crate) async fn retract_vote(
         return Err(closed_error());
     }
     if !def.allow_change {
-        return Err(bad("Votes in this poll cannot be changed"));
+        return Err(ApiError::conflict(
+            StatusCode::BAD_REQUEST,
+            "Votes in this poll cannot be changed",
+        ));
     }
     let key = voter_key(db, def.anonymous, id, &user.username, user.created_at).await?;
     let removed = sqlx::query("DELETE FROM poll_votes WHERE message_id = $1 AND voter = $2")
@@ -1688,7 +1713,10 @@ pub(crate) async fn add_option(
         return Err(closed_error());
     }
     if !def.kind.written() || !(def.allow_add || own) {
-        return Err(bad("Options cannot be added to this poll"));
+        return Err(ApiError::conflict(
+            StatusCode::BAD_REQUEST,
+            "Options cannot be added to this poll",
+        ));
     }
     let scope = Scope::of(resolved.scope().channel_id, resolved.scope().dm_id);
     let rows = sqlx::query("SELECT id, text, body FROM poll_options WHERE message_id = $1")
@@ -1707,13 +1735,17 @@ pub(crate) async fn add_option(
         ));
     }
     if existing.len() >= OPTIONS_MAX {
-        return Err(bad("A poll can have at most 20 options"));
+        return Err(ApiError::limit(
+            StatusCode::BAD_REQUEST,
+            "A poll can have at most 20 options",
+            crate::api::error::Cap::PollOptions,
+        ));
     }
     if existing
         .iter()
         .any(|t| t.to_lowercase() == text.to_lowercase())
     {
-        return Err(bad("Options must be different"));
+        return Err(ApiError::invalid("Options must be different", "options"));
     }
     let writer = match scope {
         Some(scope) => crate::api::seal::writer_of(db, &mut tx, scope).await?,

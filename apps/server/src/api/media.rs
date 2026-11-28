@@ -14,7 +14,7 @@ use crate::api::access::{MsgScope, Proof, resolve_message};
 use crate::api::audit;
 use crate::api::form_heads::Heads;
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, MediaRef, OkResp, Settings, allowed, bad, ok, placeholders,
+    ApiError, ApiErrorBody, Authed, MediaRef, OkResp, Settings, allowed, ok, placeholders,
     request_token, require_guest_ok, user_for_token,
 };
 use crate::crypt::media::{Facts, MediaKey, chunk_len, chunks};
@@ -430,7 +430,7 @@ pub(crate) async fn read_raw(
     let stream = paced(body.into_data_stream(), most, waits(), watch.clone());
     let data = collect(stream, most).await.map_err(|stop| match stop {
         Stop::Over => over(),
-        Stop::Failed(e) => watch.error(over, bad(&e)),
+        Stop::Failed(e) => watch.error(over, ApiError::invalid(&e, "body")),
     })?;
     Ok(Buffered { data, _held: held })
 }
@@ -509,7 +509,7 @@ where
 {
     collect(stream, max).await.map_err(|stop| match stop {
         Stop::Over => json_over(max),
-        Stop::Failed(e) => watch.error(|| json_over(max), bad(&e)),
+        Stop::Failed(e) => watch.error(|| json_over(max), ApiError::invalid(&e, "body")),
     })
 }
 
@@ -560,7 +560,7 @@ impl Watch {
         match self.0.get() {
             Some(Cut::Stalled) => stalled(),
             Some(Cut::Over) => over(),
-            Some(Cut::Head) => bad(MALFORMED_FORM),
+            Some(Cut::Head) => ApiError::invalid(MALFORMED_FORM, "body"),
             None => other,
         }
     }
@@ -1149,7 +1149,8 @@ pub(crate) async fn upload_media(
     }
     let key = match place.as_deref() {
         Some(text) => {
-            let place = sealed::Place::parse(text).ok_or_else(|| bad(sealed::BAD_PLACE))?;
+            let place = sealed::Place::parse(text)
+                .ok_or_else(|| ApiError::invalid(sealed::BAD_PLACE, "place"))?;
             sealed::upload_key(&state.db, &user, place).await?
         }
         None => None,
@@ -1167,7 +1168,7 @@ pub(crate) async fn upload_media(
                 ApiError(StatusCode::BAD_REQUEST, e.to_string(), None),
             )
         })?
-        .ok_or_else(|| bad("No file provided"))?;
+        .ok_or_else(|| ApiError::invalid("No file provided", "file"))?;
     let filename = clean_filename(field.file_name().unwrap_or("file"));
     let mime = clean_mime(field.content_type().unwrap_or(NEUTRAL_MIME));
     let body = read_file(field, max, held, &watch).await?;
@@ -3176,7 +3177,7 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST, "{text}");
         assert_eq!(
             text,
-            r#"{"error":"Error parsing `multipart/form-data` request"}"#
+            r#"{"error":"Error parsing `multipart/form-data` request","reason":{"kind":"invalid","field":"body"}}"#
         );
         done(state, path).await;
     }

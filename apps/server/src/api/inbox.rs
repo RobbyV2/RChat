@@ -9,8 +9,8 @@ use utoipa::{IntoParams, ToSchema};
 use crate::api::access::{member_channel_rights, not_found};
 use crate::api::pings::{GROUP_PINGS_MAX, GroupKind, announce_counts, excerpt};
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, OkResp, UserRef, bad, cursor_int, decode_cursor, encode_cursor,
-    ok, user_from, user_refs,
+    ApiError, ApiErrorBody, Authed, OkResp, UserRef, cursor_int, decode_cursor, encode_cursor, ok,
+    user_from, user_refs,
 };
 use crate::crypt::body::{Opener, Parts, Scope};
 use crate::db::{Db, LIVE_AUTHOR, User};
@@ -236,10 +236,13 @@ impl Filter {
             .map(|s| s.trim().to_lowercase())
             .filter(|s| !s.is_empty());
         if server.is_some() && dms {
-            return Err(bad("Choose a server or DMs, not both"));
+            return Err(ApiError::invalid(
+                "Choose a server or DMs, not both",
+                "server",
+            ));
         }
         if server.as_deref().is_some_and(|s| s.contains('\0')) {
-            return Err(bad("Invalid server"));
+            return Err(ApiError::invalid("Invalid server", "server"));
         }
         Ok(Filter {
             unread,
@@ -365,7 +368,7 @@ impl Key {
         };
         match InboxSource::of_rank(key.rank) {
             Some(_) => Ok(key),
-            None => Err(bad("Invalid cursor")),
+            None => Err(ApiError::invalid("Invalid cursor", "cursor")),
         }
     }
 

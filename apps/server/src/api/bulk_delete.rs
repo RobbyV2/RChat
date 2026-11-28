@@ -20,7 +20,7 @@ use crate::api::audit;
 use crate::api::budget::slow_down;
 use crate::api::messages::moderated;
 use crate::api::pings::{announce_counts, pinged_by};
-use crate::api::{ApiError, ApiErrorBody, Authed, allowed, bad, placeholders};
+use crate::api::{ApiError, ApiErrorBody, Authed, allowed, placeholders};
 use crate::db::{Db, LIVE_AUTHOR, User, get_user, pool_key};
 use crate::limits::bucket::{Keyed, Policy};
 use crate::state::AppState;
@@ -267,7 +267,7 @@ impl Place {
 fn parse_scope(scope: &str) -> Result<(&str, i64), ApiError> {
     match typing_scope(scope) {
         Some((kind @ ("c" | "t" | "d"), id)) => Ok((kind, id)),
-        Some(_) | None => Err(bad("Unknown scope")),
+        Some(_) | None => Err(ApiError::invalid("Unknown scope", "scope")),
     }
 }
 
@@ -778,23 +778,34 @@ pub(crate) async fn bulk_delete(
     } = req;
     parse_scope(&scope)?;
     let author = match author.map(|a| a.trim().to_lowercase()) {
-        Some(a) if a.is_empty() || a.chars().count() > 100 => return Err(bad("Unknown author")),
+        Some(a) if a.is_empty() || a.chars().count() > 100 => {
+            return Err(ApiError::invalid("Unknown author", "author"));
+        }
         other => other,
     };
     match (&ids, all) {
-        (Some(ids), false) if ids.is_empty() => return Err(bad("Choose messages to delete")),
+        (Some(ids), false) if ids.is_empty() => {
+            return Err(ApiError::invalid("Choose messages to delete", "ids"));
+        }
         (Some(ids), false) if ids.len() > IDS_MAX => {
-            return Err(bad("At most 200 messages at a time"));
+            return Err(ApiError::invalid("At most 200 messages at a time", "ids"));
         }
         (Some(_), false)
             if !except.is_empty() || before.is_some() || after.is_some() || author.is_some() =>
         {
-            return Err(bad("except, before, after and author only go with all"));
+            return Err(ApiError::invalid(
+                "except, before, after and author only go with all",
+                "all",
+            ));
         }
         (Some(_), false) => {}
-        (None, true) if except.len() > EXCEPT_MAX => return Err(bad("At most 1000 exceptions")),
+        (None, true) if except.len() > EXCEPT_MAX => {
+            return Err(ApiError::invalid("At most 1000 exceptions", "except"));
+        }
         (None, true) => {}
-        (Some(_), true) | (None, false) => return Err(bad("Choose messages to delete")),
+        (Some(_), true) | (None, false) => {
+            return Err(ApiError::invalid("Choose messages to delete", "ids"));
+        }
     }
     let budget = match dry_run {
         true => &*COUNTS,

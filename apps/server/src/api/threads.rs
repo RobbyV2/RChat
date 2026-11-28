@@ -9,7 +9,7 @@ use crate::api::admin::like_pattern;
 use crate::api::messages::{BODY_COL, COLS, Quotes, attach_embeds, rows_messages};
 use crate::api::reactions::attach_reactions;
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, MaybeAuthed, Message, Paged, bad, check_len, cursor_int,
+    ApiError, ApiErrorBody, Authed, MaybeAuthed, Message, Paged, check_len, cursor_int,
     decode_cursor, encode_cursor, require_guest_ok,
 };
 use crate::db::{Db, LIVE_AUTHOR, User};
@@ -58,7 +58,9 @@ enum Home {
 fn search_text(q: Option<String>) -> Result<Option<String>, ApiError> {
     let text = q.map(|q| q.trim().to_string()).filter(|q| !q.is_empty());
     match text {
-        Some(q) if q.contains('\0') => Err(bad("Search text must not contain NUL")),
+        Some(q) if q.contains('\0') => {
+            Err(ApiError::invalid("Search text must not contain NUL", "q"))
+        }
         Some(q) => {
             check_len(&q, THREADS_QUERY_MAX, "Search text")?;
             Ok(Some(q))

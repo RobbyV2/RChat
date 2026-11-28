@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, StatusCode};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
@@ -11,7 +11,7 @@ use crate::api::access::{Proof, ResolvedMessage, resolve_message};
 use crate::api::messages::{Quotes, load_message};
 use crate::api::pings::{PingKind, PingScope, PingSpec, RETRACTED, announce_counts, create_pings};
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, MaybeAuthed, Message, OkResp, UserRef, bad, now_ms, ok,
+    ApiError, ApiErrorBody, Authed, MaybeAuthed, Message, OkResp, UserRef, now_ms, ok,
     placeholders, require_guest_ok, user_from, user_refs,
 };
 use crate::db::{Db, User};
@@ -58,7 +58,7 @@ pub fn canonical_emoji(text: &str) -> Option<&'static str> {
 }
 
 fn check_emoji(emoji: &str) -> Result<&'static str, ApiError> {
-    canonical_emoji(emoji).ok_or_else(|| bad("Not an emoji"))
+    canonical_emoji(emoji).ok_or_else(|| ApiError::invalid("Not an emoji", "emoji"))
 }
 
 /// Reaction summaries of `msgs` from `viewer`'s point of view (`me`), in one query.
@@ -284,7 +284,7 @@ pub(crate) async fn add_reaction(
     let emoji = check_emoji(&emoji)?;
     let target = react_target(&state, id, &user, true).await?;
     if !matches!(target.message.kind.as_str(), "user" | "poll") {
-        return Err(bad("Cannot react to this message"));
+        return Err(ApiError::invalid("Cannot react to this message", "id"));
     }
     let mut tx = state.db.begin().await?;
     lock_message(&state.db, &mut tx, id).await?;
@@ -305,7 +305,11 @@ pub(crate) async fn add_reaction(
     if !added {
         return match reaction_exists(&state.db, id, &user.username, emoji).await? {
             true => Ok(ok()),
-            false => Err(bad("Too many reactions")),
+            false => Err(ApiError::limit(
+                StatusCode::BAD_REQUEST,
+                "Too many reactions",
+                crate::api::error::Cap::MessageReactions,
+            )),
         };
     }
     state
