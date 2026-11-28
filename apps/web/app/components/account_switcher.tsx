@@ -198,9 +198,9 @@ function OrderHandle({
           if (e.pointerType !== 'touch') return
           const el = document
             .elementFromPoint(e.clientX, e.clientY)
-            ?.closest<HTMLElement>('[data-drop-target]')
+            ?.closest<HTMLElement>('[data-order-target]')
           if (!el) return
-          const other = parseJson(el.dataset.dropTarget ?? '', ORDER_TARGET)
+          const other = parseJson(el.dataset.orderTarget ?? '', ORDER_TARGET)
           if (other.ok && sameLevel(target, other.value)) reorder(target, other.value)
         }}
         icon={GripVertical}
@@ -248,7 +248,7 @@ function AccountList({
   const reorder = (from: OrderTarget, to: OrderTarget) =>
     void client.updateBook(book => moveSwitcherRow(book, from, to))
   const drag = (target: OrderTarget, index: number) => ({
-    'data-drop-target': JSON.stringify(target),
+    'data-order-target': JSON.stringify(target),
     'data-drop-index': index,
     onDragOver: (e: React.DragEvent) => {
       if (e.dataTransfer.types.includes('application/x-rchat-order')) e.preventDefault()
