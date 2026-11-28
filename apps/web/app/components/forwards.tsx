@@ -60,6 +60,8 @@ import { ServerGlyph } from './server_rail'
 import { useStableSelector } from '../lib/stable_key'
 import type { P2pState } from '../lib/p2p/app/store'
 import { Row, Stack, Surface } from './layout'
+import { sourcePillLook } from '../lib/controls'
+import { sourcePlaceLook } from '../lib/controls'
 
 const DELETED_USER = 'Deleted user'
 
@@ -285,9 +287,8 @@ export function ForwardBar({
   )
 }
 
-const PILL =
-  'mt-2 flex w-fit max-w-full min-w-0 items-center gap-1.5 rounded-lg border border-outline-variant/70 bg-surface-container-high px-2.5 py-1 text-xs text-on-surface-variant'
-const PLACE = 'streamer flex min-w-0 items-center gap-1 rounded-sm font-semibold text-on-surface'
+const PILL = sourcePillLook
+const PLACE = sourcePlaceLook
 const PLACE_BUTTON = `${PLACE} cursor-pointer hover:underline focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-8`
 const CANT_OPEN = "You can't open this"
 

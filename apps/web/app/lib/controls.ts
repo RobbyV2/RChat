@@ -1,7 +1,7 @@
 // The looks of the shared controls: buttons, icon buttons, list rows, section headings, badges and
 // pills, each built from a fixed set of choices. The components in `components/controls.tsx` take
 // these choices as props. A call site places a control in its parent with `Place` classes only
-// (position, margins, flex and grid item sizing, display and reveal), never with spacing, color or
+// (position, `auto` margins, flex and grid item sizing, display and reveal), never with spacing, color or
 // type, so every control of a kind looks the same. On a coarse pointer every control is at least
 // 44 px high (and an icon button 44 px wide); with a mouse it keeps its size.
 
@@ -77,7 +77,7 @@ type SharedUtility =
   | 'peer'
 // A layout box may also have a fixed size (a rail, a media frame); a control's size is its look.
 type LayoutUtility = SharedUtility | `${Size}-${number}` | `${Size}-${number}/${number}`
-type PlaceUtility = SharedUtility | `${Sign}${Margin}-${Length}`
+type PlaceUtility = SharedUtility
 type Breakpoint = 'sm' | 'md' | 'lg' | 'xl' | '2xl'
 type Variant =
   | Breakpoint
@@ -227,13 +227,15 @@ export const iconBoxLook = (size: IconButtonSize) =>
 // icon in the middle. On a coarse pointer it grows to 44 px; the one inside a chip grows into the
 // chip's margin, so the chip keeps its size. `aria-pressed` shows it on, `aria-expanded` on
 // a button with a popup shows the popup open (the `pressed:` and `expanded:` variants of
-// globals.css).
+// globals.css). A `tight` one in a crowded row (the composer) grows into the gaps beside it on a
+// coarse pointer, so the row keeps its width.
 export const iconButtonLook = (
   tone: IconButtonTone,
   size: IconButtonSize,
-  shape: IconButtonShape = 'round'
+  shape: IconButtonShape = 'round',
+  tight = false
 ) =>
-  `${ICON_BOX[size]} shrink-0 items-center justify-center ${shape === 'round' ? 'rounded-full' : 'rounded-lg'} ${ICON_TONE[tone]} ${FOCUS} expanded:bg-on-surface/8 pressed:bg-secondary-container pressed:text-on-secondary-container disabled:opacity-40 pointer-coarse:size-11${size === 'xs' ? ' pointer-coarse:-m-3' : ''}`
+  `${ICON_BOX[size]} shrink-0 items-center justify-center ${shape === 'round' ? 'rounded-full' : 'rounded-lg'} ${ICON_TONE[tone]} ${FOCUS} expanded:bg-on-surface/8 pressed:bg-secondary-container pressed:text-on-secondary-container disabled:opacity-40 pointer-coarse:size-11${size === 'xs' ? ' pointer-coarse:-m-3' : ''}${tight ? ' pointer-coarse:-mx-1.5' : ''}`
 
 const ROW_TONE: Record<RowTone, string> = {
   plain: 'text-on-surface',
@@ -301,3 +303,75 @@ export const badgeLook = (tone: BadgeTone) =>
 // A short label on a pill.
 export const pillLook = (tone: BadgeTone) =>
   `min-w-0 shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-2xs leading-4 font-medium ${BADGE_TONE[tone]}`
+
+// Looks of single controls that only one screen uses. Their padding is fixed here, like every
+// control's, so the screen that places them sets none.
+
+// A field of the API console: its border color says whether its value is valid.
+export const consoleFieldLook =
+  'w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1.5 text-base outline-none placeholder:text-on-surface-variant/70 focus:border-primary md:text-sm'
+
+// A button an app puts under its message: a pill with the color of its style.
+export const appButtonLook =
+  'flex min-h-11 max-w-full cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium disabled:cursor-default disabled:opacity-40'
+
+// An action on a note only the viewer sees.
+export const noteActionLook =
+  'cursor-pointer rounded-full px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-container-highest'
+
+// A small round icon button beside a file or a code block.
+export const miniIconLook =
+  'shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary'
+
+// The same, dimmed while it cannot be used.
+export const miniIconOffLook =
+  'shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary disabled:opacity-40'
+
+// The pill under a forwarded message that says where it came from.
+export const sourcePillLook =
+  'mt-2 flex w-fit max-w-full min-w-0 items-center gap-1.5 rounded-lg border border-outline-variant/70 bg-surface-container-high px-2.5 py-1 text-xs text-on-surface-variant'
+
+// A place named in that pill.
+export const sourcePlaceLook =
+  'streamer flex min-w-0 items-center gap-1 rounded-sm font-semibold text-on-surface'
+
+// A quick action on Home: a wide card button.
+export const homeActionLook =
+  'flex min-w-0 items-center gap-3 rounded-2xl bg-surface-container-low px-4 py-3 text-left text-sm font-medium text-on-surface hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary'
+
+// The same for a peer-to-peer action: dashed, its padding less by its border.
+export const homeP2pActionLook =
+  'flex min-w-0 items-center gap-3 rounded-2xl border-2 border-dashed border-tertiary/70 bg-surface-container-low px-[calc(1rem-2px)] py-[calc(0.75rem-2px)] text-left text-sm font-medium text-on-surface hover:bg-tertiary-container hover:text-on-tertiary-container focus-visible:outline-2 focus-visible:outline-primary'
+
+// A covered or removed embed, in place of its card.
+export const embedNoteLook =
+  'mt-1 flex w-fit max-w-md items-center gap-2 rounded-lg border-l-4 border-outline bg-surface-container py-2 pr-3 pl-3 text-sm'
+
+// The quick actions floating over the top edge of a message row.
+export const messageToolbarLook =
+  'group/bar pointer-events-none absolute -top-5 right-3 z-raised flex items-center gap-0.5 rounded-lg border border-outline-variant bg-surface-container p-0.5 opacity-0 shadow-elevation-1 group-hover:pointer-events-auto group-hover:opacity-100 data-open:pointer-events-auto data-open:opacity-100 pointer-fine:group-focus-within:pointer-events-auto pointer-fine:group-focus-within:opacity-100'
+
+// A reaction under a message: its emoji and count.
+export const reactionChipLook =
+  'flex h-7 items-center gap-1.5 rounded-lg border px-2 text-sm font-medium tabular-nums outline-offset-2 select-none focus-visible:outline-2 focus-visible:outline-primary'
+
+// A field of the sign-in form: its border color says whether its value is valid.
+export const signInFieldLook = 'rounded-lg border bg-transparent px-3 py-2 outline-none'
+
+// Someone in a voice channel, under its row in the sidebar.
+export const sideSeatLook =
+  'mr-2 ml-7 flex items-center gap-2 rounded-md px-2 py-1 text-sm text-on-surface-variant -outline-offset-2'
+
+// The mark of a member muted by a moderator, on their tile.
+export const muteBadgeLook = 'rounded-full bg-mute p-0.5 text-on-mute'
+
+// An option of a poll: a full-width row with its bar behind the text.
+export const pollOptionLook =
+  'relative flex min-h-10 w-full items-center gap-2 overflow-hidden rounded-xl border px-3 py-2 text-left text-sm'
+
+// The box that stands in for a hidden secret of any size (a QR code).
+export const coverBoxLook =
+  'flex items-center justify-center border border-dashed border-outline-variant p-4 text-center text-sm text-on-surface-variant'
+
+// What a preview row holds, on one line.
+export const inlineRowLook = 'flex min-w-0 items-center gap-1.5'

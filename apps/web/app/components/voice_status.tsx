@@ -2,6 +2,7 @@
 import { MicOff, VolumeX } from 'lucide-react'
 import { voiceStatusText, type VoiceStatus } from '../lib/voice_status'
 import { Row } from './layout'
+import { muteBadgeLook } from '../lib/controls'
 
 // A voice member's mic and sound icons: in sidebar rows (`row`), or on a grid tile's name pill
 // (`tile`), where a forced mute keeps its red badge.
@@ -22,7 +23,7 @@ export function VoiceStatusIcons({
   const forced = status.mic === 'forced'
   const mic = tile
     ? forced
-      ? 'rounded-full bg-mute p-0.5 text-on-mute'
+      ? muteBadgeLook
       : ''
     : forced
       ? 'text-mute-fg'

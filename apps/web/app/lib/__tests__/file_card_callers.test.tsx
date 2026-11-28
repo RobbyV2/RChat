@@ -84,7 +84,7 @@ describe('a P2P file in a hosted message', () => {
     const html = renderToStaticMarkup(
       <MarkdownMessage message={msg(21, { author: user('bob'), media: p2p() })} />
     )
-    expect(html).toContain('data-file-card="" class="mt-1 w-md max-w-full min-w-0"')
+    expect(html).toContain('data-file-card="" class="msg-part w-md max-w-full min-w-0"')
     expect(html).toContain('lucide-file-image')
     expect(html).toContain('title="Download photo.png from bob&#x27;s browser"')
     expect(html.includes('disabled=""')).toBe(false)

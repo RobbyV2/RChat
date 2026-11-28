@@ -14,10 +14,10 @@ import { FULL_TITLE, canAddEmoji, reacted, reactionsFull } from '../lib/reaction
 import { keptWhenTight, toolbarFit } from '../lib/toolbar_fit'
 import { EmojiPicker, useTopEmojis } from './emoji_picker'
 import { time } from '../lib/platform/time'
+import { messageToolbarLook } from '../lib/controls'
 
 // It straddles the row's top edge, so a pointer moving up from the row reaches it before leaving.
-const messageToolbarCls =
-  'group/bar pointer-events-none absolute -top-5 right-3 z-raised flex items-center gap-0.5 rounded-lg border border-outline-variant bg-surface-container p-0.5 opacity-0 shadow-elevation-1 group-hover:pointer-events-auto group-hover:opacity-100 data-open:pointer-events-auto data-open:opacity-100 pointer-fine:group-focus-within:pointer-events-auto pointer-fine:group-focus-within:opacity-100'
+const messageToolbarCls = messageToolbarLook
 
 // Buttons a narrow row leaves to the More menu (see `toolbarFit`).
 const quickCls = 'group-data-[fit=compact]/bar:hidden group-data-[fit=tight]/bar:hidden'

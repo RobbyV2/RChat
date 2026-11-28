@@ -101,7 +101,9 @@ export function ChannelList({
   const row = (c: ChannelEntry) => replace?.(c) ?? (c.kind === 'voice' ? voice(c) : textRow(c))
   const zoneCls = (zone: string | undefined, empty: boolean) =>
     `flex flex-col rounded-lg transition-colors ${
-      drag?.moving && empty ? 'mx-2 min-h-8 border-2 border-dashed border-outline-variant' : ''
+      drag?.moving && empty
+        ? 'min-h-8 w-side-row self-center border-2 border-dashed border-outline-variant'
+        : ''
     } ${drag?.moving && zone !== undefined && drag.over === zone ? 'bg-primary-container/40' : ''}`
 
   const categoryBlock = (category: CategoryEntry) => {

@@ -35,6 +35,7 @@ import { useCopied } from '../lib/use_copied'
 import { useInstanceLabel } from './instance_badge'
 import { TO_SCREEN } from '../lib/secret'
 import { time } from '../lib/platform/time'
+import { consoleFieldLook } from '../lib/controls'
 
 const METHOD_CLS = {
   GET: 'bg-secondary-container text-on-secondary-container',
@@ -58,8 +59,7 @@ export function MethodBadge({ method }: { method: Method }) {
   )
 }
 
-const inputCls =
-  'w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1.5 text-base outline-none placeholder:text-on-surface-variant/70 focus:border-primary md:text-sm'
+const inputCls = consoleFieldLook
 
 const typeLabel = (f: Field): string => {
   switch (f.kind) {

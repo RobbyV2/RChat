@@ -44,7 +44,7 @@ export function ServerHeader({
   // On a banner the gear sits on a chip of the theme's surface so it reads on any color.
   const chip = colors?.bg ? ({ '--gear-chip': GEAR_CHIP_CSS } as CSSProperties) : undefined
   const gear = chip
-    ? `${gearCls} bg-(--gear-chip) text-on-surface shadow-elevation-1 hover:bg-surface-container-highest focus-visible:outline-(--hdr-gear)`
+    ? `${gearCls} bg-gear-chip text-on-surface shadow-elevation-1 hover:bg-surface-container-highest focus-visible:outline-hdr-gear`
     : `${gearCls} text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface focus-visible:outline-primary`
   const gearIcon = <Settings size={18} />
   return (

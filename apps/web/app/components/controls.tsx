@@ -109,6 +109,7 @@ export function IconButton<const S extends string = never>({
   tone = 'plain',
   size = 'md',
   shape = 'round',
+  tight = false,
   pressed,
   type = 'button',
   place,
@@ -123,6 +124,7 @@ export function IconButton<const S extends string = never>({
     tone?: IconButtonTone
     size?: IconButtonSize
     shape?: IconButtonShape
+    tight?: boolean
     pressed?: boolean
     ref?: Ref<HTMLButtonElement>
     children?: ReactNode
@@ -136,7 +138,7 @@ export function IconButton<const S extends string = never>({
       title={tooltip ?? label}
       aria-label={label}
       aria-pressed={pressed}
-      className={placed('inline-flex', iconButtonLook(tone, size, shape), place)}
+      className={placed('inline-flex', iconButtonLook(tone, size, shape, tight), place)}
     >
       {over ? (
         <span className={iconBoxLook(size)}>

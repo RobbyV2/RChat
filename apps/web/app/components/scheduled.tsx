@@ -129,7 +129,7 @@ export function SendButton({
       label="Send"
       tooltip={fine && !disabled ? `${title} (right-click to send later)` : title}
       tone="filled"
-      place="pointer-coarse:-mx-1.5"
+      tight
       aria-haspopup="menu"
       data-send-button
       disabled={disabled}

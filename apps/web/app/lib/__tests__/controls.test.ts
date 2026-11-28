@@ -223,10 +223,21 @@ describe('placement', () => {
     place('[&_svg]:hidden')
     // @ts-expect-error: layers come from the layer tokens
     place('z-50')
-    place('z-top md:group-hover/cat:opacity-100 pointer-coarse:-mr-2.5 top-1/2 -translate-y-1/2')
+    place('z-top md:group-hover/cat:opacity-100 top-1/2 -translate-y-1/2')
+    // @ts-expect-error: the space around a control comes from its parent's gap
+    place('ml-2')
+    // @ts-expect-error: also as a nudge on a coarse pointer
+    place('pointer-coarse:-mr-2.5')
     const computed: string = 'ml-auto'
     // @ts-expect-error: a computed string is not checked, so it is refused
     place(computed)
     expect(place('w-full')).toBe('w-full')
   })
+})
+
+test('a tight icon button grows into the gaps beside it on a coarse pointer', () => {
+  expect(iconButtonLook('plain', 'lg', 'round', true).split(' ')).toContain(
+    'pointer-coarse:-mx-1.5'
+  )
+  expect(iconButtonLook('plain', 'lg').includes('-mx-')).toBe(false)
 })

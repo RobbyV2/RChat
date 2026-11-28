@@ -101,6 +101,8 @@ import { useAddingAllowed } from './add_instance'
 import { AccountTag, ActorAvatar } from './account_tag'
 import { holder } from '../lib/stable_key'
 import { time } from '../lib/platform/time'
+import { homeActionLook } from '../lib/controls'
+import { homeP2pActionLook } from '../lib/controls'
 
 function showOwner(account: AccountSession, peer?: P2pApp | null) {
   if (client.shown() !== account) client.show(account)
@@ -254,11 +256,9 @@ function Tips() {
   )
 }
 
-const actionCls =
-  'flex min-w-0 items-center gap-3 rounded-2xl bg-surface-container-low px-4 py-3 text-left text-sm font-medium text-on-surface hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary'
+const actionCls = homeActionLook
 
-const p2pActionCls =
-  'flex min-w-0 items-center gap-3 rounded-2xl border-2 border-dashed border-tertiary/70 bg-surface-container-low px-[calc(1rem-2px)] py-[calc(0.75rem-2px)] text-left text-sm font-medium text-on-surface hover:bg-tertiary-container hover:text-on-tertiary-container focus-visible:outline-2 focus-visible:outline-primary'
+const p2pActionCls = homeP2pActionLook
 
 const useP2pCard = () => {
   const enabled = useP2p(s => s.enabled)

@@ -1,6 +1,6 @@
 import { Inset, Row, Surface } from '../layout'
-const actionCls =
-  'cursor-pointer rounded-full px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-container-highest'
+import { noteActionLook } from '../../lib/controls'
+const actionCls = noteActionLook
 
 // A reply only this user sees, as a local row under the messages.
 export function OnlyYouRow({

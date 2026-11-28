@@ -895,7 +895,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
       {scope && <OpenPins />}
       {scope && <ThreadsWindow />}
       {dragging && (
-        <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-surface/80 font-medium text-primary">
+        <div className="pointer-events-none absolute inset-2 z-raised flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-surface/80 font-medium text-primary">
           Drop file to attach
         </div>
       )}

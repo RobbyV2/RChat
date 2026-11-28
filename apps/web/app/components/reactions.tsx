@@ -26,6 +26,7 @@ import { centerEmoji } from '../lib/emoji_center'
 import { useChat } from '../lib/place/use_chat'
 import { Surface, Row, Inset } from './layout'
 import { time } from '../lib/platform/time'
+import { reactionChipLook } from '../lib/controls'
 
 const EMPTY: Reaction[] = []
 
@@ -42,11 +43,10 @@ const shield = {
   onKeyDown: stop,
 }
 
-const chipCls =
-  'flex h-7 items-center gap-1.5 rounded-lg border px-2 text-sm font-medium tabular-nums outline-offset-2 select-none focus-visible:outline-2 focus-visible:outline-primary'
+const chipCls = reactionChipLook
 const blockedCls = 'cursor-not-allowed opacity-40'
 // The glyph moves by the emoji font's own offset (`centerEmoji`), so it sits in the pill's middle.
-const emojiCls = 'relative top-(--emoji-shift,0px) font-emoji text-base leading-none'
+const emojiCls = 'relative top-emoji-shift font-emoji text-base leading-none'
 const chipMineCls = 'border-primary bg-primary/15 text-primary hover:bg-primary/25'
 const chipOtherCls =
   'border-transparent bg-surface-container-high text-on-surface-variant hover:border-outline-variant hover:text-on-surface'
@@ -317,7 +317,7 @@ function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClo
     <Sheet
       sheet={coarse}
       float={{
-        at: 'inset-0 m-auto h-fit max-h-[min(70vh,calc(100%-2rem))] w-[min(28rem,calc(100%-2rem))]',
+        at: 'inset-0 m-auto h-fit max-h-float-sheet w-dialog-wide',
         backdrop: 'dim',
       }}
       selectable={!coarse}

@@ -215,7 +215,7 @@ export function ComposerField({
           ref={emojiRef}
           icon={Smile}
           label="Emoji"
-          place="pointer-coarse:-mx-1.5"
+          tight
           aria-haspopup="dialog"
           aria-expanded={pickerOpen}
           onPointerEnter={() => void loadEmojiData().catch(() => {})}

@@ -22,6 +22,7 @@ import { Row, Surface, Inset } from './layout'
 import type { ComposerList, Replying } from '../lib/place/composer'
 import { useLive } from '../lib/place/react'
 import { useCompose } from '../lib/place/use_composer'
+import { inlineRowLook } from '../lib/controls'
 
 // A small marker for forwarded messages where only a line of them is shown (search, quotes).
 export function ForwardedTag() {
@@ -146,7 +147,7 @@ export function ReplyPreview({
         title="Jump to message"
         onOpen={() => onJump(quote.id)}
         className="min-w-0 rounded-sm text-xs text-on-surface-variant hover:text-on-surface"
-        contentClassName="flex min-w-0 items-center gap-1.5"
+        contentClassName={inlineRowLook}
       >
         {local ? <KeyAvatar person={author} size={16} /> : <UserAvatar person={author} size={16} />}
         {local ? (

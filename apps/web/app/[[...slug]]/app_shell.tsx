@@ -546,7 +546,7 @@ function Chat() {
           </div>
         )}
         {leftOpen && (
-          <div data-drawer className="fixed inset-x-0 top-app z-40 flex h-app md:hidden">
+          <div data-drawer className="fixed inset-x-0 top-app z-page flex h-app md:hidden">
             <div className="flex h-full bg-surface-container-lowest safe-l-0 shadow-elevation-3">
               <DrawerClose.Provider value={closeLeft}>
                 <ServerRail />
@@ -559,7 +559,7 @@ function Chat() {
         {rightOpen && (isChannel || p2pServer) && (
           <div
             data-drawer
-            className="fixed inset-x-0 top-app z-40 flex h-app justify-end lg:hidden"
+            className="fixed inset-x-0 top-app z-page flex h-app justify-end lg:hidden"
           >
             <div className="flex-1 bg-scrim/50" onClick={() => setRightOpen(false)} />
             <div className="h-full bg-surface-container-low safe-r-0 shadow-elevation-3">

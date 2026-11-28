@@ -33,6 +33,9 @@ export const APP_VARIABLES = [
   '--text-',
   '--radius-',
   '--z-',
+  '--emoji-',
+  '--gear-',
+  '--hdr-',
 ] as const
 
 // Font families of the app's own and Tailwind's stacks, and generic names, in lower case. A

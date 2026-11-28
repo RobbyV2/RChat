@@ -26,13 +26,13 @@ import { VideoAttachment } from '../video_attachment'
 import { Masked } from '../ui'
 import { useInstanceLabel } from '../instance_badge'
 import { Row, Stack, Surface, Inset } from '../layout'
+import { miniIconOffLook } from '../../lib/controls'
 
 // P2P attachments in messages and in the composer. What a file is shown as comes from its
 // stored bytes only (sniff.ts): images, video and audio play inline, everything else (SVG and
 // HTML included) is offered as a download under a safe name.
 
-const iconBtn =
-  'shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary disabled:opacity-40'
+const iconBtn = miniIconOffLook
 
 const fmtDur = (ms: number) => {
   const s = Math.round(ms / 1000)

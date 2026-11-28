@@ -607,10 +607,70 @@ body {
   padding: var(--space-2xs) var(--space-sm);
 }
 
+.md-inline {
+  border-radius: 0.25rem;
+  padding-inline: var(--space-3xs);
+}
+
 .md-mark {
   border-radius: 0.25rem;
   padding-inline: var(--space-3xs);
   font-weight: 500;
+}
+
+/* The member list beside a channel. */
+.member-list {
+  padding: var(--space-sm);
+}
+
+/* Sizes of the floating panels: inside their pane or the screen. */
+@utility max-h-pane {
+  max-height: calc(100% - 1rem);
+}
+
+@utility h-popover {
+  height: min(40rem, calc(100% - 4.5rem));
+}
+
+@utility top-palette {
+  top: max(4rem, 12vh);
+}
+
+@utility w-palette {
+  width: min(42rem, calc(100% - 2rem));
+}
+
+@utility h-palette {
+  height: min(44rem, 80vh);
+}
+
+@utility max-h-palette {
+  max-height: min(40rem, 80vh);
+}
+
+@utility max-h-float-sheet {
+  max-height: min(70vh, calc(100% - 2rem));
+}
+
+@utility w-dialog-wide {
+  width: min(28rem, calc(100% - 2rem));
+}
+
+/* One line of message text, for what stands in the gutter beside it. */
+@utility h-row-line {
+  height: 22.75px;
+}
+
+@utility top-emoji-shift {
+  top: var(--emoji-shift, 0px);
+}
+
+@utility bg-gear-chip {
+  background-color: var(--gear-chip);
+}
+
+@utility outline-hdr-gear {
+  outline-color: var(--hdr-gear);
 }
 
 /* The call stage: room around the tiles, and under them for the bar of call controls. */

@@ -130,7 +130,7 @@ export function GroupedRow({
 }
 
 const gutterStatusCls =
-  'absolute top-0 left-1/2 flex h-[22.75px] -translate-x-1/2 items-center text-on-surface-variant'
+  'absolute top-0 left-1/2 flex h-row-line -translate-x-1/2 items-center text-on-surface-variant'
 
 export const timeMeta = (ts: number) => (
   <MessageTime ts={ts} className="shrink-0 text-xs text-on-surface-variant" />

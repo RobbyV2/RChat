@@ -111,6 +111,8 @@ import { altText } from '../lib/alt_text'
 import { cause, logError } from '../lib/log'
 import { Row, Surface, Inset } from './layout'
 import { time } from '../lib/platform/time'
+import { miniIconLook } from '../lib/controls'
+import { embedNoteLook } from '../lib/controls'
 
 export const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
 
@@ -271,7 +273,7 @@ function SpoilerText({
     if (revealed && focused.current) shown.current?.focus()
   }, [revealed])
   const Tag = block ? 'div' : 'span'
-  const box = block ? 'my-1 w-fit max-w-full rounded' : 'rounded px-0.5'
+  const box = block ? 'msg-block w-fit max-w-full rounded' : 'md-inline'
   if (revealed || always)
     return (
       <Tag
@@ -1080,8 +1082,7 @@ export function MediaAttachment({
       </div>
     )
   if (lang !== null && !removed && !hidden) {
-    const iconBtn =
-      'shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary'
+    const iconBtn = miniIconLook
     return (
       <ServerText id={id} server={server}>
         {(text, notice) =>
@@ -1227,8 +1228,7 @@ function EmbedCard({
 function SpoilerLinkCard({ url }: { url: string }) {
   const always = useSpoilersOpen()
   const [revealed, setRevealed] = useState(false)
-  const box =
-    'mt-1 flex w-fit max-w-md items-center gap-2 rounded-lg border-l-4 border-outline bg-surface-container py-2 pr-3 pl-3 text-sm'
+  const box = embedNoteLook
   if (revealed || always)
     return (
       <div data-spoiler-link="shown" className={box}>

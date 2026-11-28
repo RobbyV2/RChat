@@ -738,7 +738,7 @@ export function InboxHost() {
     <Sheet
       sheet={sheet}
       float={{
-        at: 'top-[3.25rem] right-3 h-[min(40rem,calc(100%-4.5rem))] w-104',
+        at: 'top-13 right-3 h-popover w-104',
         backdrop: 'none',
       }}
       height="tall"

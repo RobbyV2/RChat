@@ -630,7 +630,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
                 <IconButton
                   icon={Plus}
                   label="Attach a file"
-                  place="pointer-coarse:-mx-1.5"
+                  tight
                   onClick={() => fileRef.current?.click()}
                 />
                 <input
@@ -648,7 +648,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
               <IconButton
                 icon={ChartColumn}
                 label="Create poll"
-                place="pointer-coarse:-mx-1.5"
+                tight
                 data-create-poll
                 onClick={() => setPollOpen(true)}
               />

@@ -875,7 +875,7 @@ function IdentityChatBody(props: ChatBodyProps) {
             />
           )}
           {dragging && (
-            <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-tertiary bg-surface/80 font-medium text-tertiary">
+            <div className="pointer-events-none absolute inset-2 z-raised flex items-center justify-center rounded-2xl border-2 border-dashed border-tertiary bg-surface/80 font-medium text-tertiary">
               Drop files to send peer-to-peer
             </div>
           )}

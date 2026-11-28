@@ -411,7 +411,7 @@ function BarButton({
 }
 
 const arrowBtn =
-  'absolute top-1/2 z-10 flex size-11 -translate-y-1/2 items-center justify-center rounded-full bg-surface-container-highest/85 text-on-surface shadow-elevation-2 hover:bg-surface-container-highest focus-visible:outline-2 focus-visible:outline-primary'
+  'absolute top-1/2 z-raised flex size-11 -translate-y-1/2 items-center justify-center rounded-full bg-surface-container-highest/85 text-on-surface shadow-elevation-2 hover:bg-surface-container-highest focus-visible:outline-2 focus-visible:outline-primary'
 
 // The press point of a button, for a menu it opens.
 const at = (e: ReactMouseEvent<HTMLElement>) => {

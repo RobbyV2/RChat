@@ -54,10 +54,10 @@ function Controls({ os, win }: { os: DesktopOs; win: Win | null }) {
   const windows = os === 'windows'
   const focus = '-outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary'
   const btn = windows
-    ? `${focus} flex h-full w-[46px] items-center justify-center text-on-surface hover:bg-on-surface/10 active:bg-on-surface/20`
+    ? `${focus} flex h-full w-11.5 items-center justify-center text-on-surface hover:bg-on-surface/10 active:bg-on-surface/20`
     : `${focus} flex size-6 items-center justify-center rounded-full bg-on-surface/10 text-on-surface hover:bg-on-surface/20 active:bg-on-surface/30`
   const close = windows
-    ? `${focus} flex h-full w-[46px] items-center justify-center text-on-surface hover:bg-window-close hover:text-on-window-close active:bg-window-close/80 active:text-on-window-close`
+    ? `${focus} flex h-full w-11.5 items-center justify-center text-on-surface hover:bg-window-close hover:text-on-window-close active:bg-window-close/80 active:text-on-window-close`
     : btn
   const size = windows ? 10 : 8
   const maxLabel = maximized ? 'Restore' : 'Maximize'

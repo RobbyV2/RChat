@@ -40,6 +40,7 @@ import { useLiveNow } from './timestamp'
 import { MaskedText, MaskedTogether } from './ui'
 import { Row, Surface } from './layout'
 import { time } from '../lib/platform/time'
+import { miniIconLook } from '../lib/controls'
 
 const ICONS: Record<FileKind, LucideIcon> = {
   archive: FileArchive,
@@ -100,9 +101,8 @@ export interface FileCardProps extends CardProps {
 const square =
   'flex size-11 shrink-0 items-center justify-center rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary pointer-coarse:size-12'
 const primaryCls = `${square} bg-primary text-on-primary disabled:opacity-40`
-const extraCls =
-  'shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary'
-const cardBox = 'mt-1 w-md max-w-full min-w-0'
+const extraCls = miniIconLook
+const cardBox = 'msg-part w-md max-w-full min-w-0'
 
 // A file in a message, hosted or P2P: its kind, name, size and a download button, with a menu
 // on right-click and long-press that acts on the card as it is when a row runs. In a row in

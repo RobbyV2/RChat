@@ -591,7 +591,7 @@ export function SwitcherDialog({ initialManage }: { initialManage: boolean }) {
   return (
     <Sheet
       sheet={narrow}
-      float={{ at: 'top-2 left-20 max-h-[calc(100%-1rem)] w-104', backdrop: 'clear' }}
+      float={{ at: 'top-2 left-20 max-h-pane w-104', backdrop: 'clear' }}
       surface="base"
       onClose={close}
       aria-label={manage ? 'Manage accounts' : 'Switch account'}

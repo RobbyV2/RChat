@@ -17,6 +17,7 @@ import { useAccount } from '../../lib/client/react'
 import { sharing } from '../../lib/platform'
 import { useStore } from '../../lib/store'
 import { time } from '../../lib/platform/time'
+import { coverBoxLook } from '../../lib/controls'
 
 export const PNG_NAME = 'rchat-backup-phrase.png'
 export const SVG_NAME = 'rchat-backup-phrase.svg'
@@ -140,7 +141,7 @@ export function PhraseQr({
         className={`${box} block bg-white`}
       />
     )
-  const cover = `${box} flex items-center justify-center border border-dashed border-outline-variant p-4 text-center text-sm text-on-surface-variant`
+  const cover = `${box} ${coverBoxLook}`
   if (!onShow) return <div className={cover}>Hidden in streamer mode</div>
   return (
     <button

@@ -3,6 +3,7 @@
 import { useId, useState } from 'react'
 import { Check, ChevronDown, ExternalLink } from 'lucide-react'
 import { Stack, Row, Surface, Inset } from '../layout'
+import { appButtonLook } from '../../lib/controls'
 
 // The buttons and menus under an automation's message, as the shared rules write them.
 export type ButtonStyle = 'plain' | 'primary' | 'danger'
@@ -69,8 +70,7 @@ export const pickedLabel = (s: Select, picks: readonly string[]) =>
   s.placeholder ||
   'Choose'
 
-const baseCls =
-  'flex min-h-11 max-w-full cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium disabled:cursor-default disabled:opacity-40'
+const baseCls = appButtonLook
 const STYLES: Record<ButtonStyle, string> = {
   plain: 'border border-outline text-on-surface hover:bg-surface-container-highest',
   primary: 'bg-primary text-on-primary hover:opacity-90',

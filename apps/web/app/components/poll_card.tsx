@@ -49,6 +49,7 @@ import { ShownAvatar, ShownName, useViewServer } from './shown_user'
 import { MessageTime } from './timestamp'
 import { Row, Stack, Surface } from './layout'
 import { time } from '../lib/platform/time'
+import { pollOptionLook } from '../lib/controls'
 
 const nowSec = () => Math.floor(time().now() / 1000)
 
@@ -172,9 +173,7 @@ function ChoiceList({
             )}
           </>
         )
-        const cls = `relative flex min-h-10 w-full items-center gap-2 overflow-hidden rounded-xl border px-3 py-2 text-left text-sm ${
-          sel && live ? 'border-primary' : 'border-outline-variant'
-        }`
+        const cls = `${pollOptionLook} ${sel && live ? 'border-primary' : 'border-outline-variant'}`
         return (
           <Row as="li" key={o.id} gap="2xs">
             {onPick ? (

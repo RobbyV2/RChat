@@ -104,8 +104,8 @@ export function MemberTimeout({ server, username }: { server: string; username: 
   return t ? <TimeoutBadge t={t} compact /> : null
 }
 
-const asideCls = 'h-full w-60 shrink-0 overflow-y-auto bg-surface-container-low p-2'
-const loadingCls = 'h-full w-60 shrink-0 overflow-hidden bg-surface-container-low p-2'
+const asideCls = 'member-list h-full w-60 shrink-0 overflow-y-auto bg-surface-container-low'
+const loadingCls = 'member-list h-full w-60 shrink-0 overflow-hidden bg-surface-container-low'
 
 // The timer of a row's timeout, until it ends.
 function RowTimeout({ t }: { t: Timeout | null }) {

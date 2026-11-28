@@ -704,8 +704,8 @@ function Palette() {
     <Sheet
       sheet={sheet}
       float={{
-        at: `top-[max(4rem,12vh)] left-1/2 w-[min(42rem,calc(100%-2rem))] -translate-x-1/2 ${
-          view.kind === 'api' ? 'h-[min(44rem,80vh)]' : 'max-h-[min(40rem,80vh)]'
+        at: `top-palette left-1/2 w-palette -translate-x-1/2 ${
+          view.kind === 'api' ? 'h-palette' : 'max-h-palette'
         }`,
         backdrop: 'dim',
       }}

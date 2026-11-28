@@ -27,6 +27,18 @@ export const handSpacing = text =>
       return SPACING.test(u) || u.includes('[') || u.includes('(--')
     })
 
+const CLASS_WORD =
+  /^!?(?:[a-z@][\w@/[\]().%,=&>+*'-]*:)*-?(?:flex|inline-flex|grid|block|hidden|absolute|relative|fixed|sticky|shrink(?:-0)?|grow|truncate|rounded(?:-[\w[\]/.-]+)?|border(?:-[\w[\]/.()%,-]+)?|(?:bg|text|font|items|justify|self|w|h|size|min-w|min-h|max-w|max-h|cursor|overflow|opacity|outline|shadow|z|top|right|bottom|left|inset|p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|ml|mr|gap|gap-x|gap-y|space-x|space-y)-[\w[\]/.()%,#-]+)$/
+
+// Whether a string outside a class attribute is a class list: two or more words, most of them
+// utility classes.
+export const classList = text => {
+  const words = text.split(/\s+/).filter(Boolean)
+  if (words.length < 2) return false
+  const known = words.filter(w => CLASS_WORD.test(w)).length
+  return known >= 2 && known * 2 >= words.length
+}
+
 // The string parts of a class name expression: literals, template parts, both sides of a
 // condition, and the strings joined into it.
 function* strings(node) {
@@ -75,13 +87,27 @@ export default {
     },
   },
   create(context) {
+    const seen = new Set()
+    const check = (node, text) => {
+      if (seen.has(node)) return
+      seen.add(node)
+      for (const word of handSpacing(text))
+        context.report({ node, messageId: 'hand', data: { word } })
+    }
     return {
       JSXAttribute(attr) {
         if (attr.name.type !== 'JSXIdentifier') return
-        if (attr.name.name !== 'className' && attr.name.name !== 'look') return
-        for (const [node, text] of strings(attr.value))
-          for (const word of handSpacing(text))
-            context.report({ node, messageId: 'hand', data: { word } })
+        if (!/^(look|className|\w+ClassName)$/.test(attr.name.name)) return
+        for (const [node, text] of strings(attr.value)) check(node, text)
+      },
+      // A class list kept in a constant or built in an expression is checked like one written
+      // in place.
+      Literal(node) {
+        if (typeof node.value === 'string' && classList(node.value)) check(node, node.value)
+      },
+      TemplateElement(node) {
+        const text = node.value.cooked ?? ''
+        if (classList(text)) check(node, text)
       },
     }
   },

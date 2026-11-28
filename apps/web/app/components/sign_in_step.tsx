@@ -18,8 +18,9 @@ import { ProviderButtons } from './sso/provider_buttons'
 import { AvatarPicker } from './avatar_picker'
 import { AccountWords, PassSwitch } from './word_grid'
 import { FieldError } from './ui'
+import { signInFieldLook } from '../lib/controls'
 type Mode = 'login' | 'register'
-const inputBase = 'rounded-lg border bg-transparent px-3 py-2 outline-none'
+const inputBase = signInFieldLook
 const inputCls = `${inputBase} border-outline focus:border-primary`
 export function SignInStep({
   owner = null,

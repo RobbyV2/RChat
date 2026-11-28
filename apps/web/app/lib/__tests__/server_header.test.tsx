@@ -34,7 +34,7 @@ describe('server header gear', () => {
       for (const preview of [false, true]) {
         const html = header(banner, preview)
         expect(html).toContain(`--hdr-gear:${on}`)
-        expect(html).toContain('focus-visible:outline-(--hdr-gear)')
+        expect(html).toContain('focus-visible:outline-hdr-gear')
         expect(html).not.toContain('focus-visible:outline-primary')
       }
   })

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { RuleTester } from 'eslint'
-import rule, { handSpacing } from '../apps/web/eslint/spacing.mjs'
+import rule, { classList, handSpacing } from '../apps/web/eslint/spacing.mjs'
 
 RuleTester.describe = describe
 RuleTester.it = test
@@ -19,11 +19,20 @@ test('hand-written padding, margins, gaps and arbitrary values are found, with a
   ).toEqual([])
 })
 
+test('a class list is told from other text', () => {
+  expect(classList('flex items-center gap-2 rounded-lg px-2')).toBe(true)
+  expect(classList('rounded-full p-1')).toBe(true)
+  expect(classList('Pick a channel to start talking.')).toBe(false)
+  expect(classList('m-1')).toBe(false)
+})
+
 tester.run('spacing', rule, {
   valid: [
     { code: '<div className="flex min-w-0 items-center text-sm" />' },
     { code: '<p className={on ? "text-primary" : "text-on-surface"} />' },
     { code: '<Row gap="sm" place="ml-auto" />' },
+    { code: 'const title = "Open the channel list and pick one"' },
+    { code: 'const look = "flex items-center rounded-lg text-sm"' },
     { code: '<Row gap="sm" look="text-sm font-medium hover:bg-primary" />' },
   ],
   invalid: [
@@ -34,5 +43,14 @@ tester.run('spacing', rule, {
     },
     { code: '<span className={["py-0.5", cls].join(" ")} />', errors: [{ messageId: 'hand' }] },
     { code: '<Row gap="sm" look="text-sm mt-2" />', errors: [{ messageId: 'hand' }] },
+    { code: 'const box = "flex items-center gap-2 rounded-lg"', errors: [{ messageId: 'hand' }] },
+    {
+      code: 'const cls = `relative flex px-3 ${on ? "bg-primary" : ""}`',
+      errors: [{ messageId: 'hand' }],
+    },
+    {
+      code: '<PreviewRow contentClassName="flex min-w-0 items-center gap-1.5" />',
+      errors: [{ messageId: 'hand' }],
+    },
   ],
 })

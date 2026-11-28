@@ -25,9 +25,9 @@ import { LiveBadge } from './voice_grid'
 import { VoiceStatusIcons } from './voice_status'
 import { Surface } from './layout'
 import { sideRowLook } from '../lib/controls'
+import { sideSeatLook } from '../lib/controls'
 
-const seatCls =
-  'mr-2 ml-7 flex items-center gap-2 rounded-md px-2 py-1 text-sm text-on-surface-variant -outline-offset-2'
+const seatCls = sideSeatLook
 const opensCls =
   'cursor-pointer hover:bg-surface-container hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary active:bg-surface-container-high'
 
