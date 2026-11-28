@@ -6,12 +6,22 @@ import { mentionLookups } from '../mentions'
 import type { Message, UserRef } from '../types'
 import { isUnsupported } from './feature'
 import { accountLooks, looks, type Face, type Looks } from './looks'
+import { HostedServer } from './place'
 import { useFeature, useWatch } from './react'
+import { featureAt } from './feature'
 
 // The looks of the place around a component; outside any place, the account's own.
 export function useLooks(): Looks {
   const account = useAccount()
   const here = useFeature(looks)
+  return isUnsupported(here) ? accountLooks(account) : here
+}
+
+// The looks of hosted `server` of the account around a component; with none, the account's own.
+export function useServerLooks(server: string | null | undefined): Looks {
+  const account = useAccount()
+  if (!server) return accountLooks(account)
+  const here = featureAt(looks, HostedServer.open(account, server))
   return isUnsupported(here) ? accountLooks(account) : here
 }
 

@@ -46,7 +46,8 @@ import { UserAvatar } from './user_avatar'
 import { Dialog, fieldCls } from './ui'
 import { Loaded, More, useAccountPages } from './loaded'
 import { Grid, Inset, Row, Stack, Surface } from './layout'
-import { useLooksFor, useShown, useShownMembers } from './shown_user'
+import { useShown, useShownMembers } from './shown_user'
+import { useLoaded, useServerLooks } from '../lib/place/use_looks'
 import { usePermissionRules } from './use_permission_rules'
 import { useStable } from '../lib/stable_key'
 import { time } from '../lib/platform/time'
@@ -82,7 +83,7 @@ function useDebounced<T>(value: T, ms: number): T {
 
 // The entries of one page run, with the looks of the people they name.
 function AuditRows({ entries, server }: { entries: AuditEntry[]; server: string }) {
-  useLooksFor(server, peopleIn(entries))
+  useLoaded(useServerLooks(server), peopleIn(entries))
   return (
     <Stack as="ul" gap="3xs">
       {entries.map(e => (

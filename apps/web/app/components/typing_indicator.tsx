@@ -8,7 +8,7 @@ import { look, plays } from '../lib/motion/play'
 import { useStore } from '../lib/store'
 import { rowTypers } from '../lib/typing_rows'
 import { typingParts, typingTitle } from '../lib/typing'
-import { useLooksFor } from './shown_user'
+import { useLoaded, useServerLooks } from '../lib/place/use_looks'
 import { PingBadge } from './ping_badge'
 import type { ComposerList } from '../lib/place/composer'
 import { useLive } from '../lib/place/react'
@@ -84,7 +84,7 @@ export function ChannelEnd({
 export function useHostedTypers(scopes: readonly string[], server: string | null) {
   const names = useStore(useShallow(s => rowTypers(s, scopes, server).names))
   const ask = useStore(useShallow(s => rowTypers(s, scopes, server).ask))
-  useLooksFor(server, ask)
+  useLoaded(useServerLooks(server), ask)
   return names
 }
 
@@ -100,7 +100,7 @@ export function TypingLine({
 }) {
   const on = useStore(s => s.typingOn)
   const { names, ask, server } = useLive(useCompose(list).typers)
-  useLooksFor(server, ask)
+  useLoaded(useServerLooks(server), ask)
   const parts = on ? typingParts(names) : []
   if (!parts.length) return null
   return (

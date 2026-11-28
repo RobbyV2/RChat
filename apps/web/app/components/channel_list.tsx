@@ -25,7 +25,7 @@ import { enterKey } from '../lib/keys'
 import { useLive } from '../lib/place/react'
 import { MutedIcon } from './notify_menu'
 import { PingBadge } from './ping_badge'
-import { useLooksFor } from './shown_user'
+import { useLoaded, useServerLooks } from '../lib/place/use_looks'
 import { ChannelEnd } from './typing_indicator'
 import { look as moves } from '../lib/motion/play'
 
@@ -170,7 +170,7 @@ export function ChannelList({
   categoryProps?: (category: CategoryEntry) => Record<`data-${string}`, string>
 }) {
   const ends = useLive(channels.ends)
-  useLooksFor(ends.server, ends.ask)
+  useLoaded(useServerLooks(ends.server), ends.ask)
   const textRow = (c: ChannelEntry) => {
     const end = ends.of.get(c.key)
     const muted = end?.muted ?? false

@@ -7,12 +7,14 @@ import { nameText } from '../names'
 import type { P2pMessage } from '../p2p/dm'
 import type { ServerView } from '../p2p/server'
 import { featureAt, isUnsupported } from '../place/feature'
-import { looks } from '../place/looks'
+import { accountLooks, looks, type Looks } from '../place/looks'
+import { HostedServer } from '../place/place'
 import { PlaceProvider } from '../place/react'
-import { useAuthor } from '../place/use_looks'
+import { useAuthor, useServerLooks } from '../place/use_looks'
 import type { Message } from '../types'
 import { member, msg, paged, serverDetail, user } from './fixtures'
 import { placeContract, type ContractWorld } from './helpers/place_contract'
+import { testAccount } from './test_account'
 
 // Ann's side with a message from Bob, who holds a colored role where the place has roles.
 const seat = (world: ContractWorld) => {
@@ -132,4 +134,21 @@ placeContract(looks, (kind, world) => {
     expect(html.toLowerCase()).toContain('bob')
     expect(html.includes('View profile')).toBe(hosted)
   })
+})
+
+test('a server named outside the place around loads through that server, none through the account', () => {
+  const account = testAccount('ann')
+  const seen: Looks[] = []
+  function Probe({ server }: { server: string | null }) {
+    seen.push(useServerLooks(server))
+    return null
+  }
+  for (const server of ['harbor', null])
+    renderToStaticMarkup(
+      <AccountProvider session={account}>
+        <Probe server={server} />
+      </AccountProvider>
+    )
+  expect(seen[0]).toBe(featureAt(looks, HostedServer.open(account, 'harbor')) as Looks)
+  expect(seen[1]).toBe(accountLooks(account))
 })

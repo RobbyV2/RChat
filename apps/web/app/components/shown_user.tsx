@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { lookIn, lookOf, shownParts, shownUser } from '../lib/server_profile'
 import { useStore } from '../lib/store'
@@ -48,15 +48,6 @@ export function useShownMembers(server: string | null | undefined) {
         shownUser(m, parts && m.profile ? lookIn(m.profile, parts) : null),
     [parts]
   )
-}
-
-// Asks for the member rows of people a server view names, so their looks can show.
-export function useLooksFor(server: string | null | undefined, usernames: readonly string[]) {
-  const ensureMembers = useStore(s => s.ensureMembers)
-  const key = usernames.join('\n')
-  useEffect(() => {
-    if (server && key) void ensureMembers(server, key.split('\n'))
-  }, [server, key, ensureMembers])
 }
 
 // The name of someone as `server` shows them, with their username after it.
