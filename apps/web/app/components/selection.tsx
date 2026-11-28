@@ -1,4 +1,5 @@
 'use client'
+import { OwnLoadNotice } from './own_load'
 import { IconButton } from './controls'
 import { useAccount } from '../lib/client/react'
 import type { AccountSession } from '../lib/client/session'
@@ -431,7 +432,16 @@ export function SelectionBar({
 export function BulkJobBar({ scope }: { scope: string | null }) {
   const acct = useAccount()
   const job = useStore(s => (scope ? s.bulkJobs[scope] : undefined))
-  if (!scope || !job || job.status !== 'running') return null
+  const loadBulkJobs = useStore(s => s.loadBulkJobs)
+  if (!scope) return null
+  if (!job || job.status !== 'running')
+    return (
+      <OwnLoadNotice
+        what="bulk_jobs"
+        lead="Could not check for a delete that is running."
+        retry={() => void loadBulkJobs()}
+      />
+    )
   const done = job.deleted.toLocaleString('en-US')
   const of = job.estimate.toLocaleString('en-US')
   return (

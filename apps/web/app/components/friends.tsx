@@ -1,4 +1,5 @@
 'use client'
+import { OwnLoadNotice } from './own_load'
 
 import { Loaded, useAccountRequest, useRequest } from './loaded'
 import { orMissing } from '../lib/api_errors'
@@ -318,8 +319,14 @@ function RequestList({ incoming }: { incoming: boolean }) {
 function Pending() {
   const counts = useStore(s => s.friendCounts)
   const loading = useStore(s => s.incomingRequests.loading || s.outgoingRequests.loading)
+  const loadFriendSummary = useStore(s => s.loadFriendSummary)
   return (
     <Stack gap="md">
+      <OwnLoadNotice
+        what="friend_summary"
+        lead="Could not load the friend request counts."
+        retry={() => void loadFriendSummary()}
+      />
       <RequestList incoming />
       <RequestList incoming={false} />
       {!loading && counts.incoming === 0 && counts.outgoing === 0 && (

@@ -1,4 +1,5 @@
 'use client'
+import { OwnLoadNotice } from './own_load'
 
 import { Name } from './name'
 import { serverCalled } from '../lib/names'
@@ -654,6 +655,13 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           <Clock size={12} className="shrink-0" />
           Slow mode: {clock(slowLeft)}
         </Inset>
+      )}
+      {draftKey && (
+        <OwnLoadNotice
+          what={`scheduled:${draftKey}`}
+          lead="Could not load the messages scheduled here."
+          retry={() => void loadScheduled(draftKey)}
+        />
       )}
       {draftKey && <ScheduledChip place={draftKey} items={scheduledItems} ops={scheduledOps} />}
       {!thread && <SiteFilterNote />}

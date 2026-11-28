@@ -1,4 +1,5 @@
 import { background } from './api_errors'
+import { ownLoad } from './own_loads'
 import { client } from './client/client'
 import type { AccountSession } from './client/session'
 // The store's friends actions and events, kept apart from store.ts. `friendsSlice` gets the
@@ -120,13 +121,19 @@ export const friendsSlice = (d: FriendsDeps) => {
     if (!get().me || get().guest) return
     const asked = ++summaryAsked
     const at = sessionMark()
+    const load = ownLoad(set, 'friend_summary')
     let sum: Awaited<ReturnType<typeof api.friendSummary>>
     try {
       sum = await api.friendSummary()
-    } catch {
+    } catch (e) {
+      // The counts stay as they were, and the friends panel says so.
+      background('loading the friend summary failed')(e)
+      if (asked === summaryAsked && at === sessionMark()) load.refused(e)
       return
     }
-    if (asked !== summaryAsked || at !== sessionMark() || typeof sum !== 'object' || !sum) return
+    if (asked !== summaryAsked || at !== sessionMark()) return
+    load.came()
+    if (typeof sum !== 'object' || !sum) return
     const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
     set(s => ({
       friendCounts: { incoming: n(sum.incoming), outgoing: n(sum.outgoing) },
@@ -230,6 +237,7 @@ export const friendsSlice = (d: FriendsDeps) => {
   }
 
   const actions = {
+    loadFriendSummary: () => loadSummary(),
     openFriends: (tab: FriendsTab = 'online') => {
       if (!signedIn()) return
       set({ panel: { kind: 'friends', tab } })

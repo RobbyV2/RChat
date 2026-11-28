@@ -96,6 +96,7 @@ import { cleanBio } from '../rules'
 import { displayNameError } from '../display_name'
 import { selectionInitial, type selectionSlice } from '../selection_store'
 import { scheduledInitial, type scheduledSlice } from '../scheduled_store'
+import { ownLoadsInitial } from '../own_loads'
 import { serverNames } from '../selectors'
 import { endsSession, meRetryIn } from '../session'
 import { signupFailure } from '../signup'
@@ -2176,6 +2177,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         ...friendsInitial(),
         ...selectionInitial(),
         ...scheduledInitial(),
+        ...ownLoadsInitial(),
         dms: [],
         dmsMore: false,
         dmsEdge: NO_DM_EDGE,

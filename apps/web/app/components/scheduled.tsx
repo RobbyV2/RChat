@@ -1,4 +1,5 @@
 'use client'
+import { OwnLoadNotice } from './own_load'
 
 // Send later and scheduled messages, the same for hosted and P2P places: the composers' Send
 // button and chip, the lists, the date and time picker, the account-wide view and the prompt
@@ -500,6 +501,7 @@ export function ScheduledDialog() {
   const closeDialog = useStore(s => s.closeDialog)
   const hostedOn = useStore(s => s.settings.scheduled_messages)
   const loadScheduled = useStore(s => s.loadScheduled)
+  const loadScheduledCounts = useStore(s => s.loadScheduledCounts)
   const more = useStore(s => s.scheduled.pages[''] ?? null)
   const hosted = useHostedItems()
   const hostedOps = useHostedOps()
@@ -517,6 +519,16 @@ export function ScheduledDialog() {
         {showHosted && (
           <Stack as="section" gap="2xs" data-scheduled-hosted>
             <SectionHeading>Sent by this site</SectionHeading>
+            <OwnLoadNotice
+              what="scheduled:"
+              lead="Could not load the scheduled messages."
+              retry={() => void loadScheduled('', more !== null)}
+            />
+            <OwnLoadNotice
+              what="scheduled_counts"
+              lead="Could not count the scheduled messages."
+              retry={() => void loadScheduledCounts()}
+            />
             <ScheduledList items={hosted} ops={hostedOps} showPlace focus={dialog.focus} />
             {more && (
               <Button place="self-center" onClick={() => void loadScheduled('', true)}>

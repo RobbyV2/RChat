@@ -6,6 +6,7 @@ import type { LucideIcon } from 'lucide-react'
 import type { LoginRequest, PollReq, RegisterRequest, SendOpts } from './api'
 import type { PollTarget } from './polls_store'
 import type { HostedScheduled } from './scheduled_store'
+import type { RefusedLoads } from './own_loads'
 import type { Selection } from './selection'
 import type { PendingUpload } from './attachments'
 import type { Decision, RelayChoice, RelayPrefs } from './relays'
@@ -318,6 +319,8 @@ export interface RChatState {
   selectionBusy: string | null
   // This account's scheduled messages the instance sends.
   scheduled: HostedScheduled
+  // The store's own loads that were refused, for the screens that show what they load.
+  refusedLoads: RefusedLoads
   dms: DmSummary[]
   dmsMore: boolean
   // While `dmsMore`, the list shows rows up to here (see `arrangeDms`).
@@ -560,6 +563,7 @@ export interface RChatState {
   loadFriends: (q: string, reset?: boolean) => Promise<void>
   loadOnlineFriends: (q: string, reset?: boolean) => Promise<void>
   loadFriendRequests: (incoming: boolean, reset?: boolean) => Promise<void>
+  loadFriendSummary: () => Promise<void>
   sendFriendRequest: (username: string) => Promise<SendResult>
   sendFriendRequests: (names: string[]) => Promise<Record<string, SendResult>>
   // Opens the confirm with mini profile previews of `names`.
@@ -599,7 +603,9 @@ export interface RChatState {
   forwardSelection: () => void
   exportSelection: (format: 'text' | 'json') => Promise<void>
   cancelBulkJob: (scope: string) => Promise<void>
+  loadBulkJobs: () => Promise<void>
   loadScheduled: (scope?: string, more?: boolean) => Promise<void>
+  loadScheduledCounts: () => Promise<void>
   // Each answers null, or why it was refused.
   scheduleDraft: (
     key: string,

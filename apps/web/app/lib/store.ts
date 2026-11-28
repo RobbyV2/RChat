@@ -41,6 +41,7 @@ import { menuActions, uiSlice } from './slices/ui'
 import { friendsInitial, friendsSlice } from './friends_store'
 import { pollsSlice } from './polls_store'
 import { scheduledInitial, scheduledSlice } from './scheduled_store'
+import { ownLoadsInitial } from './own_loads'
 import { selectionInitial, selectionSlice } from './selection_store'
 import { ANIM_DEFAULT } from './motion/setting'
 import type { BlockedUser, ServerSummaryLite, UserRef, WsEvent } from './types'
@@ -409,6 +410,7 @@ export function createChatStore(acct: AccountSession) {
       ...friendsInitial(),
       ...selectionInitial(),
       ...scheduledInitial(),
+      ...ownLoadsInitial(),
       dms: [],
       dmsMore: false,
       dmsEdge: NO_DM_EDGE,
