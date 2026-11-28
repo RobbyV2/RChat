@@ -139,7 +139,7 @@ describe('your own server profile', () => {
     const calls = profileRoutes(method =>
       json(method === 'DELETE' ? stored({ look: { ...robert, name: null } }) : stored())
     )
-    expect(await st().loadMyProfile('s')).toEqual(stored())
+    expect(await st().loadMyProfile('s')).toEqual({ ok: true, value: stored() })
     expect(st().servers.s?.my_profile).toEqual(stored())
     expect(await st().saveMyProfile('s', { name: 'Ally' })).toBeNull()
     expect(await st().clearMyProfile('s')).toBeNull()
@@ -151,10 +151,17 @@ describe('your own server profile', () => {
     ])
   })
 
+  test('a profile that cannot be read answers the refusal, not an empty profile', async () => {
+    profileRoutes(() => json({ error: 'Try again later' }, 503))
+    const tried = await st().loadMyProfile('s')
+    expect(tried.ok).toBe(false)
+    expect(!tried.ok && tried.refusal.status).toBe(503)
+  })
+
   test('a server that is not open answers its profile too', async () => {
     profileRoutes(() => json(stored()))
     useStore.setState({ servers: {} })
-    expect(await st().loadMyProfile('s')).toEqual(stored())
+    expect(await st().loadMyProfile('s')).toEqual({ ok: true, value: stored() })
     expect(st().servers).toEqual({})
   })
 

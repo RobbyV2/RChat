@@ -143,6 +143,7 @@ import type { uiSlice } from './ui'
 import { ANIM_DEFAULT } from '../motion/setting'
 import { cause, logError } from '../log'
 import { sleep, type Cancel } from '../clock'
+import { came, recorded, refused } from '../tried'
 
 // Waits before opening the URL again after a boot left nothing open because of 429s. Exported
 // so tests can shorten them.
@@ -648,8 +649,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     let names: unknown
     try {
       names = await api.blockedUsernames()
-    } catch {
-      return
+    } catch (e) {
+      return recorded('blocked names')(refused(e))
     }
     if (at !== sessionMark() || !Array.isArray(names)) return
     setBlocked(blockedSet(names.filter((n): n is string => typeof n === 'string')))
@@ -1729,7 +1730,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       } catch (e) {
         if (current() && mark === sessionMark()) fail(e)
       }
-      if (current() && mark === sessionMark()) void get().loadBrand()
+      if (current() && mark === sessionMark()) void get().loadBrand().then(recorded('brand'))
     },
 
     // An instance that sends no brand, or can't be reached, leaves the one the app has.
@@ -1738,8 +1739,9 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       try {
         const raw = await api.brand()
         if (at === sessionMark()) get().setBrand(raw)
-      } catch {
-        return
+        return came(undefined)
+      } catch (e) {
+        return refused(e)
       }
     },
 

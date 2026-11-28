@@ -2,6 +2,7 @@
 import { Covered } from './covered'
 import { ask, asked, known as answered } from '../lib/asks'
 import { accountLabel, labelWith, personCalled, serverCalled } from '../lib/names'
+import { recorded } from '../lib/tried'
 import { Name, useNameLabels } from './name'
 
 import { ActorLabel, useActorSuffix, useViewActor } from './view_actor'
@@ -555,7 +556,9 @@ function CardBody({
     const done = assign
       ? s.assignRole(server, role.id, username)
       : s.unassignRole(server, role.id, username)
-    void done.then(inSession(() => store.getState().refreshMember(server, username)))
+    void done
+      .then(inSession(() => store.getState().refreshMember(server, username)))
+      .then(tried => tried && recorded('member refresh')(tried))
   }
 
   const copyId = () => {

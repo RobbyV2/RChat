@@ -79,6 +79,7 @@ import {
 import type { presenceSlice } from './presence'
 import { withoutVoiceRooms } from './rtc'
 import type { Secret } from '../secret'
+import { came, recorded, refused } from '../tried'
 
 export interface ServersDeps {
   acct: AccountSession
@@ -1168,9 +1169,9 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       try {
         const mine = await live(api.serverProfile(server))
         keepMyProfile(server, mine)
-        return mine
-      } catch {
-        return null
+        return came(mine)
+      } catch (e) {
+        return refused(e)
       }
     },
     saveMyProfile: async (server, patch) => {
@@ -1178,7 +1179,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         keepMyProfile(server, await live(api.setServerProfile(server, patch)))
         return null
       } catch (e) {
-        if (profileLocked(e)) void get().loadMyProfile(server)
+        if (profileLocked(e)) void get().loadMyProfile(server).then(recorded('own server profile'))
         return errorText(e)
       }
     },
@@ -1187,7 +1188,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         keepMyProfile(server, await live(api.resetServerProfile(server)))
         return null
       } catch (e) {
-        if (profileLocked(e)) void get().loadMyProfile(server)
+        if (profileLocked(e)) void get().loadMyProfile(server).then(recorded('own server profile'))
         return errorText(e)
       }
     },
@@ -1196,7 +1197,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         keepMyProfile(server, await live(api.putProfileAvatar(server, file, crop)))
         return null
       } catch (e) {
-        if (profileLocked(e)) void get().loadMyProfile(server)
+        if (profileLocked(e)) void get().loadMyProfile(server).then(recorded('own server profile'))
         return errorText(e)
       }
     },
@@ -1205,7 +1206,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         keepMyProfile(server, await live(api.deleteProfileAvatar(server)))
         return null
       } catch (e) {
-        if (profileLocked(e)) void get().loadMyProfile(server)
+        if (profileLocked(e)) void get().loadMyProfile(server).then(recorded('own server profile'))
         return errorText(e)
       }
     },
@@ -1558,14 +1559,15 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       let found: Member | undefined
       try {
         found = (await live(api.membersByName(server, [username], scopeOf(server))))[0]
-      } catch {
-        return
+      } catch (e) {
+        return refused(e)
       }
       writeMemberInfo(server, [[username, found ?? null]])
       if (found) {
         const fresh = found
         patchMembers(server, list => list.map(m => (m.username === username ? fresh : m)))
       }
+      return came(undefined)
     },
 
     loadAdminOverview: () =>
@@ -1871,7 +1873,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
           : {}
       )
       if (ev.username === get().me?.username && get().servers[ev.server])
-        void get().loadMyProfile(ev.server)
+        void get().loadMyProfile(ev.server).then(recorded('own server profile'))
     },
     user_updated: ev => {
       const u = ev.user

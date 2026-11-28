@@ -83,6 +83,7 @@ import type { TypingMap } from './typing'
 import type { AnimPrefs } from './motion/setting'
 import type { SelfAudio } from './voice_layout'
 import type { SeatAudio } from './voice_status'
+import type { Tried } from './tried'
 
 // More that "Mark all as read" marks (P2P): whether it has anything unread, and marking it.
 export interface MarkAllExtra {
@@ -460,7 +461,7 @@ export interface RChatState {
   bootstrap: (restorePage?: boolean) => Promise<void>
   // `background`: the app polls on its own (see `BACKGROUND` in api.ts).
   loadSettings: (background?: boolean, current?: () => boolean) => Promise<void>
-  loadBrand: () => Promise<void>
+  loadBrand: () => Promise<Tried<void>>
   setBrand: (raw: unknown) => void
   setTheme: (theme: Theme) => void
   setStreamer: (streamer: boolean) => void
@@ -793,9 +794,9 @@ export interface RChatState {
     reason: string
   ) => Promise<boolean>
   removeTimeout: (server: string, username: string) => Promise<void>
-  // Your own server profile. Loading answers it (null when it can't be read); saving and
-  // clearing answer the error text, or null when they worked.
-  loadMyProfile: (server: string) => Promise<ServerProfile | null>
+  // Your own server profile. Loading answers it or the refusal; saving and clearing answer the
+  // error text, or null when they worked.
+  loadMyProfile: (server: string) => Promise<Tried<ServerProfile>>
   saveMyProfile: (server: string, patch: ServerProfilePatch) => Promise<string | null>
   clearMyProfile: (server: string) => Promise<string | null>
   setMyProfilePicture: (
@@ -868,7 +869,7 @@ export interface RChatState {
   loadMissingOnline: (server: string) => Promise<void>
   rememberMember: (server: string, username: string, member: Member | null) => void
   notePresence: (server: string, username: string, online: boolean) => void
-  refreshMember: (server: string, username: string) => Promise<void>
+  refreshMember: (server: string, username: string) => Promise<Tried<void>>
   joinVoice: (server: string, channelId: number) => Promise<void>
   leaveVoice: () => void
   toggleMute: () => void
