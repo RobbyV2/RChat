@@ -3107,8 +3107,7 @@ pub(crate) mod test_util {
     /// `None` unless `TEST_POSTGRES_URL` is a postgres:// URL (never `DATABASE_URL`).
     pub(crate) async fn pg_temp(tag: &str) -> Option<PgTemp> {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let admin = std::env::var("TEST_POSTGRES_URL")
-            .ok()
+        let admin = crate::config::test_env("TEST_POSTGRES_URL")
             .filter(|u| u.starts_with("postgres://") || u.starts_with("postgresql://"))?;
         let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let name = format!("rchat_test_{tag}_{}_{n}", std::process::id());

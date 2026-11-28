@@ -126,6 +126,7 @@ fn a_file_the_server_refuses_stops_it_with_the_line_and_no_value() {
 /// When `CHILD` is set: loads `.env.local` as the server does and writes the error and every
 /// variable it then has to `loaded.json`.
 #[test]
+#[allow(clippy::disallowed_methods)]
 fn in_a_child_loads_the_env_file_of_its_directory() {
     if std::env::var_os(CHILD).is_none() {
         return;

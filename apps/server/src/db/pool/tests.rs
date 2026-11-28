@@ -6,7 +6,7 @@ use crate::api::test_util::{non_test_code, pg_temp};
 /// Whether the test run asks for every test database to hold a root key and require encrypted
 /// storage (`TEST_SEALED` in its environment).
 pub(super) fn sealed_suite() -> bool {
-    std::env::var_os("TEST_SEALED").is_some()
+    crate::config::test_env("TEST_SEALED").is_some()
 }
 
 async fn commit_mode(conn: &mut AnyConnection) -> String {

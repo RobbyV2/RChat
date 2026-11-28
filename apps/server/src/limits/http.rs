@@ -320,7 +320,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs a Redis-protocol server at REDIS_URL"]
     async fn join_bucket_is_shared_across_copies() {
-        let Ok(url) = std::env::var("REDIS_URL") else {
+        let Some(url) = crate::config::test_env("REDIS_URL") else {
             return;
         };
         let (state, path) = temp_state("http_limit_shared").await;

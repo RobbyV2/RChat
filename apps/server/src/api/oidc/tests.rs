@@ -1051,7 +1051,7 @@ async fn exercise_client_consent(f: &Fixture) {
 async fn client_login_chromium() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let web = std::path::PathBuf::from(
-        std::env::var_os("RCHAT_SSO_WEB_EXPORT")
+        crate::config::test_env("RCHAT_SSO_WEB_EXPORT")
             .expect("set RCHAT_SSO_WEB_EXPORT to the built static web directory"),
     );
     assert!(web.join("sso/index.html").is_file());

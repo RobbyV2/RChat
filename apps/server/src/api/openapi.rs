@@ -862,7 +862,7 @@ pub(crate) mod tests {
         ] {
             assert!(!lower.contains(leak), "{leak}");
         }
-        if let Ok(out) = std::env::var("RCHAT_OPENAPI_OUT") {
+        if let Some(out) = crate::config::test_env("RCHAT_OPENAPI_OUT") {
             std::fs::write(out, json).expect("write");
         }
     }
@@ -921,7 +921,7 @@ pub(crate) mod tests {
         let json = format!("{}\n", ApiDoc::openapi().to_pretty_json().expect("json"));
         let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../docs/generated/openapi.json");
-        if std::env::var_os("RCHAT_DOCS_WRITE").is_some() {
+        if crate::config::test_env("RCHAT_DOCS_WRITE").is_some() {
             std::fs::write(&file, &json).expect("write");
         }
         let committed = std::fs::read_to_string(&file).unwrap_or_default();

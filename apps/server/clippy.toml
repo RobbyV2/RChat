@@ -2,4 +2,22 @@ disallowed-methods = [
   { path = "std::time::SystemTime::now", reason = "wall time comes from the Clock (src/clock.rs)" },
   { path = "std::time::Instant::now", reason = "use tokio::time::Instant, which tests pause" },
   { path = "std::thread::sleep", reason = "use tokio::time::sleep, which tests pause" },
+  { path = "std::env::var", reason = "settings come from AppConfig (src/config.rs)" },
+  { path = "std::env::var_os", reason = "settings come from AppConfig (src/config.rs)" },
+  { path = "std::env::vars", reason = "settings come from AppConfig (src/config.rs)" },
+  { path = "std::env::vars_os", reason = "settings come from AppConfig (src/config.rs)" },
+  { path = "dotenvy::var", reason = "settings come from AppConfig (src/config.rs)" },
+  { path = "dotenvy::vars", reason = "settings come from AppConfig (src/config.rs)" },
+  { path = "tracing_subscriber::filter::EnvFilter::from_default_env", reason = "the log filter is built in bin/server.rs" },
+  { path = "tracing_subscriber::filter::EnvFilter::try_from_default_env", reason = "the log filter is built in bin/server.rs" },
+  { path = "tracing_subscriber::filter::EnvFilter::from_env", reason = "the log filter is built in bin/server.rs" },
+  { path = "tracing_subscriber::filter::EnvFilter::try_from_env", reason = "the log filter is built in bin/server.rs" },
+  { path = "tracing_subscriber::filter::Builder::from_env", reason = "the log filter is built in bin/server.rs" },
+  { path = "tracing_subscriber::filter::Builder::from_env_lossy", reason = "the log filter is built in bin/server.rs" },
+  { path = "tracing_subscriber::filter::Builder::try_from_env", reason = "the log filter is built in bin/server.rs" },
+  { path = "tracing_subscriber::fmt::init", reason = "the log filter is built in bin/server.rs" },
+  { path = "tracing_subscriber::fmt::try_init", reason = "the log filter is built in bin/server.rs" },
+]
+disallowed-types = [
+  { path = "config::Environment", reason = "settings come from AppConfig (src/config.rs)" },
 ]

@@ -216,7 +216,7 @@ pub struct AppConfig {
     pub web_peerjs_port: Option<u16>,
 }
 
-/// Secrets from `NAME` or the file named by `NAME_FILE`, resolved like `env_secret`.
+/// Secrets from `NAME` or the file named by `NAME_FILE`.
 #[derive(Clone, Default)]
 pub struct Secrets {
     pub password_pepper: Option<String>,
@@ -233,8 +233,19 @@ impl std::fmt::Debug for Secrets {
 fn lookup(env: &Option<HashMap<String, String>>, name: &str) -> Option<String> {
     match env {
         Some(env) => env.get(name).cloned(),
-        None => std::env::var(name).ok(),
+        None => process_env(name),
     }
+}
+
+#[allow(clippy::disallowed_methods)]
+fn process_env(name: &str) -> Option<String> {
+    std::env::var(name).ok()
+}
+
+/// A variable of the process environment that only tests read, such as a database address.
+#[cfg(test)]
+pub(crate) fn test_env(name: &str) -> Option<String> {
+    process_env(name)
 }
 
 fn secret(env: &Option<HashMap<String, String>>, name: &str) -> Option<String> {
@@ -279,14 +290,10 @@ pub(crate) fn read_required_secret(
     }
 }
 
-/// A secret from an explicit environment map, with the same file fallback as `env_secret`.
+/// A secret from an explicit environment map: `NAME`, or the contents of the file named by
+/// `NAME_FILE`.
 pub fn env_secret_in(env: &HashMap<String, String>, name: &str) -> Option<String> {
     secret_from(&|key| env.get(key).cloned(), name)
-}
-
-/// A process environment secret: `NAME`, or the contents of the file named by `NAME_FILE`.
-pub fn env_secret(name: &str) -> Option<String> {
-    secret(&None, name)
 }
 
 /// Prints no secrets: the S3 key, database and Redis URLs (passwords) and fixed ICE servers
@@ -344,6 +351,7 @@ impl AppConfig {
         Self::load_from(&cli, Some(env.into_env()))
     }
 
+    #[allow(clippy::disallowed_types)]
     fn load_from(cli: &CliOverrides, env: Option<HashMap<String, String>>) -> anyhow::Result<Self> {
         let mut builder = config::Config::builder()
             .set_default("app_mode", "full")?
@@ -1809,22 +1817,22 @@ mod tests {
     #[test]
     fn env_secrets_come_from_the_variable_or_a_file() {
         let name = format!("RCHAT_TEST_SECRET_{}", std::process::id());
-        assert_eq!(env_secret(&name), None);
+        assert_eq!(secret(&None, &name), None);
         let file = std::env::temp_dir().join(format!("rchat_secret_{}", std::process::id()));
         std::fs::write(&file, "from-file\n").expect("write");
         unsafe {
             std::env::set_var(format!("{name}_FILE"), &file);
         }
-        assert_eq!(env_secret(&name).as_deref(), Some("from-file"));
+        assert_eq!(secret(&None, &name).as_deref(), Some("from-file"));
         unsafe {
             std::env::set_var(&name, "  direct ");
         }
-        assert_eq!(env_secret(&name).as_deref(), Some("direct"));
+        assert_eq!(secret(&None, &name).as_deref(), Some("direct"));
         unsafe {
             std::env::set_var(&name, " ");
             std::env::remove_var(format!("{name}_FILE"));
         }
-        assert_eq!(env_secret(&name), None, "blank counts as unset");
+        assert_eq!(secret(&None, &name), None, "blank counts as unset");
         unsafe {
             std::env::remove_var(&name);
         }

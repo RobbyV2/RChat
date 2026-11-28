@@ -38,6 +38,13 @@ enum Command {
     },
 }
 
+/// A variable read outside `AppConfig`: the log filter, which is set up before the
+/// configuration loads so its errors are logged.
+#[allow(clippy::disallowed_methods)]
+fn process_env(name: &str) -> Option<String> {
+    std::env::var(name).ok()
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     rust_next::env_file::load(".env.local")?;
@@ -46,7 +53,9 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+            process_env("RUST_LOG")
+                .and_then(|filter| tracing_subscriber::EnvFilter::try_new(filter).ok())
+                .unwrap_or_else(|| "info".into()),
         )
         .init();
 
@@ -158,7 +167,7 @@ mod tests {
         );
         let file =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/generated/cli.json");
-        if std::env::var_os("RCHAT_DOCS_WRITE").is_some() {
+        if super::process_env("RCHAT_DOCS_WRITE").is_some() {
             std::fs::write(&file, &json).expect("write");
         }
         let committed = std::fs::read_to_string(&file).unwrap_or_default();

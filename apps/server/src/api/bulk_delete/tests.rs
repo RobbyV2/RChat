@@ -1068,7 +1068,7 @@ async fn deleted_messages_leave_the_inbox() {
 /// jobs whose tally names them, and only those.
 #[tokio::test]
 async fn forgetting_an_author_locks_only_the_jobs_naming_them() {
-    let Ok(url) = std::env::var("RCHAT_TEST_POSTGRES") else {
+    let Some(url) = crate::config::test_env("RCHAT_TEST_POSTGRES") else {
         return;
     };
     let db = crate::db::open_started(Some(&url)).await.expect("postgres");

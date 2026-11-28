@@ -268,7 +268,7 @@ fn vectors() -> Value {
 #[test]
 fn seal_vectors_are_what_this_build_writes_and_reads() {
     let built = vectors();
-    if std::env::var_os("SEAL_VECTORS_WRITE").is_some() {
+    if crate::config::test_env("SEAL_VECTORS_WRITE").is_some() {
         let text = serde_json::to_string_pretty(&built).unwrap() + "\n";
         std::fs::write(VECTORS_PATH, text).unwrap();
         return;

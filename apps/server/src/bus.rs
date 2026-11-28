@@ -1647,7 +1647,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs a Redis-protocol server at REDIS_URL"]
     async fn redis_round_trip() {
-        let Ok(url) = std::env::var("REDIS_URL") else {
+        let Some(url) = crate::config::test_env("REDIS_URL") else {
             return;
         };
         let prefix = format!("rchat-test-{:08x}", rand::random::<u32>());
@@ -1727,7 +1727,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs a Redis-protocol server at REDIS_URL"]
     async fn sealed_frames_round_trip() {
-        let Ok(url) = std::env::var("REDIS_URL") else {
+        let Some(url) = crate::config::test_env("REDIS_URL") else {
             return;
         };
         let path = crate::db::temp_db_path("bus_sealed_round_trip");

@@ -289,7 +289,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs a Redis-protocol server at REDIS_URL"]
     async fn shared_rate_counts_across_copies() {
-        let Ok(url) = std::env::var("REDIS_URL") else {
+        let Some(url) = crate::config::test_env("REDIS_URL") else {
             return;
         };
         let prefix = format!("rchat-test-{:08x}", rand::random::<u32>());

@@ -573,7 +573,10 @@ P='a\\\\b' # it's
             assert!(!err.contains(secret) && !err.contains("RCHAT_ENV_FILE_TEST"));
             for name in ["BEFORE", "BAD", "AFTER"] {
                 let name = format!("RCHAT_ENV_FILE_TEST_{name}");
-                assert!(std::env::var_os(&name).is_none(), "{name} is not set");
+                assert!(
+                    crate::config::test_env(&name).is_none(),
+                    "{name} is not set"
+                );
             }
             let _ = std::fs::remove_dir_all(path.parent().expect("dir"));
         }
@@ -590,12 +593,12 @@ P='a\\\\b' # it's
         );
         load_path(&path).expect("loads");
         assert_eq!(
-            std::env::var("RCHAT_ENV_FILE_TEST_KEPT").as_deref(),
-            Ok("from the environment")
+            crate::config::test_env("RCHAT_ENV_FILE_TEST_KEPT").as_deref(),
+            Some("from the environment")
         );
         assert_eq!(
-            std::env::var("RCHAT_ENV_FILE_TEST_NEW").as_deref(),
-            Ok("{\"a\": 1}")
+            crate::config::test_env("RCHAT_ENV_FILE_TEST_NEW").as_deref(),
+            Some("{\"a\": 1}")
         );
         let _ = std::fs::remove_dir_all(path.parent().expect("dir"));
     }

@@ -203,7 +203,7 @@ mod tests {
 
     #[tokio::test]
     async fn physical_replica_routes_reads_and_retries_failed_queries_on_the_primary() {
-        let Ok(replica) = std::env::var("TEST_POSTGRES_REPLICA_URL") else {
+        let Some(replica) = crate::config::test_env("TEST_POSTGRES_REPLICA_URL") else {
             return;
         };
         let (state, temp) = crate::api::test_util::pg_state("replica_route")

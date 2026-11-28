@@ -718,7 +718,7 @@ mod tests {
         );
         let Ok(raw) = std::fs::read_to_string(file) else {
             assert!(
-                std::env::var_os("CI").is_none(),
+                crate::config::test_env("CI").is_none(),
                 "{file} is missing: run bun install first"
             );
             eprintln!("skipped: {file} is missing (run bun install)");
