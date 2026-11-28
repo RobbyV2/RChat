@@ -1,4 +1,4 @@
-import { background } from '../api_errors'
+import { ownWork, persistently } from '../own_loads'
 import { acceptHostedPolicy } from '../client/hosted_policy'
 import type { AccountSession } from '../client/session'
 // Servers and their members: server details, the member lists and lookups, channel layout
@@ -742,6 +742,30 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     }
   }
 
+  const missedRows = new Map<string, Set<string>>()
+
+  // Member rows the store asks for on its own account (names in a chat, a refresh): tried again
+  // quietly, and a failure that stays is kept for the chat that shows those names.
+  const loadMemberRows = (server: string, names: string[]) => {
+    const at = sessionMark()
+    const rows = ownWork(set, `members:${server}`)
+    return persistently(acct.time, () => fetchMemberInfo(server, names), {
+      live: () => at === sessionMark() && !!get().servers[server],
+    }).then(
+      () => {
+        missedRows.delete(server)
+        rows.came()
+      },
+      (error: unknown) => {
+        if (at !== sessionMark() || !get().servers[server]) return
+        const missed = missedRows.get(server) ?? new Set<string>()
+        for (const n of names) missed.add(n)
+        missedRows.set(server, missed)
+        rows.refused(error)
+      }
+    )
+  }
+
   const MEMBER_INFO_REFRESH = 300
 
   const refreshMemberInfo = (server: string) => {
@@ -756,14 +780,16 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       memberInfoTrim: { ...s.memberInfoTrim, [server]: (s.memberInfoTrim[server] ?? 0) + 1 },
     }))
     if (kept.length)
-      void fetchMemberInfo(
+      void loadMemberRows(
         server,
         kept.map(([n]) => n)
-      ).catch(background('loading member rows failed'))
+      )
   }
 
   const forgetMemberInfo = (server: string) => {
     memberGen[server] = (memberGen[server] ?? 0) + 1
+    missedRows.delete(server)
+    ownWork(set, `members:${server}`).came()
     set(s => {
       if (!s.memberInfo[server]) return {}
       const memberInfo = { ...s.memberInfo }
@@ -972,6 +998,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     | 'clearGroups'
     | 'loadInteracted'
     | 'ensureMembers'
+    | 'retryMemberRows'
     | 'loadMissingOnline'
     | 'rememberMember'
     | 'notePresence'
@@ -1445,8 +1472,14 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
           !listed.has(n) &&
           !memberPending.has(pendingKey(server, n))
       )
-      if (missing.length)
-        await fetchMemberInfo(server, missing).catch(background('loading member rows failed'))
+      if (missing.length) await loadMemberRows(server, missing)
+    },
+
+    retryMemberRows: server => {
+      const names = [...(missedRows.get(server) ?? [])]
+      missedRows.delete(server)
+      ownWork(set, `members:${server}`).came()
+      if (names.length) void loadMemberRows(server, names)
     },
 
     loadMissingOnline: async server => {

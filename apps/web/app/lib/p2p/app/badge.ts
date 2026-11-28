@@ -6,6 +6,9 @@ import type { IdentityScope, P2pParts } from './scope'
 import { time } from '../../platform/time'
 import type { Cancel } from '../../clock'
 
+export const BADGE_NOT_SPREAD =
+  'Your renewed badge has not reached your P2P servers. It is sent again with the next renewal. To send it now, turn the badge off and on.'
+
 export function createBadgePart(parts: Pick<P2pParts, 'store' | 'calls'>, scope: IdentityScope) {
   const state = parts.store
   const { useP2p } = state

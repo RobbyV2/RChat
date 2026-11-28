@@ -47,6 +47,7 @@ import { canForward } from '../lib/forward'
 import { canEdit as ownEditable } from '../lib/sed'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { BulkJobBar, Selectable, SelectionBar, openSelectionMenu } from './selection'
+import { ChatWorkNotices } from './own_load'
 import { Inset, Row, Surface } from './layout'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 
@@ -427,6 +428,7 @@ export default function ThreadPanel() {
           <>
             {wide && <SelectionBar scope={key} sheet={false} compact />}
             <BulkJobBar scope={key} />
+            <ChatWorkNotices server={server} />
           </>
         }
         root={row(root, ALONE)}

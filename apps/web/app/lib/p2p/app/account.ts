@@ -1,4 +1,5 @@
-import { background } from '../../api_errors'
+import { persistently } from '../../own_loads'
+import { BADGE_NOT_SPREAD } from './badge'
 import { client } from '../../client/client'
 import type { AccountSession } from '../../client/session'
 import { instanceLabel } from '../../instance_label'
@@ -484,7 +485,10 @@ export function createAccountPart(
       label: homeLabel,
       request: (ik, ts, proof) => account.api.p2pBinding(ik, ts, proof),
       sub: parts.badge.accountSub,
-      onIssued: () => void sv.refreshBadge().catch(background('refreshing the P2P badge failed')),
+      onIssued: () =>
+        void persistently(time(), () => sv.refreshBadge()).catch(() =>
+          useP2p.setState({ badgeError: BADGE_NOT_SPREAD })
+        ),
       limits: deps.badge,
     })
     return { dms: d, servers: sv, pingLog, calls, badges, keeper }

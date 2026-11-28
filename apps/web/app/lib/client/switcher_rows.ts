@@ -1,4 +1,5 @@
-import { background } from '../api_errors'
+import { revokeOnLeaving } from '../own_loads'
+import { time } from '../platform/time'
 import { readLocal, setMediaCookie, writeLocal } from '../instances'
 import {
   moveInstance,
@@ -52,6 +53,8 @@ export interface SwitcherRow extends Actor {
   avatar: BookAccount['avatar']
   ik: string | null
   background: boolean
+  // The account's last check for new activity failed: its badge and dot may be out of date.
+  stale?: boolean
 }
 
 interface Snapshot extends Actor {
@@ -60,6 +63,7 @@ interface Snapshot extends Actor {
   badge: number
   unread: boolean
   ik?: string | null
+  stale?: boolean
 }
 
 const keyOf = ({ origin, username, local }: Actor) => JSON.stringify([origin, username, local])
@@ -99,6 +103,7 @@ export function switcherRows(book: Book, snapshots: readonly Snapshot[], actor: 
           badge,
           unread: live?.unread ?? false,
           background,
+          stale: live?.stale ?? false,
         })
       }
       for (const account of instance.accounts) {
@@ -224,6 +229,11 @@ export function liveSwitcherRows() {
               : 'Online',
         badge: counts?.instance ?? 0,
         unread: (counts?.unread ?? 0) > 0,
+        stale:
+          paused &&
+          !!st &&
+          (st.refusedLoads.unread_counts !== undefined ||
+            st.refusedLoads.friend_summary !== undefined),
       })
     }
     if (instance.guest && shown.conn.origin === instance.origin && shown.store.getState().guest)
@@ -367,7 +377,11 @@ export function signOutSwitcherAccount(origin: string, username: string | null) 
     const token = readToken(accountStorage(conn).token(username))
     if (token) {
       if (forgetCredential(conn, username, token)) setMediaCookie(conn, null)
-      void conn.api.logout(token).catch(background('revoking a session failed'))
+      void revokeOnLeaving(
+        time(),
+        () => conn.api.logout(token),
+        line => client.shown().store.getState().setError(line)
+      )
     }
   } else {
     // A saved guest may be parked before its first bootstrap.

@@ -18,7 +18,15 @@ import { useStore } from '../lib/store'
 import type { UserRef } from '../lib/types'
 import { MENTION_QUERY, mentionText } from '../lib/mention_suggest'
 import { findTrigger, spliceText } from '../lib/autocomplete'
-import { boostFor, findShortcode, matchShortcodes, withTone, type CodeMatch } from '../lib/emoji'
+import {
+  boostFor,
+  emojiFailed,
+  findShortcode,
+  matchShortcodes,
+  withTone,
+  type CodeMatch,
+} from '../lib/emoji'
+import { refusalView } from '../lib/api_errors'
 import { AutocompletePopup, useAutocomplete } from './autocomplete'
 import { useChat } from '../lib/place/use_chat'
 import { useLive } from '../lib/place/react'
@@ -94,6 +102,7 @@ export function useTextAssist({
   )
   const findPeople = useLive(mentions.find)
   const findGroups = useLive(mentions.groups)
+  const peopleTrouble = useLive(mentions.trouble)
   const asked = atTrigger?.query ?? null
   useEffect(() => {
     mentions.ask(asked)
@@ -110,6 +119,7 @@ export function useTextAssist({
     [findPeople, findGroups]
   )
   const emoji = useEmojiNow(trigger !== null)
+  const emojiMissing = trigger !== null && emojiFailed()
   const searchCodes = useCallback(
     (q: string) => (emoji ? matchShortcodes(emoji, q, 10, boostFor(prefs, time().now())) : []),
     [emoji, prefs]
@@ -190,6 +200,11 @@ export function useTextAssist({
         title={`Emoji matching :${trigger?.query ?? ''}`}
         ac={ac}
         below={below}
+        note={
+          emojiMissing
+            ? 'Emoji names could not load. Check your connection, then type the name again.'
+            : undefined
+        }
         keyOf={m => m.emoji.emoji}
         render={m => (
           <>
@@ -218,6 +233,11 @@ export function useTextAssist({
         title="Members"
         ac={people}
         below={below}
+        note={
+          atTrigger !== null && peopleTrouble !== null
+            ? `Could not search all members. ${refusalView(peopleTrouble).line} These are the people already loaded.`
+            : undefined
+        }
         keyOf={u => (u.kind === 'user' ? u.user.username : `\n${u.key}`)}
         render={u =>
           u.kind === 'user' ? (

@@ -17,6 +17,8 @@ export interface ReadQueue {
 const READ_DELAY = 2_000
 const READ_MAX_WAIT = 5_000
 const READ_RETRY_CAP = 60_000
+// How many tries of one scope's mark fail in a row before the person is told.
+export const READ_TROUBLE_AFTER = 3
 
 const permanent = (err: unknown) => {
   const status = (err as { status?: unknown } | null)?.status
@@ -29,6 +31,9 @@ export const createReadQueue = (opts: {
   maxWait?: number
   time?: Pick<Time, 'now' | 'after'>
   retryDelay?: (attempt: number) => number
+  // Hears the failure once a mark has failed `READ_TROUBLE_AFTER` times running, and null once
+  // no mark is failing.
+  trouble?: (error: unknown) => void
 }): ReadQueue => {
   const delay = opts.delay ?? READ_DELAY
   const maxWait = opts.maxWait ?? READ_MAX_WAIT
@@ -41,25 +46,37 @@ export const createReadQueue = (opts: {
   const failures = new Map<string, number>()
   let timer: Cancel | null = null
   let gen = 0
+  let troubled = false
+
+  const settled = (scope: string) => {
+    failures.delete(scope)
+    if (!troubled || failures.size > 0) return
+    troubled = false
+    opts.trouble?.(null)
+  }
 
   const send = (scope: string, id: number) => {
     sent.set(scope, id)
     const mine = gen
     return opts.send(scope, id).then(
       () => {
-        if (mine === gen && (queue.get(scope)?.id ?? 0) <= id) failures.delete(scope)
+        if (mine === gen && (queue.get(scope)?.id ?? 0) <= id) settled(scope)
       },
       (err: unknown) => {
         if (mine !== gen) return
         if (sent.get(scope) === id) sent.delete(scope)
         if (permanent(err)) {
-          failures.delete(scope)
+          settled(scope)
           return
         }
         const cur = queue.get(scope)
         if (cur && cur.id > id) return
         const attempt = (failures.get(scope) ?? 0) + 1
         failures.set(scope, attempt)
+        if (attempt === READ_TROUBLE_AFTER) {
+          troubled = true
+          opts.trouble?.(err)
+        }
         queue.set(scope, { id, since: cur?.since ?? now(), at: now() + retryDelay(attempt) })
         schedule()
       }

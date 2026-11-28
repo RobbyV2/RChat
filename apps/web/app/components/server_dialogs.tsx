@@ -1,6 +1,6 @@
 'use client'
 import { NameInput, NameSelect } from './name'
-import { background } from '../lib/api_errors'
+import { refusalOf, refusalView } from '../lib/api_errors'
 
 import { PeerCodeDialog } from './p2p/peer_code_dialog'
 import { openPeerLink, peerCode } from '../lib/client/peer_links'
@@ -66,6 +66,7 @@ function AddServerDialog({
   const [step, setStep] = useState<JoinStep>(join && locked ? 'password' : 'name')
   const [taken, setTaken] = useState<{ id: string; taken: boolean } | null>(null)
   const [suggestions, setSuggestions] = useState<ServerMatch[]>([])
+  const [unchecked, setUnchecked] = useState<string | null>(null)
   const creating = tab === 'create' && !guest
   const joining = !creating
   const id = name.trim().toLowerCase()
@@ -74,6 +75,7 @@ function AddServerDialog({
   useEffect(() => {
     setSuggestions([])
     setTaken(null)
+    setUnchecked(null)
     if (selecting || !id || /^(?:rci1|rcp1)\./i.test(id) || (joining && id.includes('/'))) return
     const controller = new AbortController()
     const mark = selection.current
@@ -94,7 +96,7 @@ function AddServerDialog({
         }
       } catch (error) {
         // The hint is optional: submit checks with the server again.
-        background('checking a server name failed')(error)
+        if (valid()) setUnchecked(refusalView(refusalOf(error)).line)
       }
     })
     return () => {
@@ -220,6 +222,13 @@ function AddServerDialog({
                 className={`w-full ${fieldCls}`}
               />
               {nameTaken && <p className="text-xs text-error">That name is taken</p>}
+              {unchecked !== null && (
+                <p role="status" className="text-xs text-on-surface-variant">
+                  {joining
+                    ? `Could not look for matching servers. ${unchecked} You can still enter the name.`
+                    : `Could not check whether this name is free. ${unchecked} You can still try it.`}
+                </p>
+              )}
             </Stack>
             {joining && step === 'name' && suggestions.some(s => s.name !== id) && (
               <Stack gap="2xs">

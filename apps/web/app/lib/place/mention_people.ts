@@ -1,4 +1,4 @@
-import { background } from '../api_errors'
+import { refusalOf, type Refusal } from '../api_errors'
 import type { AccountSession } from '../client/session'
 import {
   dmPeople,
@@ -28,6 +28,9 @@ export interface MentionPeople {
   // Says what is being typed (null: nothing), so a place that looks people up outside what it
   // holds can.
   ask: (query: string | null) => void
+  // Why the last lookup outside what the place holds did not come; null when it did, or there is
+  // none. What `find` gives then comes only from what is held here.
+  trouble: Live<Refusal | null>
 }
 
 const NO_MESSAGES: Message[] = []
@@ -38,6 +41,7 @@ const nobody = () => NO_PEOPLE
 const NO_GROUPS: GroupSuggestion[] = []
 const noGroups = () => NO_GROUPS
 const never = () => () => {}
+const noTrouble: Live<Refusal | null> = { get: () => null, subscribe: never }
 
 // A place that holds everyone a mention can name: `people` finds them, and there are no groups.
 export const heldPeople = (
@@ -47,6 +51,7 @@ export const heldPeople = (
   find: { get: people, subscribe },
   groups: { get: () => noGroups, subscribe: never },
   ask: () => {},
+  trouble: noTrouble,
 })
 
 // The mentions of a hosted list: recent authors in view, then the server's members that match
@@ -64,6 +69,13 @@ export const hostedPeople = (
   const heard = new Set<() => void>()
   let tick = 0
   let pending: (() => void) | undefined
+  let refused: Refusal | null = null
+  const troubled = new Set<() => void>()
+  const say = (next: Refusal | null) => {
+    if (refused === next) return
+    refused = next
+    for (const changed of [...troubled]) changed()
+  }
   const find = built(
     () => {
       const s = store.getState()
@@ -161,20 +173,35 @@ export const hostedPeople = (
     ask: query => {
       pending?.()
       pending = undefined
-      if (server === null || !query) return
+      if (server === null || !query) return say(null)
       const key = suggestKey(server, query)
-      if (cache.has(key)) return
-      pending = time().after(SUGGEST_DEBOUNCE, () => {
-        api
-          .suggestMembers(server, query)
-          .then(found => {
+      if (cache.has(key)) return say(null)
+      let live = true
+      const stop = time().after(SUGGEST_DEBOUNCE, () => {
+        api.suggestMembers(server, query).then(
+          found => {
             if (cache.size >= CACHE_MAX) cache.clear()
             cache.set(key, found)
             tick += 1
             for (const changed of heard) changed()
-          })
-          .catch(background('loading member suggestions failed'))
+            if (live) say(null)
+          },
+          (error: unknown) => {
+            if (live) say(refusalOf(error))
+          }
+        )
       })
+      pending = () => {
+        live = false
+        stop()
+      }
+    },
+    trouble: {
+      get: () => refused,
+      subscribe: changed => {
+        troubled.add(changed)
+        return () => troubled.delete(changed)
+      },
     },
   }
 }

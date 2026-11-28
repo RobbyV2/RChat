@@ -416,6 +416,15 @@ function AccountList({
                               {r.local ? 'P2P · ' : ''}
                               {r.status}
                             </span>
+                            {r.stale && (
+                              <span
+                                role="status"
+                                title="Could not check this account for new activity. Switch to it to try again."
+                                className="block text-xs text-error"
+                              >
+                                Could not check for new activity
+                              </span>
+                            )}
                           </span>
                           {r.status === 'Signed out' && (
                             <span className="text-xs text-primary">Sign in</span>

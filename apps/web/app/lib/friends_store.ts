@@ -1,5 +1,5 @@
 import { background } from './api_errors'
-import { ownLoad } from './own_loads'
+import { ownLoad, ownWork, persistently } from './own_loads'
 import { client } from './client/client'
 import type { AccountSession } from './client/session'
 // The store's friends actions and events, kept apart from store.ts. `friendsSlice` gets the
@@ -171,12 +171,33 @@ export const friendsSlice = (d: FriendsDeps) => {
 
   const pageVisible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden'
 
+  // The newest request whose seen mark the instance does not have yet.
+  let unseen = 0
+
+  const sendSeen = () => {
+    const until = unseen
+    if (!until || !get().token) return
+    const at = sessionMark()
+    const seen = ownWork(set, 'friends_seen')
+    void persistently(acct.time, () => api.friendsSeen(until), {
+      live: () => at === sessionMark() && !!get().token,
+    }).then(
+      () => {
+        if (unseen === until) unseen = 0
+        seen.came()
+      },
+      (error: unknown) => {
+        if (at === sessionMark()) seen.refused(error)
+      }
+    )
+  }
+
   const markSeen = () => {
     const until = pingUntil(get().pings[FRIENDS_SCOPE])
     if (!until) return
     set(s => ({ pings: clearPings(s.pings, FRIENDS_SCOPE, until) }))
-    if (get().token)
-      void api.friendsSeen(until).catch(background('marking friend requests seen failed'))
+    unseen = Math.max(unseen, until)
+    sendSeen()
   }
 
   const putFriend = (f: Friend) =>
@@ -439,6 +460,7 @@ export const friendsSlice = (d: FriendsDeps) => {
       }
     },
     markFriendsSeen: markSeen,
+    resendFriendsSeen: sendSeen,
   }
 
   // A `ping` in the friends scope: counted unless the friends panel is open, then a toast.

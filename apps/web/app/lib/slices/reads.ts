@@ -1,4 +1,3 @@
-import { background } from '../api_errors'
 import type { AccountSession } from '../client/session'
 // Reads and pings: the read marks and their queue, ping badges, group pings and the unread list.
 
@@ -45,6 +44,7 @@ import type { Message, Unread, WsEvent } from '../types'
 import { viewKey } from '../view'
 import { pageVisible, shownKey, type GetState, type Handlers, type SetState } from './ctx'
 import type { Cancel } from '../clock'
+import { ownWork, persistently } from '../own_loads'
 
 export interface ReadsDeps {
   acct: AccountSession
@@ -97,6 +97,7 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
     if (until > (seenPings.get(key) ?? 0)) seenPings.set(key, until)
   }
 
+  const marks = ownWork(set, 'read_marks')
   const readQueue = createReadQueue({
     time: acct.time,
     send: (scope, id) => {
@@ -108,7 +109,19 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
         ? api.postRead(scope, id, true, seenPings.get(scope) ?? 0)
         : Promise.resolve()
     },
+    trouble: error => (error === null ? marks.came() : marks.refused(error)),
   })
+
+  // A mark sent on its own (pings seen, a thread read): tried again quietly, and said in the
+  // open chat once it keeps failing.
+  const sendMark = (key: string, lastRead: number, until: number) => {
+    const at = sessionMark()
+    void persistently(acct.time, () => api.postRead(key, lastRead, false, until), {
+      live: () => at === sessionMark() && !!get().token,
+    }).then(marks.came, error => {
+      if (at === sessionMark()) marks.refused(error)
+    })
+  }
 
   // Clears the badge of a scope (outside threads) or of a thread (`t<root id>`) here and,
   // through POST /api/read (which marks those pings seen and echoes read_updated), on the
@@ -119,8 +132,7 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
     noteSeen(key, until)
     set(s => ({ pings: clearPings(s.pings, key, until) }))
     const lastRead = key[0] === 't' ? 0 : (get().reads[key]?.lastRead ?? 0)
-    if (get().token)
-      void api.postRead(key, lastRead, false, until).catch(background('marking pings seen failed'))
+    if (get().token) sendMark(key, lastRead, until)
   }
 
   let unreadsReady: Promise<void> = Promise.resolve()
@@ -300,7 +312,12 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
     | 'markDmsRead'
     | 'markAllRead'
     | 'askMarkAllRead'
+    | 'resendReadMarks'
   > = {
+    resendReadMarks: () => {
+      marks.came()
+      void readQueue.flush()
+    },
     markRead: (scope, messageId) => {
       if (acct.mode !== 'shown') return
       const cur = get().reads[scope]
@@ -351,10 +368,7 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
         for (const key of chunk) {
           const at = reads[key]?.lastRead ?? 0
           if (key[0] === 't') {
-            if (failed)
-              void api
-                .postRead(key, 0, false, seenPings.get(key) ?? 0)
-                .catch(background('marking a thread read failed'))
+            if (failed) sendMark(key, 0, seenPings.get(key) ?? 0)
           } else if (at > 0) {
             if (failed) readQueue.mark(key, at)
             else readQueue.seen(key, at)
@@ -445,10 +459,7 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
         const key = pingKey(ping)
         noteSeen(key, ping.id)
         const lastRead = key[0] === 't' ? 0 : (get().reads[key]?.lastRead ?? 0)
-        if (get().token)
-          void api
-            .postRead(key, lastRead, false, ping.id)
-            .catch(background('marking a ping seen failed'))
+        if (get().token) sendMark(key, lastRead, ping.id)
       }
       if (!alert.toast) return
       const host = ping.server !== null ? s.servers[ping.server] : undefined

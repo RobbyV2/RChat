@@ -439,6 +439,9 @@ export const emojiSource = (): LoadSource<Emoji[]> =>
     })
   ))
 
+// Whether the last try to fetch the emoji data failed.
+export const emojiFailed = () => source?.get().status === 'failed'
+
 const idle: Live<null> = { get: () => null, subscribe: () => () => {} }
 
 // What to watch for the emoji data to be read with `emojiData` once it is here: the load while

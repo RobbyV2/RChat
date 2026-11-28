@@ -581,6 +581,8 @@ export interface RChatState {
   setPrivacy: (patch: Partial<Privacy>) => Promise<void>
   observeFriendsPanel: () => () => void
   markFriendsSeen: () => void
+  // Sends the seen mark of friend requests again after it failed.
+  resendFriendsSeen: () => void
   // Posts a poll; the error text, or null once it is sent.
   createPoll: (target: PollTarget, req: PollReq) => Promise<string | null>
   votePoll: (id: number, body: { options?: number[]; value?: number }) => Promise<void>
@@ -674,6 +676,8 @@ export interface RChatState {
   sedEdit: (key: string, sed: Sed) => Promise<boolean>
   sendMessage: (content: string, p2pExpiresIn?: number | null, p2pRelay?: RelayChoice) => void
   markRead: (scope: string, messageId: number) => void
+  // Sends the read marks that are waiting after a failure, now.
+  resendReadMarks: () => void
   // "Mark as read": clears unread dots and pings of the given channel, DM or thread keys (and the
   // threads with pings under a channel) here and, through POST /api/read/batch, on every device.
   markScopesRead: (scopes: string[]) => Promise<void>
@@ -834,6 +838,8 @@ export interface RChatState {
   clearGroups: (server: string) => void
   loadInteracted: (server: string, reset?: boolean) => Promise<void>
   ensureMembers: (server: string, usernames: string[]) => Promise<void>
+  // Asks again for the member rows of `server` that did not load.
+  retryMemberRows: (server: string) => void
   loadMissingOnline: (server: string) => Promise<void>
   rememberMember: (server: string, username: string, member: Member | null) => void
   notePresence: (server: string, username: string, online: boolean) => void

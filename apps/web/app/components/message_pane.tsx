@@ -90,6 +90,7 @@ import {
   openSelectionMenu,
   useSelectionKeys,
 } from './selection'
+import { ChatWorkNotices } from './own_load'
 import { Button, IconButton } from './controls'
 
 export { groupPadCls } from './grouped_row'
@@ -761,6 +762,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           )}
           {wide && <SelectionBar scope={scope} sheet={false} />}
           <BulkJobBar scope={scope} />
+          <ChatWorkNotices server={view?.kind === 'channel' ? view.server : null} />
           <MessageList
             list={list}
             state={listState}

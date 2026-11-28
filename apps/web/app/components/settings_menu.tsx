@@ -1,4 +1,5 @@
 'use client'
+import { OwnLoadNotice } from './own_load'
 import { Name } from './name'
 import { instanceAddress, instanceName, personCalled } from '../lib/names'
 import { asAccount, pictured } from '../lib/people'
@@ -560,6 +561,11 @@ function PasswordSection({ links }: { links: LinkedProvider[] }) {
   return (
     <Stack gap="md">
       <p className="text-sm font-medium text-on-surface">{title}</p>
+      <OwnLoadNotice
+        what="account"
+        lead="Could not check how you sign in. This shows what this device last knew."
+        retry={() => void refreshAccount()}
+      />
       <Stack as="form" onSubmit={submit} gap="lg">
         <input
           type="text"

@@ -1,8 +1,8 @@
-import { background } from '../api_errors'
 import { createApi } from '../api'
 import { mergeGroupPings } from '../group_pings'
 import { readLocal, writeLocal } from '../instances'
 import { notifyKey, parseNotify, unreadShown } from '../notify'
+import { ownWork } from '../own_loads'
 import { FRIENDS_SCOPE } from '../friends'
 import { mergePings, setScopePings } from '../pings'
 import { mergeReads } from '../reads'
@@ -192,11 +192,35 @@ export function createAccountCounts(account: AccountSession) {
     const initial = account.store.getState()
     const request = {}
     polling = request
+    // A parked account's failed check is kept on the account, for the row that shows its counts.
+    const record = (what: 'unread_counts' | 'friend_summary') => {
+      const kept = ownWork(account.store.setState, what)
+      return {
+        came: () => {
+          if (valid()) kept.came()
+        },
+        refused: (error: unknown) => {
+          if (valid()) kept.refused(error)
+        },
+      }
+    }
+    const unreads = record('unread_counts')
+    const summary = record('friend_summary')
     try {
       const [{ items, more }, friends] = await Promise.all([
         api.getUnreads(),
-        api.friendSummary().catch(background('loading the friend summary failed', null)),
+        api.friendSummary().then(
+          found => {
+            summary.came()
+            return found
+          },
+          (error: unknown) => {
+            summary.refused(error)
+            return null
+          }
+        ),
       ])
+      unreads.came()
       await account.deliveryLock.ifIdle(origin, owner, () => {
         if (
           readLocal(snapshotKey) !== atStart ||
@@ -271,8 +295,9 @@ export function createAccountCounts(account: AccountSession) {
           })
         }
       })
-    } catch {
-      // A parked account can be offline. Keep its last known count until the next poll.
+    } catch (error) {
+      // The last known count stays until the next poll.
+      unreads.refused(error)
     } finally {
       if (polling === request) polling = null
     }

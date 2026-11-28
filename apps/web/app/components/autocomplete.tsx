@@ -78,6 +78,7 @@ export function AutocompletePopup<T>({
   keyOf,
   render,
   below = false,
+  note,
 }: {
   id: string
   title: ReactNode
@@ -85,6 +86,8 @@ export function AutocompletePopup<T>({
   keyOf: (item: T) => string
   render: (item: T, active: boolean) => ReactNode
   below?: boolean
+  // A line under the choices, for what could not be looked up.
+  note?: ReactNode
 }) {
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -101,7 +104,7 @@ export function AutocompletePopup<T>({
       )
   }, [id, ac.open, ac.active])
 
-  if (!ac.open) return null
+  if (!ac.open && !note) return null
 
   return (
     <Surface
@@ -129,7 +132,7 @@ export function AutocompletePopup<T>({
         aria-label={typeof title === 'string' ? title : undefined}
         className="relative max-h-72 overflow-y-auto overscroll-contain"
       >
-        {ac.items.map((item, i) => (
+        {(ac.open ? ac.items : []).map((item, i) => (
           <Surface
             key={keyOf(item)}
             id={`${id}-${i}`}
@@ -154,6 +157,13 @@ export function AutocompletePopup<T>({
           </Surface>
         ))}
       </div>
+      {note && (
+        <Inset pad="sm" inset="sides">
+          <p role="status" className="text-xs text-on-surface-variant">
+            {note}
+          </p>
+        </Inset>
+      )}
     </Surface>
   )
 }

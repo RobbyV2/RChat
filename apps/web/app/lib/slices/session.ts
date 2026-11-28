@@ -1,4 +1,3 @@
-import { background } from '../api_errors'
 import { readyIdentities, runDeletion } from '../account_deletion'
 import {
   clearConfirmationHint,
@@ -96,7 +95,7 @@ import { cleanBio } from '../rules'
 import { displayNameError } from '../display_name'
 import { selectionInitial, type selectionSlice } from '../selection_store'
 import { scheduledInitial, type scheduledSlice } from '../scheduled_store'
-import { ownLoadsInitial } from '../own_loads'
+import { ownLoadsInitial, ownWork, persistently, revokeOnLeaving } from '../own_loads'
 import { serverNames } from '../selectors'
 import { endsSession, meRetryIn } from '../session'
 import { signupFailure } from '../signup'
@@ -1423,7 +1422,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     return (token: Secret) => {
       const issuer = api.base === base ? api : createApi(base, 'omit')
       if (issuer !== api) issuer.prefix = prefix
-      return issuer.logout(token).catch(background('revoking a session failed'))
+      return revokeOnLeaving(
+        acct.time,
+        () => issuer.logout(token),
+        line => client.shown().store.getState().setError(line)
+      )
     }
   }
 
@@ -1853,7 +1856,19 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       if (!get().token || !get().me) return
       const before = get().me
       const mark = sessionMark()
-      const fresh = await api.me().catch(background('refreshing the account failed', null))
+      const account = ownWork(set, 'account')
+      const fresh = await persistently(acct.time, () => api.me(), {
+        live: () => mark === sessionMark(),
+      }).then(
+        me => {
+          account.came()
+          return me
+        },
+        (error: unknown) => {
+          if (mark === sessionMark()) account.refused(error)
+          return null
+        }
+      )
       if (mark === sessionMark() && fresh)
         set(s =>
           s.me?.username === fresh.username &&

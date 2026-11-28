@@ -321,12 +321,18 @@ function Pending() {
   const counts = useStore(s => s.friendCounts)
   const loading = useStore(s => s.incomingRequests.loading || s.outgoingRequests.loading)
   const loadFriendSummary = useStore(s => s.loadFriendSummary)
+  const resendFriendsSeen = useStore(s => s.resendFriendsSeen)
   return (
     <Stack gap="md">
       <OwnLoadNotice
         what="friend_summary"
         lead="Could not load the friend request counts."
         retry={() => void loadFriendSummary()}
+      />
+      <OwnLoadNotice
+        what="friends_seen"
+        lead="Could not mark these requests as seen. Their badge may come back."
+        retry={resendFriendsSeen}
       />
       <RequestList incoming />
       <RequestList incoming={false} />
