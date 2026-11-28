@@ -50,7 +50,7 @@ const seat = (world: ContractWorld, calls: unknown[][]) => {
       id: world.room,
       name: 'Harbor',
       me: 'join',
-      perms: P.ManageChannels,
+      perms: P.ManageChannels | P.Invite,
       owners: ['A'],
       members: [],
       channels: [
@@ -253,6 +253,19 @@ placeContract(channels, (kind, world) => {
     expect(html).toContain('data-server-name')
     expect(html).toContain('aria-label="Server settings"')
     expect(html.includes('online')).toBe(!hosted)
+    expect(html).toContain('aria-label="Invite people"')
+    const opened: unknown[] = []
+    world().ann.account.store.setState({
+      openDialog: (d: unknown) => void opened.push(d),
+    } as never)
+    const { app } = world().ann
+    if (app) Object.assign(app.p2p, { openDialog: (d: unknown) => void opened.push(d) })
+    here.invite()
+    expect(opened).toEqual([
+      hosted
+        ? { kind: 'server_settings', server: world().server, section: 'invites' }
+        : { kind: 'server_invite', room: world().room },
+    ])
   })
 
   test('a new category is asked for on the side of the place', () => {

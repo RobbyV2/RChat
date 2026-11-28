@@ -308,9 +308,10 @@ const hosted = (account: AccountSession, server: string): Channels => {
             (s.me?.servers.find(x => x.name === server)?.creator ?? detail.creator) === me,
           hostedServerSeal(detail?.seal, false, s.settings).on,
           serverAdminPerms(s, server) !== 0n,
+          !s.guest && !!s.me?.servers.some(x => x.name === server),
         ] as const
       },
-      ([name, banner, nameColor, own, stored, canSet]): PlaceHead | null =>
+      ([name, banner, nameColor, own, stored, canSet, member]): PlaceHead | null =>
         name === undefined
           ? null
           : {
@@ -321,7 +322,7 @@ const hosted = (account: AccountSession, server: string): Channels => {
               peer: false,
               stored,
               line: null,
-              canInvite: false,
+              canInvite: member,
               canSet,
             }
     )
@@ -372,7 +373,17 @@ const hosted = (account: AccountSession, server: string): Channels => {
     headMenu: (x, y) =>
       openActionMenu(x, y, { kind: 'server', server, folder: null, at: 0 }, undefined, account),
     openSettings: () => store.getState().openDialog({ kind: 'server_settings', server }),
-    invite: () => {},
+    invite: () => {
+      const s = store.getState()
+      if (serverAdminPerms(s, server) !== 0n)
+        s.openDialog({ kind: 'server_settings', server, section: 'invites' })
+      else
+        actionPress(
+          'server_copy_invite',
+          { kind: 'server', server, folder: null, at: 0 },
+          account
+        )?.(0, 0)
+    },
     addCategory: () => store.getState().openDialog({ kind: 'category', server }),
     open: key => void store.getState().openChannel(server, Number(key)),
     setOpen: (category, open) =>
