@@ -22,11 +22,17 @@ describe('desktop smoke', () => {
   test('every attribute the smoke run selects is in the app', () => {
     const attrs = [...smoke.matchAll(/querySelector\('(?:[a-z]+)?\[([a-z-]+)(?:="([^"]+)")?\]'\)/g)]
     expect(attrs.length).toBeGreaterThan(2)
+    // An icon control's `label` is its `aria-label`.
+    const written = (name: string, value: string) =>
+      app.includes(`${name}="${value}"`) ||
+      (name === 'aria-label' && app.includes(` label="${value}"`))
     for (const [, name, value] of attrs) {
       const used =
         name === 'data-settings-section'
           ? new RegExp(`\\b${value}: '`).test(app)
-          : app.includes(value === undefined ? name : `${name}="${value}"`)
+          : value === undefined
+            ? app.includes(name)
+            : written(name, value)
       expect(used, `${name}=${value}`).toBe(true)
     }
   })
