@@ -32,7 +32,15 @@ test('opening a sensitive channel asks before reading history or displaying a ca
     calls.push(String(u))
     return Response.json([])
   }) as typeof fetch
-  const ordinary = { id: 1, kind: 'text' as const, name: 'general', slowmode_seconds: 0 }
+  const ordinary = {
+    id: 1,
+    kind: 'text' as const,
+    name: 'general',
+    slowmode_seconds: 0,
+    category_id: null,
+    my_perms: null,
+    topic: null,
+  }
   const privateRoom = { ...ordinary, id: 2, sensitive: true }
   useStore.setState({
     me: me('alice'),

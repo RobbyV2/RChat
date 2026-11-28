@@ -265,6 +265,7 @@ export const peopleItems = (
         display_name: hit.doc.name,
         avatar_kind: 'identicon',
         avatar_color: null,
+        avatar_image: null,
       })
   const me = s.me?.username
   return [...seen.values()]

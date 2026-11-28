@@ -33,15 +33,33 @@ afterEach(() => {
   useChannelEdit.getState().stop()
 })
 
-const general: Channel = { id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 }
+const general: Channel = {
+  id: 1,
+  name: 'general',
+  kind: 'text',
+  slowmode_seconds: 0,
+  category_id: null,
+  my_perms: null,
+  topic: null,
+}
 const random: Channel = {
   id: 2,
   name: 'random',
   kind: 'text',
   slowmode_seconds: 0,
   category_id: 7,
+  my_perms: null,
+  topic: null,
 }
-const talk: Channel = { id: 3, name: 'talk', kind: 'voice', slowmode_seconds: 0 }
+const talk: Channel = {
+  id: 3,
+  name: 'talk',
+  kind: 'voice',
+  slowmode_seconds: 0,
+  category_id: null,
+  my_perms: null,
+  topic: null,
+}
 const chat = { id: 7, name: 'Chat', position: 0 }
 
 interface State {
@@ -57,9 +75,45 @@ interface State {
 // news.
 const railState = (o: State = {}) => {
   const joined = [
-    { name: 's', display_name: 'Space', creator: null, is_admin: false },
-    { name: 'rchat', display_name: 'RChat', creator: null, is_admin: false },
-    { name: 'b', display_name: 'Base', creator: null, is_admin: false },
+    {
+      name: 's',
+      display_name: 'Space',
+      creator: null,
+      is_admin: false,
+      banner_color: null,
+      icon_image: null,
+      icon_kind: 'identicon' as const,
+      name_color: null,
+      profiles_mode: 'all' as const,
+      timed_out_remaining: null,
+      timed_out_until: null,
+    },
+    {
+      name: 'rchat',
+      display_name: 'RChat',
+      creator: null,
+      is_admin: false,
+      banner_color: null,
+      icon_image: null,
+      icon_kind: 'identicon' as const,
+      name_color: null,
+      profiles_mode: 'all' as const,
+      timed_out_remaining: null,
+      timed_out_until: null,
+    },
+    {
+      name: 'b',
+      display_name: 'Base',
+      creator: null,
+      is_admin: false,
+      banner_color: null,
+      icon_image: null,
+      icon_kind: 'identicon' as const,
+      name_color: null,
+      profiles_mode: 'all' as const,
+      timed_out_remaining: null,
+      timed_out_until: null,
+    },
   ]
   useStore.setState({
     token: o.guest ? null : Secret.of('tok'),
@@ -631,7 +685,16 @@ test('each home card kind', async () => {
 })
 
 test('the call route menu', async () => {
-  const dm: DmSummary = { id: 9, other: user('bob'), is_self: false }
+  const dm: DmSummary = {
+    id: 9,
+    other: user('bob'),
+    is_self: false,
+    closed: false,
+    friend: false,
+    last_message_at: null,
+    last_message_id: null,
+    seal: { forced: false, on: false },
+  }
   const call: Target = { kind: 'call', dm, video: true }
   railState()
   useStore.setState({

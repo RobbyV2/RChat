@@ -25,6 +25,7 @@ const author = (username: string) => ({
   display_name: 'x',
   avatar_kind: 'identicon' as const,
   avatar_color: null,
+  avatar_image: null,
 })
 
 describe('webhooks', () => {
@@ -38,7 +39,7 @@ describe('webhooks', () => {
     expect(webhookIdOf('alice')).toBeNull()
     expect(isWebhookMessage({ author: author('@webhook:3'), webhook: null })).toBe(true)
     expect(isWebhookMessage({ author: author('bob'), webhook: { id: 3, embeds: [] } })).toBe(true)
-    expect(isWebhookMessage({ author: author('bob') })).toBe(false)
+    expect(isWebhookMessage({ author: author('bob'), webhook: null })).toBe(false)
   })
 
   test('the permission bit follows timeouts', () => {

@@ -157,6 +157,8 @@ describe('friend helpers', () => {
       bio: null,
       created_at: 1,
       member: null,
+      server_banner: null,
+      server_bio: null,
     }
     expect(sendable({ profile, hidden: false, relation: 'none' })).toBe(true)
     expect(sendable({ profile: null, hidden: true, relation: 'none' })).toBe(true)

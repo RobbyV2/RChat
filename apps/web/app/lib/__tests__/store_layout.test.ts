@@ -19,12 +19,24 @@ const dm = (id: number, other: string, is_self = false): DmSummary => ({
   id,
   other: user(other),
   is_self,
+  closed: false,
+  friend: false,
+  last_message_at: null,
+  last_message_id: null,
+  seal: { forced: false, on: false },
 })
 const srv = (name: string): ServerSummary => ({
   name,
   display_name: name,
   creator: null,
   is_admin: false,
+  banner_color: null,
+  icon_image: null,
+  icon_kind: 'identicon' as const,
+  name_color: null,
+  profiles_mode: 'all' as const,
+  timed_out_remaining: null,
+  timed_out_until: null,
 })
 const recent = () => dmView(st()).recent.map(d => d.id)
 const pinned = () => dmView(st()).pinned.map(d => d.id)
@@ -84,7 +96,18 @@ describe('rail order', () => {
     dispatch({
       type: 'server_renamed',
       old_name: 'b',
-      server: { name: 'bee', display_name: 'Bee', creator: null, has_password: false },
+      server: {
+        name: 'bee',
+        display_name: 'Bee',
+        creator: null,
+        has_password: false,
+        banner_color: null,
+        description: null,
+        icon_image: null,
+        name_color: null,
+        public_read: null,
+        seal: { forced: false, on: false },
+      },
     })
     expect(railOrder(st())).toEqual(['a', 'bee', 'rchat', 'c'])
     expect(saved('rchat_layout:alice')?.servers).toEqual(['a', 'bee', 'rchat'])
@@ -194,7 +217,18 @@ describe('server folders', () => {
     dispatch({
       type: 'server_renamed',
       old_name: 'b',
-      server: { name: 'bee', display_name: 'Bee', creator: null, has_password: false },
+      server: {
+        name: 'bee',
+        display_name: 'Bee',
+        creator: null,
+        has_password: false,
+        banner_color: null,
+        description: null,
+        icon_image: null,
+        name_color: null,
+        public_read: null,
+        seal: { forced: false, on: false },
+      },
     })
     expect(folder()?.servers).toEqual(['a', 'bee', 'c'])
     expect(saved('rchat_layout:alice')?.servers[1]).toEqual(folder())
@@ -389,7 +423,18 @@ describe('guest grants', () => {
   const renamed = (old_name: string, name: string): WsEvent => ({
     type: 'server_renamed',
     old_name,
-    server: { name, display_name: name, creator: null, has_password: true },
+    server: {
+      name,
+      display_name: name,
+      creator: null,
+      has_password: true,
+      banner_color: null,
+      description: null,
+      icon_image: null,
+      name_color: null,
+      public_read: null,
+      seal: { forced: false, on: false },
+    },
   })
 
   test('a password change keeps the grant and a rename moves it', () => {
@@ -423,7 +468,18 @@ describe('guest access', () => {
     dispatch({
       type: 'server_renamed',
       old_name: 'club',
-      server: { name: 'club', display_name: 'Club', creator: null, has_password: true },
+      server: {
+        name: 'club',
+        display_name: 'Club',
+        creator: null,
+        has_password: true,
+        banner_color: null,
+        description: null,
+        icon_image: null,
+        name_color: null,
+        public_read: null,
+        seal: { forced: false, on: false },
+      },
     })
     await until(() => !st().guestServers.includes('club'))
     expect(st().guestServers).toEqual(['rchat'])

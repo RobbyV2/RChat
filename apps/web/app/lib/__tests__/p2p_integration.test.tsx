@@ -576,6 +576,7 @@ describe('threads in a P2P conversation', () => {
       display_name: ik === BOB ? 'Bob' : 'Alice',
       avatar_kind: 'identicon' as const,
       avatar_color: null,
+      avatar_image: null,
     })
     const rows = [
       row('mine', 'P2P root C', { sender: BOB, replies: 1 }),
@@ -1608,6 +1609,8 @@ describe('P2P conversations in the DM list', () => {
     last_message_id: null,
     last_message_at: null,
     friend: false,
+    closed: false,
+    seal: { forced: false, on: false },
   }
   const inDms = () =>
     Object.assign(initial, {
@@ -2504,6 +2507,8 @@ describe('P2P placeholders while loading', () => {
       last_message_id: null,
       last_message_at: null,
       friend: false,
+      closed: false,
+      seal: { forced: false, on: false },
     }
     Object.assign(initial, {
       me: me('bob'),

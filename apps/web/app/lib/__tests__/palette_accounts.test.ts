@@ -9,7 +9,7 @@ import { p2pBucket, p2pSourceId } from '../p2p/palette_source'
 import { channelTarget } from '../viewing'
 import { registerAppActions } from '../actions'
 import { testAccount } from './test_account'
-import { me, member, memoryStorage, msg, serverDetail, textChannel } from './fixtures'
+import { me, member, memoryStorage, msg, serverDetail, summary, textChannel } from './fixtures'
 import { Secret } from '../secret'
 
 const ctx: ResultCtx = {
@@ -33,7 +33,7 @@ test('a palette keeps identical destinations under their owners, rechecks consen
   const channel = { ...textChannel(4), name: 'general' }
   const roles = {
     ...me('sam'),
-    servers: [{ name: 'club', display_name: 'Club', creator: null, is_admin: false }],
+    servers: [summary('club', { display_name: 'Club' })],
   }
   registerAppActions()
   try {
@@ -263,7 +263,21 @@ test('identical peer contacts stay under each identity, the acting peer is first
     expect(find().map(s => s.owner?.local)).toEqual(['work'])
     actor.store.setState({
       me: me('sam', {
-        servers: [{ name: 'club', display_name: 'Club', creator: null, is_admin: false }],
+        servers: [
+          {
+            name: 'club',
+            display_name: 'Club',
+            creator: null,
+            is_admin: false,
+            banner_color: null,
+            icon_image: null,
+            icon_kind: 'identicon' as const,
+            name_color: null,
+            profiles_mode: 'all' as const,
+            timed_out_remaining: null,
+            timed_out_until: null,
+          },
+        ],
       }),
       servers: {
         club: serverDetail('club', { channels: [{ ...textChannel(4), name: 'general' }] }),

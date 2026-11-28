@@ -5,7 +5,18 @@ import type { Invite } from '../types'
 import { Secret } from '../secret'
 
 const invite: Invite = {
-  server: { name: 'club', display_name: 'Club', creator: null, has_password: false },
+  server: {
+    name: 'club',
+    display_name: 'Club',
+    creator: null,
+    has_password: false,
+    banner_color: null,
+    description: null,
+    icon_image: null,
+    name_color: null,
+    public_read: null,
+    seal: { forced: false, on: false },
+  },
   member_count: 1,
   online_count: 0,
   status: 'member',
@@ -13,6 +24,8 @@ const invite: Invite = {
   preview: [],
   password_expires_at: null,
   password_uses_left: null,
+  preview_channel_id: null,
+  preview_sensitive: false,
 }
 
 test('invite previews use their own connection on a shared origin and follow a connected remote account', async () => {

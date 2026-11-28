@@ -20,7 +20,21 @@ const open = (perms: bigint | 'owner', name = 'garden', section?: ServerSettings
   Object.assign(initial, {
     token: 'tok',
     me: me('alice', {
-      servers: [{ name, display_name: 'Garden', creator: null, is_admin: perms === 'owner' }],
+      servers: [
+        {
+          name,
+          display_name: 'Garden',
+          creator: null,
+          is_admin: perms === 'owner',
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+      ],
     }),
     servers: { [name]: serverDetail(name, { channels: [textChannel(1)] }) },
     members:

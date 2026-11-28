@@ -39,9 +39,19 @@ afterEach(() => {
 })
 
 const TEXT = 'Amber overlay bound folio'
-const general = { id: 1, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
+const general = {
+  id: 1,
+  name: 'general',
+  kind: 'text' as const,
+  slowmode_seconds: 0,
+  category_id: null,
+  my_perms: null,
+  topic: null,
+}
 const proofroom = { ...general, id: 2, name: 'proofroom', sensitive: true }
 const fwd = (over: Partial<ForwardRef> = {}): ForwardRef => ({
+  origin_server: null,
+  origin_server_channel: null,
   author: user('writer'),
   created_at: 1,
   source_id: 40,
@@ -178,7 +188,15 @@ test('a pinned invite preview reports a changed room instead of dropping the ans
 })
 
 test('a closed voice room keeps its people out of the client until it opens', async () => {
-  const lounge = { id: 3, name: 'lounge', kind: 'voice' as const, slowmode_seconds: 0 }
+  const lounge = {
+    id: 3,
+    name: 'lounge',
+    kind: 'voice' as const,
+    slowmode_seconds: 0,
+    category_id: null,
+    my_perms: null,
+    topic: null,
+  }
   const recordings = { ...lounge, id: 4, name: 'recordings', sensitive: true }
   useStore.setState({
     me: me('reader'),

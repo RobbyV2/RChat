@@ -7,6 +7,8 @@ import type { RChatState } from '../store_types'
 import type { Message, ScheduledMessage, ScheduledPage, WsEvent } from '../types'
 
 const row = (over: Partial<ScheduledMessage> = {}): ScheduledMessage => ({
+  media: null,
+  poll: null,
   id: 1,
   scope: 'c3',
   channel_id: 3,

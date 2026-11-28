@@ -35,6 +35,8 @@ afterEach(() => {
 })
 
 const invite = (over: Partial<Invite> = {}, server: Partial<Invite['server']> = {}): Invite => ({
+  preview_channel_id: null,
+  preview_sensitive: false,
   server: {
     name: 'club',
     display_name: 'Book Club',

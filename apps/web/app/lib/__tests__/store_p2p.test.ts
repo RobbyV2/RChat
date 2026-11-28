@@ -35,6 +35,8 @@ const hosted = (id: string, hoster: string): MessageMedia => ({
   removed: false,
   removed_by_author: false,
   spoiler: false,
+  alt: null,
+  sha256: null,
 })
 
 const scoped = { server: 's', channel_id: 1, dm_id: null, dm_users: null }

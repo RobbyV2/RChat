@@ -43,7 +43,13 @@ for (const account of accounts) {
       display_name: 'Hidden DM ' + host,
       avatar_kind: 'identicon' as const,
       avatar_color: null,
+      avatar_image: null,
     },
+    closed: false,
+    friend: false,
+    last_message_at: null,
+    last_message_id: null,
+    seal: { forced: false, on: false },
   }
   const me: Me = {
     ...dm.other,
@@ -54,12 +60,30 @@ for (const account of accounts) {
     is_site_admin: false,
     appear_offline: false,
     password_kind: 'text',
-    servers: [{ name: 'garden', display_name: 'Hidden garden', creator: null, is_admin: false }],
+    servers: [
+      {
+        name: 'garden',
+        display_name: 'Hidden garden',
+        creator: null,
+        is_admin: false,
+        banner_color: null,
+        icon_image: null,
+        icon_kind: 'identicon' as const,
+        name_color: null,
+        profiles_mode: 'all' as const,
+        timed_out_remaining: null,
+        timed_out_until: null,
+      },
+    ],
     servers_more: false,
     servers_cursor: null,
     dms: [dm],
     dms_more: false,
     dms_cursor: null,
+    can_create_servers: false,
+    delete_at: null,
+    has_password: true,
+    password_temporary: null,
   }
   account.api.me = async () => {
     await fetch(origin + '/api/me')

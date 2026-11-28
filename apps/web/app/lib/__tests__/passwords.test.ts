@@ -21,6 +21,7 @@ import {
 import type { ServerPassword, ServerPasswords } from '../types'
 
 const pw = (over: Partial<ServerPassword> = {}): ServerPassword => ({
+  kind: 'password' as const,
   id: 1,
   label: null,
   created_by: 'alice',

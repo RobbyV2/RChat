@@ -176,7 +176,9 @@ const asMember = (p: Profile): Member | null =>
     online: p.member.online,
     perms: p.member.perms,
     role_ids: p.member.role_ids,
-    ...(p.member.profile ? { profile: p.member.profile } : {}),
+    profile: p.member.profile,
+    joined_via: null,
+    timeout: p.member.timeout,
   }
 
 const fmtDate = (ts: number) =>
@@ -514,6 +516,7 @@ function CardBody({
           display_name: user.display_name,
           avatar_kind: user.avatar_kind,
           avatar_color: user.avatar_color,
+          avatar_image: user.avatar_image,
         })
         return
       case 'untimeout':
@@ -529,6 +532,7 @@ function CardBody({
             display_name: user.display_name,
             avatar_kind: user.avatar_kind,
             avatar_color: user.avatar_color,
+            avatar_image: user.avatar_image,
           },
         })
         return

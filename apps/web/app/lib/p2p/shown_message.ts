@@ -78,6 +78,7 @@ export const asMessage = (
         has_media: false,
         deleted: m.reply.body === null,
         mention: m.reply.sender === me && m.sender !== me,
+        forward: null,
       }
     : null,
   edited_at: m.edited !== null ? seconds(m.edited) : null,
@@ -88,15 +89,23 @@ export const asMessage = (
           display_name: m.fwd.name,
           avatar_kind: 'color',
           avatar_color: null,
+          avatar_image: null,
         },
         created_at: seconds(m.fwd.ts),
         source_id: 0,
         origin: null,
         dropped: null,
+        origin_channel: null,
+        origin_channel_id: null,
+        origin_server: null,
+        origin_server_channel: null,
         p2p: readFwdSrc(m.fwd),
       }
     : null,
   pinned_at: m.pinned !== null ? seconds(m.pinned) : null,
+  pin_message_id: null,
+  poll: null,
+  webhook: null,
 })
 
 // The number of a message outside the list that numbers its rows.

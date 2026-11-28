@@ -38,7 +38,7 @@ describe('ranks on hosted servers', () => {
     expect(memberRank(member([9]), roles)).toEqual({ tier: 'plain' })
     expect(memberRank(admin(0n), roles)).toEqual({ tier: 'owner' })
     expect(memberRank(admin(Perm.Kick), roles)).toEqual({ tier: 'admin', adminMask: Perm.Kick })
-    expect(roleRank({ id: 7 })).toEqual({ tier: 'role', pos: 0, tie: -7 })
+    expect(roleRank({ id: 7, position: 0 })).toEqual({ tier: 'role', pos: 0, tie: -7 })
   })
 
   test('the order is the one the shared rules decide', async () => {

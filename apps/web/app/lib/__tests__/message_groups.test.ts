@@ -34,9 +34,20 @@ const quote = {
   has_media: false,
   deleted: false,
   mention: false,
+  forward: null,
 }
 
-const forward = { author: bob, created_at: NOON - 3600, source_id: 1, origin: null, dropped: null }
+const forward = {
+  author: bob,
+  created_at: NOON - 3600,
+  source_id: 1,
+  origin: null,
+  dropped: null,
+  origin_channel: null,
+  origin_channel_id: null,
+  origin_server: null,
+  origin_server_channel: null,
+}
 
 describe('messages from one author', () => {
   test('a run within seven minutes shows one header', () => {

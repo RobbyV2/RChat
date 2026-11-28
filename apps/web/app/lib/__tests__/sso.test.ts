@@ -54,6 +54,8 @@ test('password override and registration eligibility', () => {
     password_login: false,
     registration: 'open' as const,
     providers: [{ id: 'id', name: 'Local' }],
+    client_return: null,
+    confirm_login: null,
   }
   expect(showPasswordForm(policy, '')).toBe(false)
   expect(showPasswordForm(policy, '?local=1')).toBe(true)
@@ -341,8 +343,10 @@ test('only the originating foreground session follows its logout response', asyn
 })
 
 import { canUnlink, linkable } from '../sso'
+import type { LinkedProvider } from '../types'
 test('protect the last sign-in and list remaining providers in configuration order', () => {
-  const links = [{ provider: 'a', name: 'A', linked_at: 0 }]
+  // Links from an older server, which leaves `can_unlink` out.
+  const links = [{ provider: 'a', name: 'A', linked_at: 0 }] as LinkedProvider[]
   expect(canUnlink({ has_password: false }, links, 'a')).toBe(false)
   expect(canUnlink({ has_password: true }, links, 'a')).toBe(true)
   expect(canUnlink({ has_password: false }, [...links, { ...links[0], provider: 'b' }], 'a')).toBe(
@@ -350,7 +354,16 @@ test('protect the last sign-in and list remaining providers in configuration ord
   )
   const providers = ['z', 'a', 'b'].map(id => ({ id, name: id }))
   expect(
-    linkable({ password_login: true, registration: 'open', providers }, links).map(p => p.id)
+    linkable(
+      {
+        password_login: true,
+        registration: 'open',
+        providers,
+        client_return: null,
+        confirm_login: null,
+      },
+      links
+    ).map(p => p.id)
   ).toEqual(['z', 'b'])
 })
 
@@ -365,6 +378,8 @@ test('sign-in commands target their account and require a member and configured 
       registration: 'open' as const,
       password_login: true,
       providers: [{ id: 'work', name: 'Work' }],
+      client_return: null,
+      confirm_login: null,
     },
   }
   owner.store.setState({
@@ -373,7 +388,7 @@ test('sign-in commands target their account and require a member and configured 
     signInChoices: {
       mark: owner.lifetime.sessionMark(),
       username: 'alice',
-      links: [{ provider: 'kc', name: 'Keycloak', linked_at: 0 }],
+      links: [{ provider: 'kc', name: 'Keycloak', linked_at: 0, can_unlink: false }],
     },
   })
   for (const action of ssoActions) {

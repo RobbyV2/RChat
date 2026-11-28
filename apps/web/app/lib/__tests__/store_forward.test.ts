@@ -71,6 +71,10 @@ beforeEach(() => {
           source_id: 40,
           origin: 'Direct message',
           dropped: null,
+          origin_channel: null,
+          origin_channel_id: null,
+          origin_server: null,
+          origin_server_channel: null,
         },
       })
       return new Response(writeJson(sent), { status: 200 })
@@ -78,7 +82,23 @@ beforeEach(() => {
     return new Response(writeJson([]), { status: 200 })
   }) as typeof fetch
   useStore.setState({
-    me: me('bob', { servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }] }),
+    me: me('bob', {
+      servers: [
+        {
+          name: 's',
+          display_name: 's',
+          creator: null,
+          is_admin: false,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+      ],
+    }),
     token: Secret.of('t'),
     guest: false,
     error: null,
@@ -89,7 +109,17 @@ beforeEach(() => {
     view: { kind: 'channel', server: 's', channelId: 77 },
     servers: {
       s: serverDetail('s', {
-        channels: [{ id: 77, name: 'general', kind: 'text', slowmode_seconds: 0 }],
+        channels: [
+          {
+            id: 77,
+            name: 'general',
+            kind: 'text',
+            slowmode_seconds: 0,
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
+        ],
       }),
     },
     messages: { c77: [msg(9)] },
@@ -171,7 +201,17 @@ describe('sending a forward', () => {
 
 describe('opening the original', () => {
   const copy = msg(50, {
-    forward: { author: user('carol'), created_at: 7, source_id: 40, origin: null, dropped: null },
+    forward: {
+      author: user('carol'),
+      created_at: 7,
+      source_id: 40,
+      origin: null,
+      dropped: null,
+      origin_channel: null,
+      origin_channel_id: null,
+      origin_server: null,
+      origin_server_channel: null,
+    },
   })
 
   test('an unreadable original gives a neutral toast, never an error or prompt', async () => {
@@ -197,7 +237,17 @@ describe('previewServer', () => {
 describe('leaving a preview', () => {
   const lounge = () =>
     serverDetail('lounge', {
-      channels: [{ id: 88, name: 'lobby', kind: 'text', slowmode_seconds: 0 }],
+      channels: [
+        {
+          id: 88,
+          name: 'lobby',
+          kind: 'text',
+          slowmode_seconds: 0,
+          category_id: null,
+          my_perms: null,
+          topic: null,
+        },
+      ],
     })
   const previewing = () =>
     useStore.setState({

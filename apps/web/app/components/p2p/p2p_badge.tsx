@@ -108,7 +108,13 @@ export function MemberAvatar({
   return (
     <KeyAvatar
       person={shownUser(
-        { username: ik, display_name: '', avatar_kind: 'identicon', avatar_color: null },
+        {
+          username: ik,
+          display_name: '',
+          avatar_kind: 'identicon',
+          avatar_color: null,
+          avatar_image: null,
+        },
         look
       )}
       size={size}

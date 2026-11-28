@@ -289,6 +289,7 @@ export const pingEntry = (
     display_name: actorName,
     avatar_kind: 'identicon',
     avatar_color: null,
+    avatar_image: null,
   },
   emoji: p.emoji,
   role: null,

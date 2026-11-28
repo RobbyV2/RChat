@@ -44,7 +44,7 @@ export function useShownMembers(server: string | null | undefined) {
   const parts = useStore(useShallow(s => (server ? shownParts(s, server) : null)))
   return useMemo(
     () =>
-      <T extends UserRef & { profile?: MemberLook }>(m: T): T & ShownPerson =>
+      <T extends UserRef & { profile?: MemberLook | null }>(m: T): T & ShownPerson =>
         shownUser(m, parts && m.profile ? lookIn(m.profile, parts) : null),
     [parts]
   )

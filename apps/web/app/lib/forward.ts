@@ -131,6 +131,7 @@ export function parseForward(raw: string | null): ForwardClip | null {
             display_name: author.display_name,
             avatar_kind: author.avatar_kind,
             avatar_color: author.avatar_color ?? null,
+            avatar_image: null,
           },
     snippet: [...snippet].slice(0, 200).join(''),
     has_media,

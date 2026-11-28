@@ -32,6 +32,8 @@ const plans: Channel = {
   slowmode_seconds: 0,
   category_id: 7,
   perm_sync: false,
+  my_perms: null,
+  topic: null,
 }
 
 beforeEach(() => {
@@ -60,7 +62,21 @@ beforeEach(() => {
   useStore.setState({
     guest: false,
     me: me('alice', {
-      servers: [{ name: 's', display_name: 's', creator: null, is_admin: true }],
+      servers: [
+        {
+          name: 's',
+          display_name: 's',
+          creator: null,
+          is_admin: true,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+      ],
     }),
     servers: {
       s: serverDetail('s', {

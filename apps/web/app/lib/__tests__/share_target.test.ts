@@ -5,7 +5,7 @@ import { blank } from '../p2p/contacts'
 import { attachShare, shareRooms } from '../client/share_target'
 import { client } from '../client/client'
 import { testAccount } from './test_account'
-import { me, serverDetail, textChannel, user } from './fixtures'
+import { dmWith, me, serverDetail, textChannel, user } from './fixtures'
 import { nameLabeller } from '../names'
 
 const plainLabels = nameLabeller(
@@ -20,10 +20,24 @@ function fixture(host: string) {
   account.store.setState(s => ({
     streamer: false,
     me: me('alice', {
-      servers: [{ name: 'garden', display_name: 'Garden', creator: null, is_admin: false }],
+      servers: [
+        {
+          name: 'garden',
+          display_name: 'Garden',
+          creator: null,
+          is_admin: false,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+      ],
     }),
     settings: { ...s.settings, asset_uploads: true },
-    dms: [{ id: 7, is_self: false, other: user('bob') }],
+    dms: [dmWith(7, user('bob'))],
     servers: {
       garden: serverDetail('garden', {
         channels: [{ ...textChannel(3), text_only: true }, textChannel(4), textChannel(5)],

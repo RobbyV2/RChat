@@ -20,6 +20,7 @@ const user = (username: string, display = username): UserRef => ({
   display_name: display,
   avatar_kind: 'identicon',
   avatar_color: null,
+  avatar_image: null,
 })
 
 const entry = (over: Partial<AuditEntry>): AuditEntry => ({

@@ -11,6 +11,11 @@ export function setupCallControls(owner: AccountSession) {
     id: 4,
     other: { ...owner.store.getState().me!, username: 'other', display_name: 'Other' },
     is_self: false,
+    closed: false,
+    friend: false,
+    last_message_at: null,
+    last_message_id: null,
+    seal: { forced: false, on: false },
   }
   owner.store.setState({ dms: [dm], callRoute: 'server' })
   // The contact is online. Cancelling at the switch prompt must precede sending any frame.

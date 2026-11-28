@@ -26,6 +26,7 @@ const alice: UserRef = {
   display_name: 'Alice',
   avatar_kind: 'color',
   avatar_color: '#336699',
+  avatar_image: null,
 }
 
 test('a stored hosted profile and a room intent read as the same draft', () => {
@@ -37,7 +38,7 @@ test('a stored hosted profile and a room intent read as the same draft', () => {
   })
   expect(
     draftOfProfile({
-      look: { name: 'Captain', avatar_kind: 'color', avatar_color: '#112233' },
+      look: { name: 'Captain', avatar_kind: 'color', avatar_color: '#112233', avatar_image: null },
       bio: 'Sails',
       banner_color: '#445566',
     })
@@ -52,7 +53,7 @@ test('a stored hosted profile and a room intent read as the same draft', () => {
   ).toEqual(full)
   expect(
     draftOfProfile({
-      look: { name: null, avatar_kind: null, avatar_color: null },
+      look: { name: null, avatar_kind: null, avatar_color: null, avatar_image: null },
       bio: null,
       banner_color: null,
     })
@@ -167,6 +168,7 @@ test('a mode without names leaves the name out of what is edited and shown', () 
     name: 'Captain',
     avatar_kind: 'color',
     avatar_color: '#112233',
+    avatar_image: null,
   })
   expect(draftLook(full, 'no_names')?.name).toBeNull()
   expect(draftLook(full, 'all', false)?.name).toBeNull()

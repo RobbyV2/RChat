@@ -26,7 +26,16 @@ test('a saved action acts on its account and expires with its session', async ()
 test('a DM menu opens the selected account’s conversation when IDs overlap', () => {
   const a = testAccount('sam', 'https://one.test')
   const b = testAccount('sam', 'https://two.test')
-  const dm = { id: 7, other: user('alice'), is_self: false }
+  const dm = {
+    id: 7,
+    other: user('alice'),
+    is_self: false,
+    closed: false,
+    friend: false,
+    last_message_at: null,
+    last_message_id: null,
+    seal: { forced: false, on: false },
+  }
   const visits: string[] = []
   for (const account of [a, b]) {
     account.store.setState({

@@ -370,6 +370,7 @@ describe('in messages', () => {
       has_media: false,
       deleted: false,
       mention: false,
+      forward: null,
     }
     const html =
       renderToStaticMarkup(<MarkdownMessage message={quoted} />) +

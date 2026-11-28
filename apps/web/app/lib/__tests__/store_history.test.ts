@@ -380,6 +380,9 @@ describe('pending uploads', () => {
       name: `c${id}`,
       kind: 'text' as const,
       slowmode_seconds: 0,
+      category_id: null,
+      my_perms: null,
+      topic: null,
     })
     const thread = (root: Message) => useStore.setState({ panel: { kind: 'thread', root } })
     useStore.setState({
@@ -389,8 +392,26 @@ describe('pending uploads', () => {
         o: serverDetail('o', { channels: [chan(9)] }),
       },
       dms: [
-        { id: 5, other: user('bob'), is_self: false },
-        { id: 6, other: user('carol'), is_self: false },
+        {
+          id: 5,
+          other: user('bob'),
+          is_self: false,
+          closed: false,
+          friend: false,
+          last_message_at: null,
+          last_message_id: null,
+          seal: { forced: false, on: false },
+        },
+        {
+          id: 6,
+          other: user('carol'),
+          is_self: false,
+          closed: false,
+          friend: false,
+          last_message_at: null,
+          last_message_id: null,
+          seal: { forced: false, on: false },
+        },
       ],
       messages: {
         c9: [msg(70, { channel_id: 9, author: user('bob') }), msg(80, { channel_id: 9 })],
@@ -423,7 +444,21 @@ describe('pending uploads', () => {
     const chan = (id: number, mask: bigint) => ({ ...textChannel(id), my_perms: mask })
     useStore.setState({
       me: me('alice', {
-        servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }],
+        servers: [
+          {
+            name: 's',
+            display_name: 's',
+            creator: null,
+            is_admin: false,
+            banner_color: null,
+            icon_image: null,
+            icon_kind: 'identicon' as const,
+            name_color: null,
+            profiles_mode: 'all' as const,
+            timed_out_remaining: null,
+            timed_out_until: null,
+          },
+        ],
       }),
       servers: {
         s: serverDetail('s', {

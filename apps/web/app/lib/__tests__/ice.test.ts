@@ -171,14 +171,20 @@ describe('IceCache', () => {
 
   test('signed-in users fetch TURN credentials; guests stay on STUN', async () => {
     const info = { stun: ['stun:chat.example.com:3478'], turn: true, relay: true }
-    const servers = [{ urls: ['stun:chat.example.com:3478'] }, turnEntry]
+    const servers = [
+      { urls: ['stun:chat.example.com:3478'], credential: null, username: null },
+      turnEntry,
+    ]
     const guest = setup(info, [])
     expect((await guest.cache.setSignedIn(false)).iceServers).toEqual([
       { urls: ['stun:chat.example.com:3478'] },
     ])
     expect(guest.calls.fetch).toBe(0)
     const user = setup(info, [{ ice_servers: servers, expires_at: 1_000 + 3600 }])
-    expect((await user.cache.setSignedIn(true)).iceServers).toEqual(servers)
+    expect((await user.cache.setSignedIn(true)).iceServers).toEqual([
+      { urls: ['stun:chat.example.com:3478'] },
+      turnEntry,
+    ])
     expect(user.calls.fetch).toBe(1)
   })
 

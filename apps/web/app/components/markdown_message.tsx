@@ -1437,7 +1437,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
             )}
           </div>
         )}
-        {message.webhook && message.webhook.embeds.length > 0 && (
+        {message.webhook?.embeds && message.webhook.embeds.length > 0 && (
           <RichEmbeds
             embeds={message.webhook.embeds}
             text={card.text}

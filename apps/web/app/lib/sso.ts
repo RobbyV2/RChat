@@ -34,7 +34,13 @@ export function parseLogoutFlag(raw: string | null): boolean {
   }
 }
 export const INTENT_TTL_MS = 600_000
-export const DEFAULT_AUTH: AuthInfo = { password_login: true, registration: 'open', providers: [] }
+export const DEFAULT_AUTH: AuthInfo = {
+  password_login: true,
+  registration: 'open',
+  providers: [],
+  client_return: null,
+  confirm_login: null,
+}
 export type SsoPurpose = 'login' | 'link' | 'reauth'
 const messages = {
   expired: 'That sign-in expired. Try again.',

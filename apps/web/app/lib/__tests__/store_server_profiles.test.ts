@@ -13,7 +13,12 @@ import { writeJson } from '../api/masks'
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
 const tick = () => flush()
-const robert: MemberLook = { name: 'Robert', avatar_kind: 'color', avatar_color: '#112233' }
+const robert: MemberLook = {
+  name: 'Robert',
+  avatar_kind: 'color',
+  avatar_color: '#112233',
+  avatar_image: null,
+}
 const shown = () => lookOf(st(), { server: 's' }, 'bob')
 
 const realFetch = globalThis.fetch
@@ -40,7 +45,21 @@ beforeEach(() => {
     profileLocks: {},
     settings: { ...st().settings, server_profiles: true, display_names: true },
     me: me('alice', {
-      servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }],
+      servers: [
+        {
+          name: 's',
+          display_name: 's',
+          creator: null,
+          is_admin: false,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+      ],
     }),
     servers: { s: serverDetail('s', { profiles_mode: 'all' }) },
     members: { s: paged([member('bob', { profile: robert })]) },
@@ -68,8 +87,8 @@ describe('server profile events', () => {
     expect(shown()).toEqual(robert)
     expect(cachedProfile(key)).not.toBeNull()
     dispatch({ type: 'member_profile', server: 's', username: 'bob', profile: null, bio: true })
-    expect(st().members.s?.list[0]?.profile).toBeUndefined()
-    expect(st().memberInfo.s?.bob?.profile).toBeUndefined()
+    expect(st().members.s?.list[0]?.profile).toBeNull()
+    expect(st().memberInfo.s?.bob?.profile).toBeNull()
     expect(shown()).toBeNull()
     expect(cachedProfile(key)).toBeNull()
   })
@@ -77,7 +96,19 @@ describe('server profile events', () => {
   test('a stricter server mode hides what was loaded at once; a looser one fetches it again', async () => {
     const mode = (profiles_mode: ProfilesMode): WsEvent => ({
       type: 'server_updated',
-      server: { name: 's', display_name: 's', creator: null, has_password: false, profiles_mode },
+      server: {
+        name: 's',
+        display_name: 's',
+        creator: null,
+        has_password: false,
+        profiles_mode,
+        banner_color: null,
+        description: null,
+        icon_image: null,
+        name_color: null,
+        public_read: null,
+        seal: { forced: false, on: false },
+      },
     })
     dispatch(mode('no_names'))
     expect(st().servers.s?.profiles_mode).toBe('no_names')
@@ -109,7 +140,7 @@ describe('server profile events', () => {
 })
 
 const stored = (over: Partial<ServerProfile> = {}): ServerProfile => ({
-  look: { name: 'Ally', avatar_kind: null, avatar_color: null },
+  look: { name: 'Ally', avatar_kind: null, avatar_color: null, avatar_image: null },
   bio: null,
   banner_color: null,
   effective: { ...me('alice'), display_name: 'Ally' },
@@ -226,10 +257,38 @@ describe('your own server profile', () => {
     const summary = { name: 's', display_name: 's', creator: null, is_admin: false }
     useStore.setState({
       servers: {},
-      me: me('alice', { servers: [{ ...summary, profiles_mode: 'off' }] }),
+      me: me('alice', {
+        servers: [
+          {
+            banner_color: null,
+            icon_image: null,
+            icon_kind: 'identicon' as const,
+            name_color: null,
+            timed_out_remaining: null,
+            timed_out_until: null,
+            ...summary,
+            profiles_mode: 'off',
+          },
+        ],
+      }),
     })
     expect(mayEditProfile(st(), 's')).toBe(false)
-    useStore.setState({ me: me('alice', { servers: [{ ...summary, profiles_mode: 'no_names' }] }) })
+    useStore.setState({
+      me: me('alice', {
+        servers: [
+          {
+            banner_color: null,
+            icon_image: null,
+            icon_kind: 'identicon' as const,
+            name_color: null,
+            timed_out_remaining: null,
+            timed_out_until: null,
+            ...summary,
+            profiles_mode: 'no_names',
+          },
+        ],
+      }),
+    })
     expect(mayEditProfile(st(), 's')).toBe(true)
     useStore.setState({
       servers: { s: serverDetail('s', { profiles_mode: 'all' }) },
@@ -246,6 +305,12 @@ describe('your own server profile', () => {
             creator: null,
             is_admin: false,
             timed_out_until: Math.floor(Date.now() / 1000) + 600,
+            banner_color: null,
+            icon_image: null,
+            icon_kind: 'identicon' as const,
+            name_color: null,
+            profiles_mode: 'all' as const,
+            timed_out_remaining: null,
           },
         ],
       }),

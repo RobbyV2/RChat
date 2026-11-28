@@ -16,6 +16,7 @@ export const guestRef = (name: string): UserRef => ({
   display_name: guestLabel(name),
   avatar_kind: 'identicon',
   avatar_color: null,
+  avatar_image: null,
 })
 
 // Who this tab is in voice: the account, or a guest under its connection's name.

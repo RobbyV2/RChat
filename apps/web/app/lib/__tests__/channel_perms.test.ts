@@ -14,6 +14,9 @@ import { HOSTED, baseBits, channelMask } from '../perms'
 import { ChannelPermBit as B, Perm, type Channel, type ServerDetail } from '../types'
 
 const channel = (id: number, more: Partial<Channel> = {}): Channel => ({
+  category_id: null,
+  my_perms: null,
+  topic: null,
   id,
   name: `c${id}`,
   kind: 'text',

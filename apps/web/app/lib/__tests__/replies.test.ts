@@ -15,6 +15,7 @@ import type { ReplyRef } from '../types'
 import { msg, user } from './fixtures'
 
 const quote = (over: Partial<ReplyRef> = {}): ReplyRef => ({
+  forward: null,
   id: 1,
   author: user('alice'),
   content: 'hi',
@@ -65,6 +66,7 @@ describe('plain snippets for replies being sent', () => {
       has_media: false,
       deleted: false,
       mention: false,
+      forward: null,
     })
     expect(quoteOf({ message: msg(6), mention: true }, 'bob').mention).toBe(true)
   })
@@ -101,6 +103,7 @@ describe('deleted originals', () => {
       has_media: false,
       deleted: true,
       mention: true,
+      forward: null,
     })
     expect(next[2]).toBe(list[2])
     expect(quoteDeleted(next, 1)).toBe(next)
@@ -122,6 +125,7 @@ describe('spoilers in snippets', () => {
 
 describe('partial quotes from WebSocket events', () => {
   const partial = (over: Partial<ReplyRef> = {}): ReplyRef => ({
+    forward: null,
     id: 1,
     author: null,
     content: '',
@@ -155,10 +159,21 @@ describe('partial quotes from WebSocket events', () => {
       has_media: false,
       deleted: false,
       mention: true,
+      forward: null,
     })
     const copy = {
       ...original,
-      forward: { author: null, created_at: 1, source_id: 9, origin: null, dropped: null },
+      forward: {
+        author: null,
+        created_at: 1,
+        source_id: 9,
+        origin: null,
+        dropped: null,
+        origin_channel: null,
+        origin_channel_id: null,
+        origin_server: null,
+        origin_server_channel: null,
+      },
     }
     expect(fillQuote(reply, undefined, copy)?.reply_to?.forwarded).toBe(true)
     expect(fillQuote(reply, undefined, { ...original, channel_id: 99 })).toBeNull()
@@ -175,6 +190,7 @@ describe('partial quotes from WebSocket events', () => {
       has_media: false,
       deleted: true,
       mention: true,
+      forward: null,
     })
   })
 

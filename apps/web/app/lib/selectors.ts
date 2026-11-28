@@ -475,7 +475,13 @@ export const userRefFor = (s: RChatState, username: string): UserRef => {
   let ref = fallbackRefs.get(username)
   if (!ref) {
     if (fallbackRefs.size > 1000) fallbackRefs.clear()
-    ref = { username, display_name: username, avatar_kind: 'identicon', avatar_color: null }
+    ref = {
+      username,
+      display_name: username,
+      avatar_kind: 'identicon',
+      avatar_color: null,
+      avatar_image: null,
+    }
     fallbackRefs.set(username, ref)
   }
   return ref
@@ -515,7 +521,7 @@ export const myTimeoutEnds = (
 ): number | null => {
   if (!server || !s.me) return null
   const until = s.me.servers.find(x => x.name === server)?.timed_out_until
-  return until !== undefined && until * 1000 > now ? until * 1000 : null
+  return until != null && until * 1000 > now ? until * 1000 : null
 }
 
 // The running timeout of `username` in `server` as moderators see it.

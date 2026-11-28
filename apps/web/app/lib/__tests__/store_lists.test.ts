@@ -12,6 +12,11 @@ const dm = (id: number, other: string, is_self = false): DmSummary => ({
   id,
   other: user(other),
   is_self,
+  closed: false,
+  friend: false,
+  last_message_at: null,
+  last_message_id: null,
+  seal: { forced: false, on: false },
 })
 const dmIds = () => st().dms.map(d => d.id)
 
@@ -46,6 +51,13 @@ const srv = (name: string): ServerSummary => ({
   display_name: name,
   creator: null,
   is_admin: false,
+  banner_color: null,
+  icon_image: null,
+  icon_kind: 'identicon' as const,
+  name_color: null,
+  profiles_mode: 'all' as const,
+  timed_out_remaining: null,
+  timed_out_until: null,
 })
 const serverNames = () => st().me?.servers.map(x => x.name) ?? []
 const firstFifty = () => Array.from({ length: 50 }, (_, i) => srv(`s${i}`))
@@ -167,7 +179,18 @@ describe('unread dots for lists that are not loaded', () => {
     dispatch({
       type: 'server_renamed',
       old_name: 'far',
-      server: { name: 'away', display_name: 'Away', creator: null, has_password: false },
+      server: {
+        name: 'away',
+        display_name: 'Away',
+        creator: null,
+        has_password: false,
+        banner_color: null,
+        description: null,
+        icon_image: null,
+        name_color: null,
+        public_read: null,
+        seal: { forced: false, on: false },
+      },
     })
     expect(serverUnread(st(), 'away')).toBe(true)
     dispatch({ type: 'channel_deleted', server: 'away', channel_id: 40 })
@@ -185,7 +208,21 @@ describe('server colors', () => {
       view,
       servers: { club: serverDetail('club') },
       me: me('alice', {
-        servers: [{ name: 'club', display_name: 'club', creator: null, is_admin: true }],
+        servers: [
+          {
+            name: 'club',
+            display_name: 'club',
+            creator: null,
+            is_admin: true,
+            banner_color: null,
+            icon_image: null,
+            icon_kind: 'identicon' as const,
+            name_color: null,
+            profiles_mode: 'all' as const,
+            timed_out_remaining: null,
+            timed_out_until: null,
+          },
+        ],
       }),
     })
     dispatch({
@@ -198,6 +235,10 @@ describe('server colors', () => {
         has_password: false,
         banner_color: '#ff0066',
         name_color: '#ffffff',
+        description: null,
+        icon_image: null,
+        public_read: null,
+        seal: { forced: false, on: false },
       },
     })
     expect(st().view === view).toBe(true)
@@ -207,7 +248,18 @@ describe('server colors', () => {
     dispatch({
       type: 'server_renamed',
       old_name: 'club',
-      server: { name: 'club', display_name: 'club', creator: null, has_password: false },
+      server: {
+        name: 'club',
+        display_name: 'club',
+        creator: null,
+        has_password: false,
+        banner_color: null,
+        description: null,
+        icon_image: null,
+        name_color: null,
+        public_read: null,
+        seal: { forced: false, on: false },
+      },
     })
     expect(st().servers.club.banner_color).toBeNull()
     expect(st().servers.club.name_color).toBeNull()
@@ -261,7 +313,18 @@ describe('removed or renamed list items stay gone', () => {
     dispatch({
       type: 'server_renamed',
       old_name: 's50',
-      server: { name: 'n50', display_name: 'n50', creator: null, has_password: false },
+      server: {
+        name: 'n50',
+        display_name: 'n50',
+        creator: null,
+        has_password: false,
+        banner_color: null,
+        description: null,
+        icon_image: null,
+        name_color: null,
+        public_read: null,
+        seal: { forced: false, on: false },
+      },
     })
     await until(() => requests.length === 2)
     expect(requests).toHaveLength(2)
@@ -318,7 +381,12 @@ describe('removed or renamed list items stay gone', () => {
 })
 
 describe('server bans list', () => {
-  const ban = (i: number) => ({ ...user(`b${i}`), banned_at: 100 - i })
+  const ban = (i: number) => ({
+    expires_at: null,
+    reason: null,
+    ...user(`b${i}`),
+    banned_at: 100 - i,
+  })
   const names = () => st().bans.club.list.map(b => b.username)
 
   test('an unban while a page is in flight does not bring the ban back', async () => {
@@ -458,9 +526,29 @@ describe('resync after the socket lagged', () => {
   })
 
   test('fully drops the open server even when the refetched me already lost it', async () => {
-    const channels = [{ id: 7, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }]
+    const channels = [
+      {
+        id: 7,
+        name: 'general',
+        kind: 'text' as const,
+        slowmode_seconds: 0,
+        category_id: null,
+        my_perms: null,
+        topic: null,
+      },
+    ]
     const rchat = serverDetail('rchat', {
-      channels: [{ id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 }],
+      channels: [
+        {
+          id: 1,
+          name: 'general',
+          kind: 'text',
+          slowmode_seconds: 0,
+          category_id: null,
+          my_perms: null,
+          topic: null,
+        },
+      ],
     })
     useStore.setState({
       me: me('alice', { servers: [srv('rchat'), { ...srv('club'), display_name: 'Club' }] }),

@@ -556,6 +556,7 @@ pub struct Separator {
     pub label: String,
     /// How the line is drawn.
     #[serde(default)]
+    #[schema(required = true)]
     pub style: SeparatorStyle,
     /// Id of the category it is listed in; `null` lists it among the channels without one.
     #[serde(default)]
@@ -563,6 +564,7 @@ pub struct Separator {
     /// How many channels of its list are above it, counting the channels the caller can see.
     /// Separators with the same `after` keep the order they have in their list.
     #[serde(default)]
+    #[schema(required = true)]
     pub after: i64,
 }
 

@@ -29,6 +29,9 @@ const channel = (id: number, name: string, kind: Channel['kind'] = 'text'): Chan
   name,
   kind,
   slowmode_seconds: 0,
+  category_id: null,
+  my_perms: null,
+  topic: null,
 })
 
 describe('system messages', () => {

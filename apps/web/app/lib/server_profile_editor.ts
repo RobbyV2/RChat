@@ -121,7 +121,7 @@ export const extrasOf = (d: ProfileDraft): RoomExtras => {
 }
 
 // The picture a place holds for a profile, outside the draft: it is set and removed at once.
-export type ProfilePicture = Pick<MemberLook, 'avatar_image' | 'avatar_pic'>
+export type ProfilePicture = Partial<Pick<MemberLook, 'avatar_image' | 'avatar_pic'>>
 
 // The look a draft gives under a place's mode, with the picture the place holds.
 export const draftLook = (
@@ -140,7 +140,7 @@ export const draftLook = (
     name,
     avatar_kind: s.avatar?.kind ?? null,
     avatar_color: s.avatar?.color ?? null,
-    ...(image === null ? {} : { avatar_image: image }),
+    avatar_image: image,
     // A P2P place names its picture, or says there is none: an avatar kind then shows no picture.
     ...(pic !== null
       ? { avatar_pic: pic }

@@ -7,11 +7,17 @@ const alice: UserRef = {
   display_name: 'Alice',
   avatar_kind: 'identicon',
   avatar_color: '#112233',
+  avatar_image: null,
 }
 
 describe('a person as a place shows them', () => {
   test('the same account and look give the same person', () => {
-    const look: MemberLook = { name: 'Al', avatar_kind: null, avatar_color: null }
+    const look: MemberLook = {
+      name: 'Al',
+      avatar_kind: null,
+      avatar_color: null,
+      avatar_image: null,
+    }
     const first = shownUser(alice, look)
     expect(first.display_name).toBe('Al')
     expect(first.avatar_color).toBe('#112233')
@@ -21,7 +27,12 @@ describe('a person as a place shows them', () => {
   })
 
   test('another look, or the account changed, gives another person', () => {
-    const look: MemberLook = { name: 'Al', avatar_kind: null, avatar_color: null }
+    const look: MemberLook = {
+      name: 'Al',
+      avatar_kind: null,
+      avatar_color: null,
+      avatar_image: null,
+    }
     const first = shownUser(alice, look)
     expect(shownUser(alice, { ...look })).not.toBe(first)
     expect(shownUser(alice, { ...look })).toEqual(first)

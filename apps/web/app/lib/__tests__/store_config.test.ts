@@ -42,11 +42,23 @@ const srv = (name: string): ServerSummary => ({
   display_name: name,
   creator: null,
   is_admin: false,
+  banner_color: null,
+  icon_image: null,
+  icon_kind: 'identicon' as const,
+  name_color: null,
+  profiles_mode: 'all' as const,
+  timed_out_remaining: null,
+  timed_out_until: null,
 })
 const dm = (id: number, other: string, is_self = false): DmSummary => ({
   id,
   other: user(other),
   is_self,
+  closed: false,
+  friend: false,
+  last_message_at: null,
+  last_message_id: null,
+  seal: { forced: false, on: false },
 })
 
 const realFetch = globalThis.fetch

@@ -50,7 +50,16 @@ test('two instances bootstrap the same username and route messages, badges and p
     const key = memoryStorage.key(i)!
     return [key, memoryStorage.getItem(key)!] as const
   })
-  const room = { id: 4, other: user('friend'), is_self: false }
+  const room = {
+    id: 4,
+    other: user('friend'),
+    is_self: false,
+    closed: false,
+    friend: false,
+    last_message_at: null,
+    last_message_id: null,
+    seal: { forced: false, on: false },
+  }
   const posts: { host: string; auth: string | null; content: string }[] = []
   const peerIds: string[] = []
   const peerNetwork = new Hub()

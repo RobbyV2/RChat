@@ -93,6 +93,8 @@ describe('call log', () => {
     answered_at: answered,
     ended_at: ended,
     outcome: outcome as 'missed' | 'declined' | 'completed' | null,
+    p2p: null,
+    video: null,
   })
 
   test('tones', () => {

@@ -123,7 +123,20 @@ describe('call type on the wire', () => {
       kind: 'rtc',
       ...(video === undefined ? {} : { video }),
     })
-    useStore.setState({ dms: [{ id: 5, other: me('bob'), is_self: false }] })
+    useStore.setState({
+      dms: [
+        {
+          id: 5,
+          other: me('bob'),
+          is_self: false,
+          closed: false,
+          friend: false,
+          last_message_at: null,
+          last_message_id: null,
+          seal: { forced: false, on: false },
+        },
+      ],
+    })
     dispatch(state('ringing', true))
     expect([st().call?.video, st().call?.since]).toEqual([true, null])
     const before = Math.floor(Date.now() / 1000)
@@ -138,7 +151,20 @@ describe('call type on the wire', () => {
   })
 
   test("the server's answer time starts the timer, so a reload keeps it", () => {
-    useStore.setState({ dms: [{ id: 5, other: me('bob'), is_self: false }] })
+    useStore.setState({
+      dms: [
+        {
+          id: 5,
+          other: me('bob'),
+          is_self: false,
+          closed: false,
+          friend: false,
+          last_message_at: null,
+          last_message_id: null,
+          seal: { forced: false, on: false },
+        },
+      ],
+    })
     const answered = Math.floor(Date.now() / 1000) - 90
     dispatch({
       type: 'call_state',

@@ -296,12 +296,36 @@ describe('selection store', () => {
     useStore.setState({
       token: Secret.of('tok'),
       me: me('alice', {
-        servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }],
+        servers: [
+          {
+            name: 's',
+            display_name: 's',
+            creator: null,
+            is_admin: false,
+            banner_color: null,
+            icon_image: null,
+            icon_kind: 'identicon' as const,
+            name_color: null,
+            profiles_mode: 'all' as const,
+            timed_out_remaining: null,
+            timed_out_until: null,
+          },
+        ],
       }),
       guest: false,
       servers: {
         s: serverDetail('s', {
-          channels: [{ id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 }],
+          channels: [
+            {
+              id: 1,
+              name: 'general',
+              kind: 'text',
+              slowmode_seconds: 0,
+              category_id: null,
+              my_perms: null,
+              topic: null,
+            },
+          ],
         }),
       },
       view: { kind: 'channel', server: 's', channelId: 1 },
@@ -480,7 +504,21 @@ describe('selection store', () => {
   test('a moderator deleting all from an author also deletes the other picks', async () => {
     useStore.setState({
       me: me('alice', {
-        servers: [{ name: 's', display_name: 's', creator: null, is_admin: true }],
+        servers: [
+          {
+            name: 's',
+            display_name: 's',
+            creator: null,
+            is_admin: true,
+            banner_color: null,
+            icon_image: null,
+            icon_kind: 'identicon' as const,
+            name_color: null,
+            profiles_mode: 'all' as const,
+            timed_out_remaining: null,
+            timed_out_until: null,
+          },
+        ],
       }),
     })
     routes.push([
@@ -591,7 +629,21 @@ describe('selection store', () => {
   test('the selection menu, the bar and its More menu come from the registry', async () => {
     useStore.setState({
       me: me('alice', {
-        servers: [{ name: 's', display_name: 's', creator: null, is_admin: true }],
+        servers: [
+          {
+            name: 's',
+            display_name: 's',
+            creator: null,
+            is_admin: true,
+            banner_color: null,
+            icon_image: null,
+            icon_kind: 'identicon' as const,
+            name_color: null,
+            profiles_mode: 'all' as const,
+            timed_out_remaining: null,
+            timed_out_until: null,
+          },
+        ],
       }),
     })
     st().startSelection('c1')

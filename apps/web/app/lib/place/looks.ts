@@ -77,7 +77,12 @@ const hosted = (account: AccountSession, server: string | null): Looks => {
           user,
           none
             ? null
-            : { name: name ?? null, avatar_kind: kind ?? null, avatar_color: color ?? null }
+            : {
+                name: name ?? null,
+                avatar_kind: kind ?? null,
+                avatar_color: color ?? null,
+                avatar_image: null,
+              }
         )
         const look = roleLook(serverRoles, [...held])
         return {

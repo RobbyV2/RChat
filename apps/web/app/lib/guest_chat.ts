@@ -20,7 +20,7 @@ export function guestCanPost(
     settings.guest_chat_enabled === true &&
     detail?.guest_chat === true &&
     room?.kind === 'text' &&
-    (room.my_perms === undefined
+    (room.my_perms == null
       ? !room.restrict_send && !room.restrict_view && !detail.read_only?.includes(room.id)
       : hasBit(room.my_perms, ChannelPermBit.SendMessages))
   )

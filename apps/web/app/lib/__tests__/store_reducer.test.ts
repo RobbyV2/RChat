@@ -267,9 +267,45 @@ describe('membership count math', () => {
   })
 
   test('being banned or kicked drops the server and says so; leaving stays quiet', () => {
-    const club = { name: 's', display_name: 'Club', creator: null, is_admin: false }
-    const other = { name: 't', display_name: 'Other', creator: null, is_admin: false }
-    const third = { name: 'u', display_name: 'Third', creator: null, is_admin: false }
+    const club = {
+      name: 's',
+      display_name: 'Club',
+      creator: null,
+      is_admin: false,
+      banner_color: null,
+      icon_image: null,
+      icon_kind: 'identicon' as const,
+      name_color: null,
+      profiles_mode: 'all' as const,
+      timed_out_remaining: null,
+      timed_out_until: null,
+    }
+    const other = {
+      name: 't',
+      display_name: 'Other',
+      creator: null,
+      is_admin: false,
+      banner_color: null,
+      icon_image: null,
+      icon_kind: 'identicon' as const,
+      name_color: null,
+      profiles_mode: 'all' as const,
+      timed_out_remaining: null,
+      timed_out_until: null,
+    }
+    const third = {
+      name: 'u',
+      display_name: 'Third',
+      creator: null,
+      is_admin: false,
+      banner_color: null,
+      icon_image: null,
+      icon_kind: 'identicon' as const,
+      name_color: null,
+      profiles_mode: 'all' as const,
+      timed_out_remaining: null,
+      timed_out_until: null,
+    }
     useStore.setState({
       me: me('alice', { servers: [club, other, third] }),
       servers: { s: serverDetail('s', { display_name: 'Club' }) },
@@ -295,7 +331,18 @@ describe('membership count math', () => {
       me: me('alice'),
       servers: { s: serverDetail('s', { member_count: 3 }) },
       members: { s: paged([member('alice'), member('bob')]) },
-      dms: [{ id: 1, other: user('bob'), is_self: false }],
+      dms: [
+        {
+          id: 1,
+          other: user('bob'),
+          is_self: false,
+          closed: false,
+          friend: false,
+          last_message_at: null,
+          last_message_id: null,
+          seal: { forced: false, on: false },
+        },
+      ],
       messages: { c1: [msg(1, { author: user('bob') }), msg(2, { author: user('alice') })] },
       adminOverview: { user_count: 5, server_count: 2 },
     })

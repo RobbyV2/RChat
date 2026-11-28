@@ -29,6 +29,10 @@ const dm = (id: number, other: string, is_self = false): DmSummary => ({
   other: user(other),
   is_self,
   closed: false,
+  friend: false,
+  last_message_at: null,
+  last_message_id: null,
+  seal: { forced: false, on: false },
 })
 
 const router = {
@@ -162,7 +166,21 @@ describe('recent visits', () => {
   test('visits are stored per account with the names seen, previews are not', () => {
     useStore.setState({
       me: me('alice', {
-        servers: [{ name: 's', display_name: 'Space', creator: null, is_admin: false }],
+        servers: [
+          {
+            name: 's',
+            display_name: 'Space',
+            creator: null,
+            is_admin: false,
+            banner_color: null,
+            icon_image: null,
+            icon_kind: 'identicon' as const,
+            name_color: null,
+            profiles_mode: 'all' as const,
+            timed_out_remaining: null,
+            timed_out_until: null,
+          },
+        ],
       }),
       servers: {
         s: serverDetail('s', { channels: [{ id: 1, name: 'general', kind: 'text' } as Channel] }),
@@ -195,9 +213,45 @@ describe('unread summary', () => {
     useStore.setState({
       me: me('alice', {
         servers: [
-          { name: 'a', display_name: 'A', creator: null, is_admin: false },
-          { name: 'b', display_name: 'B', creator: null, is_admin: false },
-          { name: 'c', display_name: 'C', creator: null, is_admin: false },
+          {
+            name: 'a',
+            display_name: 'A',
+            creator: null,
+            is_admin: false,
+            banner_color: null,
+            icon_image: null,
+            icon_kind: 'identicon' as const,
+            name_color: null,
+            profiles_mode: 'all' as const,
+            timed_out_remaining: null,
+            timed_out_until: null,
+          },
+          {
+            name: 'b',
+            display_name: 'B',
+            creator: null,
+            is_admin: false,
+            banner_color: null,
+            icon_image: null,
+            icon_kind: 'identicon' as const,
+            name_color: null,
+            profiles_mode: 'all' as const,
+            timed_out_remaining: null,
+            timed_out_until: null,
+          },
+          {
+            name: 'c',
+            display_name: 'C',
+            creator: null,
+            is_admin: false,
+            banner_color: null,
+            icon_image: null,
+            icon_kind: 'identicon' as const,
+            name_color: null,
+            profiles_mode: 'all' as const,
+            timed_out_remaining: null,
+            timed_out_until: null,
+          },
         ],
       }),
       reads: {
@@ -222,7 +276,21 @@ describe('unread summary', () => {
       ({ id, name: `c${id}`, kind, slowmode_seconds: 0 }) as Channel
     useStore.setState({
       me: me('alice', {
-        servers: [{ name: 'a', display_name: 'A', creator: null, is_admin: false }],
+        servers: [
+          {
+            name: 'a',
+            display_name: 'A',
+            creator: null,
+            is_admin: false,
+            banner_color: null,
+            icon_image: null,
+            icon_kind: 'identicon' as const,
+            name_color: null,
+            profiles_mode: 'all' as const,
+            timed_out_remaining: null,
+            timed_out_until: null,
+          },
+        ],
       }),
       servers: { a: serverDetail('a', { channels: [channel(1, 'text'), channel(2, 'voice')] }) },
       reads: {

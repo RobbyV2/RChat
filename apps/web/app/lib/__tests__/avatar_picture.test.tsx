@@ -112,15 +112,20 @@ describe('the picture a person carries', () => {
     expect(asAccount(account, 'dm').avatar_image).toBe(ID)
     expect(shownUser(account, null).avatar_image).toBe(ID)
     const { avatar_image: _, ...bare } = account
-    expect(asAccount(bare, 'dm').avatar_image).toBeUndefined()
+    expect(asAccount({ ...bare, avatar_image: null }, 'dm').avatar_image).toBeNull()
   })
 
   test('a look with its own picture shows it, over its own kind or the account kind', () => {
-    const named = { name: 'Robert', avatar_kind: null, avatar_color: null }
+    const named = { name: 'Robert', avatar_kind: null, avatar_color: null, avatar_image: null }
     expect(shownUser(account, named).avatar_image).toBe(ID)
     expect(shownUser(account, { ...named, avatar_image: other }).avatar_image).toBe(other)
-    const kind = { name: null, avatar_kind: 'color' as const, avatar_color: '#112233' }
-    expect(shownUser(account, kind).avatar_image).toBeUndefined()
+    const kind = {
+      name: null,
+      avatar_kind: 'color' as const,
+      avatar_color: '#112233',
+      avatar_image: null,
+    }
+    expect(shownUser(account, kind).avatar_image).toBeNull()
     const both = shownUser(account, { ...kind, avatar_image: other })
     expect([both.avatar_kind, both.avatar_image]).toEqual(['color', other])
   })

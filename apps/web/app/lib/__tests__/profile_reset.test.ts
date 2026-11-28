@@ -174,7 +174,7 @@ describe('what the resets of a room profile hide', () => {
       reset: { last: 'r1', hide: ['name', 'banner'] } as ResetFact,
     }
     expect(shownRoomProfile(m, 'all', NOW * 1000)).toEqual({
-      look: { name: null, avatar_kind: 'color', avatar_color: '#aa0000' },
+      look: { name: null, avatar_kind: 'color', avatar_color: '#aa0000', avatar_image: null },
       bio: 'here',
       banner: null,
     })

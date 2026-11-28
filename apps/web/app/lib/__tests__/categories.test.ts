@@ -34,6 +34,27 @@ const ch = (
 ) => ({ id, name: `c${id}`, kind, slowmode_seconds: 0, position, category_id }) as Channel
 
 const detail = (over: Partial<ServerDetail> = {}): ServerDetail => ({
+  description: null,
+  everyone_perms: 0n,
+  guest_voice: false,
+  hide_members: false,
+  icon_image: null,
+  icon_kind: 'identicon' as const,
+  join_mode: 'name' as const,
+  listed: false,
+  members_visible: false,
+  my_perms: 0n,
+  my_profile: null,
+  profiles_mode: 'all' as const,
+  public_read: null,
+  read_only: [],
+  role_limits: { channel_denies: [], channel_grants: [], held_above: [] },
+  roles_order_confirmed: false,
+  roles_version: 0,
+  seal: { forced: false, on: false },
+  separators: [],
+  upload_expiry: { mode: 'default' as const },
+  upload_ttl: null,
   name: 'club',
   display_name: 'Club',
   creator: 'alice',
@@ -74,8 +95,24 @@ describe('channel groups', () => {
     const legacy = detail({
       categories: [],
       channels: [
-        { id: 7, name: 'b', kind: 'voice', slowmode_seconds: 0 },
-        { id: 5, name: 'a', kind: 'text', slowmode_seconds: 0 },
+        {
+          id: 7,
+          name: 'b',
+          kind: 'voice',
+          slowmode_seconds: 0,
+          category_id: null,
+          my_perms: null,
+          topic: null,
+        },
+        {
+          id: 5,
+          name: 'a',
+          kind: 'text',
+          slowmode_seconds: 0,
+          category_id: null,
+          my_perms: null,
+          topic: null,
+        },
       ],
     })
     expect(ids(channelGroups(legacy, false).uncategorized)).toEqual([5, 7])

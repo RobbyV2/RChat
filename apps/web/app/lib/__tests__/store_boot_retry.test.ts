@@ -8,7 +8,15 @@ import { writeJson } from '../api/masks'
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch
 const realWindow = (globalThis as { window?: unknown }).window
-const chan = { id: 77, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
+const chan = {
+  id: 77,
+  name: 'general',
+  kind: 'text' as const,
+  slowmode_seconds: 0,
+  category_id: null,
+  my_perms: null,
+  topic: null,
+}
 let limited = 0
 let limitedS = false
 let path = '/'
@@ -62,7 +70,23 @@ beforeEach(() => {
     return new Response(writeJson([]), { status: 200 })
   }) as typeof fetch
   useStore.setState({
-    me: me('bob', { servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }] }),
+    me: me('bob', {
+      servers: [
+        {
+          name: 's',
+          display_name: 's',
+          creator: null,
+          is_admin: false,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+      ],
+    }),
     token: Secret.of('t'),
     guest: false,
     error: null,

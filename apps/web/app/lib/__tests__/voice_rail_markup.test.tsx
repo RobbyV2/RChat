@@ -56,6 +56,9 @@ const voiceRoom = (id: number, sensitive = false): Channel => ({
   kind: 'voice',
   slowmode_seconds: 0,
   sensitive,
+  category_id: null,
+  my_perms: null,
+  topic: null,
 })
 const servers = ['a', 'b'].map(name => ({ name, display_name: name, creator: null }))
 const hosted = (sensitive = false) =>

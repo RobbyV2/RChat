@@ -18,6 +18,10 @@ const forward = (author: string) =>
           origin_dm: true,
           origin: 'Direct message',
           dropped: null,
+          origin_channel: null,
+          origin_channel_id: null,
+          origin_server: null,
+          origin_server_channel: null,
         },
       })}
       canDelete={false}
@@ -45,6 +49,7 @@ const linkCard = (author: string) => {
         has_media: false,
         kind: 'user',
         forwarded: false,
+        forward: null,
       },
     },
   })

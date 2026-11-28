@@ -31,6 +31,7 @@ describe('guests in voice', () => {
       display_name: 'Guest 3f9a',
       avatar_kind: 'identicon',
       avatar_color: null,
+      avatar_image: null,
     })
     expect(showsUsername(ref)).toBe(false)
     const hideAll = (text: string) => text.replace(/\S/g, '*')

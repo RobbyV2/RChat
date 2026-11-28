@@ -309,6 +309,7 @@ function AuditPerson({ part, server }: { part: Part; server: string | null | und
       display_name: part.text,
       avatar_kind: 'identicon',
       avatar_color: null,
+      avatar_image: null,
     },
     server
   )

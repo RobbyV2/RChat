@@ -54,7 +54,17 @@ describe('forward clipboard', () => {
     const copy = msg(9, {
       author: user('carol'),
       media: media(),
-      forward: { author: user('bob'), created_at: 3, source_id: 5, origin: null, dropped: null },
+      forward: {
+        author: user('bob'),
+        created_at: 3,
+        source_id: 5,
+        origin: null,
+        dropped: null,
+        origin_channel: null,
+        origin_channel_id: null,
+        origin_server: null,
+        origin_server_channel: null,
+      },
     })
     const fwd = clipOf(copy)
     expect([fwd.id, fwd.author, fwd.created_at, fwd.has_media]).toEqual([9, user('bob'), 3, true])
@@ -64,7 +74,17 @@ describe('forward clipboard', () => {
   test('a forward of a deleted author stays anonymous, never the forwarder', () => {
     const copy = msg(9, {
       author: user('carol'),
-      forward: { author: null, created_at: 3, source_id: 5, origin: null, dropped: null },
+      forward: {
+        author: null,
+        created_at: 3,
+        source_id: 5,
+        origin: null,
+        dropped: null,
+        origin_channel: null,
+        origin_channel_id: null,
+        origin_server: null,
+        origin_server_channel: null,
+      },
     })
     const clip = clipOf(copy)
     expect([clip.author, clip.created_at]).toEqual([null, 3])
@@ -127,7 +147,17 @@ describe('forward clipboard', () => {
   test('forwardPending sees a queued or failed forward of the same clip', () => {
     const out = (source_id: number) => ({
       msg: msg(-1, {
-        forward: { author: user('bob'), created_at: 1, source_id, origin: null, dropped: null },
+        forward: {
+          author: user('bob'),
+          created_at: 1,
+          source_id,
+          origin: null,
+          dropped: null,
+          origin_channel: null,
+          origin_channel_id: null,
+          origin_server: null,
+          origin_server_channel: null,
+        },
       }),
     })
     expect(forwardPending(undefined, 4)).toBe(false)
@@ -184,6 +214,9 @@ describe('where a forward is from', () => {
   const site = { server_joining: 'everyone', public_reading: true, guests_enabled: false } as const
   const closed = { ...site, public_reading: false } as const
   const text = (id: number, name: string, over = {}) => ({
+    category_id: null,
+    my_perms: null,
+    topic: null,
     id,
     name,
     kind: 'text' as const,

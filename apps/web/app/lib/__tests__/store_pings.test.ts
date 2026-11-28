@@ -68,7 +68,18 @@ beforeEach(() => {
         ] as never,
       }),
     },
-    dms: [{ id: 4, other: user('alice'), is_self: false }],
+    dms: [
+      {
+        id: 4,
+        other: user('alice'),
+        is_self: false,
+        closed: false,
+        friend: false,
+        last_message_at: null,
+        last_message_id: null,
+        seal: { forced: false, on: false },
+      },
+    ],
     messages: {},
     newer: {},
     reads: {},
@@ -230,7 +241,21 @@ describe('clearing pings', () => {
         d4: counted('d4', null, 1, 3),
       },
       me: me('bob', {
-        servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }],
+        servers: [
+          {
+            name: 's',
+            display_name: 's',
+            creator: null,
+            is_admin: false,
+            banner_color: null,
+            icon_image: null,
+            icon_kind: 'identicon' as const,
+            name_color: null,
+            profiles_mode: 'all' as const,
+            timed_out_remaining: null,
+            timed_out_until: null,
+          },
+        ],
       }),
     })
     dispatch({ type: 'member_left', server: 's', username: 'bob' })

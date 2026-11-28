@@ -15,6 +15,7 @@ const quote = (author: string): Message['reply_to'] => ({
   has_media: false,
   deleted: false,
   mention: false,
+  forward: null,
 })
 const friend = (name: string): Friend => ({ user: user(name), since: 1, online: true })
 const request = (name: string, incoming: boolean): FriendRequest => ({

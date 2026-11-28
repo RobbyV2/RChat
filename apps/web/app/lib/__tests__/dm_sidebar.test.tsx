@@ -21,6 +21,8 @@ const seed = (state: Partial<RChatState>) => {
 afterEach(() => seed({ ...saved }))
 
 const dm = (id: number, other: string, over: Partial<DmSummary> = {}): DmSummary => ({
+  closed: false,
+  seal: { forced: false, on: false },
   id,
   other: user(other),
   is_self: false,

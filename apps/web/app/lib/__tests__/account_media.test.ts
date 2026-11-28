@@ -42,7 +42,9 @@ test('ICE credentials, relay preferences and pending consent follow their owner 
   expect(a.ice.servers()).toEqual([])
   expect(a.relays.prefs.allowed).toEqual([])
   expect(b.relays.prefs.allowed).toEqual(['other.example'])
-  expect(b.relays.autoConfig().iceServers).toEqual(turn('for-b').ice_servers)
+  expect(b.relays.autoConfig().iceServers).toEqual([
+    { urls: ['turn:relay.example:3478'], username: 'user', credential: 'for-b' },
+  ])
 })
 
 test('each RTC manager signals its own socket and releases only its own microphone and peers', async () => {

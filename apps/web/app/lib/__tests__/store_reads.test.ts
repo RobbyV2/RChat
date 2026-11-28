@@ -51,7 +51,21 @@ beforeEach(() => {
   }) as typeof fetch
   useStore.setState({
     me: me('alice', {
-      servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }],
+      servers: [
+        {
+          name: 's',
+          display_name: 's',
+          creator: null,
+          is_admin: false,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+      ],
     }),
     token: null,
     guest: false,
@@ -215,7 +229,20 @@ describe('unread state from the server', () => {
     expect(requests.some(r => r.url.endsWith('/unreads'))).toBe(true)
     expect(st().reads.c41.lastRead).toBe(30)
     expect(st().reads.c41.latest).toBe(30)
-    useStore.setState({ dms: [{ id: 5, other: user('u5'), is_self: false }] })
+    useStore.setState({
+      dms: [
+        {
+          id: 5,
+          other: user('u5'),
+          is_self: false,
+          closed: false,
+          friend: false,
+          last_message_at: null,
+          last_message_id: null,
+          seal: { forced: false, on: false },
+        },
+      ],
+    })
     await st().openDm(5)
     const posted = requests.filter(r => r.url.endsWith('/read'))
     expect(posted).toHaveLength(1)

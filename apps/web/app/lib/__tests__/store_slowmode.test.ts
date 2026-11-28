@@ -17,14 +17,40 @@ const tick = async () => {
 
 const setup = (slowmode: number, admin = false) =>
   useStore.setState({
-    me: me('bob', { servers: [{ name: 's', display_name: 's', creator: null, is_admin: admin }] }),
+    me: me('bob', {
+      servers: [
+        {
+          name: 's',
+          display_name: 's',
+          creator: null,
+          is_admin: admin,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+      ],
+    }),
     token: Secret.of('t'),
     guest: false,
     error: null,
     view: { kind: 'channel', server: 's', channelId: 77 },
     servers: {
       s: serverDetail('s', {
-        channels: [{ id: 77, name: 'general', kind: 'text', slowmode_seconds: slowmode }],
+        channels: [
+          {
+            id: 77,
+            name: 'general',
+            kind: 'text',
+            slowmode_seconds: slowmode,
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
+        ],
       }),
     },
     messages: { c77: [msg(9, { channel_id: 77 })] },

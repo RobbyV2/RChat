@@ -37,12 +37,31 @@ const me: Me = {
   is_site_admin: false,
   appear_offline: false,
   password_kind: 'text',
-  servers: [{ name: 'garden', display_name: 'Garden', creator: null, is_admin: false }],
+  servers: [
+    {
+      name: 'garden',
+      display_name: 'Garden',
+      creator: null,
+      is_admin: false,
+      banner_color: null,
+      icon_image: null,
+      icon_kind: 'identicon' as const,
+      name_color: null,
+      profiles_mode: 'all' as const,
+      timed_out_remaining: null,
+      timed_out_until: null,
+    },
+  ],
   servers_more: false,
   servers_cursor: null,
   dms: [],
   dms_more: false,
   dms_cursor: null,
+  avatar_image: null,
+  can_create_servers: false,
+  delete_at: null,
+  has_password: false,
+  password_temporary: null,
 }
 shown.store.setState({ me, view: { kind: 'channel', server: 'garden', channelId: 1 } })
 owner.store.setState({ me, view: { kind: 'channel', server: 'garden', channelId: 1 } })

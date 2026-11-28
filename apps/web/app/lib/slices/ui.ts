@@ -81,7 +81,7 @@ export function menuActions(
   // Records the running timeouts (or none) of members of `server`, as a moderator sees them.
   const noteMemberTimeouts = (
     server: string,
-    members: { username: string; timeout?: TimeoutWire }[]
+    members: { username: string; timeout?: TimeoutWire | null }[]
   ) =>
     store.setState(s => {
       const was = s.timeouts[server] ?? {}
@@ -95,7 +95,7 @@ export function menuActions(
       return { timeouts: { ...s.timeouts, [server]: list } }
     })
 
-  const noteTimeout = (server: string, username: string, timeout: TimeoutWire | undefined) =>
+  const noteTimeout = (server: string, username: string, timeout: TimeoutWire | null | undefined) =>
     noteMemberTimeouts(server, [{ username, timeout }])
 
   const confirmTransfer = (server: string, username: string) =>

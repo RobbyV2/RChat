@@ -129,6 +129,7 @@ export function roomProfile(extras: RoomExtras, mode?: ProfilesMode | null): Pla
     name,
     avatar_kind: extras.av?.kind ?? null,
     avatar_color: extras.av?.bg ?? null,
+    avatar_image: null,
     ...(pic ? { avatar_pic: pic } : {}),
   }
   return {

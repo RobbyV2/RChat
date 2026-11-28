@@ -43,6 +43,7 @@ import {
   result,
   serverDetail,
   user,
+  dmWith,
 } from './fixtures'
 import { Secret } from '../secret'
 import { writeJson } from '../api/masks'
@@ -109,8 +110,28 @@ let reply: Reply = () => undefined
 const json = (body: unknown, status = 200) =>
   body instanceof Response ? body : new Response(writeJson(body), { status })
 
-const channel = { id: 77, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
-const summary = { name: 's', display_name: 's', creator: null, is_admin: false }
+const channel = {
+  id: 77,
+  name: 'general',
+  kind: 'text' as const,
+  slowmode_seconds: 0,
+  category_id: null,
+  my_perms: null,
+  topic: null,
+}
+const summary = {
+  name: 's',
+  display_name: 's',
+  creator: null,
+  is_admin: false,
+  banner_color: null,
+  icon_image: null,
+  icon_kind: 'identicon' as const,
+  name_color: null,
+  profiles_mode: 'all' as const,
+  timed_out_remaining: null,
+  timed_out_until: null,
+}
 
 const answer: Reply = (who, method, path, body) => {
   const out = reply(who, method, path, body)
@@ -797,7 +818,7 @@ describe('the session slice', () => {
     late({
       hold: 'GET /dms?ids=5',
       next: 'alice',
-      state: () => ({ dms: [{ id: 7, other: user('alice'), is_self: true }] }),
+      state: () => ({ dms: [dmWith(7, user('alice'), { is_self: true })] }),
       start: () => {
         localStorage.setItem('rchat_last_dm:alice', '5')
         st().openLastDm()
@@ -904,7 +925,20 @@ describe('the messages slice', () => {
       hold: 'POST /dms/5/close',
       next: 'alice',
       start: () => {
-        useStore.setState({ dms: [{ id: 5, other: user('carol'), is_self: false }] })
+        useStore.setState({
+          dms: [
+            {
+              id: 5,
+              other: user('carol'),
+              is_self: false,
+              closed: false,
+              friend: false,
+              last_message_at: null,
+              last_message_id: null,
+              seal: { forced: false, on: false },
+            },
+          ],
+        })
         return st().closeDm(5)
       },
       reply: (who, method, path) =>
@@ -1899,8 +1933,26 @@ describe('flows that wait on a step that drops a late answer', () => {
       then: () =>
         useStore.setState({
           dms: [
-            { id: 6, other: user('carol'), is_self: false },
-            { id: 5, other: user('alice'), is_self: false },
+            {
+              id: 6,
+              other: user('carol'),
+              is_self: false,
+              closed: false,
+              friend: false,
+              last_message_at: null,
+              last_message_id: null,
+              seal: { forced: false, on: false },
+            },
+            {
+              id: 5,
+              other: user('alice'),
+              is_self: false,
+              closed: false,
+              friend: false,
+              last_message_at: null,
+              last_message_id: null,
+              seal: { forced: false, on: false },
+            },
           ],
         }),
       keys: ['dms'],

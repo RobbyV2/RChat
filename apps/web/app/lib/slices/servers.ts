@@ -87,9 +87,9 @@ export interface ServersDeps {
   act: (fn: () => Promise<void>) => Promise<void>
   noteMemberTimeouts: (
     server: string,
-    members: { username: string; timeout?: TimeoutWire }[]
+    members: { username: string; timeout?: TimeoutWire | null }[]
   ) => void
-  noteTimeout: (server: string, username: string, timeout: TimeoutWire | undefined) => void
+  noteTimeout: (server: string, username: string, timeout: TimeoutWire | null | undefined) => void
   applyMic: () => void
   askP2p: (msgs: Message[]) => void
   atHome: () => boolean
@@ -1739,7 +1739,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
                     x.name === ev.server
                       ? {
                           ...x,
-                          timed_out_until: ev.until === null ? undefined : localUntil(ev.remaining),
+                          timed_out_until: ev.until === null ? null : localUntil(ev.remaining),
                         }
                       : x
                   ),

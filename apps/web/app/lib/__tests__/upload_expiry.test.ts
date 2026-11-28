@@ -304,7 +304,15 @@ describe('upload expiry', () => {
       extended: { files: 1, bytes: 5, left_files: 0, left_bytes: 0 },
     }
     expect(serverPatch(state)).toEqual({ upload_expiry: NEVER, upload_ttl: null })
-    expect(serverPatch({ upload_expiry: DEFAULT, upload_ttl: DAY })).toEqual({
+    expect(
+      serverPatch({
+        upload_expiry: DEFAULT,
+        upload_ttl: DAY,
+        extended: null,
+        owner_kept: null,
+        kept: { bytes: 0, full: false, limit: 0 },
+      })
+    ).toEqual({
       upload_expiry: DEFAULT,
       upload_ttl: DAY,
     })

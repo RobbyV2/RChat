@@ -59,6 +59,11 @@ const signedIn = (streamer: boolean, over = {}) =>
           is_admin: true,
           banner_color: null,
           name_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
         },
       ],
     }),
@@ -110,6 +115,7 @@ describe('streamer mode', () => {
       removed: false,
       removed_by_author: false,
       spoiler: false,
+      alt: null,
     }
     const page = () =>
       render(<MarkdownMessage message={msg(3, { author: user('bob'), content: '', media })} />)

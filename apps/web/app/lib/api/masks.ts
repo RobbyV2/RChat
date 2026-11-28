@@ -2,7 +2,7 @@
 // response body and socket event is read by `readJson`, and every request body is written by
 // `writeJson`.
 
-const MASKS = new Set(['perms', 'my_perms', 'everyone_perms', 'allow', 'deny'])
+export const MASKS = new Set(['perms', 'my_perms', 'everyone_perms', 'allow', 'deny'])
 
 export const readJson = (text: string): unknown =>
   JSON.parse(text, (key, value: unknown) =>

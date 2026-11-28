@@ -13,6 +13,7 @@ import { readToken, writeToken } from './client/credentials'
 import { time } from './platform/time'
 import { readJson } from './api/masks'
 import type { Cancel } from './clock'
+import { cleanServers } from './ice'
 
 type Event =
   | WsEvent
@@ -401,7 +402,7 @@ export class WidgetConnection {
       const iceServers: RTCIceServer[] = info.ice?.stun?.length ? [{ urls: info.ice.stun }] : []
       if (this.token && info.ice?.turn) {
         const turn = await this.api.p2pIce()
-        iceServers.push(...turn.ice_servers)
+        iceServers.push(...cleanServers(turn.ice_servers))
       }
       if (this.socket !== ws || !this.joining || !this.rtc.active()) return
       this.ice = { iceServers }

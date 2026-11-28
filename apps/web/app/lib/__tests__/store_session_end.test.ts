@@ -22,7 +22,23 @@ let refuse = false
 
 const signedIn = (name: string) =>
   useStore.setState({
-    me: me(name, { servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }] }),
+    me: me(name, {
+      servers: [
+        {
+          name: 's',
+          display_name: 's',
+          creator: null,
+          is_admin: false,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+      ],
+    }),
     token: Secret.of(`t-${name}`),
     guest: false,
     error: null,
@@ -30,7 +46,17 @@ const signedIn = (name: string) =>
     view: { kind: 'channel', server: 's', channelId: 77 },
     servers: {
       s: serverDetail('s', {
-        channels: [{ id: 77, name: 'general', kind: 'text', slowmode_seconds: 0 }],
+        channels: [
+          {
+            id: 77,
+            name: 'general',
+            kind: 'text',
+            slowmode_seconds: 0,
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
+        ],
       }),
     },
     messages: { c77: [msg(9, { channel_id: 77 })] },

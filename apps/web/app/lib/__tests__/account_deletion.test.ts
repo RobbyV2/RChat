@@ -257,7 +257,7 @@ describe('the account', () => {
     await st().keepAccount()
     expect(calls.some(c => c.method === 'DELETE' && c.url.endsWith('/me/delete'))).toBe(true)
     expect(st().me?.username).toBe('alice')
-    expect(st().me?.delete_at).toBeUndefined()
+    expect(st().me?.delete_at).toBeNull()
     expect(st().toast?.text).toBe('Your account is kept')
   })
 })

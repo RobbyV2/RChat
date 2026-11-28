@@ -2,20 +2,22 @@ import { describe, expect, test } from 'bun:test'
 import { applyServerChange, dropMemberRow } from '../slices/servers'
 import { serverIconColor, serverIconKind } from '../selectors'
 import { useStore, type RChatState } from '../store'
-import type { Channel, ServerSummaryLite } from '../types'
+import type { Channel, ServerSummary, ServerSummaryLite } from '../types'
 import { me, member, paged, role, serverDetail, user } from './fixtures'
 
 const state = (over: Partial<RChatState>): RChatState => ({ ...useStore.getState(), ...over })
-const channel: Channel = { id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 }
-const lite = (over: Partial<ServerSummaryLite> = {}): ServerSummaryLite => ({
-  name: 's',
-  display_name: 'New',
-  creator: null,
-  has_password: true,
-  banner_color: '#222222',
-  name_color: '#333333',
-  ...over,
-})
+// Rows and updates as an older server sends them: only the fields these tests read.
+const channel = { id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 } as Channel
+const lite = (over: Partial<ServerSummaryLite> = {}): ServerSummaryLite =>
+  ({
+    name: 's',
+    display_name: 'New',
+    creator: null,
+    has_password: true,
+    banner_color: '#222222',
+    name_color: '#333333',
+    ...over,
+  }) as ServerSummaryLite
 
 describe('servers reducers', () => {
   test('server_updated carries how people join and whether search lists it', () => {
@@ -35,7 +37,9 @@ describe('servers reducers', () => {
     const s = state({
       servers: { s: detail },
       me: me('bob', {
-        servers: [{ name: 's', display_name: 'Old', creator: null, is_admin: true }],
+        servers: [
+          { name: 's', display_name: 'Old', creator: null, is_admin: true } as ServerSummary,
+        ],
       }),
       view: null,
       voice: null,
@@ -87,8 +91,8 @@ describe('servers reducers', () => {
       servers: { s: detail, t: serverDetail('t') },
       me: me('bob', {
         servers: [
-          { name: 's', display_name: 'Old', creator: null, is_admin: true },
-          { name: 't', display_name: 't', creator: null, is_admin: false },
+          { name: 's', display_name: 'Old', creator: null, is_admin: true } as ServerSummary,
+          { name: 't', display_name: 't', creator: null, is_admin: false } as ServerSummary,
         ],
       }),
       view: null,
@@ -141,13 +145,13 @@ describe('servers reducers', () => {
         is_admin: true,
         banner_color: '#222222',
         name_color: '#333333',
-      },
+      } as ServerSummary,
       s.me!.servers[1],
     ])
   })
 
   test('server_renamed moves the server and its cached state to the new name', () => {
-    const t = { name: 't', display_name: 't', creator: null, is_admin: false }
+    const t = { name: 't', display_name: 't', creator: null, is_admin: false } as ServerSummary
     const s = state({
       servers: { s: serverDetail('s') },
       members: { s: paged([member('bob')]) },
@@ -157,7 +161,10 @@ describe('servers reducers', () => {
       pings: { c1: { scope: 'c1', server: 's', bulk: 1, bulkUntil: 2, ids: [] } },
       groupPings: { c1: { server: 's', items: [{ message_id: 2, kinds: ['everyone'] }] } },
       me: me('bob', {
-        servers: [{ name: 's', display_name: 'Old', creator: null, is_admin: true }, t],
+        servers: [
+          { name: 's', display_name: 'Old', creator: null, is_admin: true } as ServerSummary,
+          t,
+        ],
       }),
       view: { kind: 'channel', server: 's', channelId: 1 },
       voice: { server: 's', channelId: 2 },
@@ -183,7 +190,7 @@ describe('servers reducers', () => {
         is_admin: true,
         banner_color: '#222222',
         name_color: '#333333',
-      },
+      } as ServerSummary,
       t,
     ])
     expect(out.adminServers!.list).toEqual([renamed, s.adminServers.list[1]])

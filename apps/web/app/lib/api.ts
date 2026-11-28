@@ -1346,7 +1346,7 @@ export interface Assertion {
 
 // Your own timeouts end on this device's clock, counted from the seconds left the server sent.
 export const localSummary = (s: ServerSummary, now = time().now()): ServerSummary =>
-  s.timed_out_remaining === undefined
+  s.timed_out_remaining == null
     ? s
     : { ...s, timed_out_until: localUntil(s.timed_out_remaining, now) }
 

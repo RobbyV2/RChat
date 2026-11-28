@@ -72,7 +72,21 @@ beforeEach(() => {
     new Response(writeJson({}), { status: 200 })) as unknown as typeof fetch
   useStore.setState({
     me: me('bob', {
-      servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }],
+      servers: [
+        {
+          name: 's',
+          display_name: 's',
+          creator: null,
+          is_admin: false,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+      ],
     }),
     token: Secret.of('t'),
     guest: false,
@@ -80,12 +94,50 @@ beforeEach(() => {
     servers: {
       s: serverDetail('s', {
         channels: [
-          { id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 },
-          { id: 2, name: 'random', kind: 'text', slowmode_seconds: 0 },
+          {
+            id: 1,
+            name: 'general',
+            kind: 'text',
+            slowmode_seconds: 0,
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
+          {
+            id: 2,
+            name: 'random',
+            kind: 'text',
+            slowmode_seconds: 0,
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
         ],
         roles: [
-          { id: 7, name: 'Crew', color: '#22aa66', perms: 0n, mentionable: true },
-          { id: 8, name: 'Staff', color: '#aa2266', perms: 0n },
+          {
+            id: 7,
+            name: 'Crew',
+            color: '#22aa66',
+            perms: 0n,
+            mentionable: true,
+            color_names: true,
+            display_position: null,
+            hoist: false,
+            icon: null,
+            position: 0,
+          },
+          {
+            id: 8,
+            name: 'Staff',
+            color: '#aa2266',
+            perms: 0n,
+            color_names: true,
+            display_position: null,
+            hoist: false,
+            icon: null,
+            mentionable: false,
+            position: 0,
+          },
         ],
       }),
     },
@@ -164,6 +216,9 @@ describe('group mention helpers', () => {
         last_read: 0,
         latest: 6,
         group_pings: [{ message_id: 6, kinds: ['role'] }],
+        pings: 0,
+        pings_until: 0,
+        thread_pings: [],
       },
     ]
     const merged = mergeGroupPings(before, live, items)
@@ -173,7 +228,20 @@ describe('group mention helpers', () => {
   })
 
   test('pill names use role names and skip unknown roles', () => {
-    const roles = [{ id: 7, name: ' Night Owls ', color: '#fff', perms: 0n }]
+    const roles = [
+      {
+        id: 7,
+        name: ' Night Owls ',
+        color: '#fff',
+        perms: 0n,
+        color_names: true,
+        display_position: null,
+        hoist: false,
+        icon: null,
+        mentionable: false,
+        position: 0,
+      },
+    ]
     expect(groupNames([everyone, here, crew, { kind: 'role', role_id: 99 }], roles)).toEqual([
       ['everyone', 'everyone'],
       ['here', 'here'],
@@ -183,8 +251,30 @@ describe('group mention helpers', () => {
 
   test('autocomplete offers groups only when allowed, mentionable roles always', () => {
     const roles = [
-      { id: 7, name: 'Crew', color: '#22aa66', perms: 0n, mentionable: true },
-      { id: 8, name: 'Staff', color: '#aa2266', perms: 0n },
+      {
+        id: 7,
+        name: 'Crew',
+        color: '#22aa66',
+        perms: 0n,
+        mentionable: true,
+        color_names: true,
+        display_position: null,
+        hoist: false,
+        icon: null,
+        position: 0,
+      },
+      {
+        id: 8,
+        name: 'Staff',
+        color: '#aa2266',
+        perms: 0n,
+        color_names: true,
+        display_position: null,
+        hoist: false,
+        icon: null,
+        mentionable: false,
+        position: 0,
+      },
     ]
     expect(groupSuggestions('', false, roles).map(g => g.label)).toEqual(['@Crew'])
     expect(groupSuggestions('', true, roles).map(g => g.label)).toEqual([

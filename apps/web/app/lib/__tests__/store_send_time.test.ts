@@ -40,14 +40,40 @@ const gate = () => {
 
 const setup = (mineAt: number) =>
   useStore.setState({
-    me: me('bob', { servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }] }),
+    me: me('bob', {
+      servers: [
+        {
+          name: 's',
+          display_name: 's',
+          creator: null,
+          is_admin: false,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+      ],
+    }),
     token: Secret.of('t'),
     guest: false,
     error: null,
     view: { kind: 'channel', server: 's', channelId: 77 },
     servers: {
       s: serverDetail('s', {
-        channels: [{ id: 77, name: 'general', kind: 'text', slowmode_seconds: 0 }],
+        channels: [
+          {
+            id: 77,
+            name: 'general',
+            kind: 'text',
+            slowmode_seconds: 0,
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
+        ],
       }),
     },
     messages: {

@@ -31,12 +31,31 @@ const me: Me = {
   is_site_admin: false,
   appear_offline: false,
   password_kind: 'text',
-  servers: [{ name: 'garden', display_name: 'Garden', creator: null, is_admin: false }],
+  servers: [
+    {
+      name: 'garden',
+      display_name: 'Garden',
+      creator: null,
+      is_admin: false,
+      banner_color: null,
+      icon_image: null,
+      icon_kind: 'identicon' as const,
+      name_color: null,
+      profiles_mode: 'all' as const,
+      timed_out_remaining: null,
+      timed_out_until: null,
+    },
+  ],
   servers_more: false,
   servers_cursor: null,
   dms: [],
   dms_more: false,
   dms_cursor: null,
+  avatar_image: null,
+  can_create_servers: false,
+  delete_at: null,
+  has_password: false,
+  password_temporary: null,
 }
 
 const entry: HistoryEntry = {
@@ -80,6 +99,13 @@ for (const account of [shown, owner]) {
           embeds: [],
           kind: 'user',
           call: null,
+          edited_at: null,
+          forward: null,
+          pin_message_id: null,
+          pinned_at: null,
+          poll: null,
+          reply_to: null,
+          webhook: null,
         },
       ],
     },
@@ -91,7 +117,15 @@ for (const account of [shown, owner]) {
 
 const results = new URLSearchParams(location.search).has('results')
 if (results) {
-  const channel = { id: 14, name: 'study', kind: 'text' as const, slowmode_seconds: 0 }
+  const channel = {
+    id: 14,
+    name: 'study',
+    kind: 'text' as const,
+    slowmode_seconds: 0,
+    category_id: null,
+    my_perms: null,
+    topic: null,
+  }
   const server = {
     name: 'garden',
     display_name: 'Garden',
@@ -103,6 +137,29 @@ if (results) {
     roles: [],
     member_count: 2,
     online_count: 1,
+    categories: [],
+    description: null,
+    everyone_perms: 0n,
+    guest_voice: false,
+    hide_members: false,
+    icon_image: null,
+    icon_kind: 'identicon' as const,
+    join_mode: 'name' as const,
+    layout_version: 0,
+    listed: false,
+    members_visible: false,
+    my_perms: 0n,
+    my_profile: null,
+    profiles_mode: 'all' as const,
+    public_read: null,
+    read_only: [],
+    role_limits: { channel_denies: [], channel_grants: [], held_above: [] },
+    roles_order_confirmed: false,
+    roles_version: 0,
+    seal: { forced: false, on: false },
+    separators: [],
+    upload_expiry: { mode: 'default' as const },
+    upload_ttl: null,
   }
   owner.viewing.markPersonally(
     channelTarget(me.username, 'instance', 'garden', channel, owner.conn),
@@ -119,7 +176,16 @@ if (results) {
     account.store.setState({ servers: { garden: server } })
     account.store.setState({
       dms: [
-        { id: 72, is_self: false, other: { ...me, username: 'willow', display_name: 'Willow' } },
+        {
+          id: 72,
+          is_self: false,
+          other: { ...me, username: 'willow', display_name: 'Willow' },
+          closed: false,
+          friend: false,
+          last_message_at: null,
+          last_message_id: null,
+          seal: { forced: false, on: false },
+        },
       ],
       messages: {
         c14: [

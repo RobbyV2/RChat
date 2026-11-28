@@ -1,13 +1,136 @@
-import type { PollReq } from './api'
-import type { P2pPic } from './p2p/pictures'
-import type { UploadExpiry } from './upload_expiry'
-import type { TimeoutWire } from './timeouts'
+import type {
+  AuthInfo,
+  BlockedUser,
+  BulkJob,
+  CallKind,
+  CallPhase,
+  Channel,
+  ChannelLayout,
+  ChannelPerm,
+  DmCreation,
+  Embed,
+  Friend,
+  FriendRequest,
+  Me,
+  Member,
+  MemberLook,
+  Message,
+  Ping,
+  Poll,
+  ProfanityTargets,
+  Registration,
+  Role,
+  ScheduledMessage,
+  SealJob,
+  ServerCreation,
+  ServerJoining,
+  ServerSummaryLite,
+  ThreadPings,
+  UserRef,
+} from './api/gen'
+export type {
+  AuditEntry,
+  AuditTarget,
+  AuthInfo,
+  AvatarKind,
+  BlockedUser,
+  Brand,
+  BulkJob,
+  CallKind,
+  CallLog,
+  CallPhase,
+  Category,
+  CategoryStyle,
+  Channel,
+  ChannelKind,
+  ChannelLayout,
+  ChannelPerm,
+  CreatedPassword,
+  DmCreation,
+  DmSummary,
+  Embed,
+  EmbedField,
+  ForwardRef,
+  Friend,
+  FriendRequest,
+  FriendSummary,
+  GroupKind,
+  GroupMention,
+  GroupPing,
+  IceServers,
+  InboxFilter,
+  InboxItem,
+  InboxKind,
+  InboxPage,
+  InboxSource,
+  InboxUntil,
+  Invite,
+  InviteLinkInfo,
+  InviteStatus,
+  JoinMode,
+  JoinedVia,
+  LinkedProvider,
+  Me,
+  MediaKind,
+  Member,
+  MemberHit,
+  MemberLook,
+  Message,
+  MessageLocation,
+  MessageWebhook,
+  NewPassword,
+  OptionCount,
+  PasswordMembers,
+  PasswordStatus,
+  Ping,
+  PingKind,
+  Poll,
+  PollKind,
+  PollOption,
+  PollResults,
+  PollVoter,
+  ProfanityTargets,
+  Profile,
+  ProfileMember,
+  ProfilesMode,
+  ReAuthBody,
+  Reaction,
+  Registration,
+  ReplyRef,
+  RichEmbed,
+  Role,
+  RoleLimits,
+  RunoffRound,
+  ScheduledMedia,
+  ScheduledMessage,
+  ScheduledPage,
+  ScheduledPlace,
+  SealJob,
+  SearchResult,
+  Separator,
+  SeparatorStyle,
+  ServerBan,
+  ServerCreation,
+  ServerDetail,
+  ServerJoining,
+  ServerMatch,
+  ServerPassword,
+  ServerPasswords,
+  ServerProfile,
+  ServerProfilePatch,
+  ServerSummary,
+  ServerSummaryLite,
+  ServerUpdated,
+  ShowResults,
+  SystemMessages,
+  ThreadItem,
+  ThreadPings,
+  Unread,
+  UserRef,
+} from './api/gen'
+import type { MediaRef } from './api/gen'
 import type { ProfileChoices, ProfileLevel } from './profile_choice'
-import type { FwdPlace } from './p2p/content'
-import type { ServerIconKind } from './server_about'
 import { hasBit } from './perms'
-
-export type AvatarKind = 'identicon' | 'color'
 
 export const Perm = {
   ManageChannels: 1n,
@@ -57,201 +180,11 @@ export const ROLE_BITS = 36507218943n
 
 export const hasPerm = (perms: bigint, perm: bigint) => hasBit(perms, perm)
 
-export interface UserRef {
-  username: string
-  display_name: string
-  avatar_kind: AvatarKind
-  avatar_color: string | null
-  // The id of an uploaded picture on the instance; the built-in avatar shows without one.
-  avatar_image?: string | null
-  // The picture of a P2P identity, as P2P files.
-  avatar_pic?: P2pPic | null
-}
-
-export interface ServerSummary {
-  name: string
-  display_name: string
-  creator: string | null
-  is_admin: boolean
-  banner_color?: string | null
-  name_color?: string | null
-  // How its icon is drawn. Absent on older servers: the letter.
-  icon_kind?: ServerIconKind
-  // The id of its uploaded picture, drawn over the icon.
-  icon_image?: string | null
-  // your timeout's end in unix seconds; on this device's clock once loaded (see api.ts)
-  timed_out_until?: number
-  timed_out_remaining?: number
-  // What members may set in their server profile. Absent on older servers: nothing.
-  profiles_mode?: ProfilesMode
-}
-
-export interface ServerSummaryLite {
-  name: string
-  display_name: string
-  creator: string | null
-  has_password: boolean
-  banner_color?: string | null
-  name_color?: string | null
-  // "Anyone can read this server": on, off, or null or absent to follow the site.
-  public_read?: boolean | null
-  // The server's guest voice and guest text choices: absent means off.
-  guest_voice?: boolean
-  guest_chat?: boolean
-  // "Members can be seen by people outside this server". Absent on older servers: on.
-  members_visible?: boolean
-  // "Allow members to view the member list" off: only moderators see it. Absent on older
-  // servers, which have no such rule.
-  hide_members?: boolean
-  // How people join. Absent on older servers: `name` without a password, else `password`.
-  join_mode?: JoinMode
-  // Whether search lists it. Absent on older servers: listed.
-  listed?: boolean
-  // What members may set in their server profile. Absent on older servers: nothing.
-  profiles_mode?: ProfilesMode
-  // What it is about, and how its icon is drawn. Absent on older servers: none, the letter.
-  description?: string | null
-  icon_kind?: ServerIconKind
-  icon_image?: string | null
-  // Whether new messages are stored encrypted. Absent on older servers: off.
-  seal?: StoredSeal
-}
-
-export type JoinMode = 'name' | 'invite' | 'password' | 'closed'
-
-// A server's invite link: the code, and the path of the link on its instance.
-export interface InviteLinkInfo {
-  code: string
-  path: string
-}
-
-export type PasswordMembers = 'keep' | 'remove'
-
 export interface ConfirmChoice {
   value: string
   label: string
   detail: string
   danger: boolean
-}
-
-export interface ServerUpdated extends ServerSummaryLite {
-  removed: number
-  kept: number
-}
-
-export type ChannelKind = 'text' | 'voice'
-
-export interface Channel {
-  id: number
-  name: string
-  kind: ChannelKind
-  slowmode_seconds: number
-  text_only?: boolean
-  sensitive?: boolean
-  restrict_view?: boolean
-  restrict_send?: boolean
-  topic?: string | null
-  category_id?: number | null
-  position?: number
-  // Its permission rules copy its category's.
-  perm_sync?: boolean
-  // What you hold in the channel (server details only; events leave it out).
-  my_perms?: bigint
-}
-
-// How a category header is drawn: small capitals, or the name as written with a dotted or
-// solid line after it.
-export type CategoryStyle = 'default' | 'dots' | 'line'
-// How a separator line is drawn after its label: dotted, solid, or no line.
-export type SeparatorStyle = 'dots' | 'line' | 'plain'
-
-export interface Category {
-  id: number
-  name: string
-  position: number
-  // Absent on older servers: default.
-  style?: CategoryStyle
-}
-
-// A decorative line between channels, with an optional label. `after`: the channels of its
-// list (its category's, or those without one) above it that the reader sees.
-export interface Separator {
-  id: number
-  label: string
-  style: SeparatorStyle
-  category_id: number | null
-  after: number
-}
-
-export interface ChannelLayout {
-  version: number
-  uncategorized: number[]
-  categories: { id: number; name: string; style?: CategoryStyle; channels: number[] }[]
-  // Absent on older servers, which have none.
-  separators?: Separator[]
-}
-
-export interface Role {
-  id: number
-  name: string
-  color: string
-  perms: bigint
-  // anyone who can send may mention it
-  mentionable?: boolean
-  // Place in the server's role order: higher ranks higher.
-  position?: number
-  // Place in the order roles show in; null follows `position`.
-  display_position?: number | null
-  // Its members show in a group of their own in the member list.
-  hoist?: boolean
-  // One emoji shown after its members' names.
-  icon?: string | null
-  // It colors its members' names (on unless false).
-  color_names?: boolean
-}
-
-export interface ChannelPerm {
-  subject: string
-  can_view: boolean
-  can_send: boolean
-  can_read_history: boolean
-  // The bits the rule allows and denies, and how a member's rule combines with their roles.
-  allow?: bigint
-  deny?: bigint
-  mode?: 'override' | 'merge'
-}
-
-// What a member set for one server: each field null when they use the account's.
-export interface MemberLook {
-  name: string | null
-  avatar_kind: AvatarKind | null
-  avatar_color: string | null
-  // A picture for this place: over this look's avatar, or the account's when it has no kind.
-  avatar_image?: string | null
-  // The same for a P2P room: the member's picture there as P2P files (their room picture, else
-  // the one of their identity).
-  avatar_pic?: P2pPic | null
-}
-
-export type ProfilesMode = 'all' | 'no_names' | 'off'
-
-export interface ServerProfile {
-  look: MemberLook
-  bio: string | null
-  banner_color: string | null
-  effective: UserRef
-  effective_banner: string | null
-  effective_bio: string | null
-  mode: ProfilesMode
-  locked_until: number | null
-}
-
-export interface ServerProfilePatch {
-  name?: string | null
-  bio?: string | null
-  avatar_kind?: AvatarKind | null
-  avatar_color?: string | null
-  banner_color?: string | null
 }
 
 // What a rule is set to: masks, the three flags, or a rule as listed with its flags changed.
@@ -260,205 +193,12 @@ export type ChannelPermInput =
   | Pick<ChannelPerm, 'subject' | 'can_view' | 'can_send' | 'can_read_history'>
   | ChannelPerm
 
-export interface Member extends UserRef {
-  is_admin: boolean
-  is_creator: boolean
-  online: boolean
-  perms: bigint
-  role_ids: number[]
-  joined_via?: JoinedVia
-  timeout?: TimeoutWire
-  profile?: MemberLook
-}
-
-// A member a member search found, with when they joined and when their account was made.
-export interface MemberHit extends Member {
-  joined_at: number
-  // null for an account that shows its profile only to its friends
-  created_at: number | null
-}
-
-export interface JoinedVia {
-  id: number
-  label: string | null
-}
-
-export type PasswordStatus = 'live' | 'expired' | 'used_up' | 'revoked'
-
-export interface ServerPassword {
-  id: number
-  label: string | null
-  created_by: string | null
-  created_at: number
-  expires_at: number | null
-  max_uses: number | null
-  uses: number
-  status: PasswordStatus
-}
-
-export interface ServerPasswords {
-  protected: boolean
-  permanent: boolean
-  closed: boolean
-  passwords: ServerPassword[]
-}
-
-export interface CreatedPassword extends ServerPassword {
-  password: string
-}
-
-export interface NewPassword {
-  label?: string
-  password?: string
-  expires_in?: number
-  expires_at?: number
-  max_uses?: number
-}
-
-export interface AuditTarget {
-  kind: string
-  id: number | null
-  name: string | null
-  user: UserRef | null
-  staff: boolean
-  deleted: boolean
-}
-
-export interface AuditEntry {
-  id: number
-  action: string
-  actor: UserRef | null
-  staff: boolean
-  target: AuditTarget | null
-  details: Record<string, unknown>
-  hidden: boolean
-  created_at: number
-}
-
-export interface BlockedUser {
-  user: UserRef
-  blocked_at: number
-}
-
-export interface Friend {
-  user: UserRef
-  since: number
-  online: boolean
-}
-
-export interface FriendRequest {
-  user: UserRef
-  created_at: number
-  incoming: boolean
-}
-
-export interface FriendSummary {
-  incoming: number
-  outgoing: number
-  pings: number
-  pings_until: number
-}
-
-export interface ServerBan extends UserRef {
-  banned_at: number
-  expires_at?: number | null
-  reason?: string | null
-}
-
 export interface BanResult {
   ok: boolean
   expires_at: number | null
   purge_places: number
   purge_skipped: number
   purge_busy: number
-}
-
-export interface ServerDetail {
-  name: string
-  display_name: string
-  creator: string | null
-  has_password: boolean
-  banner_color: string | null
-  name_color: string | null
-  // "Anyone can read this server": on, off, or null or absent to follow the site.
-  public_read?: boolean | null
-  // The server's guest voice and guest text choices: absent means off.
-  guest_voice?: boolean
-  guest_chat?: boolean
-  // "Members can be seen by people outside this server". Absent on older servers: on.
-  members_visible?: boolean
-  // "Allow members to view the member list" off: only moderators see it. Absent on older
-  // servers, which have no such rule.
-  hide_members?: boolean
-  // What members may set in their server profile. Absent on older servers: nothing.
-  profiles_mode?: ProfilesMode
-  my_profile?: ServerProfile
-  // How people join. Absent on older servers: `name` without a password, else `password`.
-  join_mode?: JoinMode
-  // Whether search lists it. Absent on older servers: listed.
-  listed?: boolean
-  description?: string | null
-  icon_kind?: ServerIconKind
-  icon_image?: string | null
-  // Whether new messages are stored encrypted. Absent on older servers: off.
-  seal?: StoredSeal
-  channels: Channel[]
-  categories?: Category[]
-  separators?: Separator[]
-  layout_version?: number
-  read_only?: number[]
-  roles: Role[]
-  // The version of the role order, and whether that order decides who may moderate whom.
-  roles_version?: number
-  roles_order_confirmed?: boolean
-  // What everyone in the server holds, and what you hold.
-  everyone_perms?: bigint
-  my_perms?: bigint
-  role_limits?: RoleLimits
-  member_count: number
-  online_count: number
-  // Absent on servers before per-server upload expiry: the instance default.
-  upload_expiry?: UploadExpiry
-  upload_ttl?: number | null
-}
-
-export interface RoleLimits {
-  held_above: number[]
-  channel_grants: number[]
-  channel_denies: number[]
-}
-
-// readable: anyone may read the server, but joining it needs a password or invite (or nobody
-// new may join).
-export type InviteStatus = 'member' | 'banned' | 'joinable' | 'readable'
-
-export interface Invite {
-  server: ServerSummaryLite
-  member_count: number
-  online_count: number
-  status: InviteStatus
-  preview_channel_id?: number | null
-  preview_sensitive?: boolean
-  preview_channel: string | null
-  preview: Message[]
-  password_expires_at: number | null
-  password_uses_left: number | null
-}
-
-export interface DmSummary {
-  id: number
-  other: UserRef
-  is_self: boolean
-  // Closed by you: only lookups by id return it.
-  closed?: boolean
-  // The newest message or call log, null without messages; absent from older servers.
-  last_message_id?: number | null
-  // Unix seconds.
-  last_message_at?: number | null
-  // The other person is an accepted friend; false for the self DM.
-  friend?: boolean
-  // Whether new messages are stored encrypted. Absent on older servers: off.
-  seal?: StoredSeal
 }
 
 // Whether a server or DM stores new messages encrypted with a key the site keeps, and whether
@@ -471,387 +211,15 @@ export interface StoredSeal {
   server_forced?: boolean
 }
 
-export type MediaKind = 'server' | 'p2p'
-
-export interface MessageMedia {
-  id: string
-  filename: string
-  kind: MediaKind
-  hoster: string | null
-  expires_at: number | null
-  size: number | null
-  mime: string | null
-  // SHA-256 of a P2P file, from the sender; absent or null from older senders and servers.
-  sha256?: string | null
-  removed: boolean
-  removed_by_author: boolean
-  spoiler: boolean
-  // A description of the image for people who can't see it; absent without one.
-  alt?: string
-}
-
-export interface Embed {
-  ord: number
-  url: string
-  site_name: string | null
-  title: string | null
-  description: string | null
-  image_url: string | null
-  banner_removed: boolean
-}
+export type MessageMedia = MediaRef
 
 export type MessageKind = 'user' | 'poll' | 'call' | 'pin' | 'join' | 'leave' | 'storage'
 
 export type CallOutcome = 'missed' | 'declined' | 'completed'
 
-export interface CallLog {
-  from: string
-  answered_at: number | null
-  ended_at: number | null
-  outcome: CallOutcome | null
-  // Null or missing for calls logged before these were recorded.
-  p2p?: boolean | null
-  video?: boolean | null
-}
-
-export interface Message {
-  id: number
-  channel_id: number | null
-  dm_id: number | null
-  thread_root_id: number | null
-  author: UserRef
-  content: string
-  created_at: number
-  reply_count: number
-  media: MessageMedia | null
-  embeds: Embed[]
-  no_previews?: boolean
-  kind: MessageKind
-  call: CallLog | null
-  reactions?: Reaction[]
-  reply_to?: ReplyRef | null
-  edited_at?: number | null
-  forward?: ForwardRef | null
-  // unix seconds; null when not pinned
-  pinned_at?: number | null
-  // kind 'pin': the pinned message, null once it is deleted or older than your history
-  pin_message_id?: number | null
-  // @everyone, @here and role mentions that pinged when it was sent
-  group_mentions?: GroupMention[]
-  // kind 'poll': the poll as you see it; on a forwarded poll, a frozen snapshot
-  poll?: Poll | null
-  // Posted through an incoming webhook: the author is `@webhook:<id>`
-  webhook?: MessageWebhook | null
-  // The stored message can't be opened; its content is empty.
-  unreadable?: boolean
-}
-
-export interface EmbedField {
-  name: string
-  value: string
-  inline?: boolean
-}
-
-export interface RichEmbed {
-  title?: string | null
-  description?: string | null
-  url?: string | null
-  color?: number | null
-  fields?: EmbedField[]
-  footer?: { text: string } | null
-}
-
-export interface MessageWebhook {
-  id: number
-  embeds: RichEmbed[]
-}
-
-// A job over the stored messages of a place (`s:<server>`, `d:<dm id>` or `*`): storing its
-// earlier messages encrypted, or its encrypted messages plain again.
-export interface SealJob {
-  id: number
-  place: string
-  direction: 'seal' | 'unseal'
-  upto: number
-  done: number
-  state: 'running' | 'done' | 'failed'
-  created_at: number
-  finished_at: number | null
-}
-
-// A background bulk delete (`all`), see `POST /api/messages/bulk_delete`.
-export interface BulkJob {
-  id: number
-  scope: string
-  status: 'running' | 'done' | 'cancelled' | 'failed'
-  deleted: number
-  skipped: number
-  estimate: number
-  created_at: number
-  finished_at: number | null
-  error: string | null
-}
-
-// Names of a scheduled message's place the owner can open now.
-export interface ScheduledPlace {
-  server: string | null
-  server_name: string | null
-  channel_name: string | null
-  dm_user: UserRef | null
-}
-
-// A message the instance sends later, see `GET /api/me/scheduled`. Times in seconds.
-export interface ScheduledMessage {
-  id: number
-  scope: string
-  channel_id: number | null
-  dm_id: number | null
-  thread_root_id: number | null
-  reply_to: number | null
-  mention_reply: boolean
-  content: string
-  at: number
-  next_at: number
-  status: 'waiting' | 'sending' | 'failed' | 'paused'
-  error: string | null
-  // The uploaded file it carries, and its poll.
-  media?: ScheduledMedia | null
-  poll?: PollReq | null
-  place: ScheduledPlace | null
-  created_at: number
-  updated_at: number
-}
-
-export interface ScheduledMedia {
-  id: string
-  filename: string
-  spoiler: boolean
-  alt: string | null
-}
-
-export interface ScheduledPage {
-  items: ScheduledMessage[]
-  next: string | null
-  waiting: number
-  failed: number
-}
-
-export type GroupKind = 'everyone' | 'here' | 'role'
-
-export interface GroupMention {
-  kind: GroupKind
-  role_id: number | null
-}
-
-// An unread message that pings you through group mentions.
-export interface GroupPing {
-  message_id: number
-  kinds: GroupKind[]
-}
-
-export type PollKind = 'single' | 'multiple' | 'ranked' | 'rating' | 'yes_no'
-export type ShowResults = 'always' | 'after_vote' | 'after_close'
-
-export interface PollOption {
-  id: number
-  text: string
-  emoji: string | null
-}
-
-export interface OptionCount {
-  option_id: number
-  count: number
-}
-
-export interface RunoffRound {
-  counts: OptionCount[]
-  exhausted: number
-  eliminated: number | null
-}
-
-export interface PollResults {
-  // single, multiple, yes_no: picks; ranked: first choices; empty for rating
-  counts: OptionCount[]
-  rounds: RunoffRound[]
-  winner: number | null
-  // rating: voters per score from 1
-  distribution: number[]
-  average: number | null
-}
-
-export interface Poll {
-  kind: PollKind
-  question: string
-  options: PollOption[]
-  anonymous: boolean
-  show_results: ShowResults
-  allow_change: boolean
-  allow_add: boolean
-  min_choices: number
-  max_choices: number
-  scale: number | null
-  closes_at: number | null
-  closed: boolean
-  voters: number
-  // null while hidden from you
-  results: PollResults | null
-  // your vote: option ids (rank order for ranked) or [score]; null when you did not vote or in events
-  mine: number[] | null
-  snapshot?: boolean
-}
-
-// A thread in a channel's or DM's thread list: its root and its newest reply.
-export interface ThreadItem {
-  root: Message
-  last_reply_id: number
-  last_reply_at: number
-}
-
-export interface PollVoter {
-  user: UserRef
-  voted_at: number
-}
-
-export interface SystemMessages {
-  // null: the default channel (the server's first text channel)
-  channel_id: number | null
-  join_messages: boolean
-  leave_messages: boolean
-}
-
-export interface ForwardRef {
-  // null once the original author's account is deleted or banned
-  author: UserRef | null
-  created_at: number
-  source_id: number
-  // ASCII fallback label for older servers
-  origin: string | null
-  origin_dm?: boolean
-  origin_channel_id?: number | null
-  // The channel named by origin_channel_id carries the shared sensitive label
-  origin_sensitive?: boolean
-  origin_channel?: string | null
-  origin_server?: string | null
-  // The channel of origin_server, for a copy from another server whose sender showed it
-  origin_server_channel?: string | null
-  dropped: string | null
-  // Client only: what a P2P copy says of where it's from
-  p2p?: FwdPlace
-}
-
-export interface MessageLocation {
-  id: number
-  server: string | null
-  channel_id: number | null
-  dm_id: number | null
-  thread_root_id: number | null
-  author: UserRef
-  created_at: number
-  content: string
-  has_media: boolean
-  kind: string
-  forwarded: boolean
-  forward?: ForwardRef
-}
-
-export interface ReplyRef {
-  id: number
-  author: UserRef | null
-  content: string
-  has_media: boolean
-  deleted: boolean
-  mention: boolean
-  partial?: boolean
-  forwarded?: boolean
-  // For a quoted forward, where its original came from
-  forward?: ForwardRef
-}
-
-export interface Reaction {
-  emoji: string
-  count: number
-  me: boolean
-  first_at: number
-}
-
-export interface SearchResult {
-  message: Message
-  server: string
-  channel_name: string
-}
-
-export interface ServerMatch {
-  name: string
-  display_name: string
-  has_password: boolean
-  description?: string | null
-  icon_kind?: ServerIconKind
-  icon_image?: string | null
-  banner_color?: string | null
-}
-
-export interface ProfileMember {
-  is_admin: boolean
-  is_creator: boolean
-  perms: bigint
-  role_ids: number[]
-  roles: Role[]
-  joined_at: number
-  online: boolean
-  timeout?: TimeoutWire
-  profile?: MemberLook
-  // Until when (unix seconds) a moderator locked their server profile. Only for viewers who
-  // can reset server profiles.
-  profile_locked_until?: number
-}
-
-export interface Profile {
-  user: UserRef
-  banner_color: string | null
-  bio: string | null
-  created_at: number
-  member: ProfileMember | null
-  // The description and banner the account set for the server the card was opened in.
-  server_bio?: string | null
-  server_banner?: string | null
-}
-
-export interface Me extends UserRef {
-  has_password?: boolean
-  banner_color: string | null
-  bio: string | null
-  is_site_admin: boolean
-  appear_offline: boolean
-  password_kind: 'text' | 'words'
-  servers: ServerSummary[]
-  servers_more: boolean
-  servers_cursor: string | null
-  dms: DmSummary[]
-  dms_more: boolean
-  dms_cursor: string | null
-  // Set while the password is a temporary one: when it stops signing in (unix seconds, null
-  // for never), and what this session must do. Absent on older servers.
-  password_temporary?: { expires_at: number | null; change: PasswordChangeMode } | null
-  // Set while the account waits to be deleted at its own request: when, in unix seconds.
-  delete_at?: number
-}
-
 export interface AuthResponse {
   token: string
   user: Me
-}
-
-export interface ProfanityTargets {
-  messages: boolean
-  links: boolean
-  usernames: boolean
-  server_names: boolean
-  channel_names: boolean
-  role_names: boolean
-  file_names: boolean
-  bios: boolean
-  channel_topics: boolean
-  category_names: boolean
 }
 
 export type ProfanityTarget = keyof ProfanityTargets
@@ -938,14 +306,6 @@ export interface SiteSettings {
 // required: the session can only choose a password. encouraged: it is asked to.
 export type PasswordChangeMode = 'required' | 'encouraged'
 
-export type Registration = 'open' | 'sso' | 'closed'
-
-export type ServerJoining = 'everyone' | 'invites' | 'nobody'
-
-export type ServerCreation = 'everyone' | 'nobody' | 'some'
-
-export type DmCreation = 'everyone' | 'friends' | 'nobody'
-
 export type SiteSettingsPatch = Partial<Omit<SiteSettings, 'profanity_targets'>> & {
   profanity_targets?: Partial<ProfanityTargets>
   // Lists only the site admin reads, in the config view: who "some" means for creating
@@ -979,19 +339,6 @@ export interface InstanceSuggestions {
 }
 
 export type BrandAsset = 'logo' | 'mark-32' | 'mark-180' | 'mark-192' | 'mark-512' | 'mark-maskable'
-
-// The names, texts and images an instance sets for itself and for the app it serves.
-export interface Brand {
-  instance_name: string
-  app_name: string
-  short_name: string
-  about: string
-  links: BrandLink[]
-  login_note: string
-  suggestions: InstanceSuggestions
-  // The uploaded images, each as a path on the instance with its version.
-  assets: Partial<Record<BrandAsset, string>>
-}
 
 // One row of the instance audit log, which only the site admin's panel lists.
 export interface InstanceAuditEntry {
@@ -1105,12 +452,6 @@ export interface AccountServer {
   roles: number[]
 }
 
-export interface ThreadPings {
-  root_id: number
-  pings: number
-  pings_until: number
-}
-
 // Unseen pings of a scope: `pings` counts thread pings too; `pings_until` is the highest unseen
 // ping id outside threads.
 export interface PingSummary {
@@ -1119,24 +460,12 @@ export interface PingSummary {
   thread_pings?: ThreadPings[]
 }
 
-export interface Unread extends PingSummary {
-  scope: string
-  server: string | null
-  last_read: number
-  latest: number
-  group_pings?: GroupPing[]
-}
-
 interface Scoped {
   server: string | null
   channel_id: number | null
   dm_id: number | null
   dm_users: string[] | null
 }
-
-export type CallPhase = 'ringing' | 'active' | 'ended'
-
-export type CallKind = 'rtc' | 'p2p'
 
 // Whether a hoster is online and which of their files we can read. Peer ids are never shared
 // this way; a download asks for one with `p2p_peer`.
@@ -1168,71 +497,6 @@ export interface RtcPayload {
   // The sender's session, and the session of ours it is meant for.
   sid?: string
   rsid?: string
-}
-
-export type PingKind = 'mention' | 'reply' | 'reaction' | 'friend_request' | 'friend_accept'
-
-export interface Ping {
-  id: number
-  kind: PingKind
-  scope: string
-  server: string | null
-  message_id: number
-  thread_root_id: number | null
-  actor: UserRef
-  emoji: string | null
-  excerpt: string
-  created_at: number
-}
-
-// GET /api/inbox: one notification. `id` is unique within `source` (a ping id, the message id of
-// a group mention, a friend ping id).
-export type InboxSource = 'ping' | 'group' | 'friend'
-
-export type InboxKind =
-  | 'mention'
-  | 'reply'
-  | 'reaction'
-  | 'everyone'
-  | 'here'
-  | 'role'
-  | 'friend_request'
-  | 'friend_accept'
-
-export type InboxFilter = 'mentions' | 'replies' | 'reactions' | 'friends'
-
-export interface InboxItem {
-  source: InboxSource
-  id: number
-  kind: InboxKind
-  unread: boolean
-  created_at: number
-  actor: UserRef
-  emoji: string | null
-  role: string | null
-  group_kinds?: GroupKind[]
-  scope: string | null
-  server: string | null
-  server_name: string | null
-  channel_name: string | null
-  message_id: number | null
-  thread_root_id: number | null
-  content: string | null
-  media_filename: string | null
-  media_spoiler?: boolean
-}
-
-export interface InboxUntil {
-  pings: number
-  groups: number
-  friends: number
-}
-
-export interface InboxPage {
-  items: InboxItem[]
-  next: string | null
-  // only with the first page
-  until: InboxUntil | null
 }
 
 export type VoiceMsg =
@@ -1521,26 +785,6 @@ export interface InstanceLimits {
   resync_jitter_ms?: number
   catch_up_delay_ms?: number
 }
-
-export interface LinkedProvider {
-  can_unlink?: boolean
-  provider: string
-  name: string
-  linked_at: number
-}
-export type ReAuthBody =
-  | { password: string }
-  | { words: string[] }
-  | { phrase: { nonce: string; sig: string } }
-  | { idp: { provider: string; code: string } }
-
-export interface AuthInfo {
-  confirm_login?: boolean
-  client_return?: boolean
-  password_login: boolean
-  registration: 'open' | 'sso' | 'closed'
-  providers: { id: string; name: string }[]
-}
 export interface ProviderConfirmation {
   provider: string
   code: string
@@ -1556,6 +800,19 @@ export type ExchangeResponse =
   | ({ kind: 'session'; end_session: boolean; confirmation?: ProviderConfirmation } & AuthResponse)
   | { kind: 'pick_username'; suggestion: string | null; reason: 'taken' | 'invalid' }
   | { kind: 'linked'; provider: string }
+
+// ICE servers the instance offers for P2P connections; absent on instances before API 1.1.
+export interface InstanceIce {
+  stun: string[]
+  turn: boolean
+  relay: boolean
+}
+
+export interface IceServerEntry {
+  urls: string[]
+  username?: string
+  credential?: string
+}
 
 export interface InstanceInfo {
   auth?: AuthInfo
@@ -1581,22 +838,4 @@ export interface InstanceInfo {
   e2ee?: boolean
   sfu?: boolean
   widgets?: boolean
-}
-
-// ICE servers the instance offers for P2P connections; absent on instances before API 1.1.
-export interface InstanceIce {
-  stun: string[]
-  turn: boolean
-  relay: boolean
-}
-
-export interface IceServerEntry {
-  urls: string[]
-  username?: string
-  credential?: string
-}
-
-export interface IceServers {
-  ice_servers: IceServerEntry[]
-  expires_at: number
 }

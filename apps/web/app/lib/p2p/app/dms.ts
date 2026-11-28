@@ -244,6 +244,7 @@ export function createDmsPart(
     display_name: name,
     avatar_kind: 'identicon',
     avatar_color: null,
+    avatar_image: null,
   })
 
   // A new event from the other side: toasts and desktop notifications follow the conversation's

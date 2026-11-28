@@ -8,12 +8,12 @@ import type { MemberLook, UserRef } from './types'
 const minted: unique symbol = Symbol('person')
 type Minted = typeof minted
 
-// Someone as a place shows them. `avatar_image` is there only for someone with a picture on an
+// Someone as a place shows them. `avatar_image` is null unless they have a picture on an
 // instance. `avatar_pic` is the P2P picture a room settled for them (its look says: null for
 // none), and is left out where the picture of their identity shows.
 export class ShownPerson implements UserRef {
   declare private readonly shown: true
-  declare readonly avatar_image?: string
+  declare readonly avatar_image: string | null
   declare readonly avatar_pic?: P2pPic | null
   constructor(
     by: Minted,
@@ -59,7 +59,7 @@ export type AccountWhy =
 // Someone as their account or identity has them.
 export class AccountPerson implements UserRef {
   declare private readonly account: true
-  declare readonly avatar_image?: string
+  declare readonly avatar_image: string | null
   declare readonly avatar_pic?: P2pPic | null
   constructor(
     by: Minted,
@@ -75,7 +75,7 @@ export class AccountPerson implements UserRef {
 
 export type Person = ShownPerson | AccountPerson
 
-const pictureOf = (image: string | null | undefined) => (image ? { avatar_image: image } : {})
+const pictureOf = (image: string | null | undefined) => ({ avatar_image: image || null })
 
 const plain = new WeakMap<UserRef, ShownPerson>()
 const looked = new WeakMap<UserRef, WeakMap<MemberLook, ShownPerson>>()
@@ -167,7 +167,13 @@ const identities = new Map<string, UserRef>()
 export function identityPerson(ik: string, why: AccountWhy): AccountPerson {
   let ref = identities.get(ik)
   if (!ref) {
-    ref = { username: ik, display_name: '', avatar_kind: 'identicon', avatar_color: null }
+    ref = {
+      username: ik,
+      display_name: '',
+      avatar_kind: 'identicon',
+      avatar_color: null,
+      avatar_image: null,
+    }
     identities.set(ik, ref)
   }
   return asAccount(ref, why)

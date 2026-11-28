@@ -30,6 +30,7 @@ describe('a room profile with a picture', () => {
       avatar_kind: null,
       avatar_color: null,
       avatar_pic: pic(1),
+      avatar_image: null,
     })
     expect(roomProfile({ rpic: wire(1) }, 'no_names').look?.avatar_pic).toEqual(pic(1))
     expect(roomProfile({ rpic: wire(1) }, 'off').look).toBeNull()
@@ -67,6 +68,7 @@ describe('a room profile with a picture', () => {
       avatar_kind: null,
       avatar_color: null,
       avatar_pic: pic(1),
+      avatar_image: null,
     })
     expect(roomLooksKey([{ ...plain, pic: pic(1) }])).not.toBe(roomLooksKey([plain]))
     expect(roomLooksKey([{ ...plain, pic: pic(1) }])).not.toBe(
@@ -81,6 +83,7 @@ describe('the P2P picture a person carries', () => {
     display_name: 'Bob',
     avatar_kind: 'identicon' as const,
     avatar_color: null,
+    avatar_image: null,
   }
 
   test('without a look nothing is settled, so the picture of the identity shows', () => {
@@ -89,7 +92,7 @@ describe('the P2P picture a person carries', () => {
   })
 
   test('a look settles it: its picture, none when it says so, else what the key had', () => {
-    const named = { name: 'Bo', avatar_kind: null, avatar_color: null }
+    const named = { name: 'Bo', avatar_kind: null, avatar_color: null, avatar_image: null }
     expect(shownUser(key, { ...named, avatar_pic: pic(1) }).avatar_pic).toEqual(pic(1))
     expect('avatar_pic' in shownUser(key, named)).toBe(false)
     const kind = roomLookOf({ name: 'Bob', av: { kind: 'color', bg: '#112233' } })

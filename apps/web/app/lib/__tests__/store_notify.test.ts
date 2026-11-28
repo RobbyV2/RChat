@@ -132,12 +132,41 @@ beforeEach(() => {
     servers: {
       s: serverDetail('s', {
         channels: [
-          { id: 1, name: 'general', kind: 'text', slowmode_seconds: 0, perms: [] },
-          { id: 2, name: 'random', kind: 'text', slowmode_seconds: 0, perms: [] },
+          {
+            id: 1,
+            name: 'general',
+            kind: 'text',
+            slowmode_seconds: 0,
+            perms: [],
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
+          {
+            id: 2,
+            name: 'random',
+            kind: 'text',
+            slowmode_seconds: 0,
+            perms: [],
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
         ] as never,
       }),
     },
-    dms: [{ id: 4, other: user('alice'), is_self: false }],
+    dms: [
+      {
+        id: 4,
+        other: user('alice'),
+        is_self: false,
+        closed: false,
+        friend: false,
+        last_message_at: null,
+        last_message_id: null,
+        seal: { forced: false, on: false },
+      },
+    ],
     messages: {},
     newer: {},
     reads: {},
@@ -807,8 +836,25 @@ describe('desktop notifications', () => {
       servers: {
         s: serverDetail('s', {
           channels: [
-            { id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 },
-            { id: 3, name: 'proofs', kind: 'text', slowmode_seconds: 0, sensitive: true },
+            {
+              id: 1,
+              name: 'general',
+              kind: 'text',
+              slowmode_seconds: 0,
+              category_id: null,
+              my_perms: null,
+              topic: null,
+            },
+            {
+              id: 3,
+              name: 'proofs',
+              kind: 'text',
+              slowmode_seconds: 0,
+              sensitive: true,
+              category_id: null,
+              my_perms: null,
+              topic: null,
+            },
           ],
         }),
       },
@@ -822,6 +868,9 @@ describe('desktop notifications', () => {
           source_id: 5,
           origin: null,
           origin_channel_id: origin,
+          origin_channel: null,
+          origin_server: null,
+          origin_server_channel: null,
           dropped: null,
         }
       return ev
@@ -892,7 +941,18 @@ describe('membership', () => {
     dispatch({
       type: 'server_renamed',
       old_name: 's',
-      server: { name: 'z', display_name: 'Z', creator: null, has_password: false },
+      server: {
+        name: 'z',
+        display_name: 'Z',
+        creator: null,
+        has_password: false,
+        banner_color: null,
+        description: null,
+        icon_image: null,
+        name_color: null,
+        public_read: null,
+        seal: { forced: false, on: false },
+      },
     })
     expect(Object.keys(st().notifyPrefs.servers)).toEqual(['z'])
   })
@@ -917,7 +977,19 @@ describe('membership', () => {
     p = setLevel(p, { kind: 'channel', id: 1, server: 's' }, 'all')
     p = setLevel(p, { kind: 'channel', id: 50, server: null }, 'all')
     storage.set('rchat_notify:bob', notifyValue(p))
-    const srv = (name: string) => ({ name, display_name: name, creator: null, is_admin: false })
+    const srv = (name: string) => ({
+      name,
+      display_name: name,
+      creator: null,
+      is_admin: false,
+      banner_color: null,
+      icon_image: null,
+      icon_kind: 'identicon' as const,
+      name_color: null,
+      profiles_mode: 'all' as const,
+      timed_out_remaining: null,
+      timed_out_until: null,
+    })
     globalThis.fetch = (async (url: string) => {
       const u = String(url)
       const bob = me('bob', { servers: [srv('s')], dms: [] })

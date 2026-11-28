@@ -21,6 +21,7 @@ let replaced: string[] = []
 let path = '/'
 
 const card = (over: Partial<MessageLocation> = {}): MessageLocation => ({
+  forward: null,
   id: 40,
   server: 's',
   channel_id: 77,
@@ -113,7 +114,23 @@ beforeEach(() => {
     return new Response(writeJson([]), { status: 200 })
   }) as typeof fetch
   useStore.setState({
-    me: me('bob', { servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }] }),
+    me: me('bob', {
+      servers: [
+        {
+          name: 's',
+          display_name: 's',
+          creator: null,
+          is_admin: false,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+      ],
+    }),
     token: Secret.of('t'),
     guest: false,
     error: null,
@@ -128,7 +145,15 @@ beforeEach(() => {
   })
 })
 
-const chan = { id: 77, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
+const chan = {
+  id: 77,
+  name: 'general',
+  kind: 'text' as const,
+  slowmode_seconds: 0,
+  category_id: null,
+  my_perms: null,
+  topic: null,
+}
 const dmRoot = msg(50, { channel_id: null, dm_id: 4, reply_count: 1 })
 const dmReply = msg(51, { channel_id: null, dm_id: 4, thread_root_id: 50 })
 

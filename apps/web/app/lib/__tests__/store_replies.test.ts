@@ -104,6 +104,7 @@ describe('replying state', () => {
       has_media: false,
       deleted: false,
       mention: false,
+      forward: null,
     })
     await tick()
     expect(posts).toEqual([
@@ -146,6 +147,7 @@ describe('deleted originals', () => {
         has_media: false,
         deleted: false,
         mention: true,
+        forward: null,
       },
     })
     useStore.setState({ messages: { c1: [msg(9), alice, reply] } })
@@ -204,6 +206,7 @@ describe('DM replies that ping you', () => {
           has_media: false,
           deleted: false,
           mention: true,
+          forward: null,
         },
       }),
     })
@@ -229,6 +232,7 @@ describe('partial quotes in live events', () => {
     deleted: false,
     mention,
     partial: true,
+    forward: null,
   })
   const live = (m: Message): WsEvent => ({
     type: 'message',
@@ -259,6 +263,7 @@ describe('partial quotes in live events', () => {
       has_media: false,
       deleted: false,
       mention: true,
+      forward: null,
     })
     expect(gets).toEqual([])
   })
@@ -271,6 +276,7 @@ describe('partial quotes in live events', () => {
       has_media: false,
       deleted: false,
       mention: true,
+      forward: null,
     }
     serve(() => [msg(31, { author: user('carol'), reply_to: full })])
     dispatch(live(msg(31, { author: user('carol'), reply_to: ref(3) })))

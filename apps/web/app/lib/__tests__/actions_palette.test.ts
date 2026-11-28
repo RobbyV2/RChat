@@ -96,23 +96,81 @@ const reset = (over: Partial<RChatState> = {}) => {
     guest: false,
     me: me('alice', {
       servers: [
-        { name: 's', display_name: 'Space', creator: null, is_admin: false },
-        { name: 'rchat', display_name: 'Lobby', creator: null, is_admin: false },
+        {
+          name: 's',
+          display_name: 'Space',
+          creator: null,
+          is_admin: false,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+        {
+          name: 'rchat',
+          display_name: 'Lobby',
+          creator: null,
+          is_admin: false,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
       ],
     }),
     servers: {
       s: serverDetail('s', {
         display_name: 'Space',
         channels: [
-          { id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 },
-          { id: 2, name: 'Lounge', kind: 'voice', slowmode_seconds: 0 },
-          { id: 3, name: 'news', kind: 'text', slowmode_seconds: 0 },
+          {
+            id: 1,
+            name: 'general',
+            kind: 'text',
+            slowmode_seconds: 0,
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
+          {
+            id: 2,
+            name: 'Lounge',
+            kind: 'voice',
+            slowmode_seconds: 0,
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
+          {
+            id: 3,
+            name: 'news',
+            kind: 'text',
+            slowmode_seconds: 0,
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
         ],
         roles: [role(1, '#f00', MOD)],
         read_only: [3],
       }),
       rchat: serverDetail('rchat', {
-        channels: [{ id: 10, name: 'lobby', kind: 'text', slowmode_seconds: 0 }],
+        channels: [
+          {
+            id: 10,
+            name: 'lobby',
+            kind: 'text',
+            slowmode_seconds: 0,
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
+        ],
       }),
     },
     members: {
@@ -152,11 +210,36 @@ const reset = (over: Partial<RChatState> = {}) => {
 const channelState = () => reset()
 
 const dmState = () =>
-  reset({ dms: [{ id: 9, other: bobby, is_self: false }], view: { kind: 'dm', dmId: 9 } })
+  reset({
+    dms: [
+      {
+        id: 9,
+        other: bobby,
+        is_self: false,
+        closed: false,
+        friend: false,
+        last_message_at: null,
+        last_message_id: null,
+        seal: { forced: false, on: false },
+      },
+    ],
+    view: { kind: 'dm', dmId: 9 },
+  })
 
 const voiceState = () =>
   reset({
-    dms: [{ id: 9, other: bobby, is_self: false }],
+    dms: [
+      {
+        id: 9,
+        other: bobby,
+        is_self: false,
+        closed: false,
+        friend: false,
+        last_message_at: null,
+        last_message_id: null,
+        seal: { forced: false, on: false },
+      },
+    ],
     call: {
       dmId: 9,
       dmUsers: ['alice', 'bob'],
@@ -200,11 +283,36 @@ const readOnlyState = () => reset({ view: { kind: 'channel', server: 's', channe
 const lobbyState = () => reset({ view: { kind: 'channel', server: 'rchat', channelId: 10 } })
 
 const selfDmState = () =>
-  reset({ dms: [{ id: 4, other: user('alice'), is_self: true }], view: { kind: 'dm', dmId: 4 } })
+  reset({
+    dms: [
+      {
+        id: 4,
+        other: user('alice'),
+        is_self: true,
+        closed: false,
+        friend: false,
+        last_message_at: null,
+        last_message_id: null,
+        seal: { forced: false, on: false },
+      },
+    ],
+    view: { kind: 'dm', dmId: 4 },
+  })
 
 const blockedDmState = () =>
   reset({
-    dms: [{ id: 5, other: user('erin', { display_name: 'Erin' }), is_self: false }],
+    dms: [
+      {
+        id: 5,
+        other: user('erin', { display_name: 'Erin' }),
+        is_self: false,
+        closed: false,
+        friend: false,
+        last_message_at: null,
+        last_message_id: null,
+        seal: { forced: false, on: false },
+      },
+    ],
     view: { kind: 'dm', dmId: 5 },
   })
 
@@ -1075,11 +1183,35 @@ test('an untimeout run by id in a server named like a built-in acts only on a li
   const ctor = 'constructor'
   reset({
     me: me('alice', {
-      servers: [{ name: ctor, display_name: 'Ctor', creator: null, is_admin: false }],
+      servers: [
+        {
+          name: ctor,
+          display_name: 'Ctor',
+          creator: null,
+          is_admin: false,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+      ],
     }),
     servers: {
       [ctor]: serverDetail(ctor, {
-        channels: [{ id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 }],
+        channels: [
+          {
+            id: 1,
+            name: 'general',
+            kind: 'text',
+            slowmode_seconds: 0,
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
+        ],
         roles: [role(1, '#f00', MOD)],
       }),
     },

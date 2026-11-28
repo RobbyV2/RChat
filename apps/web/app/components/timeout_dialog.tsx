@@ -52,7 +52,7 @@ export function useMyTimeoutEnds(server: string | null | undefined): number | nu
   const until = useStore(s =>
     server ? s.me?.servers.find(x => x.name === server)?.timed_out_until : undefined
   )
-  const ends = until === undefined ? null : until * 1000
+  const ends = until == null ? null : until * 1000
   const now = useNow(ends !== null && ends > time().now())
   return ends !== null && ends > now ? ends : null
 }

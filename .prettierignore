@@ -41,6 +41,7 @@ crates/identity/tests/vectors.json
 
 # Generated from the server's code, kept byte for byte
 assets/openapi.json
+apps/web/app/lib/api/gen.ts
 
 # Written by cargo test -p rchat-settings
 apps/web/app/lib/admin/rows.gen.ts

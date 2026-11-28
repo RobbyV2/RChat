@@ -17,7 +17,7 @@ import {
 import { openPalette, openPollFromPalette, usePaletteUi } from '../palette_store'
 import { useStore } from '../store'
 import type { Message, WsEvent } from '../types'
-import { advance, me, memoryStorage, msg, serverDetail, user } from './fixtures'
+import { advance, dmWith, me, memoryStorage, msg, serverDetail, user } from './fixtures'
 import { Secret } from '../secret'
 import { writeJson } from '../api/masks'
 
@@ -163,8 +163,32 @@ describe('following the app', () => {
     token: Secret.of('tok'),
     me: me('alice', {
       servers: [
-        { name: 's', display_name: 'S', creator: null, is_admin: false },
-        { name: 't', display_name: 'T', creator: null, is_admin: false },
+        {
+          name: 's',
+          display_name: 'S',
+          creator: null,
+          is_admin: false,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+        {
+          name: 't',
+          display_name: 'T',
+          creator: null,
+          is_admin: false,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
       ],
     }),
     guest: false,
@@ -172,15 +196,41 @@ describe('following the app', () => {
     servers: {
       s: serverDetail('s', {
         channels: [
-          { id: 1, name: 'general', kind: 'text' as const, slowmode_seconds: 0 },
-          { id: 2, name: 'random', kind: 'text' as const, slowmode_seconds: 0 },
+          {
+            id: 1,
+            name: 'general',
+            kind: 'text' as const,
+            slowmode_seconds: 0,
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
+          {
+            id: 2,
+            name: 'random',
+            kind: 'text' as const,
+            slowmode_seconds: 0,
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
         ],
       }),
       t: serverDetail('t', {
-        channels: [{ id: 5, name: 'x', kind: 'text' as const, slowmode_seconds: 0 }],
+        channels: [
+          {
+            id: 5,
+            name: 'x',
+            kind: 'text' as const,
+            slowmode_seconds: 0,
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
+        ],
       }),
     },
-    dms: [{ id: 9, other: user('bob'), is_self: false }],
+    dms: [dmWith(9, user('bob'))],
     blocked: {},
     members: {},
     memberInfo: {},

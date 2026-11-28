@@ -234,6 +234,8 @@ describe('list state', () => {
 })
 
 const row = (over: Partial<ScheduledMessage> = {}): ScheduledMessage => ({
+  media: null,
+  poll: null,
   id: 7,
   scope: 'c3',
   channel_id: 3,

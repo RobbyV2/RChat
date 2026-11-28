@@ -18,6 +18,8 @@ const ch = (id: number, position: number, category_id: number | null = null): Ch
   slowmode_seconds: 0,
   position,
   category_id,
+  my_perms: null,
+  topic: null,
 })
 
 const groups = () => {
@@ -36,7 +38,21 @@ const pending: ((r: Response) => void)[] = []
 const signedIn = () =>
   useStore.setState({
     me: me('alice', {
-      servers: [{ name: 'club', display_name: 'club', creator: 'alice', is_admin: true }],
+      servers: [
+        {
+          name: 'club',
+          display_name: 'club',
+          creator: 'alice',
+          is_admin: true,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+      ],
     }),
     view: null,
     error: null,

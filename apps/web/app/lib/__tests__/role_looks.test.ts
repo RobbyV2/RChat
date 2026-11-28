@@ -20,6 +20,11 @@ import { loadPerms } from './helpers/perms'
 import { serverDetail } from './fixtures'
 
 const role = (id: number, position: number, over: Partial<Role> = {}): Role => ({
+  color_names: true,
+  display_position: null,
+  hoist: false,
+  icon: null,
+  mentionable: false,
   id,
   name: `r${id}`,
   color: `#00000${id}`,

@@ -5,7 +5,7 @@ import { expect, test } from 'bun:test'
 import { listenForLinks } from '../../components/desktop_bridge'
 import { handleAndroidBack } from '../../components/mobile_bridge'
 import { client } from '../client/client'
-import { user } from './fixtures'
+import { dmWith, user } from './fixtures'
 import { testAccount } from './test_account'
 
 function replaceGlobal(key: string, value: unknown) {
@@ -63,7 +63,7 @@ for (const switched of [false, true]) {
     const paths: string[] = []
     for (const owner of [a, b])
       owner.store.setState({
-        dms: [1, 2].map(id => ({ id, other: user('friend'), is_self: false })),
+        dms: [1, 2].map(id => dmWith(id, user('friend'))),
         openDm: async id => {
           paths.push('/dm/' + id + '/')
         },

@@ -15,6 +15,10 @@ const dm = (id: number, other: string, is_self = false, closed = false): DmSumma
   other: user(other),
   is_self,
   closed,
+  friend: false,
+  last_message_at: null,
+  last_message_id: null,
+  seal: { forced: false, on: false },
 })
 const dmIds = () => st().dms.map(d => d.id)
 const pinned = () => dmView(st()).pinned.map(d => d.id)

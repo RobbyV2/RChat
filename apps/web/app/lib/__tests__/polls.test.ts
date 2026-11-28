@@ -24,7 +24,7 @@ import { canPin } from '../pins'
 import { canQuote } from '../replies'
 import type { Message, Poll, ServerDetail, WsEvent } from '../types'
 import { managesPoll } from '../actions/message'
-import { advance, me, msg, serverDetail } from './fixtures'
+import { advance, me, msg, serverDetail, summary } from './fixtures'
 import { Secret } from '../secret'
 import { writeJson } from '../api/masks'
 
@@ -311,15 +311,7 @@ describe('poll store', () => {
       useStore.setState({
         servers: { s: serverDetail('s', { channels }) },
         me: me('bob', {
-          servers: [
-            {
-              name: 's',
-              display_name: 's',
-              creator: null,
-              is_admin: false,
-              timed_out_until: until,
-            },
-          ],
+          servers: [summary('s', { timed_out_until: until ?? null })],
         }),
       })
     timedOut(undefined)

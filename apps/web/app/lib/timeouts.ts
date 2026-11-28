@@ -3,6 +3,7 @@
 import { TIMEOUT_PRESETS } from './durations'
 import { time } from './platform/time'
 import type { Cancel } from './clock'
+import type { MemberTimeout } from './api/gen'
 
 export {
   TIMEOUT_MAX,
@@ -18,11 +19,7 @@ export interface Timeout {
   reason: string | null
 }
 
-export interface TimeoutWire {
-  until: number
-  remaining: number
-  reason: string | null
-}
+export type TimeoutWire = MemberTimeout
 
 // The device time a timeout ends at, from the seconds left the server sent (clock skew safe).
 export const fromWire = (t: TimeoutWire, now = time().now()): Timeout => ({

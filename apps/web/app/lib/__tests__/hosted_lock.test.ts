@@ -1,7 +1,7 @@
 import { Ended } from '../slices/ctx'
 import { testAccount } from './test_account'
 import { createPeerFixture } from './peer_fixture'
-import { user } from './fixtures'
+import { dmWith, user } from './fixtures'
 import { peerLinkRequest } from '../client/peer_links'
 import { linkChoice, routeInstanceLink } from '../client/instance_links'
 import { attachShare, shareRooms } from '../client/share_target'
@@ -178,7 +178,7 @@ test('revoking access retires the foreign link chooser, peer identity and pendin
     const audience = source.invites.watch(beta).snapshot()
     remote.store.setState(s => ({
       settings: { ...s.settings, asset_uploads: true },
-      dms: [{ id: 7, is_self: false, other: user('recipient') }],
+      dms: [dmWith(7, user('recipient'))],
       openDm: async id => {
         await wait.promise
         remote.store.setState({ view: { kind: 'dm', dmId: id } })

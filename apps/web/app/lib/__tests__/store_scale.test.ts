@@ -27,6 +27,11 @@ const dm = (id: number): DmSummary => ({
   id,
   other: user(`u${id}`),
   is_self: false,
+  closed: false,
+  friend: false,
+  last_message_at: null,
+  last_message_id: null,
+  seal: { forced: false, on: false },
 })
 const reads = () => requests.filter(r => r.url.endsWith('/read'))
 

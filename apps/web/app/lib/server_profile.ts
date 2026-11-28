@@ -66,7 +66,7 @@ export const lookIn = (look: MemberLook, shown: ShownParts): MemberLook | null =
     name,
     avatar_kind: kind,
     avatar_color: kind === null ? null : look.avatar_color,
-    ...(image === null ? {} : { avatar_image: image }),
+    avatar_image: image,
   }
 }
 
@@ -102,12 +102,11 @@ export function lookOf(s: LookSource, place: Place, who: string): MemberLook | n
 }
 
 // `member` with the look a `member_profile` event carries: null takes the look away.
-export function withLook<T extends { profile?: MemberLook }>(
+export function withLook<T extends { profile?: MemberLook | null }>(
   member: T,
   look: MemberLook | null
 ): T {
-  const { profile: _, ...rest } = member
-  return (look ? { ...rest, profile: look } : rest) as T
+  return { ...member, profile: look }
 }
 
 export interface BannerFacts {
@@ -200,6 +199,7 @@ export const roomLookOf = (m: RoomMember | undefined): MemberLook | null => {
     name,
     avatar_kind: m.av?.kind ?? null,
     avatar_color: m.av?.bg ?? null,
+    avatar_image: null,
     // An avatar kind chosen for the room, without a picture there, shows no picture.
     ...(m.pic ? { avatar_pic: m.pic } : m.av ? { avatar_pic: null } : {}),
   }

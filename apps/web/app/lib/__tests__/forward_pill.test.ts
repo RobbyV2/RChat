@@ -97,14 +97,16 @@ describe('forwardPill', () => {
 })
 
 describe('instance copies', () => {
-  const ref = (over: Partial<ForwardRef> = {}): ForwardRef => ({
-    author: user('carol'),
-    created_at: 3,
-    source_id: 40,
-    origin: null,
-    dropped: null,
-    ...over,
-  })
+  // A forward as an older server sends it: without the structured origin fields.
+  const ref = (over: Partial<ForwardRef> = {}): ForwardRef =>
+    ({
+      author: user('carol'),
+      created_at: 3,
+      source_id: 40,
+      origin: null,
+      dropped: null,
+      ...over,
+    }) as ForwardRef
 
   test('carriedOf reads the structured fields, and the label from servers without them', () => {
     expect(carriedOf(ref({ origin: 'Direct message', origin_dm: true }))).toEqual(dm)
@@ -143,8 +145,24 @@ describe('instance copies', () => {
     expect(carriedOf(ref())).toEqual(nothing)
   })
 
-  const general = { id: 1, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
-  const reading = { id: 7, name: 'reading', kind: 'text' as const, slowmode_seconds: 0 }
+  const general = {
+    id: 1,
+    name: 'general',
+    kind: 'text' as const,
+    slowmode_seconds: 0,
+    category_id: null,
+    my_perms: null,
+    topic: null,
+  }
+  const reading = {
+    id: 7,
+    name: 'reading',
+    kind: 'text' as const,
+    slowmode_seconds: 0,
+    category_id: null,
+    my_perms: null,
+    topic: null,
+  }
   const s = {
     servers: {
       club: serverDetail('club', { display_name: 'Book Club', channels: [general, reading] }),

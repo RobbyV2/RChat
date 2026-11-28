@@ -93,6 +93,8 @@ describe('link preview images', () => {
     removed: false,
     removed_by_author: false,
     spoiler: false,
+    alt: null,
+    sha256: null,
   })
   const attached = (filename: string) =>
     renderToStaticMarkup(<MarkdownMessage message={msg(5, { media: file(filename) })} />)

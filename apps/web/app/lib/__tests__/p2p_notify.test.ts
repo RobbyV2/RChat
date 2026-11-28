@@ -25,6 +25,7 @@ const actor = {
   display_name: 'Bob',
   avatar_kind: 'identicon' as const,
   avatar_color: null,
+  avatar_image: null,
 }
 
 const arrival = (

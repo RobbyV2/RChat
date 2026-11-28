@@ -87,6 +87,7 @@ const userRef = (u: UserRef): UserRef => ({
   display_name: u.display_name,
   avatar_kind: u.avatar_kind,
   avatar_color: u.avatar_color,
+  avatar_image: u.avatar_image,
 })
 
 const copy = (text: string) => void sharing().copyText(text)

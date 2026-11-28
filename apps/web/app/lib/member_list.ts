@@ -36,7 +36,7 @@ export const P2P_MEMBERS_NOTE =
 interface HostedPlace {
   hide_members?: boolean
   members_visible?: boolean
-  my_perms?: bigint
+  my_perms?: bigint | null
   everyone_perms?: bigint
 }
 
@@ -48,7 +48,7 @@ export const hostedMembersHidden = (p: {
   siteAdmin: boolean
   member: boolean
   detail: HostedPlace | undefined
-  channel?: { my_perms?: bigint } | null
+  channel?: { my_perms?: bigint | null } | null
 }): MembersHidden | null => {
   const { siteOn, siteAdmin, member, detail, channel } = p
   if (detail?.hide_members === undefined)
@@ -65,12 +65,12 @@ export const hostedMembersHidden = (p: {
       {
         kind: 'visitor',
         everyone: detail.everyone_perms ?? 0n,
-        ...(here === undefined ? {} : { here }),
+        ...(here == null ? {} : { here }),
       },
       place
     )
   return memberListHidden(
-    { kind: 'member', server: detail.my_perms ?? 0n, ...(here === undefined ? {} : { here }) },
+    { kind: 'member', server: detail.my_perms ?? 0n, ...(here == null ? {} : { here }) },
     place
   )
 }

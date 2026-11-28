@@ -1,50 +1,22 @@
 import { durationText } from './timeouts'
 import type { InstanceInfo } from './types'
 
-// How long a server keeps uploaded files: the instance default, a custom time, or until removed.
-export type ExpiryMode = 'default' | 'custom' | 'never'
-
-export interface UploadExpiry {
-  mode: ExpiryMode
-  // Seconds after upload for `custom`, else null.
-  seconds: number | null
-}
-
-// The files a server keeps longer than the instance default, against the instance's limit for
-// one server (0: no limit). `full`: a file of the largest upload size (or of the whole limit, if
-// smaller) no longer fits.
-export interface KeptSpace {
-  bytes: number
-  limit: number
-  full: boolean
-}
-
-// What a change did to the files already posted: how many now stay longer, and how many were
-// left at the instance default because the kept space is full.
-export interface Extended {
-  files: number
-  bytes: number
-  left_files: number
-  left_bytes: number
-}
-
-// The same across all servers whose longer choice one account set, which a file must fit too.
-// `bytes` is null unless you are that account.
-export interface OwnerKept {
-  bytes: number | null
-  limit: number
-  full: boolean
-}
-
-export interface UploadExpiryState {
-  upload_expiry: UploadExpiry
-  upload_ttl: number | null
-  // Absent on servers before the kept space.
-  kept?: KeptSpace
-  // Null when no account is charged for the choice: the server has only its own kept space.
-  owner_kept?: OwnerKept | null
-  extended?: Extended
-}
+import type {
+  ExpiryMode,
+  Extended,
+  KeptSpace,
+  OwnerKept,
+  UploadExpiry,
+  UploadExpiryState,
+} from './api/gen'
+export type {
+  ExpiryMode,
+  Extended,
+  KeptSpace,
+  OwnerKept,
+  UploadExpiry,
+  UploadExpiryState,
+} from './api/gen'
 
 const DAY = 86400
 const HOUR = 3600
@@ -202,7 +174,7 @@ export const newFilesText = (
 const files = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 
 // After a save: how many files already posted now stay longer, and how many did not fit.
-export const savedText = (extended: Extended | undefined, base: number) =>
+export const savedText = (extended: Extended | null | undefined, base: number) =>
   [
     'Saved.',
     extended && extended.files > 0
@@ -238,7 +210,7 @@ export interface ExpiryForm {
 }
 
 export const expiryChoice = (choice: UploadExpiry | undefined): ExpiryForm => {
-  if (!choice || choice.mode !== 'custom' || choice.seconds === null)
+  if (!choice || choice.mode !== 'custom' || choice.seconds == null)
     return { mode: choice?.mode ?? 'default', amount: 1, unit: 'days' }
   return choice.seconds % DAY === 0
     ? { mode: 'custom', amount: choice.seconds / DAY, unit: 'days' }

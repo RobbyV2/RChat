@@ -54,6 +54,10 @@ describe('thread lists', () => {
       source_id: 2,
       origin: null,
       dropped: null,
+      origin_channel: null,
+      origin_channel_id: null,
+      origin_server: null,
+      origin_server_channel: null,
     }
     expect(rootLine({ ...msg(1), content: '', forward: fwd }, true).label).toBe('Forwarded message')
   })

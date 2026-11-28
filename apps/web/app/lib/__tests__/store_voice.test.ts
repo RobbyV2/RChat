@@ -6,7 +6,7 @@ import { getHomeSession, useStore, resetSessionCaches } from '../store'
 import { SELF_AUDIO_IDLE, toggleDeafenAudio, toggleMicAudio, type SelfAudio } from '../voice_layout'
 import { ChannelPermBit, type VoiceMsg } from '../types'
 import { TIMED_OUT_CAMERA, TIMED_OUT_SHARE } from '../timeouts'
-import { drain, me, serverDetail, until } from './fixtures'
+import { drain, me, serverDetail, summary as summaryOf, until, dmWith } from './fixtures'
 import { AUDIO_SEND_MS } from '../slices/rtc'
 
 let clock: ManualTime
@@ -274,7 +274,20 @@ describe('voice and call mic state', () => {
         })
 
       test(`an accept refused after hangup preserves the redial (scoped reply: ${scoped})`, async () => {
-        useStore.setState({ dms: [{ id: 7, is_self: false, other: me('bob') }] })
+        useStore.setState({
+          dms: [
+            {
+              id: 7,
+              is_self: false,
+              other: me('bob'),
+              closed: false,
+              friend: false,
+              last_message_at: null,
+              last_message_id: null,
+              seal: { forced: false, on: false },
+            },
+          ],
+        })
         callState('bob', 'ringing')
         await st().acceptCall()
         const accepted = lastRequest()
@@ -304,7 +317,20 @@ describe('voice and call mic state', () => {
       })
 
       test(`a refused accept stops its microphone and leaves the ring answerable (scoped reply: ${scoped})`, async () => {
-        useStore.setState({ dms: [{ id: 7, is_self: false, other: me('bob') }] })
+        useStore.setState({
+          dms: [
+            {
+              id: 7,
+              is_self: false,
+              other: me('bob'),
+              closed: false,
+              friend: false,
+              last_message_at: null,
+              last_message_id: null,
+              seal: { forced: false, on: false },
+            },
+          ],
+        })
         callState('bob', 'ringing')
         await st().acceptCall()
         for (const message of ['No shared voice session', 'Signal too large']) {
@@ -338,7 +364,7 @@ describe('voice and call mic state', () => {
 
       for (const oldRefused of [false, true]) {
         test(`redial after voice waits for the first DM (old refused: ${oldRefused}, scoped: ${scoped})`, async () => {
-          useStore.setState({ dms: [7, 8].map(id => ({ id, is_self: false, other: me('bob') })) })
+          useStore.setState({ dms: [7, 8].map(id => dmWith(id, me('bob'))) })
           await st().joinVoice('lounge', 1)
           await switchCall(() => st().startCall(7, false))
           const old = lastRequest()
@@ -464,7 +490,20 @@ describe('voice and call mic state', () => {
 
   for (const earlyHangup of [false, true]) {
     test(`same-DM redial captures after the previous call ends (early hangup: ${earlyHangup})`, async () => {
-      useStore.setState({ dms: [{ id: 7, is_self: false, other: me('bob') }] })
+      useStore.setState({
+        dms: [
+          {
+            id: 7,
+            is_self: false,
+            other: me('bob'),
+            closed: false,
+            friend: false,
+            last_message_at: null,
+            last_message_id: null,
+            seal: { forced: false, on: false },
+          },
+        ],
+      })
       const phase = (state: 'ringing' | 'ended') =>
         st().applyWsEvent({
           type: 'call_state',
@@ -511,7 +550,20 @@ describe('voice and call mic state', () => {
         })
         return capture.call(devices, options)
       }
-      useStore.setState({ dms: [{ id: 7, is_self: false, other: me('bob') }] })
+      useStore.setState({
+        dms: [
+          {
+            id: 7,
+            is_self: false,
+            other: me('bob'),
+            closed: false,
+            friend: false,
+            last_message_at: null,
+            last_message_id: null,
+            seal: { forced: false, on: false },
+          },
+        ],
+      })
       const joining = st().joinVoice('lounge', 1)
       await until(() => !!grant)
       const claim = client.calls.current()
@@ -668,13 +720,8 @@ describe('voice and call mic state', () => {
 })
 
 describe('timeouts in voice', () => {
-  const summary = (until?: number) => ({
-    name: 'lounge',
-    display_name: 'Lounge',
-    creator: null,
-    is_admin: false,
-    ...(until === undefined ? {} : { timed_out_until: until }),
-  })
+  const summary = (until?: number) =>
+    summaryOf('lounge', { display_name: 'Lounge', timed_out_until: until ?? null })
   const timeoutEvent = (until: number | null) =>
     st().applyWsEvent({
       type: 'member_timeout',
@@ -724,7 +771,7 @@ describe('timeouts in voice', () => {
     expect(sent.some(m => m.type === 'voice_join')).toBe(false)
     useStore.setState({ error: null })
     timeoutEvent(null)
-    expect(st().me?.servers[0].timed_out_until).toBeUndefined()
+    expect(st().me?.servers[0].timed_out_until).toBeNull()
     await st().joinVoice('lounge', 1)
     expect(st().error).toBeNull()
     expect(st().voice?.channelId).toBe(1)
@@ -822,7 +869,7 @@ describe('timeouts in voice', () => {
     const t = st().timeouts.lounge?.bob
     expect(t?.reason).toBe('spam')
     expect((t?.ends ?? 0) - Date.now() > 59_000).toBe(true)
-    expect(st().me?.servers[0].timed_out_until).toBeUndefined()
+    expect(st().me?.servers[0].timed_out_until).toBeNull()
     st().applyWsEvent({
       type: 'member_timeout',
       server: 'lounge',
@@ -846,7 +893,17 @@ describe('what you hold in the voice channel', () => {
     useStore.setState({
       servers: {
         lounge: serverDetail('lounge', {
-          channels: [{ id: 1, name: 'v', kind: 'voice', slowmode_seconds: 0, my_perms: mask }],
+          channels: [
+            {
+              id: 1,
+              name: 'v',
+              kind: 'voice',
+              slowmode_seconds: 0,
+              my_perms: mask,
+              category_id: null,
+              topic: null,
+            },
+          ],
         }),
       },
     })
@@ -861,7 +918,21 @@ describe('what you hold in the voice channel', () => {
   const join = async (mask: bigint) => {
     useStore.setState({
       me: me('alice', {
-        servers: [{ name: 'lounge', display_name: 'Lounge', creator: null, is_admin: false }],
+        servers: [
+          {
+            name: 'lounge',
+            display_name: 'Lounge',
+            creator: null,
+            is_admin: false,
+            banner_color: null,
+            icon_image: null,
+            icon_kind: 'identicon' as const,
+            name_color: null,
+            profiles_mode: 'all' as const,
+            timed_out_remaining: null,
+            timed_out_until: null,
+          },
+        ],
       }),
     })
     details(mask)
@@ -928,7 +999,17 @@ describe('what you hold in the voice channel', () => {
       servers: {
         ...st().servers,
         other: serverDetail('other', {
-          channels: [{ id: 9, name: 'v', kind: 'voice', slowmode_seconds: 0, my_perms: 0n }],
+          channels: [
+            {
+              id: 9,
+              name: 'v',
+              kind: 'voice',
+              slowmode_seconds: 0,
+              my_perms: 0n,
+              category_id: null,
+              topic: null,
+            },
+          ],
         }),
       },
     })
@@ -1048,7 +1129,15 @@ describe('what people in voice say about their own audio', () => {
       users,
       ...(audio ? { audio } : {}),
     })
-  const talk = { id: 3, name: 'talk', kind: 'voice' as const, slowmode_seconds: 0 }
+  const talk = {
+    id: 3,
+    name: 'talk',
+    kind: 'voice' as const,
+    slowmode_seconds: 0,
+    category_id: null,
+    my_perms: null,
+    topic: null,
+  }
   const marked = { ...talk, id: 4, name: 'marked', sensitive: true }
 
   afterEach(() => useStore.setState({ voiceAudio: {}, voiceUsers: {}, servers: {} }))
@@ -1188,7 +1277,15 @@ describe('voice rooms a refetch reveals', () => {
   })
 
   test('ask for the rosters again, so their audio shows', async () => {
-    const talk = { id: 3, name: 'talk', kind: 'voice' as const, slowmode_seconds: 0 }
+    const talk = {
+      id: 3,
+      name: 'talk',
+      kind: 'voice' as const,
+      slowmode_seconds: 0,
+      category_id: null,
+      my_perms: null,
+      topic: null,
+    }
     const hidden = { ...talk, id: 4, name: 'hidden' }
     const chat = { ...talk, id: 5, name: 'chat', kind: 'text' as const }
     let detail = serverDetail('lounge', { channels: [talk] })

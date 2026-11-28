@@ -27,13 +27,16 @@ import {
   sameOriginImage,
   serverInitial,
 } from '../rules'
-import { ALL_PERMS, hasPerm, Perm, type Channel } from '../types'
+import { ALL_PERMS, hasPerm, Perm, type Channel, type ChannelPerm } from '../types'
 
 const ch = (id: number, kind: Channel['kind']): Channel => ({
   id,
   name: `c${id}`,
   kind,
   slowmode_seconds: 0,
+  category_id: null,
+  my_perms: null,
+  topic: null,
 })
 
 describe('canDeleteChannel', () => {
@@ -171,7 +174,7 @@ describe('granting perms', () => {
 
   test('editing or deleting a role needs its perms and every holder below you', () => {
     const limits = { held_above: [2], channel_grants: [3], channel_denies: [4] }
-    const role = (id: number, perms: bigint = kick) => ({ id, perms })
+    const role = (id: number, perms: bigint = kick) => ({ id, perms, position: 0 })
     expect(roleEditBlock(ma | kick, false, role(1), limits)).toBeNull()
     expect(roleEditBlock(ma | kick, false, role(1, Perm.DeleteServer), limits)).toContain(
       "permissions you don't have"
@@ -202,12 +205,14 @@ describe('granting perms', () => {
 })
 
 describe('roleDenyEscapes', () => {
-  const rule = (subject: string, view: boolean, send: boolean, history = true) => ({
-    subject,
-    can_view: view,
-    can_send: send,
-    can_read_history: history,
-  })
+  // A rule as an older server sends it: the three flags, without its masks.
+  const rule = (subject: string, view: boolean, send: boolean, history = true) =>
+    ({
+      subject,
+      can_view: view,
+      can_send: send,
+      can_read_history: history,
+    }) as ChannelPerm
   const text = { kind: 'text' as const }
   const voice = { kind: 'voice' as const }
   test('a role deny without the matching restriction can be escaped by rejoining', () => {

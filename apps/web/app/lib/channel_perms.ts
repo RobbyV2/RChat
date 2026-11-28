@@ -1,12 +1,10 @@
 import { hasBit } from './perms'
 import { ChannelPermBit, Perm, type Channel, type ServerDetail } from './types'
 
-// A channel as an event or an update answer carries it has no `my_perms`: what you hold there
+// A channel as an event or an update answer carries it has no `my_perms` (null): what you hold there
 // only comes with the server's details, so the known value stays until they load again.
 export const keepMyPerms = (known: Channel | undefined, next: Channel): Channel =>
-  next.my_perms === undefined && known?.my_perms !== undefined
-    ? { ...next, my_perms: known.my_perms }
-    : next
+  next.my_perms == null && known?.my_perms != null ? { ...next, my_perms: known.my_perms } : next
 
 // `channels` with `next` in place of the channel it updates.
 export const withChannel = (channels: Channel[], next: Channel): Channel[] =>
@@ -143,8 +141,8 @@ export const hostedMask = (
 ): bigint => {
   const channel = detail?.channels.find(c => c.id === channelId)
   const marked = channelId !== null && (detail?.read_only?.includes(channelId) ?? false)
-  if (member && channel?.my_perms !== undefined) return channel.my_perms
-  if (member && channel && detail?.my_perms !== undefined)
+  if (member && channel?.my_perms != null) return channel.my_perms
+  if (member && channel && detail?.my_perms != null)
     return unruledMask(channel, marked, detail.my_perms)
   return legacyMask(marked, perms)
 }

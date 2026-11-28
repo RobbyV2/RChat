@@ -9,7 +9,15 @@ const st = () => useStore.getState()
 const realFetch = globalThis.fetch
 const realWindow = (globalThis as { window?: unknown }).window
 const realDocument = (globalThis as { document?: unknown }).document
-const chan = { id: 78, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
+const chan = {
+  id: 78,
+  name: 'general',
+  kind: 'text' as const,
+  slowmode_seconds: 0,
+  category_id: null,
+  my_perms: null,
+  topic: null,
+}
 let path = '/'
 let hash = ''
 let entries: { state: unknown; url: string }[] = []

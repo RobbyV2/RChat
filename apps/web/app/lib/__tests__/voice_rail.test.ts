@@ -19,7 +19,7 @@ import {
   voiceListsWanted,
   voiceSum,
 } from '../voice_rail'
-import { me, memoryStorage, serverDetail, textChannel } from './fixtures'
+import { lite, me, memoryStorage, serverDetail, textChannel } from './fixtures'
 import { shownPeer } from './shown_peer'
 import { answerPrompt } from './helpers/viewing'
 
@@ -30,6 +30,9 @@ afterEach(() => {
 
 const st = () => useStore.getState()
 const voiceRoom = (id: number, over: Partial<Channel> = {}): Channel => ({
+  category_id: null,
+  my_perms: null,
+  topic: null,
   id,
   name: `v${id}`,
   kind: 'voice',
@@ -136,7 +139,7 @@ describe('the hosted voice count', () => {
 
   test('a renamed server keeps its badge', () => {
     const s = { ...st(), ...hosted({ channelLabelEpoch: 1, channelLabelEpochs: { club: 1 } }) }
-    const server = { name: 'lounge', display_name: 'Lounge', creator: null, has_password: false }
+    const server = lite('lounge', { display_name: 'Lounge' })
     const out = {
       ...s,
       ...applyServerChange(s, { type: 'server_renamed', old_name: 'club', server }),

@@ -39,7 +39,21 @@ beforeEach(() => {
     guest: false,
     view: null,
     me: me('alice', {
-      servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }],
+      servers: [
+        {
+          name: 's',
+          display_name: 's',
+          creator: null,
+          is_admin: false,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+      ],
     }),
     servers: {
       s: serverDetail('s', { roles: [role(1, '#ff0000', 0n), role(2, '#00ff00', Perm.Kick)] }),
@@ -94,7 +108,13 @@ describe('member lookups for authors', () => {
     })
     dispatch({
       type: 'user_updated',
-      user: { username: 'bob', display_name: 'Bob', avatar_kind: 'color', avatar_color: '#123456' },
+      user: {
+        username: 'bob',
+        display_name: 'Bob',
+        avatar_kind: 'color',
+        avatar_color: '#123456',
+        avatar_image: null,
+      },
     })
     expect(memberOf(st(), 's', 'bob')?.display_name).toBe('Bob')
     dispatch({ type: 'member_left', server: 's', username: 'carol' })
@@ -404,6 +424,10 @@ describe('same-name server updates', () => {
     has_password: false,
     banner_color: '#ff0066',
     name_color: null,
+    description: null,
+    icon_image: null,
+    public_read: null,
+    seal: { forced: false, on: false },
   })
   const recolor = (name: string): WsEvent =>
     name === 's'
@@ -426,7 +450,15 @@ describe('same-name server updates', () => {
     dispatch({ type: 'server_updated', server: { ...lite('s'), has_password: true } })
     expect(st().servers.s.has_password).toBe(true)
     expect(st().servers.s.banner_color).toBe('#ff0066')
-    const channel = { id: 7, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
+    const channel = {
+      id: 7,
+      name: 'general',
+      kind: 'text' as const,
+      slowmode_seconds: 0,
+      category_id: null,
+      my_perms: null,
+      topic: null,
+    }
     useStore.setState(x => ({ servers: { s: { ...x.servers.s, channels: [channel] } } }))
     dispatch({
       type: 'channel_updated',

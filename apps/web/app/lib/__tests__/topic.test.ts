@@ -17,7 +17,15 @@ const realFetch = globalThis.fetch
 let sent: unknown[] = []
 let reply: () => Response = () => new Response('{}')
 
-const general: Channel = { id: 7, name: 'general', kind: 'text', slowmode_seconds: 0 }
+const general: Channel = {
+  id: 7,
+  name: 'general',
+  kind: 'text',
+  slowmode_seconds: 0,
+  category_id: null,
+  my_perms: null,
+  topic: null,
+}
 
 beforeEach(() => {
   sent = []
@@ -96,7 +104,7 @@ describe('setting a topic', () => {
         status: 400,
       })
     expect(await st().setChannelTopic('s', 7, 'rude')).toBe('Content blocked by profanity filter')
-    expect(st().servers.s.channels[0].topic).toBeUndefined()
+    expect(st().servers.s.channels[0].topic).toBeNull()
   })
 
   test('channel_updated brings the topic to other clients', () => {

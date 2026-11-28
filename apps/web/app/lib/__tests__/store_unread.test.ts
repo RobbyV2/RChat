@@ -77,7 +77,20 @@ describe('unread divider when reads arrive late', () => {
     await st().openChannel('s', 1, 'none')
     expect(st().unreadAnchor.c1).toBe(0)
     st().markRead('c1', 20)
-    unreads[0]({ items: [{ scope: 'c1', server: 's', last_read: 12, latest: 20 }], more: false })
+    unreads[0]({
+      items: [
+        {
+          scope: 'c1',
+          server: 's',
+          last_read: 12,
+          latest: 20,
+          pings: 0,
+          pings_until: 0,
+          thread_pings: [],
+        },
+      ],
+      more: false,
+    })
     await tick()
     expect(st().unreadAnchor.c1).toBe(12)
     expect(st().reads.c1.lastRead).toBe(20)
@@ -88,7 +101,20 @@ describe('unread divider when reads arrive late', () => {
     pages = [range(1, 20), range(1, 5)]
     await st().openChannel('s', 1, 'none')
     await st().openChannel('s', 2, 'none')
-    unreads[0]({ items: [{ scope: 'c1', server: 's', last_read: 12, latest: 20 }], more: false })
+    unreads[0]({
+      items: [
+        {
+          scope: 'c1',
+          server: 's',
+          last_read: 12,
+          latest: 20,
+          pings: 0,
+          pings_until: 0,
+          thread_pings: [],
+        },
+      ],
+      more: false,
+    })
     await tick()
     expect(st().unreadAnchor.c1).toBeUndefined()
     expect(st().unreadAnchor.c2).toBe(0)
@@ -109,7 +135,20 @@ describe('unread divider when reads arrive late', () => {
     await st().openChannel('s', 1, 'none')
     globalThis.fetch = (() => new Promise<Response>(() => {})) as typeof fetch
     st().sendMessage('hi')
-    unreads[0]({ items: [{ scope: 'c1', server: 's', last_read: 12, latest: 20 }], more: false })
+    unreads[0]({
+      items: [
+        {
+          scope: 'c1',
+          server: 's',
+          last_read: 12,
+          latest: 20,
+          pings: 0,
+          pings_until: 0,
+          thread_pings: [],
+        },
+      ],
+      more: false,
+    })
     await tick()
     expect(st().unreadAnchor.c1).toBe(0)
   })

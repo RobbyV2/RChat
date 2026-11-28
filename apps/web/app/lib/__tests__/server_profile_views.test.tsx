@@ -49,7 +49,12 @@ const router = {
 const render = (node: ReactElement) =>
   renderToStaticMarkup(<AppRouterContext.Provider value={router}>{node}</AppRouterContext.Provider>)
 
-const robert: MemberLook = { name: 'Robert', avatar_kind: 'color', avatar_color: '#112233' }
+const robert: MemberLook = {
+  name: 'Robert',
+  avatar_kind: 'color',
+  avatar_color: '#112233',
+  avatar_image: null,
+}
 const bob = user('bob', { display_name: 'Bob' })
 
 // Bob set a name and a color avatar in server `s`.
@@ -126,7 +131,17 @@ test('a mention pill keeps the handle: the username with the server name as its 
     servers: {
       s: serverDetail('s', {
         profiles_mode: 'all',
-        channels: [{ id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 }],
+        channels: [
+          {
+            id: 1,
+            name: 'general',
+            kind: 'text',
+            slowmode_seconds: 0,
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
+        ],
       }),
     },
   })

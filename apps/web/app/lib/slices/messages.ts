@@ -661,7 +661,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     set(s => {
       const messages = mapLists(s.messages, list => quoteEdited(list, next))
       const root = s.panel?.kind === 'thread' ? s.panel.root : null
-      const rootQuote = root?.reply_to ? editedQuote(root.reply_to, next) : undefined
+      const rootQuote = root?.reply_to ? editedQuote(root.reply_to, next) : (root?.reply_to ?? null)
       const replying = Object.entries(s.replying).some(([, r]) => r.message.id === next.id)
         ? Object.fromEntries(
             Object.entries(s.replying).map(([k, r]) => [
@@ -854,6 +854,12 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         kind: 'user',
         call: null,
         reply_to: reply ? quoteOf(reply, me.username) : null,
+        edited_at: null,
+        forward: null,
+        pin_message_id: null,
+        pinned_at: null,
+        poll: null,
+        webhook: null,
       },
       send: opts =>
         view.kind === 'channel'
@@ -1877,7 +1883,16 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
             source_id: clip.id,
             origin: null,
             dropped: null,
+            origin_channel: null,
+            origin_channel_id: null,
+            origin_server: null,
+            origin_server_channel: null,
           },
+          edited_at: null,
+          pin_message_id: null,
+          pinned_at: null,
+          poll: null,
+          webhook: null,
         },
         send: () =>
           kind === 'c'
@@ -2230,6 +2245,12 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           kind: 'user',
           call: null,
           reply_to: reply ? quoteOf(reply, me.username) : null,
+          edited_at: null,
+          forward: null,
+          pin_message_id: null,
+          pinned_at: null,
+          poll: null,
+          webhook: null,
         },
         send: opts => api.sendThreadMessage(rootId, content, { ...opts, ...sendReply(reply) }),
       })

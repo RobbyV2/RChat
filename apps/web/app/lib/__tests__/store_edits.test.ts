@@ -23,6 +23,7 @@ const tick = async () => {
 
 const bob = user('bob')
 const quote = (over: Partial<ReplyRef> = {}): ReplyRef => ({
+  forward: null,
   id: 10,
   author: bob,
   content: 'teh plan',
@@ -160,6 +161,7 @@ describe('inline editing', () => {
       removed_by_author: false,
       spoiler: false,
       alt: 'A cat',
+      sha256: null,
     }
     const pic = msg(13, { author: bob, content: 'look', media, reactions: [] })
     useStore.setState({ messages: { c1: [pic] } })
@@ -239,7 +241,7 @@ describe('inline editing', () => {
     st().saveEdit()
     await tick()
     expect(st().messages.c1[1].content).toBe('teh plan')
-    expect(st().messages.c1[1].edited_at).toBeUndefined()
+    expect(st().messages.c1[1].edited_at).toBeNull()
     expect(st().error).toBe('Content blocked by profanity filter')
   })
 
@@ -305,6 +307,8 @@ const stub = (id: number, thread_root_id: number | null = null): EditStub => ({
 })
 
 const media = (over: Partial<MessageMedia> = {}): MessageMedia => ({
+  alt: null,
+  sha256: null,
   id: 'm',
   filename: 'a.png',
   kind: 'server',
@@ -420,7 +424,15 @@ describe('edits: Up, dropped views, gone messages and s/', () => {
   })
 
   test('an edit in a deleted channel or a left server is dropped', () => {
-    const general = { id: 1, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
+    const general = {
+      id: 1,
+      name: 'general',
+      kind: 'text' as const,
+      slowmode_seconds: 0,
+      category_id: null,
+      my_perms: null,
+      topic: null,
+    }
     const other = msg(12, { author: bob, channel_id: 2 })
     const away = { kind: 'channel' as const, server: 't', channelId: 2 }
     useStore.setState({ view: away, messages: { c1: [mine], c2: [other] } })

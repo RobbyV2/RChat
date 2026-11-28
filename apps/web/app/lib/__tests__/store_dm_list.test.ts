@@ -24,6 +24,8 @@ beforeAll(registerAppActions)
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
 const dm = (id: number, other: string, over: Partial<DmSummary> = {}): DmSummary => ({
+  closed: false,
+  seal: { forced: false, on: false },
   id,
   other: user(other),
   is_self: false,

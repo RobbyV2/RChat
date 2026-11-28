@@ -208,7 +208,7 @@ describe('profile_mode: what room profiles may hold is a register read at displa
     const extras = roomExtras({ nick: 'Ali', bio: 'here', av: { kind: 'identicon' } })
     expect(roomProfile(extras, 'all').look?.name).toBe('Ali')
     expect(roomProfile(extras, 'no_names')).toEqual({
-      look: { name: null, avatar_kind: 'identicon', avatar_color: null },
+      look: { name: null, avatar_kind: 'identicon', avatar_color: null, avatar_image: null },
       bio: 'here',
       banner: null,
     })

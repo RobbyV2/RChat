@@ -30,9 +30,33 @@ type Call = unknown[]
 // permissions, or (hosted only) a hidden site admin.
 type Standing = 'owner' | 'site_admin' | { role: bigint }
 
-const GENERAL: Channel = { id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 }
-const RANDOM: Channel = { id: 2, name: 'random', kind: 'text', slowmode_seconds: 0 }
-const LOUNGE: Channel = { id: 3, name: 'lounge', kind: 'voice', slowmode_seconds: 0 }
+const GENERAL: Channel = {
+  id: 1,
+  name: 'general',
+  kind: 'text',
+  slowmode_seconds: 0,
+  category_id: null,
+  my_perms: null,
+  topic: null,
+}
+const RANDOM: Channel = {
+  id: 2,
+  name: 'random',
+  kind: 'text',
+  slowmode_seconds: 0,
+  category_id: null,
+  my_perms: null,
+  topic: null,
+}
+const LOUNGE: Channel = {
+  id: 3,
+  name: 'lounge',
+  kind: 'voice',
+  slowmode_seconds: 0,
+  category_id: null,
+  my_perms: null,
+  topic: null,
+}
 
 const peerChannel = (id: string, name: string, kind: string) =>
   ({ id, name, kind, pos: 0, perms: 0n }) as unknown as ChannelView

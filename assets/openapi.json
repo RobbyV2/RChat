@@ -43207,7 +43207,9 @@
         "description": "A decorative separator in a channel list: a line with an optional label between channels.\nIt is not a channel: it has no messages, voice or permissions of its own.",
         "required": [
           "id",
-          "label"
+          "label",
+          "style",
+          "after"
         ],
         "properties": {
           "after": {

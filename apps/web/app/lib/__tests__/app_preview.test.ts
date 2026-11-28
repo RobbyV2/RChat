@@ -34,7 +34,21 @@ const openLauncher = () => {
   const server = serverDetail('garden', { channels: [textChannel(1)] })
   useStore.setState({
     me: me('reader', {
-      servers: [{ name: 'garden', display_name: 'Garden', creator: null, is_admin: false }],
+      servers: [
+        {
+          name: 'garden',
+          display_name: 'Garden',
+          creator: null,
+          is_admin: false,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+      ],
     }),
     guest: false,
     servers: { garden: server },

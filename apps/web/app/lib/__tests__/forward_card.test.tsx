@@ -46,6 +46,10 @@ const card = () =>
           origin_dm: true,
           origin: 'Direct message',
           dropped: null,
+          origin_channel: null,
+          origin_channel_id: null,
+          origin_server: null,
+          origin_server_channel: null,
         },
       })}
       canDelete={false}
@@ -68,9 +72,29 @@ describe('forward card author', () => {
   })
 })
 
-const general = { id: 1, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
-const reading = { id: 7, name: 'reading', kind: 'text' as const, slowmode_seconds: 0 }
+const general = {
+  id: 1,
+  name: 'general',
+  kind: 'text' as const,
+  slowmode_seconds: 0,
+  category_id: null,
+  my_perms: null,
+  topic: null,
+}
+const reading = {
+  id: 7,
+  name: 'reading',
+  kind: 'text' as const,
+  slowmode_seconds: 0,
+  category_id: null,
+  my_perms: null,
+  topic: null,
+}
 const ref = (over: Partial<ForwardRef> = {}): ForwardRef => ({
+  origin_channel: null,
+  origin_channel_id: null,
+  origin_server: null,
+  origin_server_channel: null,
   author: user('bart'),
   created_at: 3,
   source_id: 5,

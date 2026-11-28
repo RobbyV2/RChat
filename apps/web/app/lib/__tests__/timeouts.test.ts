@@ -35,7 +35,19 @@ describe('timeouts', () => {
   })
 
   test('your own timeout ends on your clock, from the seconds left', () => {
-    const base = { name: 'club', display_name: 'Club', creator: null, is_admin: false }
+    const base = {
+      name: 'club',
+      display_name: 'Club',
+      creator: null,
+      is_admin: false,
+      banner_color: null,
+      icon_image: null,
+      icon_kind: 'identicon' as const,
+      name_color: null,
+      profiles_mode: 'all' as const,
+      timed_out_remaining: null,
+      timed_out_until: null,
+    }
     expect(localSummary(base, 5000)).toEqual(base)
     expect(
       localSummary({ ...base, timed_out_until: 99999, timed_out_remaining: 60 }, 5000)

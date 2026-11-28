@@ -28,9 +28,11 @@ const bob: UserRef = {
   display_name: 'Bob',
   avatar_kind: 'color',
   avatar_color: '#336699',
+  avatar_image: null,
 }
 
 const look = (over: Partial<MemberLook> = {}): MemberLook => ({
+  avatar_image: null,
   name: null,
   avatar_kind: null,
   avatar_color: null,
@@ -38,6 +40,9 @@ const look = (over: Partial<MemberLook> = {}): MemberLook => ({
 })
 
 const member = (profile?: MemberLook): Member => ({
+  joined_via: null,
+  profile: null,
+  timeout: null,
   ...bob,
   is_admin: false,
   is_creator: false,
@@ -205,7 +210,7 @@ test('a look event sets or takes away the look of one member', () => {
   const robert = look({ name: 'Robert' })
   expect(withLook(member(), robert).profile).toEqual(robert)
   const cleared = withLook(member(robert), null)
-  expect('profile' in cleared).toBe(false)
+  expect(cleared.profile).toBeNull()
   expect(cleared.username).toBe('bob')
 })
 
@@ -240,12 +245,12 @@ test('room extras are read field by field and a malformed one is left out', () =
 test('a room shows extras under its mode', () => {
   const extras = roomExtras({ nick: 'Robert', bio: 'hi', av: { kind: 'identicon' }, bn: '#001122' })
   expect(roomProfile(extras)).toEqual({
-    look: { name: 'Robert', avatar_kind: 'identicon', avatar_color: null },
+    look: { name: 'Robert', avatar_kind: 'identicon', avatar_color: null, avatar_image: null },
     bio: 'hi',
     banner: '#001122',
   })
   expect(roomProfile(extras, 'no_names')).toEqual({
-    look: { name: null, avatar_kind: 'identicon', avatar_color: null },
+    look: { name: null, avatar_kind: 'identicon', avatar_color: null, avatar_image: null },
     bio: 'hi',
     banner: '#001122',
   })

@@ -43,7 +43,7 @@ describe('a room profile over the global one', () => {
     expect(a.servers.nameOf(b.node.ik)).toBe('Bob')
     expect(a.servers.profileName(b.node.ik, room)).toBe('Bob')
     expect(a.servers.roomProfileOf(room, b.node.ik)).toEqual({
-      look: { name: 'Robert', avatar_kind: 'color', avatar_color: '#aa0000' },
+      look: { name: 'Robert', avatar_kind: 'color', avatar_color: '#aa0000', avatar_image: null },
       bio: 'here',
       banner: null,
     })

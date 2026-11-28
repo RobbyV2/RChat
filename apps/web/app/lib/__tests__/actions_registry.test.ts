@@ -474,9 +474,26 @@ test('refreshCtx: on the open, caught-up list, a message above its window is gon
 })
 
 test('refreshCtx: channels, categories and DMs on fresh state, or gone', () => {
-  const general = { id: 1, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
+  const general = {
+    id: 1,
+    name: 'general',
+    kind: 'text' as const,
+    slowmode_seconds: 0,
+    category_id: null,
+    my_perms: null,
+    topic: null,
+  }
   const talk = { id: 2, name: 'Talk', position: 0 }
-  const bobDm = { id: 9, other: user('bob'), is_self: false }
+  const bobDm = {
+    id: 9,
+    other: user('bob'),
+    is_self: false,
+    closed: false,
+    friend: false,
+    last_message_at: null,
+    last_message_id: null,
+    seal: { forced: false, on: false },
+  }
   const chan: Target = { kind: 'channel', server: 's', channel: general }
   const cat: Target = { kind: 'category', server: 's', category: talk }
   const dm: Target = { kind: 'dm', dm: bobDm, where: 'sidebar' }
@@ -506,7 +523,7 @@ test('refreshCtx: channels, categories and DMs on fresh state, or gone', () => {
   expect(refreshCtx(open.dm)?.dm?.other.display_name).toBe('Bobby')
   useStore.setState({ servers: { s: serverDetail('s', { categories: [] }) }, dms: [] })
   expect(fresh()).toEqual([null, null, null])
-  useStore.setState({ servers: { s: serverDetail('s') } })
+  useStore.setState({ servers: { s: serverDetail('s', { categories: undefined as never }) } })
   expect(refreshCtx(open.category)?.target).toBe(cat)
 })
 
@@ -520,8 +537,25 @@ test('a gone action or an unavailable one is not available', async () => {
 })
 
 test('ctxFor resolves the open place, or the place the target names', () => {
-  const general = { id: 1, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
-  const bobDm = { id: 9, other: user('bob'), is_self: false }
+  const general = {
+    id: 1,
+    name: 'general',
+    kind: 'text' as const,
+    slowmode_seconds: 0,
+    category_id: null,
+    my_perms: null,
+    topic: null,
+  }
+  const bobDm = {
+    id: 9,
+    other: user('bob'),
+    is_self: false,
+    closed: false,
+    friend: false,
+    last_message_at: null,
+    last_message_id: null,
+    seal: { forced: false, on: false },
+  }
   useStore.setState({
     servers: { s: serverDetail('s', { channels: [general] }) },
     dms: [bobDm],

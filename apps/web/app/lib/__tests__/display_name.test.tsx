@@ -53,7 +53,7 @@ import { typerNames } from '../typing'
 
 import type { P2pMessage } from '../p2p/dm'
 import type { ReplyRef, UserRef } from '../types'
-import { drain, me, member, msg, user } from './fixtures'
+import { dmWith, drain, me, member, msg, user } from './fixtures'
 
 const realSet = api.setDisplayName
 const initial = useStore.getInitialState()
@@ -224,14 +224,7 @@ test('DM headers and sidebar rows show the username next to a display name', () 
   expect(render(<DmPeer other={user('bob', { display_name: 'Bob' })} />)).toContain(
     '<span class="flex shrink-0">'
   )
-  const row = render(
-    <DmRow
-      dm={{ id: 9, other: impostor, is_self: false }}
-      active={false}
-      unread={false}
-      pings={0}
-    />
-  )
+  const row = render(<DmRow dm={dmWith(9, impostor)} active={false} unread={false} pings={0} />)
   expect(row).toContain(USERNAME_AFTER('alice', 'bob'))
 })
 
@@ -404,6 +397,7 @@ test('a P2P voice tile shows the P2P name and keeps the key out of its labels', 
 })
 
 const quoteOf = (author: UserRef, over: Partial<ReplyRef> = {}): ReplyRef => ({
+  forward: null,
   id: 7,
   author,
   content: 'see you there',

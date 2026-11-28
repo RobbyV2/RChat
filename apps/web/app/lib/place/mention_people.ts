@@ -89,6 +89,7 @@ export const hostedPeople = (
         s.me?.display_name ?? '',
         s.me?.avatar_kind ?? 'identicon',
         s.me?.avatar_color ?? null,
+        s.me?.avatar_image ?? null,
         (key ? s.messages[key] : undefined) ?? NO_MESSAGES,
         (list === 'thread' && s.view?.kind === 'channel' && main ? s.messages[main] : undefined) ??
           NO_MESSAGES,
@@ -99,7 +100,20 @@ export const hostedPeople = (
         tick,
       ] as const
     },
-    ([dmOther, meName, meShown, meKind, meColor, own, parent, members, info, names, rest]) => {
+    ([
+      dmOther,
+      meName,
+      meShown,
+      meKind,
+      meColor,
+      meImage,
+      own,
+      parent,
+      members,
+      info,
+      names,
+      rest,
+    ]) => {
       const me: UserRef | null =
         meName === null
           ? null
@@ -108,11 +122,12 @@ export const hostedPeople = (
               display_name: meShown,
               avatar_kind: meKind,
               avatar_color: meColor,
+              avatar_image: meImage,
             }
       if (dmOther) return (q: string) => suggestPeople(q, [dmPeople(dmOther, me)], () => false)
       if (server === null) return nobody
       const parts = names === null || rest === null ? null : { names, rest }
-      const shownOf = <T extends UserRef & { profile?: MemberLook }>(m: T) =>
+      const shownOf = <T extends UserRef & { profile?: MemberLook | null }>(m: T) =>
         shownUser(m, parts && m.profile ? lookIn(m.profile, parts) : null)
       return (q: string) => {
         let remote: UserRef[] = NO_PEOPLE

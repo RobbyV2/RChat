@@ -47,8 +47,9 @@ afterEach(() => {
 
 const HOUR = 3_600_000
 const bobby = user('bob', { display_name: 'Bobby' })
-const bobDm: DmSummary = { id: 9, other: bobby, is_self: false }
-const selfDm: DmSummary = { id: 4, other: user('alice'), is_self: true }
+// DMs as an older server lists them: without activity, friendship or storage.
+const bobDm = { id: 9, other: bobby, is_self: false } as DmSummary
+const selfDm = { id: 4, other: user('alice'), is_self: true } as DmSummary
 
 interface State {
   perms?: bigint
@@ -80,13 +81,37 @@ const state = (o: State = {}) => {
       ? null
       : me('alice', {
           is_site_admin: !!o.siteAdmin,
-          servers: [{ name: 's', display_name: 'Space', creator: null, is_admin: !!o.owner }],
+          servers: [
+            {
+              name: 's',
+              display_name: 'Space',
+              creator: null,
+              is_admin: !!o.owner,
+              banner_color: null,
+              icon_image: null,
+              icon_kind: 'identicon' as const,
+              name_color: null,
+              profiles_mode: 'all' as const,
+              timed_out_remaining: null,
+              timed_out_until: null,
+            },
+          ],
         }),
     servers: {
       s: serverDetail('s', {
         display_name: 'Space',
         roles,
-        channels: [{ id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 }],
+        channels: [
+          {
+            id: 1,
+            name: 'general',
+            kind: 'text',
+            slowmode_seconds: 0,
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
+        ],
       }),
     },
     members: {

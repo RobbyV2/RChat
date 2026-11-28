@@ -96,6 +96,8 @@ describe('bio in the store', () => {
       bio: `${name} bio`,
       created_at: 1,
       member: null,
+      server_banner: null,
+      server_bio: null,
     })
     for (const key of [profileKey('bob', null), profileKey('bob', 's'), profileKey('bobby', 's')])
       rememberProfile(key, profile(key.startsWith('bobby') ? 'bobby' : 'bob'), sessionMark())

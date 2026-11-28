@@ -1876,8 +1876,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         await api.keepAccount()
         const me = get().me
         if (at !== sessionMark() || !me) return
-        const { delete_at: _, ...kept } = me
-        set({ me: kept })
+        set({ me: { ...me, delete_at: null } })
         toast('Your account is kept')
       }),
     checkSession: refetchMe,

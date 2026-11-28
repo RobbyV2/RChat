@@ -131,6 +131,7 @@ const deletedQuote = (id: number, mention: boolean): ReplyRef => ({
   has_media: false,
   deleted: true,
   mention,
+  forward: null,
 })
 
 // The quote of `ref` built from a loaded copy of the original. Loaded lists only hold what the
@@ -142,7 +143,8 @@ const quoteFrom = (original: Message, mention: boolean): ReplyRef => ({
   has_media: original.media !== null,
   deleted: false,
   mention,
-  ...(original.forward ? { forwarded: true, forward: original.forward } : {}),
+  forward: original.forward,
+  ...(original.forward ? { forwarded: true } : {}),
 })
 
 // Fills a partial quote (WebSocket events carry only the id): from `known`, a quote already

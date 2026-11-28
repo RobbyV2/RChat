@@ -14,7 +14,21 @@ import { answerPrompt } from './helpers/viewing'
 function open(owner: AccountSession) {
   owner.store.setState({
     me: me('reader', {
-      servers: [{ name: 'garden', display_name: 'Garden', creator: null, is_admin: false }],
+      servers: [
+        {
+          name: 'garden',
+          display_name: 'Garden',
+          creator: null,
+          is_admin: false,
+          banner_color: null,
+          icon_image: null,
+          icon_kind: 'identicon' as const,
+          name_color: null,
+          profiles_mode: 'all' as const,
+          timed_out_remaining: null,
+          timed_out_until: null,
+        },
+      ],
     }),
     view: { kind: 'channel', server: 'garden', channelId: 1 },
     activeDialog: { kind: 'app_preview', server: 'garden' },

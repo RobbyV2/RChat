@@ -41,7 +41,19 @@ import { setSharing, sharing } from '../platform'
 import { useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
 import type { RChatState } from '../store_types'
 import { ChannelPermBit, Perm, type Member, type Message, type Poll } from '../types'
-import { drain, embed, me, member, msg, paged, role, serverDetail, user } from './fixtures'
+import {
+  dmWith,
+  drain,
+  embed,
+  me,
+  member,
+  msg,
+  paged,
+  role,
+  serverDetail,
+  summary,
+  user,
+} from './fixtures'
 
 const realSharing = sharing()
 const g = globalThis as { window?: unknown }
@@ -159,13 +171,11 @@ const state = (o: State = {}) => {
           servers: o.notMember
             ? []
             : [
-                {
-                  name: 's',
+                summary('s', {
                   display_name: 'Space',
-                  creator: null,
                   is_admin: !!o.owner,
                   ...(o.meTimedOut ? { timed_out_until: Date.now() / 1000 + 3600 } : {}),
-                },
+                }),
               ],
         }),
     servers: {
@@ -177,8 +187,19 @@ const state = (o: State = {}) => {
           { ...role(3, '#00f', 0n), name: 'Helper' },
         ],
         channels: [
-          { id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 },
           {
+            id: 1,
+            name: 'general',
+            kind: 'text',
+            slowmode_seconds: 0,
+            category_id: null,
+            my_perms: null,
+            topic: null,
+          },
+          {
+            category_id: null,
+            my_perms: null,
+            topic: null,
             id: 2,
             name: 'news',
             kind: 'text',
@@ -203,7 +224,7 @@ const state = (o: State = {}) => {
     onlineFriends: paged([]),
     incomingRequests: paged([]),
     outgoingRequests: paged([]),
-    dms: [{ id: 9, other: user('bob', { display_name: 'Bobby' }), is_self: false }],
+    dms: [dmWith(9, user('bob', { display_name: 'Bobby' }))],
     layout: { ...emptyLayout },
     notifyPrefs: EMPTY_NOTIFY,
     messages: {
@@ -635,7 +656,17 @@ test('pinned, empty and forwarded messages', () => {
     ...COPY_ALL.slice(1),
   ])
   const fwd = by(20, 'alice', {
-    forward: { author: user('carol'), created_at: T0, source_id: 3, origin: null, dropped: null },
+    forward: {
+      author: user('carol'),
+      created_at: T0,
+      source_id: 3,
+      origin: null,
+      dropped: null,
+      origin_channel: null,
+      origin_channel_id: null,
+      origin_server: null,
+      origin_server_channel: null,
+    },
   })
   useStore.setState(s => ({ messages: { ...s.messages, c1: [...s.messages.c1, fwd] } }))
   expect(labels(at(fwd)).slice(0, 4)).toEqual([
@@ -658,6 +689,7 @@ test('a forwarded copy opens its original and its server once the viewer may', a
       origin_channel_id: 2,
       origin_server: 'Space',
       dropped: null,
+      origin_server_channel: null,
     },
   })
   const fromDm = by(61, 'bob', {
@@ -668,6 +700,10 @@ test('a forwarded copy opens its original and its server once the viewer may', a
       origin: 'Direct message',
       origin_dm: true,
       dropped: null,
+      origin_channel: null,
+      origin_channel_id: null,
+      origin_server: null,
+      origin_server_channel: null,
     },
   })
   useStore.setState(s => ({ messages: { ...s.messages, c1: [...s.messages.c1, copy, fromDm] } }))
