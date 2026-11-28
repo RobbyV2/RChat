@@ -38,8 +38,6 @@ import { PlaceProvider } from '../../lib/place/react'
 import { P2pChatBody, P2pIntro } from './p2p_chat'
 import { Row, Inset } from '../layout'
 
-const NONE: string[] = []
-
 const IntroBanner = ({ name }: { name: string }) => (
   <P2pIntro id={P2P_DM_INTRO}>
     This conversation is stored only on your device and{' '}
@@ -97,7 +95,6 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
   const chat = useP2p(s => s.chat)
   const me = useP2p(s => s.me)
   const acct = useAccount()
-  const typingIks = useP2p(s => (s.chat ? (s.typing[s.chat.room] ?? NONE) : NONE))
   const nameId = useId()
   const shieldId = useId()
   const statusId = useId()
@@ -255,7 +252,6 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
           </span>
         </>
       }
-      typingNames={typingIks.filter(ik => ik === peerIk).map(() => peerRaw)}
       mayDelete={mayDelete}
       mayPin
       forwardSkip={peerIk}

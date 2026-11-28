@@ -34,6 +34,7 @@ import { hasInviteCode, INVITE_POST_TEXT } from '../p2p/flows'
 import type { RelayChoice } from '../relays'
 import { charCount, messageFilterOn } from '../rules'
 import { parseSed } from '../sed'
+import { shownTypers } from '../server_profile'
 import { ownsP2pServer } from '../p2p/server/types'
 import type { OwnLoad } from '../own_loads'
 import type { PollTarget } from '../polls_store'
@@ -113,6 +114,33 @@ export interface LaterState {
   fetched: boolean
   // What a failed fetch is filed under; null where nothing is fetched.
   notice: OwnLoad | null
+}
+
+// Who is typing in a list, as the line above its composer names them.
+export interface Typers {
+  names: string[]
+  // The accounts whose look in `server` is not loaded yet.
+  ask: string[]
+  server: string | null
+}
+
+const sameList = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((x, i) => x === b[i])
+
+// `read`, keeping the last value while it names the same people.
+const keptTypers = (read: () => Typers) => {
+  let held: Typers | null = null
+  return () => {
+    const next = read()
+    if (
+      held === null ||
+      held.server !== next.server ||
+      !sameList(held.names, next.names) ||
+      !sameList(held.ask, next.ask)
+    )
+      held = next
+    return held
+  }
 }
 
 // What the screen around a composer gives Send later.
@@ -236,6 +264,7 @@ export interface Compose {
   editLast: () => boolean
   cancelReply: () => void
   toggleReplyMention: () => void
+  typers: Live<Typers>
   files: Live<FilesState>
   // Adds files to the draft, as many as it takes.
   attach: (files: File[]) => void
@@ -568,7 +597,21 @@ const hosted = (account: AccountSession): Composer =>
         ([key, server, textOnly]): ForwardTo | null =>
           key === null ? null : { key, destination: { kind: 'instance', server }, textOnly }
       )
+    const typers = (initial: boolean) =>
+      keptTypers(() => {
+        const s = initial ? store.getInitialState() : store.getState()
+        const key = keyOf(initial)
+        const server = s.view?.kind === 'channel' ? s.view.server : null
+        const found =
+          key === null || !s.typingOn ? null : shownTypers(s, server, s.typing[key], s.blocked)
+        return { names: found?.names ?? [], ask: found?.ask ?? [], server }
+      })
     return {
+      typers: {
+        get: typers(false),
+        initial: typers(true),
+        subscribe: changed => store.subscribe(changed),
+      },
       files: {
         get: getFiles,
         initial: files(true),
@@ -1013,7 +1056,33 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
     }
     // When each key last said it is typing; the place wants to hear it again only so often.
     const said = new Map<string, number>()
+    const typers = (initial: boolean) =>
+      keptTypers(() => {
+        const s = initial ? useP2p.getInitialState() : useP2p.getState()
+        const key = keyOf(initial)
+        if (key === null) return { names: [], ask: [], server: null }
+        if (place.kind === 'p2pRoom')
+          return {
+            names: (s.serverTyping[key] ?? []).map(ik => app.memberName(room, ik)),
+            ask: [],
+            server: null,
+          }
+        const peerIk = s.chat?.room === room ? s.chat.peer : s.rooms[room]?.peer
+        const contact = s.contacts.find(c => c.ik === peerIk)
+        return {
+          names: (s.typing[key] ?? [])
+            .filter(ik => ik === peerIk)
+            .map(() => (contact ? displayName(contact) : 'Contact')),
+          ask: [],
+          server: null,
+        }
+      })
     return {
+      typers: {
+        get: typers(false),
+        initial: typers(true),
+        subscribe: changed => useP2p.subscribe(changed),
+      },
       files: {
         get: getFiles,
         initial: files(true),

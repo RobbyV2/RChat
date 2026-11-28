@@ -46,7 +46,7 @@ import { UnreadDivider } from './unread_banner'
 import { DateDivider } from './date_divider'
 import { MarkdownMessage } from './markdown_message'
 import { ShownName } from './shown_user'
-import { TypingIndicator } from './typing_indicator'
+import { TypingLine } from './typing_indicator'
 import { Composer } from './composer'
 import StatusClock from './status_clock'
 import { InboxButton } from './inbox'
@@ -803,11 +803,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
             />
           </MessageList>
           <div className="relative shrink-0">
-            <TypingIndicator
-              scope={view ? viewKey(view) : null}
-              server={memberServer}
-              bg="bg-surface"
-            />
+            <TypingLine bg="bg-surface" />
             {selecting && !wide ? (
               <SelectionBar scope={scope} sheet />
             ) : dm && otherBlocked ? (

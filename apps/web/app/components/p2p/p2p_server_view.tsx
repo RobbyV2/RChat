@@ -42,7 +42,7 @@ import {
 import { useMask, useStore } from '../../lib/store'
 import { allPings } from '../../lib/selectors'
 import { P2P_SERVER_INTRO } from '../../lib/home'
-import { channelScope, chatKey, serverScope } from '../../lib/p2p/app'
+import { channelScope, serverScope } from '../../lib/p2p/app'
 import { displayName } from '../../lib/p2p/contacts'
 import { type P2pMessage } from '../../lib/p2p/dm'
 import { P } from '../../lib/p2p/state'
@@ -643,8 +643,6 @@ const ServerIntro = () => (
   </P2pIntro>
 )
 
-const NONE: string[] = []
-
 function P2pChannelPaneBody({
   onMenu,
   onMembers,
@@ -655,7 +653,7 @@ function P2pChannelPaneBody({
   membersOpen: boolean
 }) {
   const identity = useP2pApp()!
-  const { memberName, p2pSearch } = identity
+  const { p2pSearch } = identity
 
   const acct = useAccount()
 
@@ -667,13 +665,11 @@ function P2pChannelPaneBody({
   const reader = useP2p(s => s.reader)
   const elsewhere = useP2p(s => s.elsewhere)
   const searchOpen = useP2p(s => s.panel === 'search')
-  const typingIks = useP2p(s => (s.chat?.ch ? (s.serverTyping[chatKey(s.chat)] ?? NONE) : NONE))
   const menuPings = useStore(allPings)
   const voiceCh = v?.channels.find(c => c.id === openCh && c.kind === 'voice')
   const channel = voiceCh ?? v?.channels.find(c => c.id === chat?.ch)
   const room = v?.id ?? ''
   const own = useP2p(s => ownsP2pServer(v, s.me))
-  const nameOf = useCallback((ik: string) => memberName(room, ik), [room])
   const timedOut = usePeerTimeoutEnds(v?.timedOutUntil)
   const held = useChannelCan(useP2pRoom(v?.id ?? null), chat?.ch ?? null)
   const moderator = held.manage && timedOut === null
@@ -889,7 +885,6 @@ function P2pChannelPaneBody({
             </span>
           </>
         }
-        typingNames={typingIks.map(nameOf)}
         mayDelete={mayDelete}
         mayPin={held.pin && timedOut === null}
         forwardSkip={null}

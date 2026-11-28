@@ -21,7 +21,6 @@ import { openThreadAt } from '../../lib/place/use_thread'
 import { composeAt } from '../../lib/place/use_composer'
 import { P2pDm, P2pRoom } from '../../lib/place/place'
 import { useGate } from '../composer_gate'
-import { TypingIndicator } from '../typing_indicator'
 import { CanFetchContext, RowFiles, useP2pFlash, useP2pList } from './p2p_chat'
 import { usePeerTimeoutEnds } from '../timeout_dialog'
 import { useDmFacts } from './p2p_dm_pane'
@@ -29,7 +28,6 @@ import { groupPlaces, p2pCue, type GroupPlace } from '../../lib/message_groups'
 import { dayStarts } from '../../lib/date_dividers'
 import { DateDivider } from '../date_divider'
 import { LightboxList } from '../media_lightbox'
-import { Composer } from '../composer'
 
 // The thread of a P2P server channel or conversation beside it (full screen on phones): its root,
 // the replies stored here and a composer, through the same panel as instance threads.
@@ -237,12 +235,6 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
                 at={at}
                 peer
                 root={head && row(head, true, ALONE)}
-                footer={
-                  <>
-                    <TypingIndicator scope={null} bg="bg-surface-container-low" names={f.typers} />
-                    <Composer list="thread" />
-                  </>
-                }
               >
                 {list.map((r, i) => (
                   <Fragment key={r.p.id}>

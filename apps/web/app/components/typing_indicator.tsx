@@ -5,15 +5,15 @@ import { Name } from './name'
 import { memo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { look, plays } from '../lib/motion/play'
-import { shownTypers } from '../lib/server_profile'
 import { useMask, useStore } from '../lib/store'
 import { rowTypers } from '../lib/typing_rows'
 import { typingParts, typingTitle } from '../lib/typing'
 import { useLooksFor } from './shown_user'
 import { PingBadge } from './ping_badge'
+import type { ComposerList } from '../lib/place/composer'
+import { useLive } from '../lib/place/react'
+import { useCompose } from '../lib/place/use_composer'
 import { Inset, Row } from './layout'
-
-const NONE: string[] = []
 
 const DOTS = [0, 1, 2]
 
@@ -86,36 +86,20 @@ export function useHostedTypers(scopes: readonly string[], server: string | null
   return names
 }
 
-// One thin line over the bottom edge of the message list, so it never moves the list.
-// `names` replaces the store's typers (a P2P conversation tracks its own). In a channel of
-// `server` each typer shows under the name the server shows; one whose member row isn't loaded
-// shows under the account name and is looked up once.
-export function TypingIndicator({
-  scope,
+// Who is typing in `list` of the place around, in one thin line over the bottom edge of the
+// message list, so it never moves the list. A typer whose look in the place's server is not
+// loaded shows under the account name and is looked up once.
+export function TypingLine({
+  list = 'main',
   bg,
-  names,
-  server = null,
 }: {
-  scope: string | null
+  list?: ComposerList
   bg: 'bg-surface' | 'bg-surface-container-low'
-  names?: string[]
-  server?: string | null
 }) {
   const on = useStore(s => s.typingOn)
-  const typers = useStore(
-    useShallow(s =>
-      names || !scope || !s.typingOn
-        ? NONE
-        : shownTypers(s, server, s.typing[scope], s.blocked).names
-    )
-  )
-  const ask = useStore(
-    useShallow(s =>
-      names || !scope || !s.typingOn ? NONE : shownTypers(s, server, s.typing[scope], s.blocked).ask
-    )
-  )
+  const { names, ask, server } = useLive(useCompose(list).typers)
   useLooksFor(server, ask)
-  const parts = on ? typingParts(names ?? typers) : []
+  const parts = on ? typingParts(names) : []
   if (!parts.length) return null
   return (
     <Inset

@@ -18,7 +18,7 @@ import type { Outgoing } from '../lib/store_types'
 import { findById } from '../lib/window'
 import { newSince } from '../lib/lists'
 import { Composer } from './composer'
-import { TypingIndicator } from './typing_indicator'
+import { TypingLine } from './typing_indicator'
 import { OutboxRows, reactHeader, useAuthorMembers, usePeopleKey } from './message_pane'
 import { MessageRow, type RowHandlers } from './message_row'
 import { useMedia } from './context_menu'
@@ -119,8 +119,8 @@ export function useThreadScroll(
 }
 
 // The thread panel of a conversation, whichever place it is in: the header, bars above the list,
-// the list (the way to older replies, the root, the reply count, the replies) and `footer` below.
-// The rows are the caller's.
+// the list (the way to older replies, the root, the reply count, the replies), who is typing and
+// the composer (or what a caller puts in its place). The rows are the caller's.
 export function ThreadPanelView({
   thread,
   state,
@@ -129,7 +129,7 @@ export function ThreadPanelView({
   bars,
   root,
   children,
-  footer,
+  composer,
 }: {
   thread: OpenThread
   state: ThreadState
@@ -138,7 +138,7 @@ export function ThreadPanelView({
   bars?: ReactNode
   root: ReactNode
   children: ReactNode
-  footer: ReactNode
+  composer?: ReactNode
 }) {
   const { older, newer, pagesOnSight, count } = state
   const { listRef, contentRef, scroll, beforePage, fresh, first } = at
@@ -215,7 +215,10 @@ export function ThreadPanelView({
           </div>
         </Inset>
       </div>
-      <div className="relative shrink-0">{footer}</div>
+      <div className="relative shrink-0">
+        <TypingLine list="thread" bg="bg-surface-container-low" />
+        {composer ?? <Composer list="thread" />}
+      </div>
     </div>
   )
 }
@@ -389,17 +392,12 @@ export default function ThreadPanel() {
           </>
         }
         root={row(root, ALONE)}
-        footer={
-          <>
-            <TypingIndicator scope={key} server={server} bg="bg-surface-container-low" />
-            {selecting && !wide ? (
-              <SelectionBar scope={key} sheet />
-            ) : dmOther ? (
-              <BlockedComposer user={dmOther} />
-            ) : (
-              <Composer list="thread" />
-            )}
-          </>
+        composer={
+          selecting && !wide ? (
+            <SelectionBar scope={key} sheet />
+          ) : dmOther ? (
+            <BlockedComposer user={dmOther} />
+          ) : undefined
         }
       >
         <BlockedList

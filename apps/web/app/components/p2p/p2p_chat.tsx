@@ -51,7 +51,7 @@ import { composeAt } from '../../lib/place/use_composer'
 import { ListedRow, useRowFlags } from '../listed_row'
 import { rowsAt } from '../../lib/place/use_rows'
 import { ThreadsWindow } from '../threads'
-import { TypingIndicator } from '../typing_indicator'
+import { TypingLine } from '../typing_indicator'
 import { EmojiPicker } from '../emoji_picker'
 import { useChatScroll, useFocusMessage } from '../viewport_height'
 import { type RowHandlers } from '../message_row'
@@ -356,7 +356,6 @@ export interface ChatBodyProps {
   // What the gap note says while nobody who has older history is online.
   gapOffline: ReactNode
   empty: ReactNode
-  typingNames: string[]
   // Others' messages a moderator may delete, and whether pins may change.
   mayDelete: (p: P2pMessage) => boolean
   mayPin: boolean
@@ -370,7 +369,7 @@ function IdentityChatBody(props: ChatBodyProps) {
   const identity = useP2pApp()!
   const { profileName, p2pDm, p2pFiles } = identity
 
-  const { chat, canAct, mayDelete, mayPin, forwardSkip, typingNames } = props
+  const { chat, canAct, mayDelete, mayPin, forwardSkip } = props
   const timedOut = props.timedOut ?? false
   const key = chatKey(chat)
   const me = useP2p(s => s.me)
@@ -565,7 +564,7 @@ function IdentityChatBody(props: ChatBodyProps) {
             ))}
           </MessageList>
           <div className="relative shrink-0">
-            <TypingIndicator scope={null} bg="bg-surface" names={typingNames} />
+            <TypingLine bg="bg-surface" />
             {!shut && (storageFull || props.peerFull) && (
               <GateNote data-p2p-full role="status">
                 <CircleAlert size={16} className="shrink-0 text-error" aria-hidden />

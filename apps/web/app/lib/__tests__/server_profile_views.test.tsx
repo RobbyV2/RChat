@@ -23,7 +23,7 @@ import {
   type ProfileResetSource,
 } from '../../components/server_profile_dialog'
 import { ShownAvatar, ShownName } from '../../components/shown_user'
-import { TypingIndicator } from '../../components/typing_indicator'
+import { TypingLine } from '../../components/typing_indicator'
 import { LOCK_CHOICES, RESET_LABELS } from '../profile_reset'
 import { EMPTY_DRAFT } from '../server_profile_editor'
 import { useStore } from '../store'
@@ -108,13 +108,13 @@ test('an audit row names people as the server shows them now, the username alway
 
 test('the typing line of a server channel names typers as the server shows them', () => {
   withLook()
-  expect(render(<TypingIndicator scope="c1" server="s" bg="bg-surface" />)).toContain(
-    'Robert (bob)'
-  )
-  expect(render(<TypingIndicator scope="c1" bg="bg-surface" />)).toContain('>Bob<')
-  expect(
-    render(<TypingIndicator scope="c1" server="s" bg="bg-surface" names={['Peer']} />)
-  ).toContain('>Peer<')
+  Object.assign(initial, { view: { kind: 'channel', server: 's', channelId: 1 } })
+  expect(render(<TypingLine bg="bg-surface" />)).toContain('Robert (bob)')
+  Object.assign(initial, {
+    view: { kind: 'dm', dmId: 1 },
+    typing: { d1: { bob: { name: 'Bob', until: Date.now() + 5000 } } },
+  })
+  expect(render(<TypingLine bg="bg-surface" />)).toContain('>Bob<')
 })
 
 test('a mention pill keeps the handle: the username with the server name as its tooltip, the name in a P2P server', () => {

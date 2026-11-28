@@ -14,6 +14,7 @@ import { ChannelPermBit } from '../types'
 import { ReplyBar } from '../../components/replies'
 import { ComposerGate } from '../../components/composer_gate'
 import { Composer } from '../../components/composer'
+import { TypingLine } from '../../components/typing_indicator'
 import { AttachButton, ComposerFiles } from '../../components/composer_files'
 import { placeContract, type ContractWorld } from './helpers/place_contract'
 
@@ -204,6 +205,45 @@ placeContract(composer, (kind, world) => {
             ['typing', key, false],
           ]
     )
+  })
+
+  test('who types in a list is named above its composer, and only there', () => {
+    const main = seat(world(), [])
+    const thread = seat(world(), [], 'thread')
+    const { ann } = world()
+    const key = mainKey()
+    expect(main.typers.get().names).toEqual([])
+    if (hosted)
+      ann.account.store.setState({
+        typingOn: true,
+        typing: { [key]: { bob: { name: 'Bob', until: Number.MAX_SAFE_INTEGER } } },
+      })
+    else if (kind === 'p2pRoom') ann.app?.useP2p.setState({ serverTyping: { [key]: ['B'] } })
+    else
+      ann.app?.useP2p.setState({
+        contacts: [{ ik: 'B', name: 'Bob', state: 'mutual' }] as never,
+        chat: { room: world().room, ch: null, peer: 'B' } as never,
+        typing: { [key]: ['B', 'C'] },
+      })
+    const typers = main.typers.get()
+    expect(main.typers.get()).toBe(typers)
+    expect(typers.names).toHaveLength(1)
+    if (kind !== 'p2pRoom') expect(typers.names).toEqual(['Bob'])
+    expect(typers.server).toBe(kind === 'hostedServer' ? world().server : null)
+    expect(thread.typers.get().names).toEqual([])
+    Object.assign(ann.account.store.getInitialState(), ann.account.store.getState())
+    if (ann.app) Object.assign(ann.app.useP2p.getInitialState(), ann.app.useP2p.getState())
+    const html = renderToStaticMarkup(
+      <AccountProvider session={ann.account}>
+        <P2pProvider identity={ann.app}>
+          <PlaceProvider place={ann.place}>
+            <TypingLine bg="bg-surface" />
+          </PlaceProvider>
+        </P2pProvider>
+      </AccountProvider>
+    )
+    expect(html).toContain('data-typing')
+    expect(html).toContain('is typing')
   })
 
   test('a text fits by its count and, between identities, by its size', () => {
