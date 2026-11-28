@@ -66,11 +66,26 @@ export function useNameLabels(): NameLabeller {
   return labellerFor(streamer, mask, mine)
 }
 
-function Body({ of, withUsername, fit }: { of: NameValue; withUsername: boolean; fit: boolean }) {
+type Fit = boolean | 'line'
+
+function Body({ of, withUsername, fit }: { of: NameValue; withUsername: boolean; fit: Fit }) {
   const own = useOwnName(of)
   const shown = !masksName(of, own)
   const { main, handle } = nameParts(of, withUsername)
   if (handle === null) return shown ? main : <Masked text={main} />
+  if (fit === 'line')
+    return (
+      <MaskedTogether word={revealKeyOf(of)}>
+        <Row as="span" gap="2xs" align="baseline" place="min-w-0 overflow-hidden">
+          <span dir="auto" className="min-w-8 shrink truncate">
+            <Masked text={main} own={shown} />
+          </span>
+          <span className="min-w-0 shrink-3 truncate text-on-surface-variant">
+            (<Masked text={handle} own={shown} />)
+          </span>
+        </Row>
+      </MaskedTogether>
+    )
   if (fit)
     return (
       <MaskedTogether word={revealKeyOf(of)}>
@@ -117,8 +132,9 @@ type NameProps<S extends string, L extends string> = Omit<
   of: NameValue
   // A person's username after their display name, when the two differ.
   withUsername?: boolean
-  // For a row the name fills: the display name is cut short first, then the username.
-  fit?: boolean
+  // For a row the name fills: the display name is cut short first, then the username. `line`:
+  // for a box as wide as its content, both stay on one line and shorten, the username sooner.
+  fit?: Fit
   // The whole name as the element's tooltip (always with `fit`), or the text given. None in
   // streamer mode.
   titled?: boolean | NameLabel
@@ -139,7 +155,7 @@ function Drawn<const S extends string, const L extends string>({
   of,
   withUsername = false,
   fit = false,
-  titled = fit,
+  titled = fit !== false,
   link = false,
   as = 'span',
   place,

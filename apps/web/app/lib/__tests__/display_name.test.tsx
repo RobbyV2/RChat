@@ -99,6 +99,11 @@ const USERNAME_AFTER = (display: string, username: string) =>
 const FITTED = (display: string, username: string) =>
   `<span class="flex min-w-0 flex-wrap gap-(--space-2xs) items-baseline justify-start h-lh text-ellipsis min-w-0 overflow-hidden"><span dir="auto" class="max-w-max min-w-0 shrink grow basis-16 truncate">${display}</span><span class="shrink-0 text-on-surface-variant">(${username})</span></span>`
 
+// In a box as wide as its content (a reply quote): one line, both parts shorten, the username
+// sooner, so no space is kept for a part out of sight.
+const FITTED_LINE = (display: string, username: string) =>
+  `<span class="flex min-w-0 flex-nowrap gap-(--space-2xs) items-baseline justify-start min-w-0 overflow-hidden"><span dir="auto" class="min-w-8 shrink truncate">${display}</span><span class="min-w-0 shrink-3 truncate text-on-surface-variant">(${username})</span></span>`
+
 test('a member list name fits its row, with the whole name in its title', async () => {
   const row = (u: ReturnType<typeof user>, color?: string, icon?: Look['icon']) =>
     renderToStaticMarkup(<MemberName user={shownUser(u, null)} color={color} icon={icon} />)
@@ -436,7 +441,7 @@ test('a P2P reply quote shows the P2P name, with the key only in its title', () 
   expect(streamer.includes(KEY)).toBe(false)
   Object.assign(initial, { streamer: false })
   const account = render(<ReplyPreview quote={quoteOf(impostor)} avatar={36} onJump={() => {}} />)
-  expect(account).toContain(FITTED('alice', 'bob'))
+  expect(account).toContain(FITTED_LINE('alice', 'bob'))
 })
 
 test('a P2P reply quote masks the P2P name of others only', async () => {

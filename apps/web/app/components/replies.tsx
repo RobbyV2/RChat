@@ -166,7 +166,7 @@ export function ReplyPreview({
             <Name
               of={personName(author, own)}
               withUsername
-              fit
+              fit="line"
               before={quote.mention ? '@' : null}
               place="flex min-w-0"
             />
