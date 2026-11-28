@@ -1,12 +1,12 @@
 import type { AccountSession } from '../client/session'
 import { chatKey } from '../p2p/app/store'
-import type { P2pApp } from '../p2p/app/runtime'
 import { asMessage, looseNumber } from '../p2p/shown_message'
 import { hostedThreadPage, pageThreads, pingedRows, type ThreadRow } from '../thread_list'
 import { viewKey } from '../view'
 import { defineFeature } from './feature'
 import { built, type Live } from './live'
-import type { P2pList } from './place'
+import type { P2pDm, P2pRoom } from './place'
+import { shownOf } from './shown'
 
 export interface ThreadPage {
   items: ThreadRow[]
@@ -83,13 +83,8 @@ const hosted = (account: AccountSession): Threads => {
 
 const unmarked = (rows: ThreadRow[]) => rows
 
-const peer = (
-  app: P2pApp,
-  list: P2pList | null,
-  fallback: Pick<P2pList, 'user' | 'name'>
-): Threads => {
-  const { useP2p, p2pDm, p2pThread } = app
-  const { user, name } = list ?? fallback
+const peer = (place: P2pRoom | P2pDm): Threads => {
+  const { useP2p, p2pDm, p2pThread } = place.app
   const state = (initial: boolean) =>
     built(
       () => {
@@ -114,6 +109,7 @@ const peer = (
     close: () => p2pDm.closeThreads(),
     page: async (query, cursor) => {
       const me = useP2p.getState().me ?? ''
+      const { user, name } = shownOf(place).get()
       const all = (await p2pThread.list()).map(t => ({
         ...t,
         id: t.root.id,
@@ -147,15 +143,7 @@ const peer = (
 // The Threads list of the conversation a place has on screen.
 export const threads = defineFeature<Threads>('threads', {
   hostedServer: place => hosted(place.account),
-  p2pRoom: place =>
-    peer(place.app, place.list, {
-      user: ik => place.app.memberUser(place.room, ik),
-      name: ik => place.app.memberName(place.room, ik),
-    }),
+  p2pRoom: peer,
   hostedDm: place => hosted(place.account),
-  p2pDm: place =>
-    peer(place.app, place.list, {
-      user: ik => place.app.p2pUser(ik),
-      name: ik => place.app.p2pUser(ik).display_name,
-    }),
+  p2pDm: peer,
 })

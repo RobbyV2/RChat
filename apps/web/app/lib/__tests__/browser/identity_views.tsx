@@ -429,7 +429,7 @@ function peerCodeFixture() {
         Join a server
       </button>
       <P2pProvider identity={sibling}>
-        <PlaceProvider place={peerPlace(sibling, { me: self, user: () => me })}>
+        <PlaceProvider place={peerPlace(sibling, { me: self })}>
           {['rcp1.fixture', 'rci1.fixture'].map((content, i) => (
             <MarkdownMessage
               key={i}

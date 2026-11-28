@@ -5,6 +5,7 @@ import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import { AuditRow } from '../../components/audit_log'
 import { PlaceProvider } from '../place/react'
+import type { Contact } from '../p2p/contacts'
 import { createPeerFixture } from './peer_fixture'
 import { peerPlace } from './helpers/peer_place'
 import { testAccount } from './test_account'
@@ -133,8 +134,16 @@ test('a mention pill keeps the handle: the username with the server name as its 
   const key = 'Bx7pW2'.padEnd(43, 'b')
   const peer = testAccount('peer')
   const place = peerPlace(createPeerFixture(peer, 'peer'), {
-    names: new Map([['skipper', key]]),
-    user: () => user(key, { display_name: 'Skipper' }),
+    chat: {
+      room: 'dm',
+      peer: key,
+      messages: [],
+      more: false,
+      loading: false,
+      readSeq: 0,
+      missed: [],
+    },
+    contacts: [{ ik: key, name: 'Skipper', petname: null, state: 'mutual' } as unknown as Contact],
   })
   const p2p = render(
     <PlaceProvider place={place}>

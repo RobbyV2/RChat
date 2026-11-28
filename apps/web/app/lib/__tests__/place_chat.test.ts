@@ -2,12 +2,12 @@ import { expect, test } from 'bun:test'
 import { chat, accountChat, type Chat } from '../place/chat'
 import { featureAt, isUnsupported } from '../place/feature'
 import type { P2pMessage } from '../p2p/dm'
-import type { P2pList } from '../place/place'
+import type { Contact } from '../p2p/contacts'
+import { isHosted } from '../place/place'
+import { reactPickOf } from '../place/shown'
 import type { Message } from '../types'
 import { member, msg, paged, serverDetail, textChannel, user } from './fixtures'
 import { placeContract, type ContractWorld, type Seat } from './helpers/place_contract'
-
-const KEYS: Record<string, string> = { ann: 'A', bob: 'B' }
 
 interface Calls {
   reacted: unknown[]
@@ -15,7 +15,7 @@ interface Calls {
 }
 
 // The chat of one party, with what its side needs to answer: the members a hosted server
-// lists, or the list a P2P place is shown through.
+// lists, or the conversation a P2P place has open.
 const seated = (world: ContractWorld, seat: Seat, calls: Calls): Chat => {
   const { place } = seat
   if (place.kind === 'hostedServer' || place.kind === 'hostedDm') {
@@ -30,22 +30,57 @@ const seated = (world: ContractWorld, seat: Seat, calls: Calls): Chat => {
     if (isUnsupported(here)) throw new Error(here.line)
     return here
   }
-  const stored = { id: 'e1', reactions: [{ key: '👍', by: ['B'] }] } as unknown as P2pMessage
-  const list: P2pList = {
+  const { app } = place
+  const row = (id: string, ts: number, by: string[]): P2pMessage =>
+    ({
+      id,
+      sender: 'B',
+      ts,
+      body: id,
+      reply: null,
+      fwd: null,
+      att: [],
+      edited: null,
+      pinned: null,
+      reactions: by.length ? [{ key: '👍', count: by.length, me: false, first: ts, by }] : [],
+    }) as unknown as P2pMessage
+  const messages = [row('e1', 0, ['B'])]
+  const contact = (ik: string, name: string) =>
+    ({ ik, name, petname: null, state: 'mutual' }) as unknown as Contact
+  const other = seat.name === 'A' ? contact('B', 'Bob') : contact('A', 'Ann')
+  app.useP2p.setState({
     me: seat.name,
-    idOf: num => (num === 1 ? 'e1' : null),
-    message: id => (id === 'e1' ? stored : undefined),
-    user: ik => user(ik, { display_name: ik === 'A' ? 'Ann' : 'Bob' }),
-    name: ik => ik,
-    names: new Map(Object.entries(KEYS)),
-    people: q => (q === 'b' ? [user('B')] : []),
-    openPicker: m => void calls.picked.push(m),
+    name: seat.name === 'A' ? 'Ann' : 'Bob',
+    contacts: [other],
+    chat: {
+      room: place.room,
+      peer: place.kind === 'p2pDm' ? other.ik : '',
+      ...(place.kind === 'p2pRoom' ? { ch: 'c1' } : {}),
+      messages,
+      more: false,
+      loading: false,
+      readSeq: 0,
+      missed: [],
+    },
+  })
+  if (place.kind === 'p2pRoom') {
+    const member = (ik: string, name: string) => ({ ik, name, m: 'join' })
+    app.useP2p.setState(s => ({
+      servers: {
+        ...s.servers,
+        [place.room]: {
+          ...s.servers[place.room],
+          id: place.room,
+          members: [member('A', 'Ann'), member('B', 'Bob')],
+        } as unknown as (typeof s.servers)[string],
+      },
+    }))
   }
   place.app.p2pDm.react = async (id, emoji, on) => {
     calls.reacted.push([id, emoji, on])
     return null
   }
-  const here = featureAt(chat, place.shownBy(list))
+  const here = featureAt(chat, place)
   if (isUnsupported(here)) throw new Error(here.line)
   return here
 }
@@ -91,7 +126,9 @@ placeContract(chat, (kind, world) => {
     ann.toggleReaction(m, '👍', false)
     expect(calls.reacted).toEqual([hosted ? [1, '👍', false] : ['e1', '👍', true]])
     ann.openReactPicker(m, null)
-    expect(calls.picked).toEqual([m])
+    const { place } = world().ann
+    const picked = isHosted(place) ? calls.picked : [reactPickOf(place).get()?.m]
+    expect(picked).toEqual([m])
     const reactors = await ann.loadReactors(1, '👍')
     expect(reactors.map(u => u.username)).toEqual([hosted ? 'bob' : 'B'])
   })
@@ -100,12 +137,10 @@ placeContract(chat, (kind, world) => {
     const ann = seated(world(), world().ann, { reacted: [], picked: [] })
     expect(ann.fetches).toBe(hosted)
     if (hosted) expect(ann.people).toBeNull()
-    else expect(ann.people?.('b').map(u => u.username)).toEqual(['B'])
+    else expect(ann.people?.('b').map(u => u.username)).toEqual(['Bob'])
   })
 
-  test('a P2P place outside its list has no chat of its own', () => {
-    const here = featureAt(chat, world().ann.place)
-    expect(isUnsupported(here)).toBe(!hosted)
+  test('outside any place the account has its own hosted chat', () => {
     const own = accountChat(world().ann.account)
     expect(own).toBe(accountChat(world().ann.account))
     expect(own.fetches).toBe(true)

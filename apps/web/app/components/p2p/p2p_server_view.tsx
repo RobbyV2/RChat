@@ -22,7 +22,6 @@ import { P2pRoom } from '../../lib/place/place'
 import MemberSidebar from '../member_sidebar'
 
 import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
-import { roomLooksKey } from '../../lib/server_profile'
 import {
   Clock,
   Folder as FolderIcon,
@@ -71,7 +70,7 @@ import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { ElsewhereNotice, MovingBanner } from './p2p_home'
 import { ServerNotices } from './p2p_server_flows'
 import { SYNCING_TEXT, TRANSFERRED_TEXT } from '../../lib/p2p/flows'
-import { NoteBar, P2pChatBody, P2pIntro, type Mentionable } from './p2p_chat'
+import { NoteBar, P2pChatBody, P2pIntro } from './p2p_chat'
 import { VoiceDock, VoiceGrid } from '../voice_grid'
 import { MemberCard } from './p2p_server_roles'
 import { TimedOutBar, usePeerTimeoutEnds } from '../timeout_dialog'
@@ -741,7 +740,7 @@ function P2pChannelPaneBody({
   membersOpen: boolean
 }) {
   const identity = useP2pApp()!
-  const { memberName, memberUser, p2pSearch } = identity
+  const { memberName, p2pSearch } = identity
 
   const acct = useAccount()
 
@@ -765,21 +764,10 @@ function P2pChannelPaneBody({
   const mask = useMask(own)
   const nameOf = useCallback((ik: string) => memberName(room, ik), [room])
   const members = v?.members
-  // Built again only when a member's name or avatar here changes: rows show the new look, and
-  // typing or presence redraws none of them.
-  const looks = useMemo(() => roomLooksKey(members), [members])
-  const userOf = useCallback((ik: string) => memberUser(room, ik), [room, looks])
   const roles = v?.roles
   const lookOf = useMemo(
     () => (members && roles ? memberLooks({ members, roles }, mask) : undefined),
     [members, roles, mask]
-  )
-  const people = useMemo<Mentionable[]>(
-    () =>
-      (members ?? [])
-        .filter(m => m.m === 'join')
-        .map(m => ({ ik: m.ik, name: m.name, handle: m.name })),
-    [members]
   )
   const timedOut = usePeerTimeoutEnds(v?.timedOutUntil)
   const held = useChannelCan(useP2pRoom(v?.id ?? null), chat?.ch ?? null)
@@ -968,10 +956,7 @@ function P2pChannelPaneBody({
         disabled={disabled}
         canAct={canAct}
         timedOut={timedOut !== null}
-        nameOf={nameOf}
-        userOf={userOf}
         lookOf={lookOf}
-        people={people}
         title={`#${mask(channel.name)}`}
         placeholder={`Message #${mask(channel.name)}`}
         pendingTip="Waiting for a member to come online"

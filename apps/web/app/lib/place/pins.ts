@@ -1,12 +1,12 @@
 import type { AccountSession } from '../client/session'
-import type { P2pApp } from '../p2p/app/runtime'
 import { asMessage, looseNumber } from '../p2p/shown_message'
 import { pinPlace } from '../pins'
 import { viewKey } from '../view'
 import type { Message } from '../types'
 import { defineFeature } from './feature'
 import { built, type Live } from './live'
-import type { P2pList } from './place'
+import type { P2pDm, P2pRoom } from './place'
+import { shownOf } from './shown'
 
 // A pinned message as the list shows it; `key` names it to the place.
 export interface Pinned {
@@ -93,14 +93,10 @@ const hosted = (account: AccountSession): Pins => {
   }
 }
 
-const peer = (
-  app: P2pApp,
-  place: 'conversation' | 'channel',
-  list: P2pList | null,
-  fallback: P2pList['user']
-): Pins => {
+const peer = (at: P2pRoom | P2pDm, place: 'conversation' | 'channel'): Pins => {
+  const { app } = at
   const { useP2p, p2pDm } = app
-  const user = list?.user ?? fallback
+  const user = (ik: string) => shownOf(at).get().user(ik)
   const state = (initial: boolean) =>
     built(
       () => {
@@ -143,8 +139,7 @@ const peer = (
 // The pinned messages of the conversation a place has on screen.
 export const pins = defineFeature<Pins>('pins', {
   hostedServer: place => hosted(place.account),
-  p2pRoom: place =>
-    peer(place.app, 'channel', place.list, ik => place.app.memberUser(place.room, ik)),
+  p2pRoom: place => peer(place, 'channel'),
   hostedDm: place => hosted(place.account),
-  p2pDm: place => peer(place.app, 'conversation', place.list, ik => place.app.p2pUser(ik)),
+  p2pDm: place => peer(place, 'conversation'),
 })

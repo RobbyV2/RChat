@@ -3,9 +3,10 @@ import { mentionHandle } from '../display_name'
 import { emojiBase } from '../reactions'
 import { knownMentions, userRefFor } from '../selectors'
 import type { Message, UserRef } from '../types'
-import { defineFeature, unsupported } from './feature'
-import { constant, fromStore, type Live } from './live'
+import { defineFeature } from './feature'
+import { derived, fromStore, type Live } from './live'
 import type { P2pDm, P2pRoom } from './place'
+import { reactPickOf, shownOf, type Shown } from './shown'
 
 // Someone a message mentions, as its pill shows them.
 export interface Mentioned {
@@ -37,6 +38,13 @@ export interface Chat {
 }
 
 const sameMention = (a: Mentioned, b: Mentioned) => a.user === b.user && a.mine === b.mine
+// A P2P list makes a member's user value on each read: the pill follows what it shows.
+const sameLook = (a: Mentioned, b: Mentioned) =>
+  a.mine === b.mine &&
+  a.label === b.label &&
+  a.user.username === b.user.username &&
+  a.user.avatar_kind === b.user.avatar_kind &&
+  a.user.avatar_color === b.user.avatar_color
 
 const hosted = (account: AccountSession, server: string | null): Chat => {
   const { store } = account
@@ -62,12 +70,12 @@ const hosted = (account: AccountSession, server: string | null): Chat => {
 }
 
 const peer = (place: P2pRoom | P2pDm) => {
-  const { list, app, account } = place
-  if (!list) return unsupported('Open the conversation first')
-  const { me } = list
+  const { app, account } = place
+  const shown = shownOf(place)
+  const named = derived(shown, s => s.names)
   const chat: Chat = {
     toggleReaction: (m, emoji, note = true) => {
-      const id = list.idOf(m.id)
+      const id = shown.get().idOf(m.id)
       if (!id) return
       const adding = !m.reactions?.some(r => r.emoji === emoji && r.me)
       if (adding && note) {
@@ -77,26 +85,41 @@ const peer = (place: P2pRoom | P2pDm) => {
       void app.p2pDm.react(id, emoji, adding)
     },
     loadReactors: async (num, emoji) => {
+      const list = shown.get()
       const id = list.idOf(num)
       const stored = id === null ? undefined : list.message(id)
       return (stored?.reactions.find(r => r.key === emoji)?.by ?? []).map(list.user)
     },
-    openReactPicker: list.openPicker,
-    self: constant(me),
-    known: (_m, candidates) => constant(candidates.filter(c => list.names.has(c)).join('\n')),
+    openReactPicker: (m, anchor) => reactPickOf(place).set({ m, anchor }),
+    self: derived(shown, s => s.me),
+    known: (_m, candidates) =>
+      derived(named, names => candidates.filter(c => names.has(c)).join('\n')),
     // A P2P identity carries its key where an account carries its username: its name is its
     // handle.
     mention: name => {
-      const ik = list.names.get(name)
-      const user = list.user(ik ?? '')
-      return constant({
-        user,
-        mine: ik !== undefined && ik === me,
-        label: user.display_name,
-        card: null,
-      })
+      const read = (from: () => Shown) => {
+        let held: Mentioned | null = null
+        return () => {
+          const list = from()
+          const ik = list.names.get(name)
+          const user = list.user(ik ?? '')
+          const next = {
+            user,
+            mine: ik !== undefined && ik === list.me,
+            label: user.display_name,
+            card: null,
+          }
+          if (held === null || !sameLook(held, next)) held = next
+          return held
+        }
+      }
+      return {
+        get: read(shown.get),
+        subscribe: shown.subscribe,
+        ...(shown.initial ? { initial: read(shown.initial) } : {}),
+      }
     },
-    people: list.people,
+    people: query => shown.get().people(query),
     fetches: false,
   }
   return chat

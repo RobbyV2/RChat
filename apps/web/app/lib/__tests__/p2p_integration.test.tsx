@@ -1,7 +1,7 @@
 import { peerStorage } from '../client/keys'
 import { peerChat } from '../actions/p2p_chat'
 import { ForwardBar } from '../../components/forwards'
-import { P2pProvider } from '../client/p2p_react'
+import { P2pProvider, useP2pApp } from '../client/p2p_react'
 import { parseForward, forwardValue } from '../forward'
 import { testAccount, testSession } from './test_account'
 import { AccountProvider } from '../client/react'
@@ -28,10 +28,10 @@ import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, beforeAll, describe, expect, test } from 'bun:test'
 import { openDB } from 'idb'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { ReactElement } from 'react'
+import { useRef, type ReactElement } from 'react'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime'
-import { maskOf, type ContextMenuItem } from '../store'
+import type { ContextMenuItem } from '../store'
 import { resetMasking, setMasking } from '../profanity'
 import { DEFAULT_VIEW, type InboxView } from '../inbox'
 const { addInboxAdapter, removeInboxAdapter } = peerOwner.inbox
@@ -50,6 +50,7 @@ import { home, pinEmptyBook } from './home_instance'
 import { P2pOffSection, P2pSection } from '../../components/p2p/p2p_settings'
 import type { Fwd } from '../p2p/content'
 import { useP2pList } from '../../components/p2p/p2p_chat'
+import { seedPeer } from './helpers/peer_place'
 import { asMessage } from '../p2p/shown_message'
 import type { Contact } from '../p2p/contacts'
 import { keyId, newKeyPair } from '../p2p/keys'
@@ -1086,13 +1087,27 @@ describe('forwarding', () => {
   const stub = (t: string) => t.replace(/shit/gi, '****')
   let list: ReturnType<typeof useP2pList> | null = null
   function Probe({ messages, draftKey = ROOM }: { messages: P2pMessage[]; draftKey?: string }) {
+    const app = useP2pApp()!
+    const seeded = useRef(false)
+    if (!seeded.current) {
+      seeded.current = true
+      seedPeer(app, {
+        chat: {
+          room: draftKey,
+          peer: ALICE,
+          messages,
+          more: false,
+          loading: false,
+          readSeq: 0,
+          missed: [],
+        },
+      })
+    }
     list = useP2pList({
-      messages,
-      nameOf: ik => maskOf(accountStore.getState())(ik === ALICE ? 'Mom' : 'Carol'),
       ownName: ik => profileName(ik),
-      people: [],
       room: draftKey,
       ch: null,
+      list: 'main',
       draftKey,
       scope: `d:${draftKey}`,
       canAct: true,

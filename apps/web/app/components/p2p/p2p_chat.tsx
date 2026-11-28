@@ -52,8 +52,9 @@ import { clock } from '../../lib/slowmode'
 import { useCountdown } from '../../lib/countdown'
 import { newSince } from '../../lib/lists'
 import { systemParts } from '../../lib/system_messages'
-import type { Message, UserRef } from '../../lib/types'
-import { P2pDm, P2pRoom, type P2pList } from '../../lib/place/place'
+import type { Message } from '../../lib/types'
+import { P2pDm, P2pRoom, type ListKind } from '../../lib/place/place'
+import { reactPickOf, shownOf } from '../../lib/place/shown'
 import { PlaceProvider, useLive } from '../../lib/place/react'
 import { messagesAt } from '../../lib/place/use_messages'
 import { MessageList } from '../message_list'
@@ -78,7 +79,6 @@ import {
 } from '../forwards'
 import { PinLine, PinsWindow } from '../pins'
 import { ThreadsWindow } from '../threads'
-import { asMessage, numbering } from '../../lib/p2p/shown_message'
 import { TypingIndicator } from '../typing_indicator'
 import { EmojiPicker } from '../emoji_picker'
 import { longPress } from '../context_menu'
@@ -103,7 +103,6 @@ import { Row, Stack, Surface } from '../layout'
 // channels: what differs (the header, who may do what, names, mentions) comes in as props.
 
 const BODY_MAX = P2P_LIMITS.body
-const EMPTY: P2pMessage[] = []
 
 // A note in the composer's place: why nothing can be sent here, or what is in the way. It keeps
 // clear of the bottom safe area as the composer does.
@@ -528,13 +527,6 @@ export function P2pSlowRow({ m, divider }: { m: Message; divider: boolean }) {
   )
 }
 
-// Someone a message can mention: who they are, and the handle the composer writes.
-export interface Mentionable {
-  ik: string
-  name: string
-  handle: string
-}
-
 // A row shown in the open conversation or thread.
 const shownRow = (
   s: { chat: P2pChat | null; thread: { head: P2pMessage | null; messages: P2pMessage[] } | null },
@@ -715,16 +707,12 @@ function P2pComposerBody({
 // The rows of a conversation, channel or thread for the shared message components: numbered
 // messages, the reaction and mention source, the edit binding and the row menu.
 export interface ListOpts {
-  messages: P2pMessage[]
-  nameOf: (ik: string) => string
-  // Who a sender is here, when the place shows more than a name (a server's own looks).
-  userOf?: (ik: string) => UserRef
   // The sender's own profile name, for forwards (never a petname or a masked name).
   ownName: (ik: string) => string
-  people: Mentionable[]
-  // The conversation or room the list is in, and the channel of a room.
+  // The conversation or room the list is in, the channel of a room, and which of its lists.
   room: string
   ch: string | null
+  list: ListKind
   draftKey: string
   scope: string
   canAct: boolean
@@ -739,13 +727,10 @@ export interface ListOpts {
 }
 
 export function useP2pList({
-  messages,
-  nameOf,
-  userOf,
   ownName,
-  people,
   room,
   ch,
+  list,
   draftKey,
   scope,
   canAct,
@@ -757,96 +742,22 @@ export function useP2pList({
   can,
 }: ListOpts) {
   const identity = useP2pApp()!
-  const { p2pUser, p2pDm } = identity
+  const { p2pDm } = identity
   const around = useContext(ChannelCanContext)
   const held = can ?? around
 
   const acct = useAccount()
 
-  const me = useP2p(s => s.me)
   const editingState = useP2p(s => (s.editing?.room === draftKey ? s.editing : null))
-  const [picker, setPicker] = useState<{ m: Message; anchor: HTMLElement | null } | null>(null)
-  const user = useCallback(
-    (ik: string) => userOf?.(ik) ?? p2pUser(ik, nameOf(ik)),
-    [nameOf, userOf]
-  )
-  // Names the markdown recognizes as mentions, lowercased.
-  const names = useMemo(() => {
-    const out = new Map<string, string>()
-    for (const p of people) {
-      for (const n of [p.handle, p.name]) {
-        const k = n.trim().toLowerCase()
-        if (k && !out.has(k)) out.set(k, p.ik)
-      }
-    }
-    return out
-  }, [people])
-  const num = useMemo(() => numbering(messages), [messages])
-  const replyNums = useMemo(() => {
-    const out = new Map<number, string>()
-    let n = -1
-    for (const m of messages)
-      if (m.reply && !num.has(m.reply.id)) {
-        out.set(n, m.reply.id)
-        n -= 1
-      }
-    return out
-  }, [messages, num])
-  const replyNumOf = useCallback(
-    (id: string) => {
-      const known = num.get(id)
-      if (known !== undefined) return known
-      for (const [k, v] of replyNums) if (v === id) return k
-      return 0
-    },
-    [num, replyNums]
-  )
-  const rows = useMemo(
-    () =>
-      messages.map(p => ({
-        p,
-        m: asMessage(
-          p,
-          num.get(p.id) as number,
-          p.reply ? replyNumOf(p.reply.id) : 0,
-          user,
-          me ?? ''
-        ),
-      })),
-    [messages, num, replyNumOf, user, me]
-  )
+  const place = ch === null ? P2pDm.open(identity, room, list) : P2pRoom.open(identity, room, list)
+  const { me, user, name, messages, rows, num, idOf } = useLive(shownOf(place))
+  const picking = reactPickOf(place)
+  const picker = useLive(picking)
+  const setPicker = picking.set
   const shared = useMemo(
     () => rows.filter(r => !r.p.system && !r.p.removed && !r.p.slowHidden).map(r => r.m),
     [rows]
   )
-  const idOf = useCallback(
-    (n: number) => rows.find(r => r.m.id === n)?.p.id ?? replyNums.get(n) ?? null,
-    [rows, replyNums]
-  )
-
-  const place = useMemo(() => {
-    const list: P2pList = {
-      me,
-      idOf,
-      message: id => rows.find(r => r.p.id === id)?.p,
-      user,
-      name: nameOf,
-      names,
-      people: q => {
-        const needle = q.toLowerCase()
-        return people
-          .filter(
-            p =>
-              p.handle &&
-              (p.handle.toLowerCase().startsWith(needle) || p.name.toLowerCase().startsWith(needle))
-          )
-          .slice(0, 20)
-          .map(p => ({ ...p2pUser(p.ik, p.name), username: p.handle }))
-      },
-      openPicker: (m, anchor) => setPicker({ m, anchor }),
-    }
-    return (ch === null ? P2pDm.open(identity, room) : P2pRoom.open(identity, room)).shownBy(list)
-  }, [identity, room, ch, idOf, rows, user, nameOf, names, me, people])
   // The picker of this list reacts through its own place.
   const react = useCallback(
     (m: Message, emoji: string, note?: boolean) => {
@@ -937,6 +848,8 @@ export function useP2pList({
   return {
     me,
     user,
+    name,
+    messages,
     rows,
     shared,
     num,
@@ -965,10 +878,6 @@ export interface ChatBodyProps {
   canAct: boolean
   // A timeout of ours: messages can be deleted and files downloaded, nothing more.
   timedOut?: boolean
-  // Display names, and who a message may mention.
-  nameOf: (ik: string) => string
-  userOf?: (ik: string) => UserRef
-  people: Mentionable[]
   // "Forwarded to {title}", and the composer placeholder.
   title: string
   placeholder: string
@@ -1012,8 +921,7 @@ function IdentityChatBody(props: ChatBodyProps) {
   const identity = useP2pApp()!
   const { profileName, p2pDm, p2pFiles } = identity
 
-  const { chat, canAct, nameOf, people, mayDelete, mayPin, disabled, forwardSkip, typingNames } =
-    props
+  const { chat, canAct, mayDelete, mayPin, disabled, forwardSkip, typingNames } = props
   const timedOut = props.timedOut ?? false
   const key = chatKey(chat)
   const me = useP2p(s => s.me)
@@ -1029,7 +937,6 @@ function IdentityChatBody(props: ChatBodyProps) {
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
 
-  const messages = chat.messages ?? EMPTY
   const list = messagesAt(
     chat.ch ? P2pRoom.open(identity, chat.room) : P2pDm.open(identity, chat.room)
   )
@@ -1040,6 +947,8 @@ function IdentityChatBody(props: ChatBodyProps) {
   const canDrop = canAct && !timedOut && !textOnly && movingAt === null
 
   const {
+    name,
+    messages,
     rows,
     shared,
     num,
@@ -1054,13 +963,10 @@ function IdentityChatBody(props: ChatBodyProps) {
     picker,
     setPicker,
   } = useP2pList({
-    messages,
-    nameOf,
-    userOf: props.userOf,
     ownName,
-    people,
     room: chat.room,
     ch: chat.ch ?? null,
+    list: 'main',
     draftKey: key,
     scope,
     canAct,
@@ -1283,7 +1189,7 @@ function IdentityChatBody(props: ChatBodyProps) {
             scope={scope}
             title={props.title}
             placeholder={props.placeholder}
-            nameOf={nameOf}
+            nameOf={name}
             disabled={disabled}
           />
         </div>

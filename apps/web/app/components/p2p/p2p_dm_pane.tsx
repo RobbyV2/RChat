@@ -4,14 +4,14 @@ import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
-import { useCallback, useId, useMemo, type ReactNode } from 'react'
+import { useCallback, useId, type ReactNode } from 'react'
 import { ArrowLeft, Menu } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
 import { allPings } from '../../lib/selectors'
 import { P2P_DM_INTRO } from '../../lib/home'
 
 import { displayName, shieldOf } from '../../lib/p2p/contacts'
-import { fullNote, movedText, withMissed, type P2pMessage } from '../../lib/p2p/dm'
+import { fullNote, movedText, type P2pMessage } from '../../lib/p2p/dm'
 import { PinsButton } from '../pins'
 import { ThreadsButton } from '../threads'
 import { PingBadge, pingLabel } from '../ping_badge'
@@ -28,7 +28,7 @@ import { useRoomCallShare, VoiceGrid } from '../voice_grid'
 import { IncomingCallBar, P2pCallButtons } from './p2p_call'
 import { P2pDm } from '../../lib/place/place'
 import { PlaceProvider } from '../../lib/place/react'
-import { NoteBar, P2pChatBody, P2pIntro, type Mentionable } from './p2p_chat'
+import { NoteBar, P2pChatBody, P2pIntro } from './p2p_chat'
 import { Masked } from '../ui'
 import { Row } from '../layout'
 
@@ -57,7 +57,6 @@ export function useDmFacts() {
   const identity = useP2pApp()!
   const { p2p } = identity
   const me = useP2p(s => s.me)
-  const myName = useP2p(s => s.name)
   const reader = useP2p(s => s.reader)
   const elsewhere = useP2p(s => s.elsewhere)
   const status = useP2p(s => s.status)
@@ -72,21 +71,6 @@ export function useDmFacts() {
   const peerName = mask(peerRaw)
   const online = presence === 'online'
   const canAct = !reader && !elsewhere && peer?.state === 'mutual' && status !== 'moved'
-  const nameOf = useCallback(
-    (ik: string) => (ik === me ? myName || 'You' : peerRaw),
-    [me, myName, peerRaw]
-  )
-  const people = useMemo<Mentionable[]>(() => {
-    const out: Mentionable[] = []
-    if (peer) {
-      const handle = peer.name || peer.petname || ''
-      out.push({ ik: peer.ik, name: displayName(peer), handle })
-      if (peer.petname && peer.name)
-        out.push({ ik: peer.ik, name: peer.petname, handle: peer.petname })
-    }
-    if (me && myName) out.push({ ik: me, name: myName, handle: myName })
-    return out
-  }, [peer, me, myName])
   const mayDelete = useCallback((p: P2pMessage) => p.sender === me, [me])
 
   const disabled: ReactNode =
@@ -129,8 +113,6 @@ export function useDmFacts() {
     online,
     room,
     canAct,
-    nameOf,
-    people,
     mayDelete,
     disabled,
   }
@@ -155,15 +137,8 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
       (s.call.dir === 'out' || s.call.state === 'active')
   )
   const callShare = useRoomCallShare(chat?.room ?? '')
-  const raw = chat?.messages
-  const missed = chat?.missed
-  const more = chat?.more ?? false
-  const messages = useMemo(
-    () => (raw && missed ? withMissed(raw, missed, more) : (raw ?? [])),
-    [raw, missed, more]
-  )
   const facts = useDmFacts()
-  const { peer, peerIk, peerRaw, peerName, presence, online, room, canAct, nameOf, people } = facts
+  const { peer, peerIk, peerRaw, peerName, presence, online, room, canAct } = facts
   const { mayDelete, disabled } = facts
   const chip = useHasChip(peerIk)
 
@@ -269,14 +244,12 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
 
   return (
     <P2pChatBody
-      chat={{ ...chat, messages }}
+      chat={chat}
       header={header}
       above={above}
       intro={<IntroBanner name={peerName} />}
       disabled={disabled}
       canAct={canAct}
-      nameOf={nameOf}
-      people={people}
       title={peerName}
       placeholder={`Message ${peerName}`}
       pendingTip={`Waiting for ${peerName} to come online`}

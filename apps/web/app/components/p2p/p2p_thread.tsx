@@ -10,13 +10,12 @@ import { CAN_ALL, type ChannelCan } from '../../lib/channel_perms'
 import type { Look } from '../../lib/role_looks'
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react'
-import { roomLooksKey } from '../../lib/server_profile'
 import { useMask, useStore } from '../../lib/store'
 import { threadKey, threadScope, type P2pThread } from '../../lib/p2p/app'
 import type { P2pMessage } from '../../lib/p2p/dm'
 import type { ServerView } from '../../lib/p2p/server'
 import { newSince } from '../../lib/lists'
-import type { Message, UserRef } from '../../lib/types'
+import type { Message } from '../../lib/types'
 import { PlaceProvider, useP2pRoom } from '../../lib/place/react'
 import { EmojiPicker } from '../emoji_picker'
 import { ThreadPanelView } from '../thread_panel'
@@ -32,7 +31,6 @@ import {
   rowLook,
   useP2pFlash,
   useP2pList,
-  type Mentionable,
 } from './p2p_chat'
 import { memberLooks } from '../../lib/p2p/roles'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
@@ -55,10 +53,7 @@ const ALONE: GroupPlace = { first: true, last: true }
 
 // What a thread's rows and composer need from where it is.
 interface ThreadFacts {
-  nameOf: (ik: string) => string
-  userOf?: (ik: string) => UserRef
   ownName: (ik: string) => string
-  people: Mentionable[]
   mayDelete: (p: P2pMessage) => boolean
   disabled: ReactNode
   typers: string[]
@@ -84,7 +79,7 @@ function P2pThreadPanelBody() {
 
 function ServerThread({ t, v }: { t: P2pThread; v: ServerView }) {
   const identity = useP2pApp()!
-  const { memberName, memberUser, profileName } = identity
+  const { memberName, profileName } = identity
   const acct = useAccount()
   const me = useP2p(s => s.me)
   const reader = useP2p(s => s.reader)
@@ -96,16 +91,9 @@ function ServerThread({ t, v }: { t: P2pThread; v: ServerView }) {
   const room = v.id
   const nameOf = useCallback((ik: string) => memberName(room, ik), [room])
   const members = v.members
-  const looks = useMemo(() => roomLooksKey(members), [members])
-  const userOf = useCallback((ik: string) => memberUser(room, ik), [room, looks])
   const roles = v.roles
   const mask = useMask(useP2p(s => ownsP2pServer(v, s.me)))
   const lookOf = useMemo(() => memberLooks({ members, roles }, mask), [members, roles, mask])
-  const people = useMemo<Mentionable[]>(
-    () =>
-      members.filter(m => m.m === 'join').map(m => ({ ik: m.ik, name: m.name, handle: m.name })),
-    [members]
-  )
   const timedOut = usePeerTimeoutEnds(v.timedOutUntil)
   const held = useChannelCan(useP2pRoom(v.id), t.ch)
   const moderator = held.manage && timedOut === null
@@ -123,10 +111,7 @@ function ServerThread({ t, v }: { t: P2pThread; v: ServerView }) {
     <ThreadBody
       t={t}
       f={{
-        nameOf,
-        userOf,
         ownName,
-        people,
         mayDelete,
         disabled,
         typers: names,
@@ -146,7 +131,7 @@ function ConversationThread({ t }: { t: P2pThread }) {
   const identity = useP2pApp()!
   const { profileName } = identity
   const facts = useDmFacts()
-  const { nameOf, people, mayDelete, disabled, peerIk, peerRaw, peerName } = facts
+  const { mayDelete, disabled, peerIk, peerRaw, peerName } = facts
   const typingIks = useP2p(s => s.typing[threadKey(t)] ?? NONE)
   const unseen = useP2p(s => (s.rooms[t.room]?.threads?.[t.root] ?? 0) > 0)
   const ownName = useCallback((ik: string) => profileName(ik), [])
@@ -158,9 +143,7 @@ function ConversationThread({ t }: { t: P2pThread }) {
     <ThreadBody
       t={t}
       f={{
-        nameOf,
         ownName,
-        people,
         mayDelete,
         disabled,
         typers,
@@ -174,7 +157,7 @@ function ConversationThread({ t }: { t: P2pThread }) {
 function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
   const identity = useP2pApp()!
   const { p2pThread, p2pDm } = identity
-  const { nameOf, userOf, ownName, people, mayDelete, disabled, unseen } = f
+  const { ownName, mayDelete, disabled, unseen } = f
 
   const me = useP2p(s => s.me)
   const key = threadKey(t)
@@ -187,8 +170,8 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
   const timedOut = f.timedOut ?? false
   const held = f.can ?? CAN_ALL
   const replies = t.messages ?? EMPTY
-  const all = useMemo(() => (t.head ? [t.head, ...replies] : replies), [t.head, replies])
   const {
+    name,
     rows,
     num,
     idOf,
@@ -202,13 +185,10 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
     picker,
     setPicker,
   } = useP2pList({
-    messages: all,
-    nameOf,
-    userOf,
     ownName,
-    people,
     room: t.room,
     ch: t.ch,
+    list: 'thread',
     draftKey: key,
     scope,
     canAct,
@@ -365,7 +345,7 @@ function ThreadBody({ t, f }: { t: P2pThread; f: ThreadFacts }) {
                     scope={scope}
                     title="the thread"
                     placeholder="Message thread"
-                    nameOf={nameOf}
+                    nameOf={name}
                     disabled={disabled}
                   />
                 </>
