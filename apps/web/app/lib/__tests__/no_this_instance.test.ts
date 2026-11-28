@@ -7,7 +7,7 @@ import ts from 'typescript'
 // UI text names the instance (`instanceLabel`) instead of saying "this instance". Comments
 // don't count, nor the admin page's feature rows, which describe the admin's own instance.
 const APP = fileURLToPath(new URL('../..', import.meta.url))
-const SKIP = new Set(['lib/admin_rows.ts'])
+const SKIP = new Set(['lib/admin_rows.ts', 'lib/admin/rows.gen.ts'])
 
 const sources = (dir: string): string[] =>
   readdirSync(dir).flatMap(name => {
@@ -110,6 +110,7 @@ describe('no "this instance" in UI text', () => {
     expect(files).toContain('lib/instance_label.ts')
     expect(files).toContain('lib/features.ts')
     expect(files).not.toContain('lib/admin_rows.ts')
+    expect(files).not.toContain('lib/admin/rows.gen.ts')
     expect(files.filter(f => f.includes('__tests__'))).toEqual([])
   })
 
