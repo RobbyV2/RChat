@@ -8812,7 +8812,7 @@
         ],
         "summary": "List your scheduled messages",
         "description": "Your messages waiting to be sent, being sent and failed, soonest first, 50 at a time, with\nhow many wait and how many failed. `place` names each place you can still open, through the\nsame access checks as reading it; it is `null` for the rest. Sent messages are not listed.\nRequires a bearer token. General rate-limit bucket.",
-        "operationId": "list",
+        "operationId": "list_scheduled",
         "parameters": [
           {
             "name": "scope",
@@ -8929,7 +8929,7 @@
         ],
         "summary": "Schedule a message",
         "description": "Stores a text message this site sends for you at `at`, in a channel, a thread or a DM. The\nplace is checked as for sending (membership, the channel's Send messages permission and, for\nthe first reply of a thread, Start threads; timeouts; a DM's participants and blocks), but\nslow mode only applies when it is sent. In channels and threads the profanity filter checks\nthe text when it is on. At its time everything is checked again as you: a message that may\nnot be sent then fails with a reason, and one held by slow mode or the message rate waits up\nto an hour past its time. Requires a bearer token. Emits `scheduled_updated` to your own\nconnections. General rate-limit bucket.",
-        "operationId": "create",
+        "operationId": "create_scheduled",
         "parameters": [
           {
             "name": "X-Audit-Reason",
@@ -9286,7 +9286,7 @@
         ],
         "summary": "Send a scheduled message now",
         "description": "Sends one of your messages that waits or failed right away (Retry for a failed one), through\nthe same checks as sending it yourself, slow mode included. Refused, it stays as it was (a\nfailed one takes the new reason) and the refusal is the answer. Works while the\n`scheduled_messages` switch is off. Requires a bearer token. Emits the `message` events of\nsending and `scheduled_removed` to your own connections. General rate-limit bucket.",
-        "operationId": "send_now",
+        "operationId": "send_scheduled_now",
         "parameters": [
           {
             "name": "id",
