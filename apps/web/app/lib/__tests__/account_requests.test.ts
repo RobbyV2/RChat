@@ -81,9 +81,9 @@ test('authentication cannot commit between a completed response and a queued dis
     const body = Promise.withResolvers<unknown>()
     const reading = Promise.withResolvers<void>()
     const response = Response.json({})
-    response.json = () => {
+    response.text = () => {
       reading.resolve()
-      return body.promise
+      return body.promise.then(value => JSON.stringify(value))
     }
     account.api.send = async () => response
     let disposed = false
