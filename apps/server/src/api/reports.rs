@@ -284,32 +284,32 @@ async fn place(
         Aim::Message { id } => {
             let resolved = resolve_message(db, id, Some(user), &Proof::none()).await?;
             let scope = resolved.scope();
-            if scope.author == user.username {
+            if scope.author() == user.username {
                 return Err(myself());
             }
-            if !matches!(scope.kind.as_str(), "user" | "poll") {
+            if !matches!(scope.kind(), "user" | "poll") {
                 return Err(invalid("target", NOT_REPORTABLE));
             }
             let message = snapshot::message(db, id).await?.ok_or_else(not_found)?;
-            let target_user = message.author.as_ref().map(|_| scope.author.clone());
+            let target_user = message.author.as_ref().map(|_| scope.author().to_string());
             let base = Placed {
                 base: Base::Message,
                 target_kind: "message",
-                target_key: format!("u:{}", scope.author),
+                target_key: format!("u:{}", scope.author()),
                 target_user,
                 server: None,
                 message_id: Some(id),
                 channel_id: None,
                 channel_private: false,
-                dm_id: scope.dm_id,
+                dm_id: scope.dm_id(),
                 role: None,
                 snapshot: Snapshot::default(),
             };
-            match (resolved.channel(), scope.dm_id) {
+            match (resolved.channel(), scope.dm_id()) {
                 (Some(channel), _) => {
                     let server = channel.server();
                     let since = channel.read_since(db).await?;
-                    let spot = match scope.thread_root_id {
+                    let spot = match scope.thread_root_id() {
                         Some(root) => Place::Thread(root),
                         None => Place::Channel(channel.id()),
                     };
@@ -323,7 +323,7 @@ async fn place(
                         )),
                         channel_id: Some(channel.id()),
                         channel_private: private,
-                        role: first_role(db, server.name(), &scope.author).await?,
+                        role: first_role(db, server.name(), scope.author()).await?,
                         snapshot: Snapshot {
                             context: snapshot::context(db, id, spot, since, context).await?,
                             message: Some(message),
@@ -337,7 +337,7 @@ async fn place(
                     if to == ReportKind::Server {
                         return Err(instance_only());
                     }
-                    let spot = match scope.thread_root_id {
+                    let spot = match scope.thread_root_id() {
                         Some(root) => Place::Thread(root),
                         None => Place::Dm(dm),
                     };

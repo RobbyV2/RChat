@@ -10,7 +10,7 @@ use rand::Rng;
 use s3::Bucket;
 use sqlx::Row;
 
-use crate::api::access::{MsgScope, Proof, resolve_message};
+use crate::api::access::{Proof, resolve_message};
 use crate::api::audit;
 use crate::api::form_heads::Heads;
 use crate::api::{
@@ -1297,17 +1297,16 @@ pub(crate) async fn delete_media(
     let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
     message.require_can_delete(&state.db).await?;
     let audit = crate::api::messages::moderated(&state.db, id, &message, &user, true).await?;
-    let MsgScope {
-        channel_id,
-        dm_id,
-        thread_root_id: _,
-        kind: _,
-        author,
-        media_id,
-        media_kind,
-        server,
-        dm_users,
-    } = message.into_scope();
+    let msg = message.scope();
+    let (channel_id, dm_id, author, media_id, media_kind, server, dm_users) = (
+        msg.channel_id(),
+        msg.dm_id(),
+        msg.author().to_string(),
+        msg.media_id().map(str::to_string),
+        msg.media_kind(),
+        msg.server().map(str::to_string),
+        msg.dm_users().map(<[String]>::to_vec),
+    );
     let media_id = match media_id {
         Some(media_id) => media_id,
         None => {

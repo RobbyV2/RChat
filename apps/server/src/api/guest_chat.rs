@@ -167,9 +167,9 @@ pub(crate) async fn post(
         let message = super::allowed(resolve_message(db, target, None, &proof).await)?
             .ok_or_else(cannot_reply)?;
         let at = message.scope();
-        if at.channel_id != Some(id)
-            || !(at.thread_root_id == thread_root_id || thread_root_id == Some(target))
-            || !matches!(at.kind.as_str(), "user" | "poll")
+        if at.channel_id() != Some(id)
+            || !(at.thread_root_id() == thread_root_id || thread_root_id == Some(target))
+            || !matches!(at.kind(), "user" | "poll")
         {
             return Err(cannot_reply());
         }
@@ -358,7 +358,7 @@ pub(crate) async fn pause(
         .require_perm(db, Perm::TimeoutMembers)
         .await
         .map_err(|e| if e.failed() { e } else { not_found() })?;
-    let author = &message.scope().author;
+    let author = &message.scope().author();
     if !crate::ws::is_guest(author) {
         return Err(not_found());
     }

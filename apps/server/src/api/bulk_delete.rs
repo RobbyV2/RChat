@@ -202,12 +202,14 @@ impl Place {
 
     fn holds(&self, scope: &MsgScope) -> bool {
         match self {
-            Place::Channel(c) => scope.channel_id == Some(c.id()) && scope.thread_root_id.is_none(),
-            Place::Thread(root, _) => scope.thread_root_id == Some(*root),
+            Place::Channel(c) => {
+                scope.channel_id() == Some(c.id()) && scope.thread_root_id().is_none()
+            }
+            Place::Thread(root, _) => scope.thread_root_id() == Some(*root),
             Place::Dm(id, _) => {
-                scope.dm_id == Some(*id)
-                    && scope.channel_id.is_none()
-                    && scope.thread_root_id.is_none()
+                scope.dm_id() == Some(*id)
+                    && scope.channel_id().is_none()
+                    && scope.thread_root_id().is_none()
             }
         }
     }
@@ -244,7 +246,10 @@ impl Place {
         };
         let (dm_id, dm_users) = match self {
             Place::Dm(id, users) => (Some(*id), Some(users.clone())),
-            Place::Thread(_, root) => (root.scope().dm_id, root.scope().dm_users.clone()),
+            Place::Thread(_, root) => (
+                root.scope().dm_id(),
+                root.scope().dm_users().map(<[String]>::to_vec),
+            ),
             Place::Channel(_) => (None, None),
         };
         let thread_root_id = match self {
@@ -475,8 +480,8 @@ async fn pick(
     }
     Ok(Picked {
         id,
-        notice: crate::api::access::is_membership_notice(&message.scope().kind),
-        author: message.scope().author.clone(),
+        notice: crate::api::access::is_membership_notice(message.scope().kind()),
+        author: message.scope().author().to_string(),
         pinged: pinged_by(db, id).await?,
         moderated: audit.is_some(),
     })

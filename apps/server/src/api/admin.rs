@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use crate::api::access::subjects::{Level, ProfileChoices};
-use crate::api::access::{MsgScope, ReportMode, not_found, report_scope, staff_message};
+use crate::api::access::{ReportMode, not_found, report_scope, staff_message};
 use crate::api::account_deletion;
 use crate::api::controls::{ConfigRecords, Control, ROWS_SQL};
 use crate::api::features::{Feature, Registration};
@@ -2212,7 +2212,7 @@ pub(crate) async fn delete_message(
 ) -> Result<Json<OkResp>, ApiError> {
     require_site_admin(&user)?;
     let scope = staff_message(&state.db, &user, id).await?;
-    let channel = match scope.channel_id {
+    let channel = match scope.scope().channel_id() {
         Some(cid) => crate::api::audit::channel_ref(&state.db, cid).await?,
         None => None,
     };
@@ -2221,7 +2221,7 @@ pub(crate) async fn delete_message(
         .bind(id)
         .execute(&mut *tx)
         .await?;
-    if let (Some(server), Some(channel)) = (&scope.server, &channel) {
+    if let (Some(server), Some(channel)) = (&scope.scope().server(), &channel) {
         crate::api::audit::record(
             &mut tx,
             crate::api::audit::message_entry(
@@ -2229,24 +2229,22 @@ pub(crate) async fn delete_message(
                 &crate::api::audit::Actor::Staff,
                 crate::api::audit::Action::MessageDelete,
                 id,
-                &scope.author,
+                scope.scope().author(),
                 channel,
             ),
         )
         .await?;
     }
     tx.commit().await?;
-    let MsgScope {
-        channel_id,
-        dm_id,
-        thread_root_id,
-        kind,
-        author: _,
-        media_id: _,
-        media_kind: _,
-        server,
-        dm_users,
-    } = scope;
+    let msg = scope.scope();
+    let (channel_id, dm_id, thread_root_id, kind, server, dm_users) = (
+        msg.channel_id(),
+        msg.dm_id(),
+        msg.thread_root_id(),
+        msg.kind().to_string(),
+        msg.server().map(str::to_string),
+        msg.dm_users().map(<[String]>::to_vec),
+    );
     state.hub.broadcast(WsEvent::MessageDeleted {
         server,
         channel_id,

@@ -1443,7 +1443,7 @@ async fn moderated(
 
 async fn poll_target(state: &AppState, id: i64, user: &User) -> Result<ResolvedMessage, ApiError> {
     let resolved = resolve_message(&state.db, id, Some(user), &Proof::none()).await?;
-    match resolved.scope().kind.as_str() {
+    match resolved.scope().kind() {
         "poll" => Ok(resolved),
         _ => Err(not_found()),
     }
@@ -1704,7 +1704,7 @@ pub(crate) async fn add_option(
             .await
             .check_profanity(ProfanityTarget::Messages, &text)?;
     }
-    let own = resolved.scope().author == user.username;
+    let own = resolved.scope().author() == user.username;
     let db = &state.db;
     crate::db::pepper(db).await?;
     let mut tx = db.begin().await?;
@@ -1718,7 +1718,7 @@ pub(crate) async fn add_option(
             "Options cannot be added to this poll",
         ));
     }
-    let scope = Scope::of(resolved.scope().channel_id, resolved.scope().dm_id);
+    let scope = Scope::of(resolved.scope().channel_id(), resolved.scope().dm_id());
     let rows = sqlx::query("SELECT id, text, body FROM poll_options WHERE message_id = $1")
         .bind(id)
         .fetch_all(&mut *tx)
@@ -1812,7 +1812,14 @@ async fn set_closed(
         };
         audit::record(
             &mut tx,
-            audit::message_entry(server, actor, action, id, &resolved.scope().author, channel),
+            audit::message_entry(
+                server,
+                actor,
+                action,
+                id,
+                resolved.scope().author(),
+                channel,
+            ),
         )
         .await?;
     }

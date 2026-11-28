@@ -1311,9 +1311,9 @@ async fn quoted(
         .ok_or_else(cannot_reply)?;
     let scope = target.scope();
     let here = match place {
-        Place::Channel(cid) => scope.channel_id == Some(cid) && scope.thread_root_id.is_none(),
-        Place::Thread(root) => id == root || scope.thread_root_id == Some(root),
-        Place::Dm(did) => scope.dm_id == Some(did) && scope.thread_root_id.is_none(),
+        Place::Channel(cid) => scope.channel_id() == Some(cid) && scope.thread_root_id().is_none(),
+        Place::Thread(root) => id == root || scope.thread_root_id() == Some(root),
+        Place::Dm(did) => scope.dm_id() == Some(did) && scope.thread_root_id().is_none(),
     };
     if !here {
         return Err(cannot_reply());
@@ -1329,8 +1329,8 @@ async fn quoted(
     }
     Ok(Some(Quoted {
         id,
-        mention: mention && scope.author != user.username,
-        author: scope.author.clone(),
+        mention: mention && scope.author() != user.username,
+        author: scope.author().to_string(),
     }))
 }
 
@@ -1710,7 +1710,7 @@ async fn forwarded(
 ) -> Result<Forwarded, ApiError> {
     let source = allowed(resolve_message(db, id, Some(user), &Proof::none()).await)?
         .ok_or_else(cannot_forward)?;
-    let origin = match (source.channel(), source.scope().dm_id) {
+    let origin = match (source.channel(), source.scope().dm_id()) {
         (Some(channel), _) => {
             let same = dest == Some(channel.server().name());
             let asked = match show_source {
@@ -2333,21 +2333,28 @@ async fn locate_message(
     channel: Option<&super::access::ResolvedChannel>,
     expected: Option<&str>,
 ) -> Result<MessageLocation, ApiError> {
+    let in_channel;
+    let resolved;
     let scope = match channel {
-        Some(channel) => channel.message_scope(db, id).await?,
-        None => resolve_message(db, id, user, proof).await?.into_scope(),
+        Some(channel) => {
+            in_channel = channel.message_scope(db, id).await?;
+            &in_channel
+        }
+        None => {
+            resolved = resolve_message(db, id, user, proof).await?;
+            resolved.scope()
+        }
     };
-    let crate::api::access::MsgScope {
-        channel_id,
-        dm_id,
-        thread_root_id,
-        kind,
-        author,
-        media_id,
-        media_kind: _,
-        server,
-        dm_users: _,
-    } = scope;
+    let msg = scope;
+    let (channel_id, dm_id, thread_root_id, kind, author, media_id, server) = (
+        msg.channel_id(),
+        msg.dm_id(),
+        msg.thread_root_id(),
+        msg.kind().to_string(),
+        msg.author().to_string(),
+        msg.media_id().map(str::to_string),
+        msg.server().map(str::to_string),
+    );
     if let Some(expected) = expected {
         let scope = channel_id
             .map(|id| format!("c{id}"))
@@ -2455,12 +2462,12 @@ pub(crate) async fn message_lookup(
         Some(channel) => shown_source(db, channel).await?,
         None => None,
     };
-    let scope = found.into_scope();
+    let scope = found.scope();
     Ok(Json(LocationResult::Place(MessagePlace {
-        server: scope.server,
-        channel_id: scope.channel_id,
-        dm_id: scope.dm_id,
-        thread_root_id: scope.thread_root_id,
+        server: scope.server().map(str::to_string),
+        channel_id: scope.channel_id(),
+        dm_id: scope.dm_id(),
+        thread_root_id: scope.thread_root_id(),
         shown,
     })))
 }
@@ -2818,7 +2825,7 @@ pub(crate) async fn delete_message(
     let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
     message.require_can_delete(&state.db).await?;
     let audit = moderated(&state.db, id, &message, &user, true).await?;
-    let scope = message.into_scope();
+    let scope = message.scope();
     let pinged = pinged_by(&state.db, id).await?;
     let mut tx = state.db.begin().await?;
     sqlx::query("DELETE FROM messages WHERE id = $1")
@@ -2833,7 +2840,7 @@ pub(crate) async fn delete_message(
                 &actor,
                 audit::Action::MessageDelete,
                 id,
-                &scope.author,
+                scope.author(),
                 &channel,
             ),
         )
@@ -2841,17 +2848,15 @@ pub(crate) async fn delete_message(
     }
     tx.commit().await?;
     announce_counts(&state, pinged).await;
-    let crate::api::access::MsgScope {
-        channel_id,
-        dm_id,
-        thread_root_id,
-        kind,
-        author: _,
-        media_id: _,
-        media_kind: _,
-        server,
-        dm_users,
-    } = scope;
+    let msg = scope;
+    let (channel_id, dm_id, thread_root_id, kind, server, dm_users) = (
+        msg.channel_id(),
+        msg.dm_id(),
+        msg.thread_root_id(),
+        msg.kind().to_string(),
+        msg.server().map(str::to_string),
+        msg.dm_users().map(<[String]>::to_vec),
+    );
     state.hub.broadcast(WsEvent::MessageDeleted {
         server,
         channel_id,
@@ -2878,7 +2883,7 @@ pub(crate) async fn moderated(
     let Some(channel) = message.channel() else {
         return Ok(None);
     };
-    if others_only && message.scope().author == user.username {
+    if others_only && message.scope().author() == user.username {
         return Ok(None);
     }
     let Some(found) = audit::channel_ref(db, channel.id()).await? else {
@@ -2958,7 +2963,7 @@ pub(crate) async fn edit_message(
         None => return Err(crate::api::access::not_found()),
     };
     check_len(&content, state.limits.message_max_chars, "Message")?;
-    let attached = message.scope().media_id.is_some() && media_removed == 0;
+    let attached = message.scope().media_id().is_some() && media_removed == 0;
     if content.trim().is_empty() && !attached {
         return Err(ApiError::invalid("Message is empty", "content"));
     }
@@ -2999,23 +3004,19 @@ pub(crate) async fn edit_message(
         let ring = crate::db::ring(&state.db);
         let write = begin_message_write(
             &state.db,
-            message.scope().channel_id,
-            message.scope().dm_id,
+            message.scope().channel_id(),
+            message.scope().dm_id(),
             false,
         )
         .await?;
         let text_only = store_edit(write, ring, edit).await?;
-        let crate::api::access::MsgScope {
-            channel_id,
-            dm_id,
-            thread_root_id: _,
-            kind: _,
-            author: _,
-            media_id: _,
-            media_kind: _,
-            server,
-            dm_users,
-        } = message.into_scope();
+        let msg = message.scope();
+        let (channel_id, dm_id, server, dm_users) = (
+            msg.channel_id(),
+            msg.dm_id(),
+            msg.server().map(str::to_string),
+            msg.dm_users().map(<[String]>::to_vec),
+        );
         if relink && !text_only {
             embeds::spawn_unfurl(
                 &state,

@@ -51,7 +51,7 @@ struct Place {
 }
 
 fn place_of(scope: &MsgScope) -> Result<Place, ApiError> {
-    match (scope.channel_id, scope.dm_id) {
+    match (scope.channel_id(), scope.dm_id()) {
         (Some(key), _) => Ok(Place {
             column: "channel_id",
             lock: "SELECT id FROM channels WHERE id = $1 FOR NO KEY UPDATE",
@@ -100,13 +100,13 @@ pub(crate) async fn pin_message(
         return Err(cannot_pin());
     }
     let audit = moderated(&state.db, id, &resolved, &user, false).await?;
-    let scope = resolved.into_scope();
+    let scope = resolved.scope();
     let Place {
         column,
         lock,
         key,
         full,
-    } = place_of(&scope)?;
+    } = place_of(scope)?;
     let at = now_ms();
     let mut tx = state.db.begin().await?;
     if !is_sqlite(&state.db) {
@@ -145,8 +145,8 @@ pub(crate) async fn pin_message(
     let notice: Option<i64> = sqlx::query(
         "INSERT INTO messages(channel_id, dm_id, author, content, kind, pin_message_id, created_at) SELECT $1, $2, $3, '', 'pin', $4, $5 WHERE NOT EXISTS(SELECT 1 FROM messages n WHERE n.pin_message_id = $4 AND n.kind = 'pin' AND n.created_at > $6) RETURNING id",
     )
-    .bind(scope.channel_id)
-    .bind(scope.dm_id)
+    .bind(scope.channel_id())
+    .bind(scope.dm_id())
     .bind(&user.username)
     .bind(id)
     .bind(t)
@@ -163,28 +163,24 @@ pub(crate) async fn pin_message(
                 actor,
                 audit::Action::MessagePin,
                 id,
-                &scope.author,
+                scope.author(),
                 channel,
             ),
         )
         .await?;
     }
     tx.commit().await?;
-    let history_rules = match scope.channel_id {
+    let history_rules = match scope.channel_id() {
         Some(cid) => crate::api::access::limits_history(&state.db, cid).await?,
         None => false,
     };
-    let MsgScope {
-        channel_id,
-        dm_id,
-        thread_root_id: _,
-        kind: _,
-        author: _,
-        media_id: _,
-        media_kind: _,
-        server,
-        dm_users,
-    } = scope;
+    let msg = scope;
+    let (channel_id, dm_id, server, dm_users) = (
+        msg.channel_id(),
+        msg.dm_id(),
+        msg.server().map(str::to_string),
+        msg.dm_users().map(<[String]>::to_vec),
+    );
     if let Some(notice) = notice
         && let Some(mut row) = load_broadcast(&state.db, notice).await?
     {
@@ -245,7 +241,7 @@ pub(crate) async fn unpin_message(
                 actor,
                 audit::Action::MessageUnpin,
                 id,
-                &resolved.scope().author,
+                resolved.scope().author(),
                 channel,
             ),
         )
@@ -253,17 +249,13 @@ pub(crate) async fn unpin_message(
     }
     tx.commit().await?;
     if unpinned {
-        let MsgScope {
-            channel_id,
-            dm_id,
-            thread_root_id: _,
-            kind: _,
-            author: _,
-            media_id: _,
-            media_kind: _,
-            server,
-            dm_users,
-        } = resolved.into_scope();
+        let msg = resolved.scope();
+        let (channel_id, dm_id, server, dm_users) = (
+            msg.channel_id(),
+            msg.dm_id(),
+            msg.server().map(str::to_string),
+            msg.dm_users().map(<[String]>::to_vec),
+        );
         state.hub.broadcast(WsEvent::MessageUnpinned {
             server,
             channel_id,

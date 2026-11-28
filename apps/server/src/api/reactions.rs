@@ -151,12 +151,12 @@ fn reaction_event(
 ) -> WsEvent {
     let scope = target.resolved.scope();
     let (server, channel_id, dm_id, dm_users, message_id, thread_root_id, emoji, username) = (
-        scope.server.clone(),
-        scope.channel_id,
-        scope.dm_id,
-        scope.dm_users.clone(),
+        scope.server().map(str::to_string),
+        scope.channel_id(),
+        scope.dm_id(),
+        scope.dm_users().map(<[String]>::to_vec),
         target.message.id,
-        scope.thread_root_id,
+        scope.thread_root_id(),
         emoji.to_string(),
         username.to_string(),
     );
@@ -194,7 +194,7 @@ async fn ping_author(state: &AppState, target: &Target, actor: &User, emoji: &st
     }
     let scope = match (
         resolved.channel(),
-        &resolved.scope().dm_users,
+        &resolved.scope().dm_users(),
         message.dm_id,
     ) {
         (Some(channel), _, _) => PingScope::Channel(channel),

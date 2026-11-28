@@ -2073,15 +2073,64 @@ pub(crate) fn is_membership_notice(kind: &str) -> bool {
 }
 
 pub struct MsgScope {
-    pub channel_id: Option<i64>,
-    pub dm_id: Option<i64>,
-    pub thread_root_id: Option<i64>,
-    pub kind: String,
-    pub author: String,
-    pub media_id: Option<String>,
-    pub media_kind: MediaKind,
-    pub server: Option<String>,
-    pub dm_users: Option<Vec<String>>,
+    channel_id: Option<i64>,
+    dm_id: Option<i64>,
+    thread_root_id: Option<i64>,
+    kind: String,
+    author: String,
+    media_id: Option<String>,
+    media_kind: MediaKind,
+    server: Option<String>,
+    dm_users: Option<Vec<String>>,
+}
+
+impl MsgScope {
+    pub fn channel_id(&self) -> Option<i64> {
+        self.channel_id
+    }
+
+    pub fn dm_id(&self) -> Option<i64> {
+        self.dm_id
+    }
+
+    pub fn thread_root_id(&self) -> Option<i64> {
+        self.thread_root_id
+    }
+
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    pub fn author(&self) -> &str {
+        &self.author
+    }
+
+    pub fn media_id(&self) -> Option<&str> {
+        self.media_id.as_deref()
+    }
+
+    pub fn media_kind(&self) -> MediaKind {
+        self.media_kind
+    }
+
+    pub fn server(&self) -> Option<&str> {
+        self.server.as_deref()
+    }
+
+    pub fn dm_users(&self) -> Option<&[String]> {
+        self.dm_users.as_deref()
+    }
+}
+
+/// A message as a site admin reaches it through instance powers, for the staff tools only.
+pub struct StaffMessage {
+    scope: MsgScope,
+}
+
+impl StaffMessage {
+    pub fn scope(&self) -> &MsgScope {
+        &self.scope
+    }
 }
 
 pub struct ResolvedMessage {
@@ -2234,7 +2283,7 @@ pub async fn resolve_message_for(
     })
 }
 
-pub async fn staff_message(db: &Db, user: &User, id: i64) -> Result<MsgScope, ApiError> {
+pub async fn staff_message(db: &Db, user: &User, id: i64) -> Result<StaffMessage, ApiError> {
     if !user.is_site_admin {
         return Err(not_found());
     }
@@ -2251,16 +2300,12 @@ pub async fn staff_message(db: &Db, user: &User, id: i64) -> Result<MsgScope, Ap
         (None, Some(did)) => scope.dm_users = dm_pair(db, did, false).await?,
         (None, None) => {}
     }
-    Ok(scope)
+    Ok(StaffMessage { scope })
 }
 
 impl ResolvedMessage {
     pub fn scope(&self) -> &MsgScope {
         &self.scope
-    }
-
-    pub fn into_scope(self) -> MsgScope {
-        self.scope
     }
 
     pub fn channel(&self) -> Option<&ResolvedChannel> {

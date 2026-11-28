@@ -728,7 +728,7 @@ pub(crate) async fn delete_embed(
 ) -> Result<Json<OkResp>, ApiError> {
     let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
     message.require_can_delete(&state.db).await?;
-    let scope = message.into_scope();
+    let scope = message.scope();
     let banner = q.banner == Some(1);
     let col = match banner {
         true => "banner_removed",
@@ -748,10 +748,10 @@ pub(crate) async fn delete_embed(
         ));
     }
     state.hub.broadcast(WsEvent::EmbedsRemoved {
-        server: scope.server,
-        channel_id: scope.channel_id,
-        dm_id: scope.dm_id,
-        dm_users: scope.dm_users,
+        server: scope.server().map(str::to_string),
+        channel_id: scope.channel_id(),
+        dm_id: scope.dm_id(),
+        dm_users: scope.dm_users().map(<[String]>::to_vec),
         message_id: id,
         ord,
         banner,

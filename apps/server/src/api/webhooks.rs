@@ -3230,8 +3230,8 @@ async fn payload(
         } => match allowed(resolve_message(db, *message_id, Some(owner), &Proof::none()).await)? {
             Some(m) => Some(serde_json::json!({
                 "message_id": message_id,
-                "channel_id": m.scope().channel_id,
-                "thread_root_id": m.scope().thread_root_id,
+                "channel_id": m.scope().channel_id(),
+                "thread_root_id": m.scope().thread_root_id(),
                 "emoji": emoji,
                 "user": crate::api::user_ref(db, username).await,
                 "count": count,
