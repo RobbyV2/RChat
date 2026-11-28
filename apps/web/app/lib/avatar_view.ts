@@ -1,3 +1,4 @@
+import { avatarUrlOf } from './asks'
 import { sizeFor } from './avatar_images'
 import { picturesShown, type AvatarView } from './avatar_setting'
 import { useAccount } from './client/react'
@@ -14,6 +15,6 @@ export function useAvatarView(): AvatarView {
 // The address of an account's uploaded picture for a drawing of `size` CSS pixels; null when
 // this device draws no picture for it.
 export function useAccountPicture(image: string | null, size: number, view: AvatarView) {
-  const { api } = useAccount()
-  return image && picturesShown(view) ? api.avatarUrl(image, sizeFor(size, 2)) : null
+  const account = useAccount()
+  return image && picturesShown(view) ? avatarUrlOf(account, image, sizeFor(size, 2)) : null
 }

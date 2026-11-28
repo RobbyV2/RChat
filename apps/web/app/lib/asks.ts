@@ -53,6 +53,10 @@ export const known = <T>(answer: T): Ask<T> => ({ [run]: () => Promise.resolve(a
 // The address of an uploaded file on the session's instance.
 export const mediaUrlOf = (session: { api: Api }, id: string): string => session.api.mediaUrl(id)
 
+// The address of an uploaded profile picture at `size` pixels on the session's instance.
+export const avatarUrlOf = (session: { api: Api }, id: string, size: number): string =>
+  session.api.avatarUrl(id, size)
+
 // The address the session's requests go to, and the origin it is served from.
 export const apiBaseOf = (session: { api: Api }): string => session.api.base
 export const apiOriginOf = (session: { api: Api }): string => session.api.origin()
