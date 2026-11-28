@@ -93,8 +93,10 @@ beforeEach(() => {
   useStore.setState({ me: null, token: null, guest: false, authExpired: false, bootError: null })
 })
 
-afterEach(() => {
-  st().logout()
+afterEach(async () => {
+  const left = st().logout()
+  await advance(3_100)
+  await left
   home.info = homeInfo
   jest.useRealTimers()
   globalThis.fetch = real.fetch
