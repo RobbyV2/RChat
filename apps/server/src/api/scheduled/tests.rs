@@ -448,8 +448,10 @@ fn scheduled_retries_server_failures_with_backoff() {
     );
     let gone: Result<Message, ApiError> = Err(not_found());
     assert_eq!(settle_of(&gone, 0, 1, 0), Settle::Fail(GONE.to_string()));
-    let other: Result<Message, ApiError> =
-        Err(crate::api::bad("Message must be at most 4000 characters"));
+    let other: Result<Message, ApiError> = Err(ApiError::invalid(
+        "Message must be at most 4000 characters",
+        "content",
+    ));
     assert_eq!(
         settle_of(&other, 0, 1, 0),
         Settle::Fail("Message must be at most 4000 characters".to_string())

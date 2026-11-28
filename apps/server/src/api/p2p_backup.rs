@@ -14,7 +14,7 @@ use crate::api::media::{Held, declared_length, read_raw, reading_slot, reserve, 
 use crate::api::rare::{self, Rare};
 use crate::api::reauth::{AuthedSession, Purpose, ReAuth, ReAuthBody, Session, check_at};
 use crate::api::seal::Source;
-use crate::api::{ApiError, ApiErrorBody, Authed, OkResp, Settings, bad, ok};
+use crate::api::{ApiError, ApiErrorBody, Authed, OkResp, Settings, ok};
 use crate::crypt::copies::{BACKUPS, Opener, backup_binding};
 use crate::db::{Db, PURGE_BATCH, PURGING_HASH, User};
 use crate::state::AppState;
@@ -139,7 +139,7 @@ fn capable(state: &AppState) -> Result<u64, ApiError> {
 fn check_ik(ik: &str) -> Result<(), ApiError> {
     crate::identity::p2p_key(ik)
         .map(|_| ())
-        .ok_or_else(|| bad(BAD_IK))
+        .ok_or_else(|| ApiError::invalid(BAD_IK, "ik"))
 }
 
 fn stale(latest: i64) -> ApiError {

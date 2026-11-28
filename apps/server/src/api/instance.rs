@@ -223,15 +223,14 @@ pub(crate) async fn assertion(
         ));
     }
     let aud = aud.trim().to_string();
-    let bad = |m: &str| ApiError(StatusCode::BAD_REQUEST, m.to_string(), None);
     if aud.is_empty() || aud.len() > AUD_MAX {
-        return Err(bad("aud must be 1 to 512 bytes"));
+        return Err(ApiError::invalid("aud must be 1 to 512 bytes", "aud"));
     }
     if nonce
         .as_ref()
         .is_some_and(|n| n.is_empty() || n.len() > NONCE_MAX)
     {
-        return Err(bad("nonce must be 1 to 256 bytes"));
+        return Err(ApiError::invalid("nonce must be 1 to 256 bytes", "nonce"));
     }
     let iss = state.instance.origin(peer, &headers);
     let sub = format!("{}@{}", user.username, state.instance.host(&iss));
@@ -349,19 +348,23 @@ pub(crate) async fn p2p_binding(
             None,
         ));
     }
-    let bad = |m: &str| ApiError(StatusCode::BAD_REQUEST, m.to_string(), None);
-    let key = p2p_key(&ik).ok_or_else(|| bad("ik must be a base64url Ed25519 public key"))?;
+    let key = p2p_key(&ik)
+        .ok_or_else(|| ApiError::invalid("ik must be a base64url Ed25519 public key", "ik"))?;
     let iat = state.clock.unix();
     if ts.abs_diff(iat) > BINDING_SKEW_SECS {
-        return Err(bad("ts must be within 5 minutes of the server clock"));
+        return Err(ApiError::invalid(
+            "ts must be within 5 minutes of the server clock",
+            "ts",
+        ));
     }
     let iss = state.instance.origin(peer, &headers);
     let sub = format!("{}@{}", user.username, state.instance.host(&iss));
     let head = match (cr, chain) {
         (None, None) => {
             if !binding_proof_ok(&key, &sub, ts, &proof) {
-                return Err(bad(
+                return Err(ApiError::invalid(
                     "proof is not a signature by ik over this account and ts",
+                    "proof",
                 ));
             }
             None

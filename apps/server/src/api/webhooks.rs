@@ -41,7 +41,7 @@ use crate::api::rare::{self, Rare};
 use crate::api::seal;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Message, OkResp, ProfanityTarget, Settings, UserRef, allowed,
-    bad, check_len, embeds, media, ok, placeholders, valid_color,
+    check_len, embeds, media, ok, placeholders, valid_color,
 };
 use crate::crypt::body::{Opened, Parts};
 use crate::crypt::copies::{self, DELIVERIES};
@@ -278,7 +278,7 @@ fn web_url(raw: &str) -> bool {
 /// Checks `list` (counts, lengths, URLs, colors, the profanity filter) and trims nothing.
 pub fn validate_embeds(list: &[RichEmbed], settings: &Settings) -> Result<(), ApiError> {
     if list.len() > EMBEDS_MAX {
-        return Err(bad("At most 10 embeds"));
+        return Err(ApiError::invalid("At most 10 embeds", "embeds"));
     }
     let mut total = 0;
     for e in list {
@@ -298,37 +298,46 @@ pub fn validate_embeds(list: &[RichEmbed], settings: &Settings) -> Result<(), Ap
             texts.push((d, 4096, "Embed description"));
         }
         if fields.len() > FIELDS_MAX {
-            return Err(bad("At most 25 embed fields"));
+            return Err(ApiError::invalid("At most 25 embed fields", "embeds"));
         }
         for f in fields {
             if blank(&f.name) || blank(&f.value) {
-                return Err(bad("Embed fields need a name and a value"));
+                return Err(ApiError::invalid(
+                    "Embed fields need a name and a value",
+                    "embeds",
+                ));
             }
             texts.push((&f.name, 256, "Embed field name"));
             texts.push((&f.value, 1024, "Embed field value"));
         }
         if let Some(f) = footer {
             if blank(&f.text) {
-                return Err(bad("Embed footer is empty"));
+                return Err(ApiError::invalid("Embed footer is empty", "embeds"));
             }
             texts.push((&f.text, 2048, "Embed footer"));
         }
         if let Some(u) = url
             && !web_url(u)
         {
-            return Err(bad("Embed url must be an http or https link"));
+            return Err(ApiError::invalid(
+                "Embed url must be an http or https link",
+                "embeds",
+            ));
         }
         if let Some(c) = color
             && !(0..=0xff_ffff).contains(c)
         {
-            return Err(bad("Embed color must be between 0 and 16777215"));
+            return Err(ApiError::invalid(
+                "Embed color must be between 0 and 16777215",
+                "embeds",
+            ));
         }
         let shown = title.as_deref().is_some_and(|t| !blank(t))
             || description.as_deref().is_some_and(|d| !blank(d))
             || !fields.is_empty()
             || footer.is_some();
         if !shown {
-            return Err(bad("Embed is empty"));
+            return Err(ApiError::invalid("Embed is empty", "embeds"));
         }
         for (text, max, what) in texts {
             check_len(text, max, what)?;
@@ -337,7 +346,10 @@ pub fn validate_embeds(list: &[RichEmbed], settings: &Settings) -> Result<(), Ap
         }
     }
     match total > EMBED_TEXT_MAX {
-        true => Err(bad("Embeds must have at most 6000 characters in total")),
+        true => Err(ApiError::invalid(
+            "Embeds must have at most 6000 characters in total",
+            "embeds",
+        )),
         false => Ok(()),
     }
 }
@@ -594,10 +606,13 @@ async fn manager_channel(
 ) -> Result<ResolvedChannel, ApiError> {
     let channel = allowed(resolve_channel(db, id, Some(user), &Proof::none()).await)?
         .filter(|c| c.server().name() == access.name())
-        .ok_or_else(|| bad("Unknown channel"))?;
+        .ok_or_else(|| ApiError::invalid("Unknown channel", "channel_id"))?;
     match channel.kind() {
         ChannelKind::Text => Ok(channel),
-        ChannelKind::Voice => Err(bad("Webhooks post only in text channels")),
+        ChannelKind::Voice => Err(ApiError::invalid(
+            "Webhooks post only in text channels",
+            "channel_id",
+        )),
     }
 }
 
@@ -607,18 +622,18 @@ async fn manager_channel(
 async fn check_name(db: &Db, server: &str, raw: &str) -> Result<String, ApiError> {
     let name = raw.trim().to_string();
     if name.is_empty() {
-        return Err(bad("Name is required"));
+        return Err(ApiError::invalid("Name is required", "name"));
     }
     check_len(&name, NAME_MAX, "Name")?;
     if name.chars().any(hidden_char) {
-        return Err(bad("Name has invalid characters"));
+        return Err(ApiError::invalid("Name has invalid characters", "name"));
     }
     Settings::cached(db)
         .await
         .check_profanity(ProfanityTarget::Usernames, &name)?;
     let keys = name_keys(&name);
     if keys.iter().any(String::is_empty) {
-        return Err(bad("Name is required"));
+        return Err(ApiError::invalid("Name is required", "name"));
     }
     let mut taken = names_clash(&keys, &name_keys(STAFF_NAME));
     if !taken {
@@ -636,7 +651,8 @@ async fn check_name(db: &Db, server: &str, raw: &str) -> Result<String, ApiError
         }
     }
     match taken {
-        true => Err(bad(
+        true => Err(ApiError::conflict(
+            StatusCode::BAD_REQUEST,
             "That name belongs to someone in this server. Pick another name",
         )),
         false => Ok(name),
@@ -647,7 +663,10 @@ fn check_avatar(kind: AvatarKind, color: Option<&str>) -> Result<Option<String>,
     match (kind, color) {
         (AvatarKind::Identicon, _) => Ok(None),
         (AvatarKind::Color, Some(c)) if valid_color(c) => Ok(Some(c.to_lowercase())),
-        (AvatarKind::Color, _) => Err(bad("Avatar color must be #rrggbb")),
+        (AvatarKind::Color, _) => Err(ApiError::invalid(
+            "Avatar color must be #rrggbb",
+            "avatar_color",
+        )),
     }
 }
 
@@ -760,7 +779,7 @@ pub(crate) async fn create_webhook(
     let actor = manager_actor(db, &access, &user).await?;
     let place = audit::channel_ref(db, channel.id())
         .await?
-        .ok_or_else(|| bad("Unknown channel"))?;
+        .ok_or_else(|| ApiError::invalid("Unknown channel", "channel_id"))?;
     let t = state.clock.unix();
     let mut tx = db.begin().await?;
     lock_server(&mut tx, access.name()).await?;
@@ -1263,7 +1282,7 @@ async fn read_execute(
         let req = Request::from_parts(parts, axum::body::Body::from(json));
         let Json(body) = Json::<ExecuteReq>::from_request(req, state)
             .await
-            .map_err(|e| bad(&e.body_text()))?;
+            .map_err(|e| ApiError::invalid(e.body_text(), "body"))?;
         return Ok((body, None));
     }
     let file_only = declared.is_some_and(|n| n > EXECUTE_FORM_MAX as u64);
@@ -1280,7 +1299,7 @@ async fn read_execute(
     };
     let (mut form, watch) = media::form(req, most)
         .await
-        .map_err(|e| bad(&e.body_text()))?;
+        .map_err(|e| ApiError::invalid(e.body_text(), "body"))?;
     let over = || media::json_over(EXECUTE_JSON_MAX);
     let mut body: Option<ExecuteReq> = None;
     let mut file = None;
@@ -1291,14 +1310,18 @@ async fn read_execute(
         match field.name() {
             Some("payload_json") => {
                 let json = media::read_json_part(field, EXECUTE_JSON_MAX, &watch).await?;
-                body =
-                    Some(serde_json::from_slice(&json).map_err(|_| bad("Invalid payload_json"))?);
+                body = Some(
+                    serde_json::from_slice(&json)
+                        .map_err(|_| ApiError::invalid("Invalid payload_json", "payload_json"))?,
+                );
             }
             Some(_) | None if file.is_none() && field.file_name().is_some() => {
                 let held = match (held.take(), refused.take()) {
                     (Some(held), _) => held,
                     (None, Some(e)) => return Err(e),
-                    (None, None) => return Err(bad("Send one file and payload_json")),
+                    (None, None) => {
+                        return Err(ApiError::invalid("Send one file and payload_json", "file"));
+                    }
                 };
                 let filename = media::clean_filename(field.file_name().unwrap_or("file"));
                 let mime =
@@ -1311,7 +1334,9 @@ async fn read_execute(
                     data,
                 });
             }
-            Some(_) | None => return Err(bad("Send one file and payload_json")),
+            Some(_) | None => {
+                return Err(ApiError::invalid("Send one file and payload_json", "file"));
+            }
         }
     }
     Ok((body.unwrap_or_default(), file))
@@ -1325,7 +1350,10 @@ fn override_avatar(
         None => Ok((hook.avatar_kind, hook.avatar_color.clone())),
         Some("identicon") => Ok((AvatarKind::Identicon, None)),
         Some(c) if valid_color(c) => Ok((AvatarKind::Color, Some(c.to_lowercase()))),
-        Some(_) => Err(bad("Avatar must be identicon or #rrggbb")),
+        Some(_) => Err(ApiError::invalid(
+            "Avatar must be identicon or #rrggbb",
+            "avatar",
+        )),
     }
 }
 
@@ -1359,7 +1387,10 @@ async fn post(
     let (kind, color) = override_avatar(avatar.as_deref(), hook)?;
     let channel = webhook_channel(db, hook.channel_id).await?;
     if channel.kind() != ChannelKind::Text {
-        return Err(bad("Voice channels cannot receive messages"));
+        return Err(ApiError::conflict(
+            StatusCode::BAD_REQUEST,
+            "Voice channels cannot receive messages",
+        ));
     }
     channel.allow_payload(file.is_some() || poll.is_some() || !cards.is_empty())?;
     let place = match thread_id {
@@ -1379,7 +1410,7 @@ async fn post(
                         .is_ok_and(|k| matches!(k.as_str(), "user" | "poll"))
             });
             if !ok {
-                return Err(bad("Unknown thread"));
+                return Err(ApiError::invalid("Unknown thread", "thread_id"));
             }
             Place::Thread(root)
         }
@@ -1687,13 +1718,13 @@ pub(crate) async fn edit_hook_message(
         .ok_or_else(unknown_message)?;
     let kind: String = row.try_get(0)?;
     if kind != "user" {
-        return Err(bad("Cannot edit this message"));
+        return Err(ApiError::invalid("Cannot edit this message", "id"));
     }
     let attached = row.try_get::<Option<String>, _>(1)?.is_some() && row.try_get::<i64, _>(2)? == 0;
     let (author, parts) =
         match crate::api::seal::stored_parts(crate::db::ring(db), &mut tx, mid).await? {
             Some((_, author, Opened { parts, unreadable })) if !unreadable => (author, parts),
-            Some(_) => return Err(bad("Cannot edit this message")),
+            Some(_) => return Err(ApiError::invalid("Cannot edit this message", "id")),
             None => return Err(unknown_message()),
         };
     let old = parts.content.clone();
@@ -1701,13 +1732,17 @@ pub(crate) async fn edit_hook_message(
     let content = content.unwrap_or_else(|| old.clone());
     let cards = cards.unwrap_or(old_cards.clone());
     if text_only && !cards.is_empty() && cards != old_cards {
-        return Err(bad("This channel only accepts text"));
+        return Err(ApiError::off_server(
+            StatusCode::BAD_REQUEST,
+            "This channel only accepts text",
+            "text_only",
+        ));
     }
     check_len(&content, state.limits.message_max_chars, "Message")?;
     settings.check_profanity(ProfanityTarget::Messages, &content)?;
     validate_embeds(&cards, &settings)?;
     if blank(&content) && !attached && cards.is_empty() {
-        return Err(bad("Message is empty"));
+        return Err(ApiError::invalid("Message is empty", "content"));
     }
     if content != old || cards != old_cards {
         let relink = embeds::extract_urls(&content) != embeds::extract_urls(&old);
@@ -2084,14 +2119,14 @@ fn check_events(list: &[String]) -> Result<String, ApiError> {
     let mut out: Vec<&str> = Vec::new();
     for e in list {
         let Some(known) = EVENTS.iter().find(|k| **k == e.trim()) else {
-            return Err(bad("Unknown event"));
+            return Err(ApiError::invalid("Unknown event", "events"));
         };
         if !out.contains(known) {
             out.push(known);
         }
     }
     match out.is_empty() {
-        true => Err(bad("Choose at least one event")),
+        true => Err(ApiError::invalid("Choose at least one event", "events")),
         false => Ok(out.join(" ")),
     }
 }
@@ -2100,18 +2135,18 @@ fn check_events(list: &[String]) -> Result<String, ApiError> {
 async fn check_url(raw: &str) -> Result<String, ApiError> {
     let raw = raw.trim();
     check_len(raw, URL_MAX, "URL")?;
-    let url = Url::parse(raw).map_err(|_| bad("Invalid URL"))?;
+    let url = Url::parse(raw).map_err(|_| ApiError::invalid("Invalid URL", "url"))?;
     if !url.username().is_empty() || url.password().is_some() {
-        return Err(bad("URL must not contain credentials"));
+        return Err(ApiError::invalid("URL must not contain credentials", "url"));
     }
     if url.fragment().is_some() {
-        return Err(bad("URL must not contain a fragment"));
+        return Err(ApiError::invalid("URL must not contain a fragment", "url"));
     }
     net_guard::check(&url, &outbound_policy())
         .await
         .map_err(|r| {
             tracing::debug!("outgoing webhook URL refused: {r}");
-            bad(refusal_text(r))
+            ApiError::invalid(refusal_text(r), "url")
         })?;
     Ok(url.to_string())
 }
@@ -2198,7 +2233,7 @@ pub(crate) async fn create_outgoing(
     rare::take(&state, Rare::Webhook, Some(&user))?;
     let hook_name = hook_name.trim().to_string();
     if hook_name.is_empty() {
-        return Err(bad("Name is required"));
+        return Err(ApiError::invalid("Name is required", "name"));
     }
     check_len(&hook_name, NAME_MAX, "Name")?;
     let events = check_events(&events)?;
@@ -2370,7 +2405,7 @@ pub(crate) async fn update_outgoing(
         Some(n) => {
             let n = n.trim().to_string();
             if n.is_empty() {
-                return Err(bad("Name is required"));
+                return Err(ApiError::invalid("Name is required", "name"));
             }
             check_len(&n, NAME_MAX, "Name")?;
             n
@@ -2389,7 +2424,7 @@ pub(crate) async fn update_outgoing(
             .await?
             .is_some()
     {
-        return Err(bad(TAKEOVER_URL));
+        return Err(ApiError::invalid(TAKEOVER_URL, "url"));
     }
     let url = match url {
         Some(u) if u.trim() != before.url => check_url(&u).await?,
@@ -2506,7 +2541,7 @@ pub(crate) async fn reset_secret(
         .and_then(|Json(b)| b.url)
         .filter(|u| !u.trim().is_empty());
     let url = match (takes, given) {
-        (true, None) => return Err(bad(TAKEOVER_URL)),
+        (true, None) => return Err(ApiError::invalid(TAKEOVER_URL, "url")),
         (true, Some(u)) if u.trim() != was_url => check_url(&u).await?,
         _ => was_url.clone(),
     };
@@ -3197,7 +3232,7 @@ async fn payload(
 /// server stores content sealed.
 async fn queue(state: &AppState, hook: i64, fact: &Fact) -> Result<(), ApiError> {
     let db = &state.db;
-    let text = serde_json::to_string(fact).map_err(|e| bad(&e.to_string()))?;
+    let text = serde_json::to_string(fact).map_err(ApiError::internal)?;
     let t = state.clock.unix();
     let (status, payload, error, finished) = match text.len() > PAYLOAD_MAX {
         true => ("failed", None, Some("Payload too large"), Some(t)),

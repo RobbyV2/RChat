@@ -8,7 +8,7 @@ use crate::api::access::perms::Perm;
 use crate::api::access::{Proof, ServerAccess, resolve_server};
 use crate::api::audit;
 use crate::api::media::MEDIA_TTL_SECS;
-use crate::api::{ApiError, ApiErrorBody, Authed, Settings, bad, placeholders};
+use crate::api::{ApiError, ApiErrorBody, Authed, Settings, placeholders};
 use crate::db::{Db, User};
 use crate::limits::Limits;
 use crate::state::AppState;
@@ -737,7 +737,7 @@ pub(crate) async fn set_upload_expiry(
     let settings = Settings::cached(&state.db).await;
     let cap = settings.upload_expiry_max_days;
     if let Err(problem) = refusal(req, cap) {
-        return Err(bad(&problem));
+        return Err(ApiError::invalid(&problem, "upload_expiry"));
     }
     let key = access.name().to_string();
     let actor = access.audit_actor(&state.db, Perm::ManageServer).await?;

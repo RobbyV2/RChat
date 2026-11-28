@@ -193,7 +193,7 @@ impl Search {
         };
         let parts = decode_cursor(raw, 3)?;
         if parts[0] != self.sort.wire() {
-            return Err(crate::api::bad("Invalid cursor"));
+            return Err(ApiError::invalid("Invalid cursor", "cursor"));
         }
         let key = match self.sort.key() {
             Some(_) => Some(cursor_int(&parts[1])?),

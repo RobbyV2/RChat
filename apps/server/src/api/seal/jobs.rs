@@ -17,7 +17,7 @@ use super::sweep::seal_row;
 use crate::api::access::perms::Perm;
 use crate::api::access::{Proof, not_found, resolve_dm, resolve_server};
 use crate::api::reauth::{AuthedSession, Purpose, ReAuth, ReAuthBody, check};
-use crate::api::{ApiError, ApiErrorBody, Authed, bad};
+use crate::api::{ApiError, ApiErrorBody, Authed};
 use crate::crypt::body::{OPTIONS, Opener, POLLS, Parts, SNAPSHOTS, Scope};
 use crate::crypt::copies::{self, BACKUPS, BIOS, DELIVERIES, SERVER_BIOS};
 use crate::db::{Db, User, is_sqlite, now, pool_key};
@@ -279,7 +279,7 @@ pub(crate) async fn start_job(
         reauth,
     }): Json<NewSealJob>,
 ) -> Result<Json<SealJob>, ApiError> {
-    let target = Target::parse(&place).ok_or_else(|| bad(BAD_PLACE))?;
+    let target = Target::parse(&place).ok_or_else(|| ApiError::invalid(BAD_PLACE, "place"))?;
     allowed(&state.db, &session.user, &target, direction).await?;
     let purpose = Purpose::SealData {
         place: target.key(),
@@ -380,7 +380,7 @@ pub(crate) async fn list_jobs(
     Authed(user): Authed,
     Query(JobsQuery { place }): Query<JobsQuery>,
 ) -> Result<Json<Vec<SealJob>>, ApiError> {
-    let target = Target::parse(&place).ok_or_else(|| bad(BAD_PLACE))?;
+    let target = Target::parse(&place).ok_or_else(|| ApiError::invalid(BAD_PLACE, "place"))?;
     let unseal = allowed(&state.db, &user, &target, Direction::Unseal)
         .await
         .is_ok();
@@ -540,7 +540,7 @@ async fn step(state: &AppState, id: i64) -> Result<bool, ApiError> {
     if job.state != JobState::Running {
         return Ok(false);
     }
-    let target = Target::parse(&job.place).ok_or_else(|| bad(BAD_PLACE))?;
+    let target = Target::parse(&job.place).ok_or_else(|| ApiError::invalid(BAD_PLACE, "place"))?;
     let (cond, bind) = target.messages();
     let form = match job.direction {
         Direction::Seal => "body IS NULL AND kind IN ('user', 'poll')",

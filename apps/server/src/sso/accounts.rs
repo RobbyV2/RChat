@@ -419,10 +419,18 @@ pub async fn link(
         .await?;
         match owner {
             Some((actor, _)) if actor != username => {
-                return Err(crate::api::bad("That sign-in belongs to another account"));
+                return Err(ApiError::conflict(
+                    axum::http::StatusCode::BAD_REQUEST,
+                    "That sign-in belongs to another account",
+                ));
             }
             Some((_, provider)) if provider == id.provider => (),
-            _ => return Err(crate::api::bad("Already linked")),
+            _ => {
+                return Err(ApiError::conflict(
+                    axum::http::StatusCode::BAD_REQUEST,
+                    "Already linked",
+                ));
+            }
         }
     } else {
         crate::api::instance_audit::record_in(
@@ -492,7 +500,10 @@ pub async fn unlink(state: &AppState, user: &User, provider: &str) -> Result<(),
         .find(|link| link.provider == provider)
         .ok_or_else(crate::api::access::not_found)?;
     if !link.can_unlink {
-        return Err(crate::api::bad("Add a password or another sign-in first"));
+        return Err(ApiError::conflict(
+            axum::http::StatusCode::BAD_REQUEST,
+            "Add a password or another sign-in first",
+        ));
     }
     sqlx::query("DELETE FROM sso_links WHERE username=$1 AND provider=$2")
         .bind(&user.username)

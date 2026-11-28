@@ -9,7 +9,7 @@ use hmac::{Hmac, KeyInit, Mac};
 use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
 use sha2::Sha256;
 
-use crate::api::{ApiError, bad};
+use crate::api::ApiError;
 
 /// Most characters of a sealed cursor that are read.
 const SEALED_MAX: usize = 1024;
@@ -77,7 +77,7 @@ pub(crate) fn open(
     raw: &str,
     count: usize,
 ) -> Result<Vec<String>, ApiError> {
-    let invalid = || bad("Invalid cursor");
+    let invalid = || ApiError::invalid("Invalid cursor", "cursor");
     let raw = raw.trim();
     if raw.len() > SEALED_MAX {
         return Err(invalid());
@@ -160,7 +160,7 @@ mod tests {
             &"A".repeat(SEALED_MAX + 1),
         ] {
             match open(PEPPER, "people", &["club"], raw, 2) {
-                Err(ApiError(status, msg, None)) => {
+                Err(ApiError(status, msg, Some(_))) => {
                     assert_eq!((status.as_u16(), msg.as_str()), (400, "Invalid cursor"))
                 }
                 other => panic!("{raw}: {:?}", other.ok()),

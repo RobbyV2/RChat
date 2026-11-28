@@ -150,7 +150,10 @@ pub(crate) async fn post_rotate(
         None => crate::crypt::Purpose::ALL.to_vec(),
         Some(names) => names
             .iter()
-            .map(|n| crate::crypt::Purpose::parse(n).ok_or_else(|| super::bad(BAD_PURPOSE)))
+            .map(|n| {
+                crate::crypt::Purpose::parse(n)
+                    .ok_or_else(|| ApiError::invalid(BAD_PURPOSE, "purposes"))
+            })
             .collect::<Result<_, _>>()?,
     };
     check(

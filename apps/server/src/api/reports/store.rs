@@ -12,8 +12,7 @@ use crate::api::audit::{
     self, Action, ChannelRef, Details, Entry, Target, TargetKind, like_escape,
 };
 use crate::api::{
-    ApiError, LIST_PAGE, Paged, bad, decode_cursor, encode_cursor, instance_audit, user_from,
-    user_refs,
+    ApiError, LIST_PAGE, Paged, decode_cursor, encode_cursor, instance_audit, user_from, user_refs,
 };
 use crate::crypt::copies::{Opener, Sealer};
 use crate::db::{Db, PURGE_BATCH, delete_batched};
@@ -495,7 +494,9 @@ pub(super) async fn escalate(
     };
     let opener = Opener::on(db, &mut tx, record.as_deref()).await?;
     let kept = match &record {
-        Some(record) => Text::open(&opener, id, record).ok_or_else(|| bad(text::UNREADABLE))?,
+        Some(record) => Text::open(&opener, id, record).ok_or_else(|| {
+            ApiError::conflict(axum::http::StatusCode::BAD_REQUEST, text::UNREADABLE)
+        })?,
         None => plain,
     };
     let sealer = text::sealer_of(db, &mut tx, id).await?;

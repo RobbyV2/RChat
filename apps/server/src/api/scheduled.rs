@@ -633,10 +633,6 @@ fn check_content(state: &AppState, content: &str, carried: bool) -> Result<(), A
     check_len(content, state.limits.message_max_chars, "Message")
 }
 
-fn bad(text: &str) -> ApiError {
-    ApiError(StatusCode::BAD_REQUEST, text.to_string(), None)
-}
-
 /// The file `id` as a scheduled message of `username` may carry it: their own upload that no
 /// message and no other scheduled message has. Answers its name. Runs in the transaction that
 /// stores the row.
@@ -651,7 +647,7 @@ async fn file_name(
             .bind(id)
             .fetch_optional(&mut *conn)
             .await?
-            .ok_or_else(|| bad("Unknown media"))?;
+            .ok_or_else(|| ApiError::invalid("Unknown media", "media_id"))?;
     if row.try_get::<Option<String>, _>(0)?.as_deref() != Some(username) {
         return Err(ApiError(
             StatusCode::FORBIDDEN,
@@ -664,7 +660,10 @@ async fn file_name(
         .fetch_one(&mut *conn)
         .await?;
     if taken > 0 {
-        return Err(bad("This file is already attached to a message"));
+        return Err(ApiError::conflict(
+            StatusCode::BAD_REQUEST,
+            "This file is already attached to a message",
+        ));
     }
     let record: Option<Vec<u8>> = row.try_get(3)?;
     let facts = crate::api::media::sealed::facts_on(
@@ -963,7 +962,9 @@ pub(crate) async fn create_at(
     }
     let in_channel = spot.channel_id.is_some();
     let poll = match poll {
-        Some(_) if media_id.is_some() => return Err(bad("Polls cannot have attachments")),
+        Some(_) if media_id.is_some() => {
+            return Err(ApiError::invalid("Polls cannot have attachments", "poll"));
+        }
         Some(given) => {
             let req = serde_json::from_value(given.clone())
                 .map_err(|_| ApiError::invalid("Invalid poll", "poll"))?;

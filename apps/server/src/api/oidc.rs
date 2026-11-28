@@ -1,7 +1,6 @@
 use super::{
     ApiError, Authed, NAME_MAX, OkResp,
     auth::{Me, me_payload},
-    bad,
     reauth::{AuthedSession, ReAuthBody},
 };
 use crate::{
@@ -506,8 +505,8 @@ pub(crate) async fn backchannel_logout(
         .sso
         .provider(&id)
         .ok_or_else(super::access::not_found)?;
-    let invalid = |_| bad("invalid_request");
-    let token = form.map_err(|_| bad("invalid_request"))?.0.logout_token;
+    let invalid = |_| invalid_request();
+    let token = form.map_err(|_| invalid_request())?.0.logout_token;
     let (alg, kid) = jwt::header(&token).map_err(invalid)?;
     let key = provider
         .key(state.sso.http(), alg, kid.as_deref())
@@ -532,7 +531,7 @@ pub(crate) async fn backchannel_logout(
         .fetch_all(&state.db)
         .await?
     } else {
-        let sub = claims.sub.ok_or_else(|| bad("invalid_request"))?;
+        let sub = claims.sub.ok_or_else(invalid_request)?;
         sqlx::query_scalar(
             "DELETE FROM tokens WHERE sso_provider=$1 AND username IN
              (SELECT username FROM sso_links WHERE issuer=$2 AND subject=$3)
@@ -559,6 +558,15 @@ pub(crate) async fn backchannel_logout(
     )
     .await;
     Ok(([(header::CACHE_CONTROL, "no-store")], ()).into_response())
+}
+
+/// The OpenID back-channel logout refusal, in the shape that specification gives it.
+fn invalid_request() -> ApiError {
+    ApiError(
+        axum::http::StatusCode::BAD_REQUEST,
+        "invalid_request".to_string(),
+        None,
+    )
 }
 
 #[cfg(test)]
@@ -597,7 +605,13 @@ pub(crate) async fn client_consent(
         .instance
         .public_url
         .as_ref()
-        .ok_or_else(|| bad("Missing public URL"))?
+        .ok_or_else(|| {
+            ApiError::off_site(
+                axum::http::StatusCode::BAD_REQUEST,
+                "Missing public URL",
+                &rchat_settings::items::PUBLIC_URL,
+            )
+        })?
         .origin()
         .ascii_serialization();
     if headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) != Some(public.as_str()) {

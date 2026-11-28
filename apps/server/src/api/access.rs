@@ -1784,7 +1784,11 @@ impl ResolvedChannel {
 
     pub(crate) fn allow_payload(&self, rich: bool) -> Result<(), ApiError> {
         if self.text_only && rich {
-            return Err(crate::api::bad("This channel only accepts text"));
+            return Err(ApiError::off_server(
+                StatusCode::BAD_REQUEST,
+                "This channel only accepts text",
+                "text_only",
+            ));
         }
         Ok(())
     }
@@ -4370,7 +4374,7 @@ mod tests {
                     .replacen("{id}", &target, 1)
                     .replace("{id}", "1")
                     .replace("{username}", "alice")
-                    .replace("{emoji}", "x")
+                    .replace("{emoji}", "%F0%9F%91%8D")
                     .replace("{ord}", "0")
                     .replace("{subject}", "u:alice")
                     .replace("{guest}", "@guest:00000000000000aa");
@@ -6422,7 +6426,22 @@ mod tests {
                 (r.0, String::from_utf8_lossy(&r.2).into_owned())
             }
         };
-        let err = |m: &str| (400, format!(r#"{{"error":"{m}"}}"#));
+        let err = |m: &str| {
+            let reason = match m {
+                "Use at least 8 characters, or leave it blank for a generated one" => {
+                    r#"{"kind":"invalid","field":"password"}"#
+                }
+                "Uses must be between 1 and 10000" => r#"{"kind":"invalid","field":"max_uses"}"#,
+                m if m.starts_with("The expiry") || m.starts_with("Use either") => {
+                    r#"{"kind":"invalid","field":"expires_in"}"#
+                }
+                "A server can have at most 50 active passwords" => {
+                    r#"{"kind":"limit","control":"server_passwords"}"#
+                }
+                _ => r#"{"kind":"conflict"}"#,
+            };
+            (400, format!(r#"{{"error":"{m}","reason":{reason}}}"#))
+        };
         assert_eq!(create("bob", "rchat", "{}".into()).await.0, 403);
         exec(db, "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('vault', 'bob', 0, 0, 0)").await;
         assert_eq!(create("bob", "vault", "{}".into()).await.0, 403);

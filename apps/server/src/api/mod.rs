@@ -116,10 +116,6 @@ pub(crate) fn ok() -> axum::Json<OkResp> {
     axum::Json(OkResp { ok: true })
 }
 
-pub(crate) fn bad(msg: &str) -> ApiError {
-    ApiError(StatusCode::BAD_REQUEST, msg.to_string(), None)
-}
-
 /// A gate result with denials as `None`, so callers can answer them their own way. Server
 /// errors stay errors.
 pub(crate) fn allowed<T>(res: Result<T, ApiError>) -> Result<Option<T>, ApiError> {
@@ -317,7 +313,7 @@ pub(crate) fn encode_cursor(parts: &[&str]) -> String {
 }
 
 pub(crate) fn decode_cursor(raw: &str, count: usize) -> Result<Vec<String>, ApiError> {
-    let invalid = || bad("Invalid cursor");
+    let invalid = || ApiError::invalid("Invalid cursor", "cursor");
     let bytes = hex::decode(raw.trim()).map_err(|_| invalid())?;
     let text = String::from_utf8(bytes).map_err(|_| invalid())?;
     let parts: Vec<String> = text.split('\u{1f}').map(str::to_string).collect();
@@ -328,7 +324,8 @@ pub(crate) fn decode_cursor(raw: &str, count: usize) -> Result<Vec<String>, ApiE
 }
 
 pub(crate) fn cursor_int(part: &str) -> Result<i64, ApiError> {
-    part.parse().map_err(|_| bad("Invalid cursor"))
+    part.parse()
+        .map_err(|_| ApiError::invalid("Invalid cursor", "cursor"))
 }
 
 pub struct Paged<T>(pub Vec<T>, pub Option<String>);
@@ -1266,6 +1263,21 @@ pub enum ProfanityTarget {
 }
 
 impl ProfanityTarget {
+    /// The request value this target screens.
+    pub fn field(self) -> &'static str {
+        match self {
+            ProfanityTarget::Messages => "content",
+            ProfanityTarget::Usernames => "username",
+            ProfanityTarget::ServerNames
+            | ProfanityTarget::ChannelNames
+            | ProfanityTarget::RoleNames
+            | ProfanityTarget::CategoryNames => "name",
+            ProfanityTarget::FileNames => "filename",
+            ProfanityTarget::Bios => "bio",
+            ProfanityTarget::ChannelTopics => "topic",
+        }
+    }
+
     pub const ALL: [ProfanityTarget; 9] = [
         ProfanityTarget::Messages,
         ProfanityTarget::Usernames,
@@ -2155,7 +2167,10 @@ impl Settings {
 
     pub fn check_profanity(&self, target: ProfanityTarget, text: &str) -> Result<(), ApiError> {
         match self.blocks(target, text) {
-            true => Err(bad("Content blocked by profanity filter")),
+            true => Err(ApiError::invalid(
+                "Content blocked by profanity filter",
+                target.field(),
+            )),
             false => Ok(()),
         }
     }

@@ -12334,7 +12334,7 @@ mod tests {
         let (by_offset, _) = page(bob(), None, Some(2)).await.expect("offset");
         assert_eq!(by_offset, ["cat"]);
         let refused = |res: Result<(Vec<String>, Option<String>), ApiError>| match res {
-            Err(ApiError(StatusCode::BAD_REQUEST, msg, None)) => msg,
+            Err(ApiError(StatusCode::BAD_REQUEST, msg, Some(_))) => msg,
             other => panic!(
                 "expected the invalid cursor answer: {:?}",
                 other.map(|p| p.0)

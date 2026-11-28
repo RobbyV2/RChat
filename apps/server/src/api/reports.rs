@@ -27,7 +27,7 @@ use crate::api::access::{
 use crate::api::features::Feature;
 use crate::api::policy::Policy;
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, LIST_PAGE, OkResp, Paged, Settings, UserRef, allowed, bad,
+    ApiError, ApiErrorBody, Authed, LIST_PAGE, OkResp, Paged, Settings, UserRef, allowed,
     decode_cursor, encode_cursor, lookup, ok,
 };
 use crate::db::{Db, User};
@@ -51,7 +51,7 @@ pub const WRONG_TARGET: &str = "This form takes another target";
 /// The answer to a forms document the instance refuses for what it says, and to a setting the
 /// server config holds.
 pub(crate) fn refused(msg: &str) -> ApiError {
-    bad(msg)
+    ApiError(axum::http::StatusCode::BAD_REQUEST, msg.to_string(), None)
 }
 
 /// The 400 answer to a report request whose value `field` is wrong.

@@ -21,7 +21,7 @@ use crate::api::reports::forms::{self, Form, ReportForms};
 use crate::api::staff_audit;
 use crate::api::{
     ApiError, Authed, OkResp, Paged, ProfanitySwitch, ProfanityTarget, PublicSettings,
-    STRICT_FILE_NAMES, ServerSummaryLite, UserRef, bad, brand, check_profanity, decode_cursor,
+    STRICT_FILE_NAMES, ServerSummaryLite, UserRef, brand, check_profanity, decode_cursor,
     encode_cursor, ok, reports, upload_expiry,
 };
 use crate::db::{AvatarKind, Db, User, get_user, now, purge_messages, recount_members, user_row};
@@ -577,7 +577,10 @@ pub(crate) async fn patch_settings(
         ));
     }
     if upload_expiry_max_days.is_some_and(|d| !(0..=upload_expiry::CAP_DAYS_MAX).contains(&d)) {
-        return Err(bad("The longest file expiry must be 0 to 365 days"));
+        return Err(ApiError::invalid(
+            "The longest file expiry must be 0 to 365 days",
+            "upload_expiry_max_days",
+        ));
     }
     let creators = match server_creators {
         Some(entries) => {
@@ -593,7 +596,9 @@ pub(crate) async fn patch_settings(
                     .ok_or_else(not_found)?
                     .parse(&entries.join(",")),
             };
-            Some(stored.map_err(|expected| bad(&format!("{SERVER_CREATORS}: {expected}")))?)
+            Some(stored.map_err(|expected| {
+                ApiError::invalid(format!("{SERVER_CREATORS}: {expected}"), SERVER_CREATORS)
+            })?)
         }
         None => None,
     };
@@ -607,10 +612,13 @@ pub(crate) async fn patch_settings(
                 false => crate::api::controls::parse_servers(&entries.join(",")),
             };
             Some(stored.ok_or_else(|| {
-                bad(&format!(
-                    "{DEFAULT_SERVERS}: expected up to {} server names",
-                    crate::api::controls::SERVERS_MAX
-                ))
+                ApiError::invalid(
+                    format!(
+                        "{DEFAULT_SERVERS}: expected up to {} server names",
+                        crate::api::controls::SERVERS_MAX
+                    ),
+                    DEFAULT_SERVERS,
+                )
             })?)
         }
         None => None,
@@ -690,7 +698,10 @@ pub(crate) async fn patch_settings(
         .filter(|c| pairs.iter().any(|(key, _)| c.keys().contains(key)))
         .collect();
     if let Some(control) = touched.iter().find(|c| records.pins(c)) {
-        return Err(bad(&format!("Set in the server config: {}", control.env)));
+        return Err(ApiError::invalid(
+            format!("Set in the server config: {}", control.env),
+            control.key,
+        ));
     }
     let mut tx = state.db.begin().await?;
     let before = control_rows(&mut tx).await?;
@@ -1155,7 +1166,7 @@ pub(crate) async fn create_server_for(
         options,
     } = req;
     let Some(owner) = get_user(&state.db, &owner).await? else {
-        return Err(bad("No such account"));
+        return Err(ApiError::invalid("No such account", "owner"));
     };
     crate::api::servers::found_for(&state, &user, &name, password.as_deref(), options, &owner).await
 }
@@ -1299,7 +1310,10 @@ pub(crate) async fn delete_server(
     require_site_admin(&user)?;
     let name = name.to_lowercase();
     if is_default_builtin(&state, &name).await {
-        return Err(bad(DEFAULT_SERVER_STAYS));
+        return Err(ApiError::conflict(
+            StatusCode::BAD_REQUEST,
+            DEFAULT_SERVER_STAYS,
+        ));
     }
     match remove_server(&state, &name).await? {
         true => Ok(ok()),
@@ -2039,7 +2053,7 @@ pub(crate) async fn ban_user(
     let BanReq { username } = req;
     let key = username.to_lowercase();
     if key == user.username {
-        return Err(bad(BAN_SELF));
+        return Err(ApiError::invalid(BAN_SELF, "username"));
     }
     hide_user(&state, &user.username, &key, PurgeKind::Ban).await?;
     Ok(ok())
@@ -2087,7 +2101,7 @@ pub(crate) async fn delete_user(
     require_site_admin(&user)?;
     let key = username.to_lowercase();
     if key == user.username {
-        return Err(bad("Cannot delete yourself"));
+        return Err(ApiError::invalid("Cannot delete yourself", "username"));
     }
     hide_user(&state, &user.username, &key, PurgeKind::User).await?;
     Ok(ok())
@@ -2114,7 +2128,10 @@ pub(crate) async fn remove_phrase(
     require_site_admin(&user)?;
     let key = username.to_lowercase();
     if key == user.username {
-        return Err(bad("Cannot remove your own backup phrase here"));
+        return Err(ApiError::invalid(
+            "Cannot remove your own backup phrase here",
+            "username",
+        ));
     }
     if key.contains('\0') {
         return Ok(Json(PhraseRemoved { removed: false }));

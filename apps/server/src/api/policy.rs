@@ -1100,7 +1100,10 @@ mod tests {
                 set(&state, bad.clone()).await.expect_err("refused");
             assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
             assert_eq!(error, "default_servers: expected up to 10 server names");
-            assert!(reason.is_none());
+            assert_eq!(
+                reason.and_then(|r| r.field).as_deref(),
+                Some("default_servers")
+            );
         }
         assert_eq!(stored_defaults(db).await, "rchat");
         set(&state, json!({"default_servers": ["None", "Lobby"]}))

@@ -1,7 +1,7 @@
 //! Descriptions of attached images, for people who can't see them.
 
 use crate::api::auth::clean_multiline;
-use crate::api::{ApiError, ProfanityTarget, Settings, bad};
+use crate::api::{ApiError, ProfanityTarget, Settings};
 
 /// Most characters (code points) a description holds.
 pub const ALT_MAX: usize = 1000;
@@ -35,7 +35,7 @@ pub fn alt_to_store(
 ) -> Result<Option<String>, ApiError> {
     match (text, attached) {
         (None, _) => Ok(None),
-        (Some(_), false) => Err(bad(NOTHING_TO_DESCRIBE)),
+        (Some(_), false) => Err(ApiError::invalid(NOTHING_TO_DESCRIBE, "media_alt")),
         (Some(t), true) => clean_alt(settings, Some(t), in_channel),
     }
 }

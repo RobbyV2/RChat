@@ -732,7 +732,7 @@ mod tests {
                     for n in 0..burst(1) {
                         let (took, out) = timed(run(state, Some("alice"), query)).await;
                         assert!(
-                            matches!(out, Err(ApiError(StatusCode::BAD_REQUEST, _, None))),
+                            matches!(out, Err(ApiError(StatusCode::BAD_REQUEST, _, Some(_)))),
                             "{query} {n} full={full}"
                         );
                         assert!(
