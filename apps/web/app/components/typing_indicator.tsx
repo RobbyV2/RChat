@@ -1,4 +1,6 @@
 'use client'
+import { personCalled } from '../lib/names'
+import { Name } from './name'
 
 import { memo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
@@ -8,7 +10,6 @@ import { useMask, useStore } from '../lib/store'
 import { rowTypers } from '../lib/typing_rows'
 import { typingParts, typingTitle } from '../lib/typing'
 import { useLooksFor } from './shown_user'
-import { Masked } from './ui'
 import { PingBadge } from './ping_badge'
 import { Inset, Row } from './layout'
 
@@ -137,9 +138,7 @@ export function TypingIndicator({
       <span aria-live="polite" className="min-w-0 truncate">
         {parts.map((p, i) =>
           p.name ? (
-            <span key={i} className="streamer font-semibold text-on-surface">
-              <Masked text={p.text} />
-            </span>
+            <Name key={i} of={personCalled(p.text)} look="font-semibold text-on-surface" />
           ) : (
             <span key={i}>{p.text}</span>
           )

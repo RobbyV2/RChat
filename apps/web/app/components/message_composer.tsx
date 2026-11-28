@@ -2,7 +2,7 @@
 import { OwnLoadNotice } from './own_load'
 
 import { Name } from './name'
-import { serverCalled } from '../lib/names'
+import { instanceName, serverCalled } from '../lib/names'
 import { Button, IconButton } from './controls'
 import { PeerCodeButton } from './p2p/peer_code_button'
 import { useActorSuffix, useViewActor } from './view_actor'
@@ -228,7 +228,7 @@ function SiteFilterNote() {
     >
       <ShieldAlert size={14} className="shrink-0" />
       <span className="min-w-0 flex-1">
-        <span className="streamer">{label}</span> filters some words in server messages.
+        <Name of={instanceName(label)} /> filters some words in server messages.
       </span>
       <Inset
         type="button"

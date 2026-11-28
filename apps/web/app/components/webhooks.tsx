@@ -1,4 +1,6 @@
 'use client'
+import { personCalled } from '../lib/names'
+import { Name } from './name'
 
 import { asAccount } from '../lib/people'
 import { ListRow } from './controls'
@@ -8,7 +10,7 @@ import { Check, Copy } from 'lucide-react'
 import { embedColor, fieldRows, safeLink, webhookIdOf } from '../lib/webhooks'
 import type { RichEmbed, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
-import { Masked, useCopied } from './ui'
+import { useCopied } from './ui'
 import { sharing } from '../lib/platform'
 
 // Always shown next to a webhook's name, whatever name it posted with.
@@ -139,12 +141,12 @@ export function WebhookProfile({
               </span>
             </Row>
           </Lift>
-          <p
+          <Name
+            as="p"
             id={titleId}
-            className="streamer line-clamp-2 text-lg leading-6 font-semibold break-words text-on-surface"
-          >
-            <Masked text={user.display_name} by={user.username} />
-          </p>
+            of={personCalled(user.display_name, user.username)}
+            look="line-clamp-2 text-lg leading-6 font-semibold break-words text-on-surface"
+          />
           <Surface pad="md" tone="low" radius="lg">
             <p className="text-sm text-on-surface-variant">
               Posted by an app or service through a webhook. It is not a member and cannot get

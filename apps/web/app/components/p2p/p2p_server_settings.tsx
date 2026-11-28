@@ -418,12 +418,11 @@ function MemberLine({ v, m, children }: { v: ServerView; m: MemberView; children
     <Surface as="li" data-p2p-member-line={m.name} pad="sm" tone="plain" radius="lg">
       <Row gap="md" wrap lineGap="2xs">
         <MemberAvatar members={v.members} ik={m.ik} size={32} />
-        <span
-          className="streamer min-w-0 flex-1 truncate text-sm"
-          style={{ color: nameColor(m, v.roles) }}
-        >
-          <Masked text={m.name} own={m.ik === me} />
-        </span>
+        <Name
+          of={p2pName(m.name, m.ik === me)}
+          color={nameColor(m, v.roles)}
+          look="min-w-0 flex-1 truncate text-sm"
+        />
         {m.owner && (
           <span title="Owner" aria-label="Owner" role="img" className="flex text-tertiary">
             <Crown size={14} />
@@ -456,13 +455,12 @@ function PeerMemberRow({ v, m, dated }: { v: ServerView; m: MemberView; dated: b
       rowKey={m.name}
       avatar={<MemberAvatar members={v.members} ik={m.ik} size={28} />}
       name={
-        <span
+        <Name
           data-p2p-member-line={m.name}
-          className="streamer min-w-0 flex-1 truncate text-sm"
-          style={{ color: nameColor(m, v.roles) }}
-        >
-          <Masked text={m.name} own={m.ik === me} />
-        </span>
+          of={p2pName(m.name, m.ik === me)}
+          color={nameColor(m, v.roles)}
+          look="min-w-0 flex-1 truncate text-sm"
+        />
       }
       badges={
         <>

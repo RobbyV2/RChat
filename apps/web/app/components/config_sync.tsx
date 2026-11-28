@@ -1,4 +1,6 @@
 'use client'
+import { instanceName } from '../lib/names'
+import { Name } from './name'
 import { Loaded, useAccountRequest } from './loaded'
 import { RowsSkeleton } from './skeletons'
 import { orMissing } from '../lib/api_errors'
@@ -655,8 +657,8 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
       </Row>
       <p className="text-xs text-on-surface-variant">
         Anyone with the link can see the included settings, like the servers you are in and who you
-        message, until it expires. <span className="streamer">{label}</span> stores them as readable
-        text. Links never include P2P servers or P2P settings.
+        message, until it expires. <Name of={instanceName(label)} /> stores them as readable text.
+        Links never include P2P servers or P2P settings.
       </p>
       {empty && <p className="text-xs text-on-surface-variant">Include at least one section.</p>}
       <FieldError message={error} />

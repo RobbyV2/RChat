@@ -1,4 +1,6 @@
 'use client'
+import { personCalled } from '../lib/names'
+import { Name } from './name'
 
 import { ActorLabel, useActorSuffix, useViewActor } from './view_actor'
 import { useAccount, useStoreApi } from '../lib/client/react'
@@ -599,16 +601,19 @@ function CardBody({
             </Lift>
             <Stack gap="2xs">
               <Stack gap="none">
-                <p
+                <Name
+                  as="p"
                   id={titleId}
-                  className="streamer line-clamp-2 text-xl leading-7 font-semibold break-words text-on-surface"
-                >
-                  <Masked text={placed.display_name} own={self} />
-                </p>
+                  of={personCalled(placed.display_name, null, self)}
+                  look="line-clamp-2 text-xl leading-7 font-semibold break-words text-on-surface"
+                />
                 {named && (
-                  <p data-account-name className="streamer truncate text-sm text-on-surface">
-                    <Masked text={user.display_name} own={self} />
-                  </p>
+                  <Name
+                    as="p"
+                    data-account-name
+                    of={personCalled(user.display_name, null, self)}
+                    look="truncate text-sm text-on-surface"
+                  />
                 )}
                 <ProfileHandle
                   user={user}

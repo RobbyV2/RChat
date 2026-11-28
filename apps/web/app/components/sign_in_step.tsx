@@ -1,4 +1,6 @@
 'use client'
+import { instanceAddress } from '../lib/names'
+import { Name } from './name'
 import { Button } from './controls'
 import { Stack, Surface } from './layout'
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
@@ -222,7 +224,7 @@ export function SignInStep({
           {error && (
             <Surface as="p" tone="error" radius="md" pad="md">
               <span className="text-sm">
-                {adding && <span className="streamer">{account.conn.host}: </span>}
+                {adding && <Name of={instanceAddress(account.conn.host)} after=": " />}
                 {error}
               </span>
             </Surface>

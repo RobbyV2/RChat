@@ -1,4 +1,6 @@
 'use client'
+import { instanceAddress, instanceName } from '../lib/names'
+import { Name } from '../components/name'
 import { Button } from '../components/controls'
 import { Row, Stack, Surface } from '../components/layout'
 import { watchPagePolicy } from '../lib/client/hosted_policy'
@@ -124,8 +126,9 @@ function LoginForm({ next, owner }: { next: string; owner: RouteOwner | null }) 
             <>
               <Surface tone="base" radius="lg" pad="md">
                 <p className="text-xs">Instance</p>
-                <span className="streamer">
-                  {info?.name ?? account.conn.name} · {account.conn.host}
+                <span>
+                  <Name of={instanceName(info?.name ?? account.conn.name)} /> ·{' '}
+                  <Name of={instanceAddress(account.conn.host)} />
                 </span>
               </Surface>
               {!owner && allowed && (

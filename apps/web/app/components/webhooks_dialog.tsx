@@ -1,7 +1,7 @@
 'use client'
 
 import { asAccount, pictured } from '../lib/people'
-import { personCalled, personName } from '../lib/names'
+import { instanceName, personCalled, personName } from '../lib/names'
 import { Name } from './name'
 import { useAccount } from '../lib/client/react'
 
@@ -846,8 +846,8 @@ function Outgoing({ server }: { server: string }) {
         {!data.available && (
           <Surface pad="md" tone="base" radius="lg">
             <p className="text-sm text-on-surface-variant">
-              Outgoing webhooks are turned off on <span className="streamer">{label}</span>. Nothing
-              is sent until an instance admin turns them on.
+              Outgoing webhooks are turned off on <Name of={instanceName(label)} />. Nothing is sent
+              until an instance admin turns them on.
             </p>
           </Surface>
         )}

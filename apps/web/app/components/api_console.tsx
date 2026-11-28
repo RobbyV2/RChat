@@ -1,4 +1,6 @@
 'use client'
+import { instanceName } from '../lib/names'
+import { Name } from './name'
 
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import { ArrowLeft, Check, Copy, Plus, Send, TriangleAlert, X } from 'lucide-react'
@@ -594,7 +596,7 @@ export function ApiConsoleFor({
     return (
       <Surface pad="lg" gap="sm" tone="plain" radius="none" align="start">
         <p className="text-sm text-on-surface-variant">
-          That operation is not in the API of <span className="streamer">{label}</span>.
+          That operation is not in the API of <Name of={instanceName(label)} />.
         </p>
         <Button onClick={onBack}>Back</Button>
       </Surface>

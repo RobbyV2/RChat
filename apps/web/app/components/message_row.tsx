@@ -67,9 +67,11 @@ export function AuthorRow({
         </div>
         <div className="min-w-0 flex-1">
           <Row gap="sm" align="baseline" wrap>
-            <span className="streamer min-w-0 truncate text-sm font-medium" style={{ color }}>
-              <Masked text={author.display_name} by={author.username} />
-            </span>
+            <Name
+              of={personCalled(author.display_name, author.username)}
+              color={color}
+              look="min-w-0 truncate text-sm font-medium"
+            />
             <RoleIcon emoji={icon?.emoji} role={icon?.role} />
             {meta}
           </Row>
