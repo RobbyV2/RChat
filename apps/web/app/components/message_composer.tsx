@@ -12,11 +12,9 @@ import { useMask, useStore, viewKey } from '../lib/store'
 import { limitsOf } from '../lib/instance_limits'
 import { useAccount } from '../lib/client/react'
 import { outgoing } from '../lib/link_safety'
-import { altError } from '../lib/alt_text'
 import { charCount, messageFilterOn } from '../lib/rules'
 import { dmPlaceholder } from '../lib/display_name'
 import { hasInviteCode, INVITE_POST_TEXT } from '../lib/p2p/flows'
-import { parseSed } from '../lib/sed'
 import { useChannelCan } from '../lib/place/use_rights'
 import { useHostedServer, useLive } from '../lib/place/react'
 import { textOnlyDestination } from '../lib/channel_content'
@@ -31,7 +29,6 @@ import { ForwardBar, useForwardClip } from './forwards'
 import { ComposerField } from './composer_field'
 import { AttachButton, ComposerFiles, pastedFiles } from './composer_files'
 import { useCompose } from '../lib/place/use_composer'
-import { previewFor } from '../lib/apps/preview'
 import { CreatePollDialog } from './poll_dialog'
 import type { PollTarget } from '../lib/polls_store'
 import { RelayPicker } from './relay_settings'
@@ -115,9 +112,6 @@ function ExpiryDialog({
   )
 }
 
-const useSlowLeft = (channelId: number | null): number =>
-  useCountdown(useStore(s => (channelId === null ? 0 : (s.slowUntil[channelId] ?? 0))))
-
 // Said once in server channels while the instance filter checks messages, until closed.
 function SiteFilterNote() {
   const { home } = useAccount()
@@ -165,10 +159,8 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const rootId = useStore(s => (s.panel?.kind === 'thread' ? s.panel.root.id : null))
   const draftKey = thread ? (rootId !== null ? `t${rootId}` : null) : view ? viewKey(view) : null
   const textOnly = useStore(s => textOnlyDestination(s, draftKey))
-  const held = useStore(s => (draftKey ? s.pending[draftKey] : undefined)) ?? null
-  const pending = textOnly ? null : held
   const compose = useCompose(thread ? 'thread' : 'main')
-  const { text, max, replying } = useLive(compose.state)
+  const { text, replying, slowUntil } = useLive(compose.state)
   const { shut } = useGate(compose)
   const threadChannel = useStore(s => (s.panel?.kind === 'thread' ? s.panel.root.channel_id : null))
   const placeChannel = thread ? threadChannel : view?.kind === 'channel' ? view.channelId : null
@@ -176,11 +168,8 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     useHostedServer(view?.kind === 'channel' ? view.server : null),
     placeChannel
   )
-  const sendMessage = useStore(s => s.sendMessage)
-  const sendThreadMessage = useStore(s => s.sendThreadMessage)
   const linkPrefs = useStore(s => s.linkPrefs)
   const forwarding = useForwardClip() !== null
-  const sedEdit = useStore(s => s.sedEdit)
   const [expiryOpen, setExpiryOpen] = useState(false)
   const [pollOpen, setPollOpen] = useState(false)
   const [laterOpen, setLaterOpen] = useState(false)
@@ -191,8 +180,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     s =>
       s.settings.scheduled_messages || !!(s.scheduled.counts?.waiting || s.scheduled.counts?.failed)
   )
-  const channelId = thread ? threadChannel : view?.kind === 'channel' ? view.channelId : null
-  const slowLeft = useSlowLeft(channelId)
+  const slowLeft = useCountdown(slowUntil)
 
   useEffect(() => {
     if (draftKey && scheduledHere) void loadScheduled(draftKey)
@@ -208,7 +196,6 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
       ? `Message #${mask(servers[view.server]?.channels.find(c => c.id === view.channelId)?.name ?? '')}`
       : dmPlaceholder(dms.find(d => d.id === view?.dmId)?.other, streamer, mask)
 
-  const { setText } = compose
   const draftNow = compose.getText
 
   const pollTarget: PollTarget | null =
@@ -224,23 +211,12 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
             ? { kind: 'dm', id: view.dmId }
             : null
 
-  const count = charCount(text)
-  const tooLong = count > max
-
   const bar =
     replying && draftKey ? (
       <ReplyBar list={thread ? 'thread' : 'main'} />
     ) : forwarding && draftKey ? (
       <ForwardBar list={thread ? 'thread' : 'main'} />
     ) : null
-
-  const doSend = (p2pExpiresIn?: number | null, relay?: RelayChoice) => {
-    const sent = outgoing(linkPrefs, text)
-    void (thread
-      ? sendThreadMessage(sent, p2pExpiresIn, relay)
-      : sendMessage(sent, p2pExpiresIn, relay))
-    setText('')
-  }
 
   // Schedules the draft as written, after the invite code question when it has one.
   const scheduleAt = async (at: number): Promise<string | null> => {
@@ -291,41 +267,6 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     }
   }
 
-  const send = () => {
-    if ((!text.trim() && !pending) || tooLong || altError(pending?.alt ?? '')) return
-    const sed = pending || !draftKey ? null : parseSed(text)
-    if (sed && draftKey) {
-      void sedEdit(draftKey, sed).then(
-        account.lifetime.inSession(ok => {
-          if (ok && draftNow() === text) setText('')
-        })
-      )
-      return
-    }
-    if (
-      !thread &&
-      !pending &&
-      !replying &&
-      !forwarding &&
-      view?.kind === 'channel' &&
-      previewFor(account).dispatchPreviewText(text)
-    ) {
-      setText('')
-      return
-    }
-    if (slowLeft > 0) return
-    const go = () => (pending?.mode === 'p2p' ? setExpiryOpen(true) : doSend())
-    // A P2P server invite code posted here can be read by the instance.
-    if (hasInviteCode(text))
-      return account.store.getState().askConfirm({
-        title: 'Post Invite Code',
-        body: INVITE_POST_TEXT,
-        confirm: 'Post',
-        action: account.lifetime.inSession(go),
-      })
-    go()
-  }
-
   return (
     <Dock gap="sm">
       <PeerCodeButton text={text} />
@@ -347,7 +288,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
         <ExpiryDialog
           onPick={(seconds, relay) => {
             setExpiryOpen(false)
-            doSend(seconds, relay)
+            compose.sendKept(seconds, relay)
           }}
           onClose={() => setExpiryOpen(false)}
         />
@@ -387,7 +328,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
         mayEditLast={can.send}
         bar={bar}
         later={laterDraft}
-        onSend={send}
+        onSend={() => compose.send(() => setExpiryOpen(true))}
         onPaste={e => compose.paste(pastedFiles(e))}
         tools={
           <>

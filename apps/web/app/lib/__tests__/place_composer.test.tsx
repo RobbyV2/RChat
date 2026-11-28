@@ -237,6 +237,47 @@ placeContract(composer, (kind, world) => {
     expect(html).toContain('aria-label="Send"')
   })
 
+  test('a draft is sent on the side of the place, and held back while slow mode runs', async () => {
+    for (const list of ['main', 'thread'] as const) {
+      const calls: unknown[][] = []
+      const here = seat(world(), calls, list)
+      const { ann } = world()
+      const key = list === 'main' ? mainKey() : threadKey()
+      const text = list === 'main' ? 'see you at noon' : 'in the thread'
+      if (hosted)
+        ann.account.store.setState({
+          sendMessage: (...a: unknown[]) => void calls.push(['send', ...a]),
+          sendThreadMessage: (...a: unknown[]) => void calls.push(['reply', ...a]),
+        } as never)
+      else if (ann.app)
+        Object.assign(ann.app.p2pDm, {
+          send: async (...a: unknown[]) => {
+            calls.push(['send', ...a])
+            return true
+          },
+        })
+      here.send(() => calls.push(['keep']))
+      await Promise.resolve()
+      expect(calls).toEqual([
+        hosted
+          ? [list === 'main' ? 'send' : 'reply', text, undefined, undefined]
+          : ['send', key, text],
+        ['draft', key, ''],
+      ])
+      if (kind === 'hostedDm') continue
+      calls.length = 0
+      const until = Number.MAX_SAFE_INTEGER
+      if (hosted) ann.account.store.setState({ slowUntil: { 1: until } })
+      else ann.app?.useP2p.setState({ slowUntil: { [mainKey()]: until } })
+      expect(here.state.get().slowUntil).toBe(until)
+      here.send(() => {})
+      await Promise.resolve()
+      expect(calls).toEqual([])
+      if (hosted) ann.account.store.setState({ slowUntil: {} })
+      else ann.app?.useP2p.setState({ slowUntil: {} })
+    }
+  })
+
   test('a draft holds files where the place takes them, and one card draws either', () => {
     const calls: unknown[][] = []
     const main = seat(world(), calls)

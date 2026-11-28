@@ -28,6 +28,12 @@ import { built, type Live } from './live'
 import { P2pDm, P2pRoom } from './place'
 import { shownOf } from './shown'
 import { namePasted } from '../pasted_files'
+import { altError } from '../alt_text'
+import { previewFor } from '../apps/preview'
+import { hasInviteCode, INVITE_POST_TEXT } from '../p2p/flows'
+import type { RelayChoice } from '../relays'
+import { charCount } from '../rules'
+import { parseSed } from '../sed'
 import type { UploadMode } from '../attachments'
 
 // Which of a place's lists a composer writes to: the conversation on screen or its open thread.
@@ -43,6 +49,8 @@ export interface ComposeState {
   replying: Replying | null
   // Rises each time the field is asked to take the focus; 0 while it never was.
   focus: number
+  // When slow mode lets the next message through (ms); 0 without a wait.
+  slowUntil: number
 }
 
 // The message a draft answers, as its bar above the composer says it.
@@ -138,6 +146,10 @@ export interface Compose {
   join: (password?: string) => Promise<void>
   // Sends `content` as the guest whose `guestWrite` gate stands.
   sendAsGuest: (content: string) => Promise<void>
+  // Sends the draft as written. When a held file needs its storage time chosen first, nothing is
+  // sent and `askKeep` is called: `sendKept` then sends it.
+  send: (askKeep: () => void) => void
+  sendKept: (seconds: number | null, relay: RelayChoice) => void
   getText: () => string
   setText: (text: string) => void
   // Whether the text is too big to send although its character count fits.
@@ -194,6 +206,15 @@ const hosted = (account: AccountSession): Composer =>
       if (list === 'thread') return s.panel?.kind === 'thread' ? `t${s.panel.root.id}` : null
       return s.view ? viewKey(s.view) : null
     }
+    // The channel the list writes to; null in a DM.
+    const channelOf = (s: ReturnType<typeof store.getState>) =>
+      list === 'thread'
+        ? s.panel?.kind === 'thread'
+          ? s.panel.root.channel_id
+          : null
+        : s.view?.kind === 'channel'
+          ? s.view.channelId
+          : null
     const state = (initial: boolean) =>
       built(
         () => {
@@ -207,13 +228,15 @@ const hosted = (account: AccountSession): Composer =>
             s.view?.kind === 'channel' ? s.view.server : null,
             s.me?.username,
             key !== null && s.composerFocus?.key === key ? s.composerFocus.n : 0,
+            channelOf(s) === null ? 0 : (s.slowUntil[channelOf(s) as number] ?? 0),
           ] as const
         },
-        ([key, text, max, reply, server, me, focus]): ComposeState => ({
+        ([key, text, max, reply, server, me, focus, slowUntil]): ComposeState => ({
           key,
           text,
           max,
           focus,
+          slowUntil,
           replying: reply
             ? {
                 to: { kind: 'account', user: reply.message.author, server },
@@ -338,6 +361,15 @@ const hosted = (account: AccountSession): Composer =>
       const { key } = get()
       if (key !== null) run(key)
     }
+    const post = (keep?: number | null, relay?: RelayChoice) => {
+      const s = store.getState()
+      const { key, text } = get()
+      if (key === null) return
+      const sent = outgoing(s.linkPrefs, text)
+      if (list === 'thread') s.sendThreadMessage(sent, keep, relay)
+      else s.sendMessage(sent, keep, relay)
+      store.getState().setDraft(key, '')
+    }
     const forwardTo = (initial: boolean) =>
       built(
         () => {
@@ -421,6 +453,46 @@ const hosted = (account: AccountSession): Composer =>
         })
         store.getState().cancelReply(key)
       },
+      send: askKeep => {
+        const s = store.getState()
+        const { key, text, max, replying, slowUntil } = get()
+        const pending = getFiles().held.length && key !== null ? s.pending[key] : undefined
+        if (key === null || (!text.trim() && !pending)) return
+        if (charCount(text) > max || altError(pending?.alt ?? '')) return
+        const sed = pending ? null : parseSed(text)
+        if (sed) {
+          void s.sedEdit(key, sed).then(
+            account.lifetime.inSession(ok => {
+              if (ok && get().text === text) store.getState().setDraft(key, '')
+            })
+          )
+          return
+        }
+        const forwarding = s.forwardClip !== null && clipAllowed(s, s.forwardClip, account)
+        if (
+          list === 'main' &&
+          !pending &&
+          !replying &&
+          !forwarding &&
+          s.view?.kind === 'channel' &&
+          previewFor(account).dispatchPreviewText(text)
+        ) {
+          s.setDraft(key, '')
+          return
+        }
+        if (slowUntil > account.time.now()) return
+        const go = () => (pending?.mode === 'p2p' ? askKeep() : post())
+        // A P2P server invite code posted here can be read by the instance.
+        if (hasInviteCode(text))
+          return s.askConfirm({
+            title: 'Post Invite Code',
+            body: INVITE_POST_TEXT,
+            confirm: 'Post',
+            action: account.lifetime.inSession(go),
+          })
+        go()
+      },
+      sendKept: (seconds, relay) => post(seconds, relay),
       getText: () => get().text,
       setText: text => {
         const { key } = get()
@@ -467,14 +539,17 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
             key !== null && s.replying?.room === key ? s.replying.id : null,
             initial && shown.initial ? shown.initial() : shown.get(),
             key !== null && s.composerFocus?.key === key ? s.composerFocus.n : 0,
+            // A thread's replies count in its channel's slow mode.
+            key === null ? 0 : (s.slowUntil[key.split('#')[0]] ?? 0),
           ] as const
         },
-        ([key, text, id, rows, focus]): ComposeState => {
+        ([key, text, id, rows, focus, slowUntil]): ComposeState => {
           const answered = id === null ? undefined : rows.message(id)
           return {
             key,
             text,
             focus,
+            slowUntil,
             max: P2P_LIMITS.body,
             replying: answered
               ? {
@@ -711,6 +786,18 @@ const peer = (place: P2pRoom | P2pDm): Composer =>
       },
       join: async () => {},
       sendAsGuest: async () => {},
+      send: () => {
+        const { key, text, max, slowUntil } = get()
+        const { held, stuck } = getFiles()
+        if (key === null || stuck || (!text.trim() && !held.length)) return
+        if (charCount(text) > max || bodyTooLong(text)) return
+        if (slowUntil > app.owner.time.now()) return
+        void p2pDm.send(key, outgoing(place.account.store.getState().linkPrefs, text)).then(ok => {
+          if (ok && get().text === text) p2pDm.setDraft(key, '')
+        })
+        if (said.delete(key)) p2pDm.typing(key, false)
+      },
+      sendKept: () => {},
       getText: () => get().text,
       setText: text => {
         const { key } = get()

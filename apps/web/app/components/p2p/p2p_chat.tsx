@@ -225,37 +225,25 @@ function P2pComposerBody({
   placeholder: string
 }) {
   const identity = useP2pApp()!
-  const { p2pDm } = identity
 
   const account = useAccount()
   const { store } = account
   const compose = useCompose(list)
-  const { text, max, replying } = useLive(compose.state)
+  const { text, max, replying, slowUntil } = useLive(compose.state)
   const { shut } = useGate(compose)
   const forwardClip = useForwardClip()
   const suffix = useActorSuffix(usePeerActor())
   const streamer = useStore(s => s.streamer)
-  const { held: attached, stuck } = useLive(compose.files)
-  const files = attached.length
-  // A thread's replies count in its channel's slow mode: the channel's countdown.
-  const slowLeft = useCountdown(useP2p(s => s.slowUntil[key.split('#')[0]] ?? 0))
+  const { stuck } = useLive(compose.files)
+  const slowLeft = useCountdown(slowUntil)
   const linkPrefs = useStore(s => s.linkPrefs)
-  const { getText, setText } = compose
+  const { getText } = compose
   const [laterOpen, setLaterOpen] = useState(false)
   const scheduledItems = useDeviceItems()
   const scheduledOps = useDeviceOps()
 
   if (shut) return <ComposerGate compose={compose} list={list} />
 
-  const tooLong = !fits(compose, text, max)
-  const send = () => {
-    if (stuck || (!text.trim() && !files) || tooLong || slowLeft > 0) return
-    const sent = text
-    void p2pDm.send(key, outgoing(linkPrefs, sent)).then(ok => {
-      if (ok && getText() === sent) setText('')
-    })
-    compose.typing(key, false)
-  }
   // Schedules the draft as written for `at`.
   const scheduleAt = (at: number) => {
     const st = identity.useP2p.getState()
@@ -332,7 +320,7 @@ function P2pComposerBody({
               bar={bar}
               inputProps={{ 'data-p2p-composer': '' }}
               later={laterDraft}
-              onSend={send}
+              onSend={() => compose.send(() => {})}
               onPaste={e => compose.paste(pastedFiles(e))}
               tools={<AttachButton compose={compose} />}
             />
