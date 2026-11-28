@@ -175,15 +175,15 @@ struct Route {
 /// One side of the comparison: zed and the things only zed's server holds, or a name, a server
 /// and ids that don't exist.
 #[derive(Clone, Copy, Debug)]
-struct Side {
-    user: &'static str,
-    server: &'static str,
-    texts: [&'static str; 4],
-    message: i64,
-    dm: i64,
-    channel: i64,
-    category: i64,
-    role: i64,
+pub(crate) struct Side {
+    pub(crate) user: &'static str,
+    pub(crate) server: &'static str,
+    pub(crate) texts: [&'static str; 4],
+    pub(crate) message: i64,
+    pub(crate) dm: i64,
+    pub(crate) channel: i64,
+    pub(crate) category: i64,
+    pub(crate) role: i64,
 }
 
 /// Who asks: alice's token, a guest holding a live grant for another password server, or
@@ -594,7 +594,7 @@ async fn id_of(db: &Db, sql: &str) -> i64 {
 /// the role zedrole, wrote a message with a poll, reacted and pinned it, and zed wrote in a DM
 /// with yan. alice shares nothing with zed and owns the server own; the guest grant `g-open2`
 /// opens the password server open2, which zed is not in.
-async fn world(db: &Db) -> (Side, Side) {
+pub(crate) async fn world(db: &Db) -> (Side, Side) {
     NewUser::plain("root").at(1).add(db).await;
     exec(
         db,
@@ -715,7 +715,7 @@ async fn world(db: &Db) -> (Side, Side) {
 
 /// The lookup limits at the top of their ranges and no miss cap, so the walk measures answers,
 /// not rates.
-fn wide() -> Limits {
+pub(crate) fn wide() -> Limits {
     Limits {
         lookup_list_per_minute: 10_000,
         lookup_typeahead_per_minute: 10_000,
@@ -726,7 +726,7 @@ fn wide() -> Limits {
     }
 }
 
-async fn serve(state: &AppState) -> (String, tokio::task::JoinHandle<()>) {
+pub(crate) async fn serve(state: &AppState) -> (String, tokio::task::JoinHandle<()>) {
     use crate::config::{AppConfig, Roles};
     use crate::server::client_ip::ProxyTrust;
     use crate::server::route_builder::{api_router, resolve_versions};

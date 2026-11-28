@@ -570,6 +570,39 @@ pub struct ApiDoc;
 )]
 pub struct AdminDoc;
 
+impl ApiDoc {
+    /// The served document with the admin routes and the realtime frames, as the client's types
+    /// are generated from it (`assets/openapi.json`).
+    pub fn full() -> utoipa::openapi::OpenApi {
+        let mut doc = ApiDoc::openapi();
+        doc.merge(AdminDoc::openapi());
+        doc.merge(crate::ws::EventDoc::openapi());
+        admin_fields(&mut doc);
+        doc
+    }
+}
+
+/// Adds the fields the served document leaves out because they would show who is a site admin.
+fn admin_fields(doc: &mut utoipa::openapi::OpenApi) {
+    let Some(RefOr::T(utoipa::openapi::Schema::Object(me))) = doc
+        .components
+        .as_mut()
+        .and_then(|c| c.schemas.get_mut("Me"))
+    else {
+        return;
+    };
+    me.properties.insert(
+        "is_site_admin".to_string(),
+        RefOr::T(utoipa::openapi::Schema::Object(
+            ObjectBuilder::new()
+                .schema_type(Type::Boolean)
+                .description(Some("Whether the account is the site administrator."))
+                .build(),
+        )),
+    );
+    me.required.push("is_site_admin".to_string());
+}
+
 async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
     Json(ApiDoc::openapi())
 }
@@ -589,6 +622,9 @@ pub fn routes(swagger_ui: Option<&str>) -> Router<AppState> {
         false => router,
     }
 }
+
+#[cfg(test)]
+mod responses;
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -992,6 +1028,40 @@ pub(crate) mod tests {
             committed == json,
             "docs/generated/openapi.json is out of date: run `just src docs-refs`"
         );
+    }
+
+    /// `assets/openapi.json` is the full document, which the client's API types are generated
+    /// from. `UPDATE_FIXTURES=1` writes it.
+    #[test]
+    fn the_generated_document_is_current() {
+        let json = format!("{}\n", ApiDoc::full().to_pretty_json().expect("json"));
+        let file =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/openapi.json");
+        if crate::config::test_env("UPDATE_FIXTURES").is_some() {
+            std::fs::write(&file, &json).expect("write");
+        }
+        let committed = std::fs::read_to_string(&file).unwrap_or_default();
+        assert!(
+            committed == json,
+            "assets/openapi.json is out of date: run `UPDATE_FIXTURES=1 cargo test -p rust-next openapi`, then `bun scripts/gen_api.ts`"
+        );
+        let doc: Value = serde_json::from_str(&json).expect("parse");
+        let schemas = &doc["components"]["schemas"];
+        for name in [
+            "WsEvent",
+            "ClientMsg",
+            "AdminOverview",
+            "Message",
+            "ApiErrorBody",
+        ] {
+            assert!(schemas[name].is_object(), "{name}");
+        }
+        assert!(doc["paths"]["/api/v1/admin/overview"]["get"].is_object());
+        assert_eq!(
+            schemas["Me"]["properties"]["is_site_admin"]["type"],
+            "boolean"
+        );
+        assert!(non_ascii(&json).is_empty());
     }
 
     /// Line and text of every non-ASCII character in `text`.

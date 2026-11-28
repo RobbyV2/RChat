@@ -34,7 +34,7 @@ pub mod ranks;
 mod rules;
 pub mod subjects;
 #[cfg(test)]
-mod subjects_walk;
+pub(crate) mod subjects_walk;
 
 use overwrite_sql::{denied_to_some_sql, everyone_stage_sql, overwrite_sql, private_sql};
 use perms::{

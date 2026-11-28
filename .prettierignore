@@ -38,3 +38,6 @@ docs/generated
 
 # Model vectors, kept byte for byte
 crates/identity/tests/vectors.json
+
+# Generated from the server's code, kept byte for byte
+assets/openapi.json
