@@ -1,10 +1,8 @@
 'use client'
-import { background } from '../lib/api_errors'
 
 import { Name } from './name'
 import { handleName, personCalled } from '../lib/names'
 import { shownUser } from '../lib/people'
-import { useApi } from '../lib/client/react'
 import {
   useCallback,
   useEffect,
@@ -16,26 +14,16 @@ import {
   type KeyboardEvent,
   type RefObject,
 } from 'react'
-import { channelCan, useStore, viewKey } from '../lib/store'
-import type { Message, Role, UserRef } from '../lib/types'
-import {
-  dmPeople,
-  withYouLast,
-  groupSuggestions,
-  MENTION_QUERY,
-  mentionText,
-  recentAuthors,
-  SUGGEST_DEBOUNCE,
-  suggestKey,
-  suggestPeople,
-} from '../lib/mention_suggest'
+import { useStore } from '../lib/store'
+import type { UserRef } from '../lib/types'
+import { MENTION_QUERY, mentionText } from '../lib/mention_suggest'
 import { findTrigger, spliceText } from '../lib/autocomplete'
 import { boostFor, findShortcode, matchShortcodes, withTone, type CodeMatch } from '../lib/emoji'
 import { AutocompletePopup, useAutocomplete } from './autocomplete'
 import { useChat } from '../lib/place/use_chat'
+import { useLive } from '../lib/place/react'
 import { useEmojiData } from './emoji_picker'
 import { UserAvatar } from './user_avatar'
-import { useShownMembers } from './shown_user'
 import {
   STYLE_LABELS,
   acceptStamp,
@@ -45,124 +33,9 @@ import {
 } from '../lib/timestamps'
 import { time } from '../lib/platform/time'
 
-const NO_MESSAGES: Message[] = []
-const NO_PEOPLE: UserRef[] = []
-const CACHE_MAX = 200
-
-// Mention suggestions: recent authors in view, then server members that match the query
-// (debounced and cached), then cached members. DMs suggest the other person and you. Mentioning
-// yourself never pings you.
-function useMentionSearch(listKey: string | null, query: string | null) {
-  const api = useApi()
-  const meName = useStore(s => s.me?.username ?? null)
-  const meShown = useStore(s => s.me?.display_name ?? '')
-  const meKind = useStore(s => s.me?.avatar_kind ?? 'identicon')
-  const meColor = useStore(s => s.me?.avatar_color ?? null)
-  const meRef = useMemo<UserRef | null>(
-    () =>
-      meName === null
-        ? null
-        : {
-            username: meName,
-            display_name: meShown,
-            avatar_kind: meKind,
-            avatar_color: meColor,
-          },
-    [meName, meShown, meKind, meColor]
-  )
-  const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
-  const dmOther = useStore(s => {
-    const v = s.view
-    return v?.kind === 'dm' ? (s.dms.find(d => d.id === v.dmId)?.other ?? null) : null
-  })
-  const own = useStore(s => (listKey ? s.messages[listKey] : undefined)) ?? NO_MESSAGES
-  const parent =
-    useStore(s =>
-      listKey?.[0] === 't' && s.view?.kind === 'channel' ? s.messages[viewKey(s.view)] : undefined
-    ) ?? NO_MESSAGES
-  const list = useStore(s => (server ? s.members[server]?.list : undefined)) ?? NO_PEOPLE
-  const info = useStore(s => (server ? s.memberInfo[server] : undefined))
-  const cache = useMemo(() => new Map<string, UserRef[]>(), [api])
-  const [tick, setTick] = useState(0)
-  const shownOf = useShownMembers(server)
-
-  useEffect(() => {
-    if (!server || !query) return
-    const key = suggestKey(server, query)
-    if (cache.has(key)) return
-    const t = time().after(SUGGEST_DEBOUNCE, () => {
-      api
-        .suggestMembers(server, query)
-        .then(found => {
-          if (cache.size >= CACHE_MAX) cache.clear()
-          cache.set(key, found)
-          setTick(n => n + 1)
-        })
-        .catch(background('loading member suggestions failed'))
-    })
-    return () => t?.()
-  }, [api, cache, server, query])
-
-  return useCallback(
-    (q: string): UserRef[] => {
-      void tick
-      if (dmOther) return suggestPeople(q, [dmPeople(dmOther, meRef)], () => false)
-      if (!server) return []
-      let remote: UserRef[] = NO_PEOPLE
-      for (let n = q.length; n > 0; n -= 1) {
-        const hit = cache.get(suggestKey(server, q.slice(0, n)))
-        if (hit) {
-          remote = hit
-          break
-        }
-      }
-      // People match and show under the names the server shows; `remote` carries them already.
-      const looks = new Map(
-        [...list, ...Object.values(info ?? {})].flatMap(m => (m ? [[m.username, shownOf(m)]] : []))
-      )
-      const shown = (group: readonly UserRef[]) => group.map(u => looks.get(u.username) ?? u)
-      return suggestPeople(
-        q,
-        withYouLast(
-          [shown(recentAuthors(own)), shown(recentAuthors(parent)), remote, shown(list)],
-          meRef && shown([meRef])[0]
-        ),
-        name => info?.[name] === null
-      )
-    },
-    [cache, tick, dmOther, meRef, server, own, parent, list, info, shownOf]
-  )
-}
-
-const NO_ROLES: Role[] = []
-
 type Suggestion =
   | { kind: 'user'; user: UserRef }
   | { kind: 'group'; key: string; label: string; color: string | null; hint: string }
-
-// `@everyone`, `@here` and roles you may mention in a channel (not in threads or DMs): all of
-// them with Mention everyone and roles, otherwise roles that allow anyone.
-function useGroupSearch(listKey: string | null) {
-  const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
-  const member = useStore(s => !!server && !!s.me?.servers.some(x => x.name === server))
-  const channelId = useStore(s => (s.view?.kind === 'channel' ? s.view.channelId : null))
-  const allowed = useStore(s => (server ? channelCan(s, server, channelId).mention : false))
-  const roles = useStore(s => (server ? s.servers[server]?.roles : undefined)) ?? NO_ROLES
-  const open = member && listKey?.[0] === 'c'
-  return useCallback(
-    (q: string): Suggestion[] =>
-      open
-        ? groupSuggestions(q, allowed, roles).map(g => ({
-            kind: 'group' as const,
-            key: g.key,
-            label: g.label,
-            color: g.color,
-            hint: g.hint,
-          }))
-        : [],
-    [open, allowed, roles]
-  )
-}
 
 // `:shortcode`, `@mention` and `<t:` timestamp autocomplete for a message box, and auto-grow up
 // to `maxHeight`. `listKey` is the message list of the box. `getText` reads the text when the
@@ -214,21 +87,27 @@ export function useTextAssist({
     caret !== null && !paused && !trigger && !stampTrigger
       ? findTrigger(text, caret, '@', 0, MENTION_QUERY)
       : null
-  const { people: listed } = useChat()
-  const searchUsers = useMentionSearch(
-    listed ? null : listKey,
-    listed ? null : (atTrigger?.query ?? null)
+  const chat = useChat()
+  const mentions = useMemo(
+    () => chat.people(listKey?.[0] === 't' ? 'thread' : 'main'),
+    [chat, listKey]
   )
-  const searchGroups = useGroupSearch(listed ? null : listKey)
+  const findPeople = useLive(mentions.find)
+  const findGroups = useLive(mentions.groups)
+  const asked = atTrigger?.query ?? null
+  useEffect(() => {
+    mentions.ask(asked)
+    return () => mentions.ask(null)
+  }, [mentions, asked])
   const searchPeople = useCallback(
     (q: string): Suggestion[] => {
-      const groups = searchGroups(q)
-      const users = (listed ? listed(q) : searchUsers(q))
+      const groups = findGroups(q).map(g => ({ kind: 'group' as const, ...g }))
+      const users = findPeople(q)
         .slice(0, 10 - groups.length)
         .map(user => ({ kind: 'user' as const, user }))
       return [...users, ...groups]
     },
-    [listed, searchUsers, searchGroups]
+    [findPeople, findGroups]
   )
   const { data: emoji } = useEmojiData(trigger !== null)
   const searchCodes = useCallback(

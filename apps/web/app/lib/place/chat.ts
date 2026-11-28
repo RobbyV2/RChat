@@ -5,7 +5,8 @@ import { knownMentions, userRefFor } from '../selectors'
 import type { Message, UserRef } from '../types'
 import { defineFeature } from './feature'
 import { derived, fromStore, type Live } from './live'
-import type { P2pDm, P2pRoom } from './place'
+import { heldPeople, hostedPeople, type MentionPeople } from './mention_people'
+import type { ListKind, P2pDm, P2pRoom } from './place'
 import { reactPickOf, shownOf, type Shown } from './shown'
 
 // Someone a message mentions, as its pill shows them.
@@ -29,9 +30,8 @@ export interface Chat {
   // The candidates that are people here, newline-joined.
   known: (m: Message, candidates: string[]) => Live<string>
   mention: (username: string) => Live<Mentioned>
-  // The people to suggest for a mention, where the place lists them itself; null where the
-  // composer searches the instance's members.
-  people: ((query: string) => UserRef[]) | null
+  // Who a mention typed in `list` of the place can name.
+  people: (list: ListKind) => MentionPeople
   // Whether messages here load what they show (images, grammars) from the instance by
   // themselves.
   fetches: boolean
@@ -46,9 +46,14 @@ const sameLook = (a: Mentioned, b: Mentioned) =>
   a.user.avatar_kind === b.user.avatar_kind &&
   a.user.avatar_color === b.user.avatar_color
 
-const hosted = (account: AccountSession, server: string | null): Chat => {
+const hosted = (
+  account: AccountSession,
+  where: { server: string } | { dmId: number } | null
+): Chat => {
   const { store } = account
+  const server = where !== null && 'server' in where ? where.server : null
   const card = { server }
+  const people: Partial<Record<ListKind, MentionPeople>> = {}
   return {
     toggleReaction: (m, emoji, note) => store.getState().toggleReaction(m, emoji, note),
     loadReactors: (id, emoji) => store.getState().loadReactors(id, emoji),
@@ -64,7 +69,7 @@ const hosted = (account: AccountSession, server: string | null): Chat => {
         },
         sameMention
       ),
-    people: null,
+    people: list => (people[list] ??= hostedPeople(account, where, list)),
     fetches: true,
   }
 }
@@ -73,6 +78,7 @@ const peer = (place: P2pRoom | P2pDm) => {
   const { app, account } = place
   const shown = shownOf(place)
   const named = derived(shown, s => s.names)
+  const people = heldPeople(() => shown.get().people, shown.subscribe)
   const chat: Chat = {
     toggleReaction: (m, emoji, note = true) => {
       const id = shown.get().idOf(m.id)
@@ -119,16 +125,16 @@ const peer = (place: P2pRoom | P2pDm) => {
         ...(shown.initial ? { initial: read(shown.initial) } : {}),
       }
     },
-    people: query => shown.get().people(query),
+    people: () => people,
     fetches: false,
   }
   return chat
 }
 
 export const chat = defineFeature<Chat>('chat', {
-  hostedServer: place => hosted(place.account, place.server),
+  hostedServer: place => hosted(place.account, { server: place.server }),
   p2pRoom: peer,
-  hostedDm: place => hosted(place.account, null),
+  hostedDm: place => hosted(place.account, { dmId: place.dmId }),
   p2pDm: peer,
 })
 

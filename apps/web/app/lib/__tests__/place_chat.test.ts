@@ -8,6 +8,9 @@ import { reactPickOf } from '../place/shown'
 import type { Message } from '../types'
 import { member, msg, paged, serverDetail, textChannel, user } from './fixtures'
 import { placeContract, type ContractWorld, type Seat } from './helpers/place_contract'
+import { testClock } from './helpers/test_clock'
+import { flush } from '../clock'
+import { SUGGEST_DEBOUNCE } from '../mention_suggest'
 
 interface Calls {
   reacted: unknown[]
@@ -133,11 +136,50 @@ placeContract(chat, (kind, world) => {
     expect(reactors.map(u => u.username)).toEqual([hosted ? 'bob' : 'B'])
   })
 
-  test('only a hosted place loads from the instance and searches its members there', () => {
+  test('only a hosted place loads what its messages show from the instance', () => {
     const ann = seated(world(), world().ann, { reacted: [], picked: [] })
     expect(ann.fetches).toBe(hosted)
-    if (hosted) expect(ann.people).toBeNull()
-    else expect(ann.people?.('b').map(u => u.username)).toEqual(['Bob'])
+  })
+
+  test('a mention finds the people of the place, in one list at a time', () => {
+    const ann = seated(world(), world().ann, { reacted: [], picked: [] })
+    const people = ann.people('main')
+    expect(ann.people('main')).toBe(people)
+    const find = people.find.get()
+    expect(people.find.get()).toBe(find)
+    expect(find('b').map(u => u.username)).toEqual([hosted ? 'bob' : 'Bob'])
+    expect(people.groups.get()('every')).toEqual([])
+  })
+
+  test('typing asks a hosted server for members it does not hold, after a pause', async () => {
+    const clock = testClock()
+    const { ann: seat, server } = world()
+    const asked: unknown[][] = []
+    Object.assign(seat.account.api, {
+      suggestMembers: async (...a: unknown[]) => {
+        asked.push(a)
+        return [user('bobbin')]
+      },
+    })
+    const people = seated(world(), seat, { reacted: [], picked: [] }).people('main')
+    let changes = 0
+    const off = people.find.subscribe(() => void (changes += 1))
+    const before = people.find.get()
+    people.ask('bo')
+    people.ask('bob')
+    clock.advance(SUGGEST_DEBOUNCE)
+    await flush()
+    off()
+    people.ask(null)
+    if (world().kind !== 'hostedServer') {
+      expect(asked).toEqual([])
+      expect(people.find.get()).toBe(before)
+      return
+    }
+    expect(asked).toEqual([[server, 'bob']])
+    expect(changes).toBeGreaterThan(0)
+    const found = people.find.get()('bob')
+    expect(found.map(u => u.username)).toEqual(['bobbin', 'bob'])
   })
 
   test('outside any place the account has its own hosted chat', () => {
