@@ -57,7 +57,7 @@ Most events about a channel carry `server` and `channel_id`, and most events abo
 | Voice and calls         | `voice_state`, `voice_audio`, `voice_muted`, `voice_ended`, `call_state`, `rtc_signal`                                                                                                                                                        |
 | P2P files               | `p2p_availability`, `p2p_hosted`, `p2p_peer`                                                                                                                                                                                                  |
 | Instance                | `settings_changed`, `brand_changed`                                                                                                                                                                                                           |
-| Your account            | `bulk_delete_progress`, `staff_view_opened`                                                                                                                                                                                                   |
+| Your account            | `bulk_delete_progress`, `scheduled_updated`, `scheduled_removed`, `staff_view_opened`                                                                                                                                                         |
 | Connection              | `guest_name`, `error`, `resync`                                                                                                                                                                                                               |
 
 ### Notes on some events
