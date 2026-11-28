@@ -2389,7 +2389,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_server_picture_shows_over_the_look_or_the_account_and_is_removed_with_it() {
-        use crate::api::avatars::image::tests::{halves, png};
+        use rchat_avatar::samples::{halves, png};
         let (state, path) = club("profile_picture").await;
         let db = &state.db;
         let upload = |by: &'static str| {

@@ -4,12 +4,12 @@ use axum::body::to_bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 
-use super::image::tests::{halves, png};
 use super::*;
 use crate::api::error::ReasonKind;
 use crate::api::test_util::{done, mem_user, temp_state};
 use crate::limits::Limits;
 use crate::ws::WsEvent;
+use rchat_avatar::samples::{halves, png, read};
 
 const WHOLE: CropQuery = CropQuery {
     x: None,
@@ -115,8 +115,8 @@ async fn an_upload_sets_the_picture_and_each_size_is_served_for_good() {
         );
         let etag = headers[header::ETAG].clone();
         let bytes = to_bytes(res.into_body(), usize::MAX).await.expect("body");
-        let image = ::image::load_from_memory(&bytes).expect("an image");
-        assert_eq!((image.width(), image.height()), (side, side));
+        let (image, _) = read(&bytes).expect("an image");
+        assert_eq!(image.dimensions(), (side, side));
         let mut again = HeaderMap::new();
         again.insert(header::IF_NONE_MATCH, etag);
         let fresh = served(&state, &id, &side.to_string(), again).await;
@@ -180,9 +180,7 @@ async fn the_crop_chooses_the_square_and_a_bad_crop_or_file_is_refused() {
         .expect("id");
     let res = served(&state, &id, "64", HeaderMap::new()).await;
     let bytes = to_bytes(res.into_body(), usize::MAX).await.expect("body");
-    let image = ::image::load_from_memory(&bytes)
-        .expect("image")
-        .into_rgb8();
+    let (image, _) = read(&bytes).expect("image");
     assert!(
         image.pixels().all(|p| p.0[0] > 200 && p.0[2] < 60),
         "only the red half"
@@ -305,7 +303,7 @@ async fn the_sweep_removes_only_old_pictures_nothing_names() {
     let (state, path) = temp_state("avatar_sweep").await;
     account(&state, "alice").await;
     let used = upload(&state, "alice").await;
-    let picture = image::encode(&png(&halves(64, 64)), None).expect("picture");
+    let picture = rchat_avatar::encode(&png(&halves(64, 64)), None).expect("picture");
     let mut conn = state.db.acquire().await.expect("conn");
     let old = store(&mut conn, "alice", None, &picture)
         .await

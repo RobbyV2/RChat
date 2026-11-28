@@ -8,6 +8,7 @@ members = [
   "crates/app-docs",
   "crates/app-sheet",
   "crates/automation",
+  "crates/avatar",
   "crates/fed",
   "crates/identity",
   "crates/perms",

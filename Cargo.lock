@@ -5382,6 +5382,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rchat-avatar"
+version = "0.3.0"
+dependencies = [
+ "image",
+ "serde_json",
+]
+
+[[package]]
 name = "rchat-desktop"
 version = "0.3.0"
 dependencies = [
@@ -5806,7 +5814,6 @@ dependencies = [
  "hmac 0.13.0",
  "hyper",
  "hyper-util",
- "image",
  "jsonwebtoken",
  "memchr",
  "memorable-wordlist",
@@ -5814,6 +5821,7 @@ dependencies = [
  "percent-encoding",
  "rand 0.10.3",
  "rand_chacha 0.10.0",
+ "rchat-avatar",
  "rchat-perms",
  "rchat-profanity",
  "redis",
@@ -5857,6 +5865,7 @@ name = "rust-next-wasm"
 version = "0.3.0"
 dependencies = [
  "console_error_panic_hook",
+ "rchat-avatar",
  "rchat-perms",
  "rchat-profanity",
  "serde_json",

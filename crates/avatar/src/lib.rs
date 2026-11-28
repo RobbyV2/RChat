@@ -1,5 +1,7 @@
-//! Profile pictures as the instance keeps them: the chosen square of an uploaded image, decoded
-//! within fixed bounds and encoded again at each size in `SIZES`, with nothing else of the file.
+//! Profile pictures as an instance and a P2P device keep them: the chosen square of an image,
+//! decoded within fixed bounds and encoded again at each size in `SIZES`, with nothing else of
+//! the file. The server runs it natively and the client through WebAssembly, so both make the
+//! same files.
 
 use std::io::Cursor;
 
@@ -173,22 +175,35 @@ pub fn encode(bytes: &[u8], crop: Option<Crop>) -> Result<Encoded, Refused> {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
-    use super::*;
+/// Images for tests of the code that takes pictures.
+pub mod samples {
     use image::{Rgba, RgbaImage};
 
-    pub(crate) fn png(image: &RgbaImage) -> Vec<u8> {
-        file(image, Mime::Png).expect("png")
+    /// `image` as a PNG file.
+    pub fn png(image: &RgbaImage) -> Vec<u8> {
+        super::file(image, super::Mime::Png).unwrap_or_default()
     }
 
     /// An opaque image whose left half is red and right half blue.
-    pub(crate) fn halves(width: u32, height: u32) -> RgbaImage {
+    pub fn halves(width: u32, height: u32) -> RgbaImage {
         RgbaImage::from_fn(width, height, |x, _| match x < width / 2 {
             true => Rgba([255, 0, 0, 255]),
             false => Rgba([0, 0, 255, 255]),
         })
     }
+
+    /// The side and format of an encoded picture file.
+    pub fn read(bytes: &[u8]) -> Option<(RgbaImage, image::ImageFormat)> {
+        let format = image::guess_format(bytes).ok()?;
+        Some((image::load_from_memory(bytes).ok()?.into_rgba8(), format))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::samples::{halves, png};
+    use super::*;
+    use image::Rgba;
 
     fn opened(bytes: &[u8]) -> RgbaImage {
         image::load_from_memory(bytes)
@@ -325,7 +340,7 @@ pub(crate) mod tests {
     #[test]
     fn the_sizes_and_bounds_are_the_shared_ones() {
         let shared: serde_json::Value =
-            serde_json::from_str(include_str!("../../../../../assets/avatar_images.json"))
+            serde_json::from_str(include_str!("../../../assets/avatar_images.json"))
                 .expect("avatar_images.json");
         assert_eq!(shared["sizes"], serde_json::json!(SIZES));
         assert_eq!(shared["max_pixels"], serde_json::json!(MAX_PIXELS));

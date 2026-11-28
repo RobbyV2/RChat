@@ -22,9 +22,7 @@ use crate::api::{ApiError, ApiErrorBody, Authed, Settings};
 use crate::db::{Db, User, now};
 use crate::state::AppState;
 
-pub mod image;
-
-use image::{Crop, Encoded, Mime, Refused, SIZES};
+use rchat_avatar::{Crop, Encoded, Mime, Refused, SIZES};
 
 #[cfg(test)]
 mod tests;
@@ -133,7 +131,7 @@ pub(crate) async fn uploaded(
         .map_err(ApiError::internal)?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        image::encode(&body.data, crop)
+        rchat_avatar::encode(&body.data, crop)
     })
     .await
     .map_err(ApiError::internal)?

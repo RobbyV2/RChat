@@ -96,12 +96,7 @@ webrtc-util = { version = "0.17.2", default-features = false, features = [
 chacha20poly1305 = "0.10"
 hkdf = "0.13"
 zeroize = "1"
-image = { version = "0.25", default-features = false, features = [
-  "png",
-  "jpeg",
-  "gif",
-  "webp",
-] }
+rchat-avatar = { path = "../../crates/avatar" }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", default-features = false, features = [
