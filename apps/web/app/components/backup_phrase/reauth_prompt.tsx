@@ -1,4 +1,5 @@
 'use client'
+import { Button } from '../controls'
 import { Loaded, useAccountRequest } from '../loaded'
 import { statusOf } from '../../lib/api_errors'
 import {
@@ -16,7 +17,7 @@ import { errorText } from '../../lib/store'
 import type { LinkedProvider, ReAuthBody } from '../../lib/types'
 import { PhraseInput } from './phrase_input'
 import { Stack } from '../layout'
-import { FieldError, fieldCls, filledBtn, textBtn } from '../ui'
+import { FieldError, fieldCls } from '../ui'
 import { useConfirmation } from '../sso/use_confirmation'
 
 const confirmationError = (e: unknown) =>
@@ -95,9 +96,10 @@ export function ReAuthPrompt({
             value={password}
             onChange={e => setPassword(e.target.value)}
           />
-          <button
+          <Button
+            variant="filled"
+            size="md"
             type="button"
-            className={filledBtn}
             disabled={!password}
             onClick={() =>
               void confirm(async () =>
@@ -106,7 +108,7 @@ export function ReAuthPrompt({
             }
           >
             Confirm password
-          </button>
+          </Button>
         </>
       )}
       {ways.includes('idp') &&
@@ -118,10 +120,9 @@ export function ReAuthPrompt({
               auth?.providers.some(p => p.id === l.provider)
           )
           .map(({ provider, name }) => (
-            <button
+            <Button
               key={provider}
               type="button"
-              className={textBtn}
               onClick={() =>
                 void confirm(async () => ({
                   idp: { provider, code: takeRecentConfirmation(acct, provider).code },
@@ -129,16 +130,15 @@ export function ReAuthPrompt({
               }
             >
               Confirm with recent {name} sign-in
-            </button>
+            </Button>
           ))}
       {ways.includes('idp') &&
         links
           .filter(l => auth?.providers.some(p => p.id === l.provider))
           .map(({ provider, name }) => (
-            <button
+            <Button
               key={provider}
               type="button"
-              className={textBtn}
               onClick={() =>
                 void confirm(async () => {
                   const { ticket } = await acct.api.ssoTicket({ provider, purpose: 'reauth' })
@@ -149,7 +149,7 @@ export function ReAuthPrompt({
               }
             >
               Sign in with {name}
-            </button>
+            </Button>
           ))}
       <Loaded load={phrase} skeleton={null} what="whether a backup phrase is set">
         {hasPhrase =>
@@ -157,9 +157,10 @@ export function ReAuthPrompt({
           (phraseOpen ? (
             <>
               <PhraseInput label="Current backup phrase" onWords={setWords} />
-              <button
+              <Button
+                variant="filled"
+                size="md"
                 type="button"
-                className={filledBtn}
                 disabled={!words}
                 onClick={() =>
                   void confirm(async () => {
@@ -176,12 +177,12 @@ export function ReAuthPrompt({
                 }
               >
                 Confirm backup phrase
-              </button>
+              </Button>
             </>
           ) : (
-            <button type="button" className={textBtn} onClick={() => setPhraseOpen(true)}>
+            <Button type="button" onClick={() => setPhraseOpen(true)}>
               Use backup phrase
-            </button>
+            </Button>
           ))
         }
       </Loaded>

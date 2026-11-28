@@ -1,4 +1,5 @@
 'use client'
+import { Button } from '../components/controls'
 import { asAccount } from '../lib/people'
 import { useAccount } from '../lib/client/react'
 import { useContext, useEffect, useMemo, useReducer, useRef, useState, type FormEvent } from 'react'
@@ -22,7 +23,7 @@ import { ContextMenu, longPress } from '../components/context_menu'
 import { LightboxList, MediaLightbox } from '../components/media_lightbox'
 import { TextComposer } from '../components/text_composer'
 import { UserAvatar } from '../components/user_avatar'
-import { fieldCls, filledBtn, Masked, textBtn } from '../components/ui'
+import { fieldCls, Masked } from '../components/ui'
 import { Grid, Row, Stack, Surface, Inset } from '../components/layout'
 import { audibleStreams, guestLabel, isGuestName } from '../lib/guest_voice'
 import { restoreStreamer } from '../lib/start'
@@ -82,24 +83,16 @@ function AccessForm({ client }: { client: WidgetConnection }) {
     <Surface tone="plain" radius="none" pad="sm" gap="2xs">
       <Row gap="2xs" align="stretch" wrap>
         {client.signedIn ? (
-          <button className={textBtn + ' cursor-pointer'} onClick={() => client.logout()}>
-            Sign out
-          </button>
+          <Button onClick={() => client.logout()}>Sign out</Button>
         ) : (
-          <button
-            className={textBtn + ' cursor-pointer'}
-            onClick={() => setChoice(choice === 'account' ? null : 'account')}
-          >
+          <Button onClick={() => setChoice(choice === 'account' ? null : 'account')}>
             Sign in
-          </button>
+          </Button>
         )}
         {client.mode === 'voice' && !client.room && !client.signedIn && (
-          <button
-            className={textBtn + ' cursor-pointer'}
-            onClick={() => setChoice(choice === 'grant' ? null : 'grant')}
-          >
+          <Button onClick={() => setChoice(choice === 'grant' ? null : 'grant')}>
             Use server password
-          </button>
+          </Button>
         )}
       </Row>
       {choice && (
@@ -124,9 +117,9 @@ function AccessForm({ client }: { client: WidgetConnection }) {
               placeholder="Password"
               required
             />
-            <button className={filledBtn + ' cursor-pointer'} disabled={busy}>
+            <Button variant="filled" size="md" type="submit" disabled={busy}>
               {choice === 'account' ? 'Sign in to widget' : 'Open room'}
-            </button>
+            </Button>
           </Grid>
         </form>
       )}
@@ -342,20 +335,12 @@ function WidgetChat({ client, rows }: { client: WidgetConnection; rows: Message[
               {client.draftExpired ? 'Your sign-in expired.' : 'Your sign-in changed.'} Your unsent
               text is still here.
             </p>
-            <button
-              type="button"
-              className={textBtn + ' cursor-pointer'}
-              onClick={() => client.recoverDraft(true)}
-            >
+            <Button type="button" onClick={() => client.recoverDraft(true)}>
               Restore draft
-            </button>
-            <button
-              type="button"
-              className={textBtn + ' cursor-pointer'}
-              onClick={() => client.recoverDraft(false)}
-            >
+            </Button>
+            <Button type="button" onClick={() => client.recoverDraft(false)}>
               Discard draft
-            </button>
+            </Button>
           </Row>
         </Surface>
       ) : client.canPost ? (
@@ -532,25 +517,25 @@ export default function WidgetPage() {
               </Stack>
               {client.inVoice ? (
                 <Row gap="sm" align="stretch" wrap>
-                  <button
-                    className={filledBtn + ' cursor-pointer'}
+                  <Button
+                    variant="filled"
+                    size="md"
                     disabled={client.silenced.includes(client.name)}
                     onClick={() => client.mute()}
                   >
                     {client.userMuted ? 'Unmute' : 'Mute'}
-                  </button>
-                  <button className={textBtn + ' cursor-pointer'} onClick={() => client.leave()}>
-                    Leave voice
-                  </button>
+                  </Button>
+                  <Button onClick={() => client.leave()}>Leave voice</Button>
                 </Row>
               ) : room.participate && !client.hideSend ? (
-                <button
-                  className={filledBtn + ' cursor-pointer'}
+                <Button
+                  variant="filled"
+                  size="md"
                   disabled={!client.name || client.joining}
                   onClick={() => void client.join()}
                 >
                   {client.joining ? 'Joining…' : 'Join voice'}
-                </button>
+                </Button>
               ) : (
                 <p className="text-sm text-on-surface-variant">
                   Voice participation is unavailable.
@@ -565,12 +550,9 @@ export default function WidgetPage() {
       ) : gated && target ? (
         <Surface tone="plain" radius="none" pad="md">
           <p role="status">This channel is marked sensitive.</p>
-          <button
-            className={textBtn + ' cursor-pointer self-start'}
-            onClick={() => void requestViewing(target)}
-          >
+          <Button place="self-start" onClick={() => void requestViewing(target)}>
             Open channel
-          </button>
+          </Button>
           {client && client.mode !== 'public_read' && client.mode !== 'read_link' && (
             <AccessForm client={client} />
           )}
@@ -626,15 +608,14 @@ export default function WidgetPage() {
               Mark sensitive on this device
             </Row>
             {room && needsWarning(target) && (
-              <button
-                className={textBtn + ' cursor-pointer'}
+              <Button
                 onClick={() => {
                   prompted.current = target.key
                   forgetViewing(target)
                 }}
               >
                 Hide channel
-              </button>
+              </Button>
             )}
           </details>
         </Surface>

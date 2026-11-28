@@ -1,5 +1,6 @@
 'use client'
 
+import { Button } from './controls'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Check, Slash, X } from 'lucide-react'
 import {
@@ -24,7 +25,7 @@ import {
 } from '../lib/perm_source'
 import { hasBit, type Ow } from '../lib/perms'
 import { Row, Stack, Surface } from './layout'
-import { fieldCls, smallFieldCls, textBtn } from './ui'
+import { fieldCls, smallFieldCls } from './ui'
 
 // The rules of a channel or category, for hosted servers and P2P rooms alike: the subjects with a
 // rule (@everyone, roles, members), each permission of the selected one as Allow, Inherit or
@@ -252,17 +253,16 @@ export function RuleEditor({
                   </option>
                 ))}
               </select>
-              <button
+              <Button
                 type="button"
                 onClick={() => {
                   if (!adding) return
                   add(adding)
                   setAdding('')
                 }}
-                className={textBtn}
               >
                 Add
-              </button>
+              </Button>
             </Row>
           </span>
         )}

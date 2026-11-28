@@ -1,5 +1,6 @@
 'use client'
 
+import { Button } from './controls'
 import { Name } from './name'
 import { personCalled } from '../lib/names'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -26,7 +27,7 @@ import { RestrictionToggles } from './settings_fields'
 import { MemberPicker } from './member_search'
 import { usePermissionRules } from './use_permission_rules'
 import { Row, Surface } from './layout'
-import { Dialog, textBtn } from './ui'
+import { Dialog } from './ui'
 import { ViewActorTag } from './view_actor'
 import { staffChange, staffViewChannel } from '../lib/staff_view'
 import { newestReads } from '../lib/newest_read'
@@ -152,9 +153,7 @@ export function HostedRules({
           <span className="min-w-0 flex-1 text-xs text-on-surface-variant">
             Confirm to open this channel
           </span>
-          <button onClick={() => askStaffView(channel.id)} className={textBtn}>
-            Open channel
-          </button>
+          <Button onClick={() => askStaffView(channel.id)}>Open channel</Button>
         </Row>
       </Surface>
     )
@@ -283,7 +282,7 @@ export function HostedRules({
                   : `Not synced with ${category.name}.`}
               </span>
               {!channel.perm_sync && (
-                <button
+                <Button
                   type="button"
                   onClick={() =>
                     void syncChannelPerms(server, channel.id).then(
@@ -293,10 +292,9 @@ export function HostedRules({
                       })
                     )
                   }
-                  className={textBtn}
                 >
                   Sync now
-                </button>
+                </Button>
               )}
             </Row>
           )}

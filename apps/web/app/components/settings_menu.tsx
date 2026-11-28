@@ -78,16 +78,7 @@ import { Choice, PrivacyChoices } from './friends'
 import { LinkSafetySection } from './link_safety_settings'
 import { AccountWords, PassSwitch } from './word_grid'
 import { PageRow, SettingsPage, type PageSection } from './settings_page'
-import {
-  dangerBtn,
-  FieldError,
-  fieldCls,
-  filledBtn,
-  Masked,
-  sectionCls,
-  textBtn,
-  useOwnServer,
-} from './ui'
+import { dangerBtn, FieldError, fieldCls, Masked, sectionCls, useOwnServer } from './ui'
 
 const bioFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
@@ -276,22 +267,18 @@ function AboutMe({ focus }: { focus: boolean }) {
         </span>
       </Row>
       <Row gap="sm" justify="end">
-        <button
-          type="button"
-          onClick={cancel}
-          disabled={text === saved}
-          className={`${textBtn} disabled:opacity-40`}
-        >
+        <Button type="button" onClick={cancel} disabled={text === saved}>
           Cancel
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="filled"
+          size="md"
           type="button"
           onClick={() => void save()}
           disabled={busy || over || !changed}
-          className={filledBtn}
         >
           Save
-        </button>
+        </Button>
       </Row>
     </Stack>
   )

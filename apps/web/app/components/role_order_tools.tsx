@@ -4,8 +4,7 @@ import type { KeyboardEvent, ReactNode } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import type { longPress } from './context_menu'
 import { Row, Surface } from './layout'
-import { textBtn } from './ui'
-import { IconButton, Tab } from './controls'
+import { Button, IconButton, Tab } from './controls'
 
 // Pieces the Roles pages of hosted servers and P2P rooms share: the Role order and Display order
 // tabs, Alt+Up and Alt+Down on a focused role row, and a row of the display order.
@@ -78,8 +77,8 @@ export function ShownRow({
 
 export function FollowButton({ run }: { run: Run }) {
   return run ? (
-    <button type="button" onClick={run} className={`${textBtn} self-start`}>
+    <Button place="self-start" type="button" onClick={run}>
       Follow role order
-    </button>
+    </Button>
   ) : null
 }

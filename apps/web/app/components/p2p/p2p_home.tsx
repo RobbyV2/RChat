@@ -51,16 +51,7 @@ import { TypingEllipsis } from '../typing_indicator'
 import { MutedIcon } from '../notify_menu'
 import { P2pDmPane } from './p2p_dm_pane'
 import { VoiceDock } from '../voice_grid'
-import {
-  dangerBtn,
-  Dialog,
-  fieldCls,
-  filledBtn,
-  iconBtn,
-  Masked,
-  textBtn,
-  useBackdrop,
-} from '../ui'
+import { Dialog, fieldCls, iconBtn, Masked, textBtn, useBackdrop } from '../ui'
 import { AddContactDialog } from './add_contact'
 import { VerifyDialog } from './verify_dialog'
 import { P2pFolderDialog, ServerInviteDialog, ServerNewDialog } from './p2p_invite_dialog'
@@ -91,7 +82,7 @@ import { DmListSkeleton } from '../skeletons'
 import { Row, Stack, Surface, Inset } from '../layout'
 import { GateNote } from '../gate_note'
 import { time } from '../../lib/platform/time'
-import { IconButton } from '../controls'
+import { Button, IconButton } from '../controls'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
 
@@ -177,9 +168,9 @@ function ElsewhereNoticeBody() {
     <Surface role="status" pad="md" tone="plain" radius="none">
       <Row gap="md" wrap>
         <p className="text-sm">P2P is open in another tab.</p>
-        <button data-p2p-use-here onClick={() => p2p.useHere()} className={textBtn}>
+        <Button data-p2p-use-here onClick={() => p2p.useHere()}>
           Use here
-        </button>
+        </Button>
       </Row>
     </Surface>
   )
@@ -214,12 +205,10 @@ function IdentityAlertBody() {
     <Surface role="alert" data-p2p-alert pad="lg" gap="md" tone="error" align="start">
       <p className="text-sm">{ALERT_TEXT}</p>
       <Row gap="sm" align="stretch" wrap>
-        <button onClick={() => confirmResetFor(identity)(ask)} className={dangerBtn}>
+        <Button variant="danger" onClick={() => confirmResetFor(identity)(ask)}>
           Reset identity
-        </button>
-        <button onClick={() => void p2p.clearAlert()} className={textBtn}>
-          Dismiss
-        </button>
+        </Button>
+        <Button onClick={() => void p2p.clearAlert()}>Dismiss</Button>
       </Row>
     </Surface>
   )
@@ -238,7 +227,7 @@ function MovingBannerBody({ bar = false }: { bar?: boolean }) {
   const body = (
     <>
       <p className="text-sm text-on-surface">{MOVING_TEXT}</p>
-      <button
+      <Button
         onClick={() =>
           ask({
             title: 'Resume sending here?',
@@ -247,10 +236,9 @@ function MovingBannerBody({ bar = false }: { bar?: boolean }) {
             action: () => void p2p.resumeSending(),
           })
         }
-        className={textBtn}
       >
         Resume
-      </button>
+      </Button>
     </>
   )
   if (bar)
@@ -274,9 +262,7 @@ function UnreachableNoticeBody() {
   return (
     <Surface role="status" data-p2p-unreachable pad="lg" gap="md" align="start">
       <p className="text-sm text-on-surface">{UNREACHABLE_TEXT}</p>
-      <button onClick={() => void p2p.retry()} className={`${textBtn} cursor-pointer`}>
-        Retry
-      </button>
+      <Button onClick={() => void p2p.retry()}>Retry</Button>
     </Surface>
   )
 }
@@ -297,9 +283,7 @@ function AddressNoticeBody() {
   return (
     <Surface role="status" data-p2p-address-hidden pad="lg" gap="md" align="start">
       <p className="text-sm text-on-surface">{ADDRESS_HIDDEN}</p>
-      <button onClick={p2p.dismissAddress} className={`${textBtn} cursor-pointer`}>
-        Dismiss
-      </button>
+      <Button onClick={p2p.dismissAddress}>Dismiss</Button>
     </Surface>
   )
 }
@@ -314,7 +298,8 @@ function MovedBannerBody() {
   return (
     <Surface role="status" data-p2p-moved pad="lg" gap="md" align="start">
       <p className="text-sm text-on-surface">{movedText(movedAt)}</p>
-      <button
+      <Button
+        variant="danger"
         onClick={() =>
           ask({
             title: 'Remove P2P data from this browser?',
@@ -323,10 +308,9 @@ function MovedBannerBody() {
             action: () => void p2p.removeData(),
           })
         }
-        className={dangerBtn}
       >
         Remove P2P data from this browser
-      </button>
+      </Button>
     </Surface>
   )
 }
@@ -584,9 +568,9 @@ function Off() {
           <LabelText text={error} />
         </p>
       )}
-      <button onClick={() => p2p.openDialog({ kind: 'enable' })} className={filledBtn}>
+      <Button variant="filled" size="md" onClick={() => p2p.openDialog({ kind: 'enable' })}>
         Turn on P2P
-      </button>
+      </Button>
     </Surface>
   )
 }
@@ -801,15 +785,16 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
                 </p>
                 {adds && (
                   <Row gap="sm" align="stretch">
-                    <button onClick={() => p2p.openDialog({ kind: 'add' })} className={filledBtn}>
-                      Add contact
-                    </button>
-                    <button
-                      onClick={() => p2p.openDialog({ kind: 'add', tab: 'mine' })}
-                      className={textBtn}
+                    <Button
+                      variant="filled"
+                      size="md"
+                      onClick={() => p2p.openDialog({ kind: 'add' })}
                     >
+                      Add contact
+                    </Button>
+                    <Button onClick={() => p2p.openDialog({ kind: 'add', tab: 'mine' })}>
                       Show my code
-                    </button>
+                    </Button>
                   </Row>
                 )}
               </Surface>
@@ -831,9 +816,9 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
             )}
             {blockedList.length > 0 && (
               <Stack as="section" gap="sm" align="start">
-                <button onClick={() => setShowBlocked(v => !v)} className={textBtn}>
+                <Button onClick={() => setShowBlocked(v => !v)}>
                   {showBlocked ? 'Hide blocked' : `Blocked (${blockedList.length})`}
-                </button>
+                </Button>
                 {showBlocked && (
                   <Stack as="ul" gap="none" place="w-full">
                     {blockedList.map(c => (
@@ -936,13 +921,13 @@ function ContactDialog({ ik }: { ik: string }) {
           )
             .filter(item => item.action && !item.submenu)
             .map(item => (
-              <button
+              <Button
+                variant={item.danger ? 'danger' : 'text'}
                 key={item.label}
                 onClick={item.action}
-                className={item.danger ? dangerBtn : textBtn}
               >
                 {item.label}
-              </button>
+              </Button>
             ))}
         </Row>
       </Stack>
@@ -1004,12 +989,10 @@ function RenameDialog({ ik }: { ik: string }) {
           </p>
         </Stack>
         <Row gap="sm" justify="end">
-          <button onClick={p2p.closeDialog} className={textBtn}>
-            Cancel
-          </button>
-          <button onClick={save} className={filledBtn}>
+          <Button onClick={p2p.closeDialog}>Cancel</Button>
+          <Button variant="filled" size="md" onClick={save}>
             Save
-          </button>
+          </Button>
         </Row>
       </Stack>
     </Dialog>

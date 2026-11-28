@@ -1,4 +1,5 @@
 'use client'
+import { Button } from '../controls'
 import { Name } from '../name'
 import { p2pName } from '../../lib/names'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -73,7 +74,7 @@ import {
   RoleNameForm,
   SlowmodeField,
 } from '../settings_fields'
-import { dangerBtn, Dialog, fieldCls, Masked, textBtn } from '../ui'
+import { dangerBtn, Dialog, fieldCls, Masked } from '../ui'
 import { PeerTimeoutBadge } from '../timeout_dialog'
 import { MemberAvatar } from './p2p_badge'
 import { RoleLooksFields } from '../role_looks_fields'
@@ -248,15 +249,14 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
           <p className="min-w-0 flex-1 text-xs text-on-surface-variant">
             {r.holders} {r.holders === 1 ? 'member' : 'members'}
           </p>
-          <button
+          <Button
             type="button"
             {...keepPress}
             onClick={() => setOpen(o => !o)}
             aria-expanded={open}
-            className={textBtn}
           >
             {open ? 'Hide permissions' : 'Permissions'}
-          </button>
+          </Button>
         </Row>
         {open && (
           <span {...keepPress} className="block">
@@ -623,12 +623,9 @@ function MemberPickerBody({
         )}
       </ul>
       {more && (
-        <button
-          onClick={() => setShown(n => nextPage(n, found.length))}
-          className={`${textBtn} self-start`}
-        >
+        <Button place="self-start" onClick={() => setShown(n => nextPage(n, found.length))}>
           Show more
-        </button>
+        </Button>
       )}
     </Stack>
   )
@@ -751,14 +748,14 @@ function ChannelAccessBody({
         memberPicker={pick =>
           people.length > 0 && (
             <Stack gap="sm" place="w-full">
-              <button
+              <Button
+                place="self-start"
                 type="button"
                 onClick={() => setPicking(p => !p)}
                 aria-expanded={picking}
-                className={`${textBtn} self-start`}
               >
                 Add member
-              </button>
+              </Button>
               {picking && (
                 <MemberPicker
                   people={people}
@@ -787,9 +784,9 @@ function ChannelAccessBody({
                     : `Not synced with ${category.name}.`}
                 </span>
                 {!channel.sync && (
-                  <button type="button" onClick={() => void syncNow()} className={textBtn}>
+                  <Button type="button" onClick={() => void syncNow()}>
                     Sync now
-                  </button>
+                  </Button>
                 )}
               </Row>
             )}

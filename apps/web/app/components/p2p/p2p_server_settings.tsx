@@ -25,7 +25,7 @@ import { fieldMax } from '../../lib/p2p/event_v2'
 import { voiceNotice } from '../../lib/p2p/voice'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
-import { fieldCls, filledBtn, Masked, Sentinel, textBtn } from '../ui'
+import { fieldCls, Masked, Sentinel } from '../ui'
 import { Row, Stack, Surface, Inset } from '../layout'
 import { ServerSettingsPage } from '../server_settings_page'
 import { page, PAGE } from '../../lib/paging'
@@ -92,13 +92,15 @@ function Overview({ v }: { v: ServerView }) {
         />
       </Stack>
       {edit ? (
-        <button
+        <Button
+          variant="filled"
+          size="md"
+          place="self-end"
           disabled={!dirty}
           onClick={() => void p2pServer.rename(v.id, name)}
-          className={`${filledBtn} self-end`}
         >
           Save
-        </button>
+        </Button>
       ) : (
         <Note>Only members with Manage server can rename the server.</Note>
       )}
@@ -176,13 +178,12 @@ function Channels({ v }: { v: ServerView }) {
                 <span className="text-xs text-on-surface-variant">
                   {synced === 1 ? '1 synced channel' : `${synced} synced channels`}
                 </span>
-                <button
+                <Button
                   onClick={() => setOpenCat(openCat === cat.id ? null : cat.id)}
                   aria-expanded={openCat === cat.id}
-                  className={textBtn}
                 >
                   Permissions
-                </button>
+                </Button>
               </Row>
               {openCat === cat.id && <ChannelAccess v={v} cat={cat} />}
             </Surface>
@@ -195,8 +196,7 @@ function Channels({ v }: { v: ServerView }) {
             new copy.
           </Note>
           {me && v.owners.length === 1 && v.owner === me && !v.upgraded ? (
-            <button
-              className={textBtn}
+            <Button
               onClick={() =>
                 ownerAccount.store.getState().askConfirm({
                   title: 'Upgrade server?',
@@ -207,7 +207,7 @@ function Channels({ v }: { v: ServerView }) {
               }
             >
               Upgrade server
-            </button>
+            </Button>
           ) : (
             <Note>
               An owner can transfer the server to a member with an updated app. Every co-owner must
@@ -298,23 +298,21 @@ function Channels({ v }: { v: ServerView }) {
             />
             <Row gap="sm" align="stretch" justify="end" wrap>
               {edit && (
-                <button
+                <Button
                   onClick={() => setOpen(open === c.id ? null : c.id)}
                   aria-expanded={open === c.id}
-                  className={textBtn}
                 >
                   Permissions
-                </button>
+                </Button>
               )}
               {edit && dirty && (
-                <button
+                <Button
                   onClick={() =>
                     void p2pServer.editChannel(v.id, c.id, { name: name.trim() || c.name, topic })
                   }
-                  className={textBtn}
                 >
                   Save
-                </button>
+                </Button>
               )}
             </Row>
             {edit && !voice && v.textOnlyChannels && (
@@ -348,16 +346,17 @@ function Channels({ v }: { v: ServerView }) {
             aria-label="New channel name"
             className={`${fieldCls} min-w-0 flex-1`}
           />
-          <button
+          <Button
+            variant="filled"
+            size="md"
             disabled={!fresh.trim()}
             onClick={() => {
               void p2pServer.addChannel(v.id, fresh, kind)
               setFresh('')
             }}
-            className={filledBtn}
           >
             Add channel
-          </button>
+          </Button>
         </Row>
       ) : (
         <Note>Only members with Manage channels can change channels.</Note>
@@ -571,11 +570,7 @@ function Bans({ v }: { v: ServerView }) {
       <Stack as="ul" data-p2p-bans-tab gap="none">
         {paged.items.map(m => (
           <MemberLine key={m.ik} v={v} m={m}>
-            {m.unban && (
-              <button onClick={() => void p2pServer.unban(v.id, m.ik)} className={textBtn}>
-                Lift ban
-              </button>
-            )}
+            {m.unban && <Button onClick={() => void p2pServer.unban(v.id, m.ik)}>Lift ban</Button>}
             {(timedBan(m) || (lift && m.banReason)) && (
               <span className="basis-full text-xs break-words text-on-surface-variant">
                 {[banStateText(m, now), lift ? m.banReason : null].filter(Boolean).join(' · ')}
@@ -704,15 +699,11 @@ function ModerationLog({ v }: { v: ServerView }) {
       </Stack>
       <Row gap="sm" align="stretch" wrap>
         {next !== null && (
-          <button onClick={more} disabled={loading} className={textBtn}>
+          <Button onClick={more} disabled={loading}>
             Show more
-          </button>
+          </Button>
         )}
-        {paged && (
-          <button onClick={latest} className={textBtn}>
-            Back to the newest
-          </button>
-        )}
+        {paged && <Button onClick={latest}>Back to the newest</Button>}
       </Row>
     </Stack>
   )

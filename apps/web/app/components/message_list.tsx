@@ -1,5 +1,6 @@
 'use client'
 
+import { Button } from './controls'
 import type { ReactNode, RefObject } from 'react'
 import { History } from 'lucide-react'
 import type { Messages, MessagesState } from '../lib/place/messages'
@@ -7,7 +8,6 @@ import type { UnreadSummary } from '../lib/unread_banner'
 import { Inset, Row, Surface } from './layout'
 import { LightboxList, type LightboxScope } from './media_lightbox'
 import { MessageListSkeleton } from './skeletons'
-import { textBtn } from './ui'
 import { UnreadBanner } from './unread_banner'
 import { EdgeSentinel, OlderLoading, PresentBar } from './viewport_height'
 
@@ -98,9 +98,7 @@ export function MessageList({
                 )
               : older.more && (
                   <Surface pad="sm" tone="plain" radius="none" align="center">
-                    <button onClick={list.loadOlder} className={textBtn}>
-                      Show older messages
-                    </button>
+                    <Button onClick={list.loadOlder}>Show older messages</Button>
                   </Surface>
                 )}
             {head}
@@ -112,12 +110,10 @@ export function MessageList({
                   <span className="text-xs text-on-surface-variant">
                     Newer messages aren&apos;t shown.
                   </span>
-                  <button onClick={list.loadNewer} disabled={newer.loading} className={textBtn}>
+                  <Button onClick={list.loadNewer} disabled={newer.loading}>
                     Show newer
-                  </button>
-                  <button onClick={list.toPresent} className={textBtn}>
-                    Jump to present
-                  </button>
+                  </Button>
+                  <Button onClick={list.toPresent}>Jump to present</Button>
                 </Row>
               </Surface>
             )}

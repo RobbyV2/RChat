@@ -1,4 +1,5 @@
 'use client'
+import { Button } from '../controls'
 import { PeerCodeButton } from './peer_code_button'
 import { useActorSuffix, usePeerActor } from '../view_actor'
 import { identityScopeKey } from '../../lib/p2p/app/host'
@@ -68,7 +69,6 @@ import type { P2pApp } from '../../lib/p2p/app/runtime'
 import { groupPlaces, p2pCue } from '../../lib/message_groups'
 import { dayStarts } from '../../lib/date_dividers'
 import { DateDivider } from '../date_divider'
-import { textBtn } from '../ui'
 import { ScheduledChip, SendLaterDialog, useDeviceItems, useDeviceOps } from '../scheduled'
 import { laterBlocked, type ComposerDraft } from '../../lib/scheduled'
 import { P2pBadge } from './p2p_badge'
@@ -755,9 +755,9 @@ function IdentityChatBody(props: ChatBodyProps) {
             <span className="text-xs text-on-surface-variant">
               Older messages are not on this device yet.
             </span>
-            <button onClick={p2pDm.loadOlderHistory} disabled={pulling} className={textBtn}>
+            <Button onClick={p2pDm.loadOlderHistory} disabled={pulling}>
               {pulling ? 'Loading…' : 'Load older'}
-            </button>
+            </Button>
           </>
         ) : (
           <span className="text-xs text-on-surface-variant">{props.gapOffline}</span>

@@ -108,18 +108,7 @@ import {
   headerColors,
 } from '../lib/server_colors'
 import { Row, Stack, Surface, Inset } from './layout'
-import {
-  Dialog,
-  FieldError,
-  Sentinel,
-  dangerBtn,
-  fieldCls,
-  filledBtn,
-  filledDangerBtn,
-  sectionCls,
-  textBtn,
-  useOwnServer,
-} from './ui'
+import { Dialog, FieldError, Sentinel, dangerBtn, fieldCls, sectionCls, useOwnServer } from './ui'
 import { LabelText } from './instance_badge'
 import { endsText } from '../lib/durations'
 import { ServerSettingsPage } from './server_settings_page'
@@ -318,14 +307,9 @@ function RoleRow({
               Allow anyone to mention this role
             </Row>
           </label>
-          <button
-            type="button"
-            onClick={() => setOpen(o => !o)}
-            aria-expanded={open}
-            className={textBtn}
-          >
+          <Button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}>
             {open ? 'Hide permissions' : 'Permissions'}
-          </button>
+          </Button>
         </Row>
         {open && (
           <span {...keepPress} className="block">
@@ -389,14 +373,9 @@ function EveryoneRow({ server, limit }: { server: string; limit?: number }) {
         <Row gap="sm" place="flex-1">
           <span className="min-w-0 flex-1 truncate text-sm font-medium">@everyone</span>
           <span className="shrink-0 text-xs text-on-surface-variant">Every member</span>
-          <button
-            type="button"
-            onClick={() => setOpen(o => !o)}
-            aria-expanded={open}
-            className={textBtn}
-          >
+          <Button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}>
             {open ? 'Hide permissions' : 'Permissions'}
-          </button>
+          </Button>
         </Row>
       </div>
       {open && (
@@ -447,15 +426,14 @@ export function RolesEditor({
             <span className="min-w-0 flex-1 text-sm">
               Role order now decides who can moderate whom. Check the order, then confirm it.
             </span>
-            <button
+            <Button
               type="button"
               onClick={() =>
                 void confirmRoleOrder(server, version).then(acct.lifetime.inSession(after))
               }
-              className={textBtn}
             >
               Confirm
-            </button>
+            </Button>
           </Row>
         </Surface>
       )}
@@ -552,9 +530,9 @@ function CategoryControls({
         <span className="text-xs text-on-surface-variant">
           {synced === 1 ? '1 synced channel' : `${synced} synced channels`}
         </span>
-        <button onClick={() => setOpen(!open)} aria-expanded={open} className={textBtn}>
+        <Button onClick={() => setOpen(!open)} aria-expanded={open}>
           {open ? 'Hide permissions' : 'Permissions'}
-        </button>
+        </Button>
       </Row>
       {open && <HostedRules server={server} target={{ category }} />}
     </Surface>
@@ -597,9 +575,9 @@ function CategoryCreator({ server }: { server: string }) {
           aria-label="Category name"
           className={`${fieldCls} min-w-40 flex-1`}
         />
-        <button onClick={create} disabled={!trimmed} className={textBtn}>
+        <Button onClick={create} disabled={!trimmed}>
           Create category
-        </button>
+        </Button>
       </Row>
     </Surface>
   )
@@ -682,16 +660,10 @@ export function ChannelControls({
           </label>
         )}
         {channel.kind === 'text' && <ChannelSlowmode channel={channel} refresh={refresh} />}
-        <button
-          onClick={() => setTopicOpen(!topicOpen)}
-          aria-expanded={topicOpen}
-          className={textBtn}
-        >
+        <Button onClick={() => setTopicOpen(!topicOpen)} aria-expanded={topicOpen}>
           {topicOpen ? 'Hide topic' : 'Topic'}
-        </button>
-        <button onClick={() => setOpen(!open)} className={textBtn}>
-          {open ? 'Hide permissions' : 'Permissions'}
-        </button>
+        </Button>
+        <Button onClick={() => setOpen(!open)}>{open ? 'Hide permissions' : 'Permissions'}</Button>
       </Row>
       {topicOpen && <TopicEditor server={server} channel={channel} refresh={refresh} />}
       {open && <HostedRules server={server} target={{ channel }} refresh={refresh} />}
@@ -800,9 +772,14 @@ export function ServerPasswordField({
             placeholder={hasPassword ? 'New password (blank clears)' : 'Set a join password'}
             className={fieldCls}
           />
-          <button disabled={!password.trim() && !hasPassword} className={filledBtn}>
+          <Button
+            variant="filled"
+            size="md"
+            type="submit"
+            disabled={!password.trim() && !hasPassword}
+          >
             {password.trim() ? 'Set' : hasPassword ? 'Clear' : 'Set'}
-          </button>
+          </Button>
         </Row>
         <FieldError message={error} />
         {done && (
@@ -929,7 +906,9 @@ export function ServerAppearance({
           </Row>
         )}
         <Row gap="sm" wrap>
-          <button
+          <Button
+            variant="filled"
+            size="md"
             type="button"
             disabled={!dirty || saving}
             onClick={() => {
@@ -949,12 +928,11 @@ export function ServerAppearance({
                 )
                 .finally(() => setSaving(false))
             }}
-            className={filledBtn}
           >
             {saving ? 'Saving…' : 'Save colors'}
-          </button>
+          </Button>
           {dirty && !saving && (
-            <button
+            <Button
               type="button"
               onClick={() =>
                 edit(() => {
@@ -962,10 +940,9 @@ export function ServerAppearance({
                   setName(savedName)
                 })
               }
-              className={textBtn}
             >
               Discard
-            </button>
+            </Button>
           )}
           {done && !dirty && (
             <span role="status" className="text-xs text-on-surface">
@@ -1074,8 +1051,7 @@ function StandingLink({
       {link && <input readOnly value={link} aria-label="Invite link" className={fieldCls} />}
       <Row gap="sm" wrap>
         {link && (
-          <button
-            className={textBtn}
+          <Button
             onClick={() =>
               void sharing()
                 .copyText(link)
@@ -1086,17 +1062,17 @@ function StandingLink({
             }
           >
             {copied ? 'Copied' : 'Copy link'}
-          </button>
+          </Button>
         )}
         {manage && (
-          <button className={textBtn} disabled={busy} onClick={() => request(false)}>
+          <Button disabled={busy} onClick={() => request(false)}>
             {link ? 'Replace link' : 'Create invite link'}
-          </button>
+          </Button>
         )}
         {manage && link && (
-          <button className={dangerBtn} disabled={busy} onClick={() => request(true)}>
+          <Button variant="danger" disabled={busy} onClick={() => request(true)}>
             Revoke link
-          </button>
+          </Button>
         )}
       </Row>
       <FieldError message={error} />
@@ -1123,7 +1099,9 @@ function InviteLinkField({ server, hasPassword }: { server: string; hasPassword:
             onFocus={e => e.currentTarget.select()}
             className={`${fieldCls} text-on-surface-variant`}
           />
-          <button
+          <Button
+            variant="filled"
+            size="md"
             onClick={() => {
               setError(null)
               navigator.clipboard.writeText(link).then(
@@ -1131,10 +1109,9 @@ function InviteLinkField({ server, hasPassword }: { server: string; hasPassword:
                 (err: unknown) => setError(errorText(err))
               )
             }}
-            className={filledBtn}
           >
             {copied === link ? 'Copied' : 'Copy'}
-          </button>
+          </Button>
         </Row>
         <FieldError message={error} />
         {hasPassword && (
@@ -1237,9 +1214,7 @@ export function BanList({ server }: { server: string }) {
                 </span>
               )}
             </span>
-            <button onClick={() => void unbanMember(server, b.username)} className={textBtn}>
-              Unban
-            </button>
+            <Button onClick={() => void unbanMember(server, b.username)}>Unban</Button>
           </Row>
         </Surface>
       ))}
@@ -1356,10 +1331,12 @@ function ConfirmBody({ request, onClose }: { request: ConfirmRequest; onClose: (
           </Stack>
         )}
         <Row gap="sm" justify="end">
-          <button autoFocus onClick={onClose} className={textBtn}>
+          <Button autoFocus onClick={onClose}>
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
+            variant={danger ? 'filled-danger' : 'filled'}
+            size="md"
             onClick={() => {
               onClose()
               action(
@@ -1367,10 +1344,9 @@ function ConfirmBody({ request, onClose }: { request: ConfirmRequest; onClose: (
                 request.reason ? reason.trim() || undefined : undefined
               )
             }}
-            className={danger ? filledDangerBtn : filledBtn}
           >
             {confirm}
-          </button>
+          </Button>
         </Row>
       </Stack>
     </Dialog>
@@ -1462,7 +1438,7 @@ function Settings({ server, section }: { server: string; section: ServerSettings
 
   const rolesButton = (m: Member) =>
     canAssign && changeableRoles(store.getState(), server, m.username).length > 0 ? (
-      <button
+      <Button
         onClick={e =>
           openChoiceMenu(
             e.clientX,
@@ -1478,10 +1454,9 @@ function Settings({ server, section }: { server: string; section: ServerSettings
             acct
           )
         }
-        className={textBtn}
       >
         Roles
-      </button>
+      </Button>
     ) : null
 
   const memberRow = (m: Member, action: ReactNode, extra?: ReactNode) => (
@@ -1521,7 +1496,9 @@ function Settings({ server, section }: { server: string; section: ServerSettings
         }}
       >
         <NameInput value={name} onChange={e => setName(e.target.value)} placeholder="Server name" />
-        <button className={filledBtn}>Rename</button>
+        <Button variant="filled" size="md" type="submit">
+          Rename
+        </Button>
       </Row>
       <FieldError message={renameError} />
     </>
@@ -1608,14 +1585,13 @@ function Settings({ server, section }: { server: string; section: ServerSettings
                   memberRow(
                     m,
                     <>
-                      <button
+                      <Button
                         onClick={() =>
                           setEditingAdmin(editingAdmin === m.username ? null : m.username)
                         }
-                        className={textBtn}
                       >
                         Perms
-                      </button>
+                      </Button>
                       <span
                         title={
                           limit !== undefined &&
@@ -1624,16 +1600,16 @@ function Settings({ server, section }: { server: string; section: ServerSettings
                             : undefined
                         }
                       >
-                        <button
+                        <Button
+                          variant="danger"
                           onClick={() => revokeAdminFor(server, m.username, reloadBoth)}
                           disabled={
                             limit !== undefined &&
                             !canRevoke(limit, false, m.perms, rolePerms(m, detail.roles))
                           }
-                          className={`${dangerBtn} disabled:pointer-events-none`}
                         >
                           Remove
-                        </button>
+                        </Button>
                       </span>
                     </>,
                     editingAdmin === m.username && (
@@ -1669,14 +1645,13 @@ function Settings({ server, section }: { server: string; section: ServerSettings
                   memberRow(
                     m,
                     promote && (
-                      <button
+                      <Button
                         onClick={() =>
                           void grantAdmin(server, m.username).then(inSession(reloadBoth))
                         }
-                        className={textBtn}
                       >
                         Make Admin
-                      </button>
+                      </Button>
                     )
                   )
                 )
@@ -1707,9 +1682,7 @@ function Settings({ server, section }: { server: string; section: ServerSettings
             Webhooks post into channels from scripts and services, or send this server&apos;s events
             to a URL.
           </p>
-          <button onClick={() => openDialog({ kind: 'webhooks', server })} className={textBtn}>
-            Webhooks
-          </button>
+          <Button onClick={() => openDialog({ kind: 'webhooks', server })}>Webhooks</Button>
         </Row>
       </>
     ),
@@ -1719,9 +1692,7 @@ function Settings({ server, section }: { server: string; section: ServerSettings
           <p className="min-w-48 flex-1 text-xs text-on-surface-variant">
             See who changed what in this server over the last 90 days.
           </p>
-          <button onClick={() => openDialog({ kind: 'audit_log', server })} className={textBtn}>
-            Open audit log
-          </button>
+          <Button onClick={() => openDialog({ kind: 'audit_log', server })}>Open audit log</Button>
         </Row>
       </>
     ),

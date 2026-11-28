@@ -1,4 +1,5 @@
 'use client'
+import { Button } from './controls'
 import { PeerActorTag, ViewActorTag } from './view_actor'
 import { useAccount } from '../lib/client/react'
 
@@ -37,7 +38,7 @@ import {
   useFocusMessage,
   useScrollAnchor,
 } from './viewport_height'
-import { PanelHeader, textBtn, useEscape } from './ui'
+import { PanelHeader, useEscape } from './ui'
 import { LightboxList } from './media_lightbox'
 import { BlockedComposer, BlockedList } from './blocking'
 import { MessageListSkeleton } from './skeletons'
@@ -195,9 +196,7 @@ export function ThreadPanelView({
                 )
               : older.more && (
                   <Surface pad="sm" tone="plain" radius="none" align="center">
-                    <button onClick={thread.loadOlder} className={textBtn}>
-                      Show older replies
-                    </button>
+                    <Button onClick={thread.loadOlder}>Show older replies</Button>
                   </Surface>
                 )}
             {state.root === 'shown' ? (
