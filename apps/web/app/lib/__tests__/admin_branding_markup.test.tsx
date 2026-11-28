@@ -104,7 +104,9 @@ test('every brand control shows what is stored', () => {
   const suggested = row(html, 'instance_suggestions')
   expect(suggested).toContain('value="https://other.example.com"')
   expect(suggested).toContain('value="Other"')
-  expect(/aria-checked="true"[^>]*>Instead of the app&#x27;s own list</.test(suggested)).toBe(true)
+  expect(
+    /aria-checked="true"[^>]*><span[^>]*>Instead of the app&#x27;s own list</.test(suggested)
+  ).toBe(true)
   expect(row(page(config({ brand_links: { value: '[]' } })), 'brand_links')).toContain('No links.')
 })
 
