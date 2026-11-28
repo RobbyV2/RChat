@@ -92,7 +92,7 @@ export class WidgetConnection {
     return {
       ...this.scope,
       ...(!this.token && this.metadata
-        ? guestSessionHeaders(this.api, this.metadata.server, this.storageKey)
+        ? guestSessionHeaders({ api: this.api }, this.metadata.server, this.storageKey)
         : {}),
     }
   }
@@ -483,7 +483,7 @@ export class WidgetConnection {
       if (token) await this.api.req('POST', this.path + '/messages', body, this.headers)
       else
         await postGuest(
-          this.api,
+          { api: this.api },
           room.server,
           this.path + '/messages',
           body,

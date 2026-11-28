@@ -1,6 +1,24 @@
 import { describe, expect, test } from 'bun:test'
 import type { Api } from '../api'
-import { apiBaseOf, ask, asked, known, mediaUrlOf, sendTo, together } from '../asks'
+import {
+  apiBaseOf,
+  apiDescription,
+  apiOriginOf,
+  ask,
+  asked,
+  blobOf,
+  guestMediaOf,
+  guestRequest,
+  known,
+  mediaBlobOf,
+  mediaIdOf,
+  mediaUrlOf,
+  previewUrlOf,
+  sendTo,
+  sendWritten,
+  signedInTo,
+  together,
+} from '../asks'
 
 const session = (api: Record<string, unknown>) => ({ api: api as unknown as Api })
 
@@ -58,5 +76,72 @@ describe('a named request', () => {
     const here = session({ base: '/api/v1', mediaUrl: (id: string) => `/api/v1/media/${id}` })
     expect(apiBaseOf(here)).toBe('/api/v1')
     expect(mediaUrlOf(here, 'm1')).toBe('/api/v1/media/m1')
+  })
+
+  test('media addresses, sign-in state and bytes come from its client', async () => {
+    const asked: unknown[][] = []
+    const here = session({
+      origin: (page?: string) => `origin of ${page}`,
+      previewUrl: (path: string) => `/api/v1${path}`,
+      mediaId: (url: string) => (url.endsWith('/m1') ? 'm1' : null),
+      signedIn: () => true,
+      guestMedia: (server?: string) => server === 'den',
+      authedBlob: async (...args: unknown[]) => (asked.push(['blob', ...args]), 'bytes'),
+      mediaBlob: async (...args: unknown[]) => (asked.push(['media', ...args]), 'upload'),
+    })
+    expect(apiOriginOf(here, 'https://a.test/x')).toBe('origin of https://a.test/x')
+    expect(previewUrlOf(here, '/messages/1/embeds/0/image?v=a')).toBe(
+      '/api/v1/messages/1/embeds/0/image?v=a'
+    )
+    expect(mediaIdOf(here, 'https://a.test/api/v1/media/m1')).toBe('m1')
+    expect(mediaIdOf(here, 'https://b.test/picture')).toBeNull()
+    expect(signedInTo(here)).toBe(true)
+    expect(guestMediaOf(here, 'den')).toBe(true)
+    const stop = new AbortController().signal
+    expect<unknown>(await blobOf(here, '/api/v1/media/m1', 'den', stop)).toBe('bytes')
+    expect<unknown>(await mediaBlobOf(here, 'm1', undefined, stop)).toBe('upload')
+    expect(asked).toEqual([
+      ['blob', '/api/v1/media/m1', 'den', stop],
+      ['media', 'm1', undefined, stop],
+    ])
+  })
+
+  test('a guest request carries the headers it is given', async () => {
+    const sent: unknown[][] = []
+    const here = session({ req: async (...args: unknown[]) => (sent.push(args), 7) })
+    expect(
+      await guestRequest<number>(here, 'GET', '/channels/3/guest-messages', undefined, {
+        'X-Guest-Session': 's',
+      })
+    ).toBe(7)
+    expect(sent).toEqual([
+      ['GET', '/channels/3/guest-messages', undefined, { 'X-Guest-Session': 's' }],
+    ])
+  })
+
+  test('the console asks for the API description and sends a written request once', async () => {
+    const sent: unknown[][] = []
+    const here = session({
+      req: async (...args: unknown[]) => (sent.push(['req', ...args]), { openapi: '3.1.0' }),
+      send: async (...args: unknown[]) => (sent.push(['send', ...args]), new Response('ok')),
+    })
+    expect(await apiDescription(here)).toEqual({ openapi: '3.1.0' })
+    const answer = await sendWritten(here, {
+      method: 'POST',
+      path: '/servers',
+      body: '{}',
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(await answer.text()).toBe('ok')
+    expect(sent).toEqual([
+      ['req', 'GET', '/openapi.json'],
+      [
+        'send',
+        'POST',
+        '/servers',
+        '{}',
+        { headers: { 'Content-Type': 'application/json' }, retry: false },
+      ],
+    ])
   })
 })

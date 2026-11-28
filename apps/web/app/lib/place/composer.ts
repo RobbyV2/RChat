@@ -5,7 +5,7 @@ import { LIMITS as P2P_LIMITS } from '../p2p/content'
 import { bodyTooLong, fullNote } from '../p2p/dm'
 import { peerServer } from '../actions/p2p_server'
 import { canOf, p2pMask } from '../channel_perms'
-import { guestPostingStatus, postGuestFrom } from '../guest_chat'
+import { guestPostingStatus, postGuest } from '../guest_chat'
 import { outgoing } from '../link_safety'
 import { p2pName, personCalled, type P2pName, type PersonName } from '../names'
 import { displayName } from '../p2p/contacts'
@@ -666,7 +666,7 @@ const hosted = (account: AccountSession): Composer =>
         if (getGate().first?.kind !== 'guestWrite' || key === null || v?.kind !== 'channel') return
         if (channel === null || channel === undefined) return
         const message = await account.lifetime.live(
-          postGuestFrom(account, v.server, `/channels/${channel}/guest-messages`, {
+          postGuest(account, v.server, `/channels/${channel}/guest-messages`, {
             content: outgoing(s.linkPrefs, content),
             reply_to: s.replying[key]?.message.id,
             thread_root_id: root?.id,

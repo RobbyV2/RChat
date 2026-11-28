@@ -51,6 +51,8 @@ test('app code cannot reach the API client of a session, only name requests', as
   expect(await held(call, 'apps/web/app/widget/page.tsx')).toBe(1)
   expect(await held(call, 'apps/web/app/login/page.tsx')).toBe(1)
   expect(await held(taken, 'apps/web/app/lib/x.ts')).toBe(1)
+  for (const user of ['media_src.ts', 'guest_chat.ts', 'api_console.ts'])
+    expect(await held(call, `apps/web/app/lib/${user}`)).toBe(1)
   for (const owner of ['api.ts', 'asks.ts', 'store.ts', 'slices/x.ts', 'x_store.ts', 'client/x.ts'])
     expect(await held(call, `apps/web/app/lib/${owner}`)).toBe(0)
   expect(await held('export const x = () => new Date()\n', 'apps/web/app/components/x.tsx')).toBe(1)

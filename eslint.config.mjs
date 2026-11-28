@@ -156,8 +156,7 @@ const askSyntax = [
 const NETWORK_FILES = ['apps/web/app/lib/api.ts', 'apps/web/app/lib/api/**']
 const CLOCK_FILES = ['apps/web/app/lib/clock.ts', 'apps/web/app/lib/platform/time.ts']
 // What holds the API client: the client and its connections, the request names, the stores and
-// their actions, the sessions, and the three that speak to the client in its own terms (media
-// addresses and blobs, the guest session, the API console).
+// their actions, and the sessions.
 const API_HOLDERS = [
   'apps/web/app/lib/api.ts',
   'apps/web/app/lib/api/**',
@@ -169,9 +168,6 @@ const API_HOLDERS = [
   'apps/web/app/lib/*_store.ts',
   'apps/web/app/lib/slices/**',
   'apps/web/app/lib/client/**',
-  'apps/web/app/lib/media_src.ts',
-  'apps/web/app/lib/guest_chat.ts',
-  'apps/web/app/lib/api_console.ts',
 ]
 
 export default tseslint.config(

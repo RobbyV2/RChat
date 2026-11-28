@@ -1,6 +1,6 @@
 import type { RChatState } from './store_types'
-import type { ApiClient } from './api'
 import { ApiError } from './api'
+import { apiOriginOf, guestRequest } from './asks'
 import { device } from './platform'
 import { hasBit } from './perms'
 import { ChannelPermBit, type ServerDetail, type SiteSettings, type Message } from './types'
@@ -62,13 +62,16 @@ export function guestPostingStatus(s: RChatState, server: string | null, channel
   return s.guestPosting[channel] ?? 'checking'
 }
 
-const sessionKey = (client: ApiClient, server: string, widget?: string) =>
+// What a guest posts through: an account's session, or a frame's connection.
+type Posting = Parameters<typeof apiOriginOf>[0]
+
+const sessionKey = (client: Posting, server: string, widget?: string) =>
   widget
     ? widget + ':guest_session:' + server
-    : 'rchat_guest_session:' + client.origin() + ':' + server
+    : 'rchat_guest_session:' + apiOriginOf(client) + ':' + server
 
 export function guestSessionHeaders(
-  client: ApiClient,
+  client: Posting,
   server: string,
   widget?: string
 ): Record<string, string> {
@@ -78,22 +81,17 @@ export function guestSessionHeaders(
 }
 
 // Until when this guest may not post in `channel` (null: they may now).
-export const guestPostingUntil = (session: { api: ApiClient }, server: string, channel: number) =>
-  session.api.req<number | null>(
+export const guestPostingUntil = (session: Posting, server: string, channel: number) =>
+  guestRequest<number | null>(
+    session,
     'GET',
     `/channels/${channel}/guest-messages`,
     undefined,
-    guestSessionHeaders(session.api, server)
+    guestSessionHeaders(session, server)
   )
 
-// The same from a session of the instance.
-export const postGuestFrom = (
-  session: { api: ApiClient },
-  ...rest: Parameters<typeof postGuest> extends [ApiClient, ...infer R] ? R : never
-) => postGuest(session.api, ...rest)
-
 export async function postGuest(
-  client: ApiClient,
+  client: Posting,
   server: string,
   path: string,
   body: { content: string; reply_to?: number; thread_root_id?: number },
@@ -103,7 +101,8 @@ export async function postGuest(
   const key = sessionKey(client, server, widget)
   const current = () => sessions.get(key) ?? device().read(key)
   const send = async (secret?: string | null) => {
-    const result = await client.req<{ message: Message; session: string }>(
+    const result = await guestRequest<{ message: Message; session: string }>(
+      client,
       'POST',
       path,
       body,

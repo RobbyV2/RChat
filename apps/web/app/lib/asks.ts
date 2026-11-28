@@ -1,4 +1,4 @@
-import type { Api } from './api'
+import type { Api, ApiClient } from './api'
 
 // Screens never hold the client of an instance: they name a request with `ask` and hand it to a
 // load (components/loaded.tsx) or to `sendTo`.
@@ -51,12 +51,54 @@ export const together = <T>(requests: Ask<T>[]): Ask<T[]> => ({
 export const known = <T>(answer: T): Ask<T> => ({ [run]: () => Promise.resolve(answer) })
 
 // The address of an uploaded file on the session's instance.
-export const mediaUrlOf = (session: { api: Api }, id: string): string => session.api.mediaUrl(id)
+export const mediaUrlOf = (session: Held, id: string): string => session.api.mediaUrl(id)
 
 // The address of an uploaded profile picture at `size` pixels on the session's instance.
-export const avatarUrlOf = (session: { api: Api }, id: string, size: number): string =>
+export const avatarUrlOf = (session: Held, id: string, size: number): string =>
   session.api.avatarUrl(id, size)
 
-// The address the session's requests go to, and the origin it is served from.
-export const apiBaseOf = (session: { api: Api }): string => session.api.base
-export const apiOriginOf = (session: { api: Api }): string => session.api.origin()
+// The address the session's requests go to, and the origin it is served from (as the page at
+// `page` reaches it).
+export const apiBaseOf = (session: Held): string => session.api.base
+export const apiOriginOf = (session: Held, page?: string): string => session.api.origin(page)
+
+// What holds a connection to an instance: an account's session, a connection to another site, a
+// frame's connection.
+type Held = { api: ApiClient }
+
+// Media addresses on the session's instance: a link preview's image, and the upload an address
+// on the instance names (null for any other address).
+export const previewUrlOf = (session: Held, path: string): string => session.api.previewUrl(path)
+export const mediaIdOf = (session: Held, url: string): string | null => session.api.mediaId(url)
+
+// Whether the session is signed in, and whether a guest's media in `server` loads by address.
+export const signedInTo = (session: Held): boolean => session.api.signedIn()
+export const guestMediaOf = (session: Held, server?: string) => session.api.guestMedia(server)
+
+// The bytes behind a media address or an upload, fetched with the session's own credentials.
+export const blobOf = (session: Held, url: string, server?: string, signal?: AbortSignal) =>
+  session.api.authedBlob(url, server, signal)
+export const mediaBlobOf = (session: Held, id: string, server?: string, signal?: AbortSignal) =>
+  session.api.mediaBlob(id, server, signal)
+
+// A guest's request: `headers` carry the guest session (lib/guest_chat.ts keeps it).
+export const guestRequest = <T>(
+  session: Held,
+  method: 'GET' | 'POST',
+  path: string,
+  body: unknown,
+  headers: Record<string, string>
+): Promise<T> => session.api.req<T>(method, path, body, headers)
+
+// The API console: the instance's description of its API, and a request the person wrote, sent
+// once as written with the session's credentials.
+export const apiDescription = (session: Held): Promise<unknown> =>
+  session.api.req<unknown>('GET', '/openapi.json')
+export const sendWritten = (
+  session: Held,
+  request: { method: string; path: string; body?: unknown; headers?: Record<string, string> }
+): Promise<Response> =>
+  session.api.send(request.method, request.path, request.body, {
+    headers: request.headers,
+    retry: false,
+  })

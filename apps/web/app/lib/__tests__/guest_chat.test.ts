@@ -38,7 +38,7 @@ function guest(origin: string) {
     fail: () => {
       rejectFirst = true
     },
-    post: (server: string, path: string) => postGuest(api, server, path, { content: path }),
+    post: (server: string, path: string) => postGuest({ api }, server, path, { content: path }),
   }
 }
 test('overlapping first sends share an author across composers without persistent storage', async () => {

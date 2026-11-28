@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { ApiError, readStart } from './api'
+import { apiBaseOf, apiDescription, sendWritten } from './asks'
 import { Ended } from './slices/ctx'
 import { readLocal, writeLocal } from './instances'
 import {
@@ -48,7 +49,7 @@ export const RESPONSE_MAX = 2 * 1024 * 1024
 const emptyHistory = (): ApiHistory => ({ ...EMPTY_HISTORY, items: [] })
 
 export function createApiDoc(acct: AccountSession) {
-  const { api, conn: home } = acct
+  const { conn: home } = acct
   const { sessionMark } = acct.lifetime
   let generation = 0
   let disposed = false
@@ -62,7 +63,7 @@ export function createApiDoc(acct: AccountSession) {
   }))
 
   // Per instance and account: what one account loaded is not shown to the next.
-  const docKey = () => `${api.base}\n${home.scoped(useApiDoc.getState().owner ?? 'guest')}`
+  const docKey = () => `${apiBaseOf(acct)}\n${home.scoped(useApiDoc.getState().owner ?? 'guest')}`
 
   const loadApiDoc = async (force = false) => {
     if (disposed) return
@@ -73,7 +74,7 @@ export function createApiDoc(acct: AccountSession) {
     const request = ++generation
     useApiDoc.setState({ key, loading: true, error: null })
     try {
-      const doc = await api.req<unknown>('GET', '/openapi.json')
+      const doc = await apiDescription(acct)
       if (request !== generation || at !== sessionMark() || useApiDoc.getState().key !== key) return
       useApiDoc.setState({ ops: parseOpenApi(doc), loading: false })
     } catch (e) {
@@ -134,7 +135,7 @@ export function createApiDoc(acct: AccountSession) {
     if (path === null) throw new ApiError('Only API paths can be called', 0)
     const started = acct.time.elapsed()
     const res = await acct.lifetime.live(
-      api.send(r.method, path, r.body, { headers: r.headers, retry: false })
+      sendWritten(acct, { method: r.method, path, body: r.body, headers: r.headers })
     )
     if (disposed || mark !== sessionMark()) throw new Ended()
     const type = res.headers.get('content-type')
