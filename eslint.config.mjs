@@ -222,6 +222,25 @@ export default tseslint.config(
     ignores: ['apps/web/app/lib/log.ts', ...TEST_FILES],
     rules: { 'no-console': 'error' },
   },
+  {
+    files: ['apps/web/app/components/**'],
+    ignores: TEST_FILES,
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/lib/api', '**/lib/api/*'],
+              allowTypeImports: true,
+              message:
+                'Components get data through loads (components/loaded.tsx) and store actions, and read a failure through app/lib/api_errors.',
+            },
+          ],
+        },
+      ],
+    },
+  },
   { files: REQUEST_SINKS, rules: sinkRule(['TO_REQUEST']) },
   { files: STORE_SINKS, rules: sinkRule(['TO_STORE']) },
   { files: SCREEN_SINKS, ignores: TEST_FILES, rules: sinkRule(['TO_SCREEN']) },

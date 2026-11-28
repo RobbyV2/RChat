@@ -1,6 +1,6 @@
 'use client'
 import { Loaded, useAccountRequest } from '../loaded'
-import { ApiError } from '../../lib/api'
+import { statusOf } from '../../lib/api_errors'
 import {
   recentConfirmation,
   takeRecentConfirmation,
@@ -64,9 +64,9 @@ export function ReAuthPrompt({
       await onBody(body)
     } catch (e) {
       if (freshProvider && current()) {
-        if (unwatch && e instanceof ApiError && e.status === 401 && e.message === 'Unauthorized') {
+        if (unwatch && statusOf(e) === 401 && (e as Error).message === 'Unauthorized') {
           acct.store.getState().expireSession()
-        } else if (e === 'expired' || (unwatch && e instanceof ApiError && e.status === 401)) {
+        } else if (e === 'expired' || (unwatch && statusOf(e) === 401)) {
           // The callback and the socket's revocation check can arrive in either order.
           unwatch ??= watchProviderConfirmation(acct, freshProvider, current)
           await acct.store.getState().checkSession()

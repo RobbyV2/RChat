@@ -10,7 +10,7 @@ import type { AccountSession } from '../../lib/client/session'
 import { errorText } from '../../lib/sso'
 import type { AuthInfo } from '../../lib/types'
 import { NAME_MAX } from '../../lib/rules'
-import { ApiError } from '../../lib/api'
+import { statusOf } from '../../lib/api_errors'
 import { sameSecret, Secret } from '../../lib/secret'
 export function ClientLogin({
   account,
@@ -119,8 +119,7 @@ export function ClientLogin({
     } catch (e) {
       if (!valid()) return
       const message = e instanceof Error ? e.message : errorText('failed')
-      const retry =
-        !!reason && e instanceof ApiError && e.status === 400 && !/expired/i.test(message)
+      const retry = !!reason && statusOf(e) === 400 && !/expired/i.test(message)
       if (!retry) {
         releaseTemporary()
         setReason(null)

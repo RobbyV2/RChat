@@ -2,7 +2,7 @@
 import { useAccount, accountBoundStore } from '../../lib/client/react'
 import { useEffect } from 'react'
 import { applyWarning, configPatch, controlOf } from '../../lib/admin_config'
-import { ApiError } from '../../lib/api'
+import { missing } from '../../lib/api_errors'
 import { errorText, useStore } from '../../lib/store'
 import type { AdminConfig, ConfigControl } from '../../lib/types'
 
@@ -28,8 +28,7 @@ export const useConfigSync = (open: boolean) => {
       })
       .catch(
         ownerSession.lifetime.inSession((e: unknown) => {
-          if (live && !(e instanceof ApiError && e.status === 404))
-            ownerSession.store.getState().setError(errorText(e))
+          if (live && !missing(e)) ownerSession.store.getState().setError(errorText(e))
         })
       )
     return () => {

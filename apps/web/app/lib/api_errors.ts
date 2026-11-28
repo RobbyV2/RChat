@@ -110,6 +110,9 @@ export const refusalOf = (error: unknown): Refusal => {
   return plain('unknown', typeof error === 'string' && error ? error : 'Something went wrong')
 }
 
+// The status the server answered with; null for a request that got no answer.
+export const statusOf = (error: unknown): number | null => refusalOf(error).status
+
 // Whether the answer was that the thing is not there (or not the caller's to see).
 export const missing = (error: unknown): boolean => refusalOf(error).status === 404
 

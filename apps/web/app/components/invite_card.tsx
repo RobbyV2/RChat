@@ -18,7 +18,7 @@ import {
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { ExternalLink, Globe, Hash, Link2Off, Lock, Paperclip } from 'lucide-react'
-import { ApiError } from '../lib/api'
+import { missing, statusOf } from '../lib/api_errors'
 import type { InviteAccess } from '../lib/remote_invite'
 import { accountPath } from '../lib/view'
 import { knownLinkOrigin, routeInstanceLink, linkChoice } from '../lib/client/instance_links'
@@ -145,7 +145,7 @@ function useSettledVersion(version: number, visible: boolean) {
   return settled
 }
 
-const transient = (error: unknown) => keepsPreview(error instanceof ApiError ? error.status : null)
+const transient = (error: unknown) => keepsPreview(statusOf(error))
 
 function useInvite(
   server: string,
@@ -789,7 +789,7 @@ export function InviteCard({
       return { ok: true }
     } catch (e) {
       const retry = needsPassword(e) || deniedAccess(e)
-      const banned = !asGuest && e instanceof ApiError && e.status === 403
+      const banned = !asGuest && statusOf(e) === 403
       const message = needsPassword(e) ? 'Enter the server password' : errorText(e)
       return { ok: false, password: retry, banned, message }
     } finally {
@@ -860,7 +860,7 @@ export function InviteCard({
 
   const btn = big ? 'w-full' : 'shrink-0'
   const fit = big ? 'break-words' : 'truncate'
-  const errorCode = error instanceof ApiError ? error.status : null
+  const errorCode = statusOf(error)
   const ticketEnds = data?.password_expires_at ?? null
   const now = useNow(
     ticketEnds === null ? 60_000 : tickMs(ticketEnds - Math.floor(time().now() / 1000))
@@ -1216,7 +1216,7 @@ export function RemoteInviteCard({
     </Button>
   )
   const hidden = needsPassword(error) || deniedAccess(error)
-  const invalid = error instanceof ApiError && error.status === 404 && !hidden
+  const invalid = missing(error) && !hidden
   const heading = (
     <>
       Invite on <Name of={instanceAddress(host)} look="normal-case" />

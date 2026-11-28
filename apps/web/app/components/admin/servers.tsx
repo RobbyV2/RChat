@@ -18,7 +18,7 @@ import {
   removeEntry,
   type CreateServerForm,
 } from '../../lib/admin_servers'
-import { ApiError } from '../../lib/api'
+import { missing } from '../../lib/api_errors'
 import { errorText, useStore } from '../../lib/store'
 import { PageGroup, PageRow } from '../settings_page'
 import { Button, IconButton, ListRow } from '../controls'
@@ -35,7 +35,7 @@ const serverExists = (api: ReturnType<typeof useAccount>['api'], key: string) =>
   api.getServer(key).then(
     () => true,
     (e: unknown) => {
-      if (e instanceof ApiError && e.status === 404) return false
+      if (missing(e)) return false
       throw e
     }
   )
