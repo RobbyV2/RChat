@@ -38,6 +38,7 @@ const seat = (world: ContractWorld, calls: unknown[][]) => {
       perms: -1,
       owners: [],
       members: [{ ik: 'B', name: 'Bob' }],
+      memberList: { hide: false, roles: null, channels: [] },
       channels: [{ id: 'c3', name: 'deck', kind: 'voice' }],
       voice: { c3: [{ ik: 'B', video: false, muted: true, deafened: false }] },
     } as unknown as ServerView
