@@ -45,6 +45,16 @@ describe('a load on screen', () => {
     expect(html.includes('<b>')).toBe(false)
   })
 
+  test('nothing while it loads, where the caller asks for no skeleton', () => {
+    const time = clock()
+    const html = renderToStaticMarkup(
+      <Loaded load={load<number>(time, make => make.loading())} skeleton={null}>
+        {value => <b>{value}</b>}
+      </Loaded>
+    )
+    expect(html).toBe('')
+  })
+
   test('past the deadline, a line and a way to ask again', () => {
     const time = clock()
     const l = load<number>(

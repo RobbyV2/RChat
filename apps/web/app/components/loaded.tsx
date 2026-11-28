@@ -43,12 +43,14 @@ function Loading({
 }) {
   const now = useElapsed(overdueAt)
   if (overdueIn(overdueAt, now) > 0)
-    return <Held>{skeleton ?? <RowsSkeleton rows={3} label={`Loading ${what}`} />}</Held>
+    return skeleton === null ? null : (
+      <Held>{skeleton ?? <RowsSkeleton rows={3} label={`Loading ${what}`} />}</Held>
+    )
   return <Notice line={`Still loading ${what}.`} icon="none" retry={retry} />
 }
 
 // Draws what a load holds: `children` with the value once it is here, and every other state
-// itself. While loading it shows `skeleton` (rows by default), and past the deadline a line with
+// itself. While loading it shows `skeleton` (rows by default, nothing for null), and past the deadline a line with
 // a way to ask again. `empty` is the line for nothing to show; `what` names the thing in the
 // lines ("pins", "the member list").
 export function Loaded<T>({

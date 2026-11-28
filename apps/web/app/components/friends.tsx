@@ -1,5 +1,6 @@
 'use client'
 
+import { Loaded, useRequest } from './loaded'
 import { Name } from './name'
 import { handleName, personCalled } from '../lib/names'
 import { asAccount } from '../lib/people'
@@ -854,8 +855,7 @@ function AddFriends({ dialog }: { dialog: Extract<ActiveDialog, { kind: 'add_fri
 
 // The friend row for a profile card: Add friend, Accept, Cancel request or Remove friend.
 export function ProfileFriendButton({ user, onDone }: { user: UserRef; onDone: () => void }) {
-  const { api, store } = useAccount()
-  const [relation, setRelation] = useState<Relation | null>(null)
+  const { api } = useAccount()
   const rev = useStore(
     s =>
       s.friends.list.length +
@@ -864,17 +864,27 @@ export function ProfileFriendButton({ user, onDone }: { user: UserRef; onDone: (
       s.friendCounts.incoming +
       s.friendCounts.outgoing
   )
-  useEffect(() => {
-    let live = true
-    api.friendship(user.username).then(
-      r => live && setRelation(r.status),
-      () => live && setRelation(null)
-    )
-    return () => {
-      live = false
-    }
-  }, [user.username, rev])
-  if (relation === null) return null
+  const load = useRequest(
+    () => api.friendship(user.username).then(r => r.status),
+    [api, user.username, rev]
+  )
+  return (
+    <Loaded load={load} skeleton={null} what="the friend status">
+      {relation => <FriendAction user={user} relation={relation} onDone={onDone} />}
+    </Loaded>
+  )
+}
+
+function FriendAction({
+  user,
+  relation,
+  onDone,
+}: {
+  user: UserRef
+  relation: Relation
+  onDone: () => void
+}) {
+  const { store } = useAccount()
   const s = store.getState()
   const [label, icon, run, danger]: [string, LucideIcon, () => void, boolean] =
     relation === 'friend'
