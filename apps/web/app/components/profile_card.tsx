@@ -79,7 +79,7 @@ import { sendKey } from '../lib/keys'
 import type { Member, Profile, Role, UserRef } from '../lib/types'
 import { useLook } from './shown_user'
 import { UserAvatar } from './user_avatar'
-import { Button, IconButton, LinkButton, ListRow } from './controls'
+import { Button, IconButton, ListRow, LinkButton } from './controls'
 import { Row, Stack, Surface, Inset, Lift } from './layout'
 import { Masked, Sheet, useOwnServer, fieldCls } from './ui'
 import { useCopied } from '../lib/use_copied'
@@ -758,17 +758,14 @@ function CardBody({
                         </Surface>
                       ))}
                       {addable.length > 0 && (
-                        <button
-                          title="Add role"
-                          aria-label="Add role"
+                        <IconButton
+                          icon={Plus}
+                          label="Add role"
                           aria-expanded={adding}
                           onClick={() => setAdding(a => !a)}
-                          className={`flex h-6 w-6 items-center justify-center rounded-full border border-dashed text-on-surface-variant hover:border-primary hover:text-primary ${
-                            adding ? 'border-primary text-primary' : 'border-outline'
-                          }`}
-                        >
-                          <Plus size={14} />
-                        </button>
+                          size="sm"
+                          aria-haspopup="menu"
+                        />
                       )}
                     </Row>
                     {adding && addable.length > 0 && (

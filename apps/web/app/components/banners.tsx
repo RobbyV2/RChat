@@ -11,7 +11,8 @@ import { LabelText } from './instance_badge'
 import { NoticeStack } from './notice_stack'
 import { time } from '../lib/platform/time'
 import { bannerLook } from '../lib/controls'
-import { Inset, Row } from './layout'
+import { Row } from './layout'
+import { LinkButton } from './controls'
 
 // Shown while the account signed in with a temporary password it has not replaced, in the
 // place of the error and the toast, which take it while they show. A dialog hides it.
@@ -31,16 +32,13 @@ function TemporaryPassword() {
         <span className="min-w-0">
           {temporaryNotice(temporary, Math.floor(time().now() / 1000))}
         </span>
-        <Inset
+        <LinkButton
           onClick={() => openDialog({ kind: 'settings', section: 'profile' })}
-          as="button"
-          row
-          pad="md"
-          inset="sides"
-          look="rounded-full font-medium underline outline-offset-2 focus-visible:outline-2 focus-visible:outline-current pointer-coarse:min-h-11"
+          tone="inherit"
+          underlined
         >
           Change it
-        </Inset>
+        </LinkButton>
       </Row>
     </div>
   )

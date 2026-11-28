@@ -11,8 +11,8 @@ import {
 import { useAccount, useStore } from '../lib/client/react'
 import type { LinkedProvider } from '../lib/types'
 import { ReAuthPrompt } from './backup_phrase/reauth_prompt'
-import { Button } from './controls'
-import { Inset, Row, Stack } from './layout'
+import { Button, LinkButton } from './controls'
+import { Row, Stack } from './layout'
 import { Dialog } from './ui'
 import { time } from '../lib/platform/time'
 
@@ -98,17 +98,9 @@ export function DeletionBanner({ className }: { className: string }) {
     >
       <Row gap="md" justify="center" wrap>
         <span className="min-w-0">{deletionNotice(pending, Math.floor(time().now() / 1000))}</span>
-        <Inset
-          type="button"
-          onClick={() => void keep()}
-          as="button"
-          row
-          pad="md"
-          inset="sides"
-          look="rounded-full font-medium underline outline-offset-2 focus-visible:outline-2 focus-visible:outline-current pointer-coarse:min-h-11"
-        >
+        <LinkButton onClick={() => void keep()} tone="inherit" underlined>
           Keep account
-        </Inset>
+        </LinkButton>
       </Row>
     </div>
   )

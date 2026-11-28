@@ -1,5 +1,6 @@
 'use client'
 
+import { IconButton } from './controls'
 import { Name } from './name'
 import { serverCalled } from '../lib/names'
 import type { CSSProperties } from 'react'
@@ -67,15 +68,14 @@ export function ServerHeader({
               </span>
             )
           : onSettings && (
-              <button
-                title="Server settings"
-                aria-label="Server settings"
-                onClick={onSettings}
-                style={chip}
-                className={gear}
-              >
-                {gearIcon}
-              </button>
+              <span style={chip} className="flex shrink-0">
+                <IconButton
+                  icon={Settings}
+                  label="Server settings"
+                  tone={chip ? 'banner' : 'plain'}
+                  onClick={onSettings}
+                />
+              </span>
             )}
       </Inset>
     </header>

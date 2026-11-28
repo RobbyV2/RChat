@@ -48,18 +48,16 @@ export function RoleLooksFields({
   return (
     <Row data-role-looks gap="lg" wrap>
       <Row as="span" gap="2xs">
-        <button
+        <IconButton
           ref={ref}
-          type="button"
-          title={iconTitle}
-          aria-label={iconTitle}
+          {...(icon ? { glyph: icon } : { icon: SmilePlus })}
+          label={iconTitle}
+          tone="tonal"
+          shape="square"
           aria-expanded={picking}
           disabled={!!locked}
           onClick={() => setPicking(p => !p)}
-          className="flex h-8 w-8 items-center justify-center rounded-lg bg-surface-container-high text-base text-on-surface-variant outline-offset-2 hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60 pointer-coarse:h-11 pointer-coarse:w-11"
-        >
-          {icon ?? <SmilePlus size={16} />}
-        </button>
+        />
         {icon && !locked && (
           <IconButton
             icon={X}

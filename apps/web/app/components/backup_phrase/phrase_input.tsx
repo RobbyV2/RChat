@@ -32,21 +32,14 @@ export function PhraseHints({
   return (
     <Row role="group" aria-label="Suggestions" gap="2xs" wrap>
       {hints.map(w => (
-        <Surface
+        <Button
           key={w}
-          type="button"
           onMouseDown={e => e.preventDefault()}
           onClick={() => onPick(w)}
-          as="button"
-          pad="md"
-          inset="chip"
-          tone="secondary"
-          radius="full"
-          text="sm"
-          look={`${secret ? SECRET : ''} font-mono hover:opacity-90 pointer-coarse:min-h-11`}
+          variant="tonal"
         >
-          {w}
-        </Surface>
+          <span className={`${secret ? SECRET : ''} font-mono`}>{w}</span>
+        </Button>
       ))}
     </Row>
   )

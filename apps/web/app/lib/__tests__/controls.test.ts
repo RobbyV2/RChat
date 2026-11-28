@@ -46,6 +46,7 @@ const TONES: IconButtonTone[] = [
   'error',
   'tonal',
   'raised',
+  'banner',
   'filled',
   'filled-danger',
   'overlay',
@@ -117,7 +118,6 @@ describe('button looks', () => {
       "[aria-current='true']",
       "[aria-current='page']",
       "[aria-selected='true']",
-      "[aria-checked='true']",
       "[aria-disabled='true']",
     ])
       expect(idle).toContain(state)
@@ -239,11 +239,9 @@ describe('the other controls', () => {
       'pressed:bg-secondary-container'
     )
     has(cardButtonLook('low', 'md', true), 'pressed:bg-secondary-container')
-    has(
-      rowLook('plain', 'menu'),
-      'selected:bg-secondary-container',
-      'checked:bg-secondary-container'
-    )
+    has(rowLook('plain', 'menu'), 'selected:bg-secondary-container')
+    has(iconButtonLook('plain', 'lg'), 'checked:bg-secondary-container')
+    expect(classes(rowLook('plain', 'menu'))).not.toContain('checked:bg-secondary-container')
     has(tileLook('active'), 'bg-primary', 'text-on-primary')
   })
 

@@ -12,6 +12,7 @@ import { useShownMembers } from './shown_user'
 import { Row, Stack, Surface } from './layout'
 import { fieldCls } from './ui'
 import { time } from '../lib/platform/time'
+import { CardButton } from './controls'
 
 // Searching a hosted server's members: the paged search, its field, and a picker that adds one.
 
@@ -151,20 +152,13 @@ export function MemberPicker({
       {found.active && (
         <Stack gap="3xs">
           {hits.map(m => (
-            <Surface
+            <CardButton
               key={m.username}
               onClick={() => {
                 onPick(m)
                 setQ('')
               }}
-              as="button"
-              row
               pad="sm"
-              inset="chip"
-              gap="sm"
-              tone="plain"
-              radius="lg"
-              look="text-left hover:bg-surface-container-highest"
               place="w-full"
             >
               <UserAvatar person={shownOf(m)} size={20} />
@@ -172,7 +166,7 @@ export function MemberPicker({
                 of={personCalled(shownOf(m).display_name, m.username)}
                 look="min-w-0 flex-1 truncate text-sm"
               />
-            </Surface>
+            </CardButton>
           ))}
           {!found.loading && hits.length === 0 && (
             <Surface pad="sm" inset="bar" tone="plain" radius="none">

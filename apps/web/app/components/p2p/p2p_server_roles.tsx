@@ -1,6 +1,6 @@
 'use client'
 import { Covered } from '../covered'
-import { Button, IconButton } from '../controls'
+import { Button, IconButton, CardButton } from '../controls'
 import { Name } from '../name'
 import { p2pName } from '../../lib/names'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -66,7 +66,7 @@ import type {
 import { allowListTitle, emptyAllowText, type RestrictKey } from '../../lib/channel_access'
 import { matching, nextPage, page, PAGE } from '../../lib/paging'
 import { longPress } from '../context_menu'
-import { Inset, Row, Stack, Surface } from '../layout'
+import { Row, Stack, Surface } from '../layout'
 import { dragScope } from '../drag'
 import {
   ColorSwatch,
@@ -599,20 +599,10 @@ function MemberPickerBody({
       <ul aria-label="Members" className="max-h-48 overflow-y-auto rounded-lg bg-surface-container">
         {items.map(m => (
           <li key={m.ik}>
-            <Inset
-              as="button"
-              onClick={() => onPick(m)}
-              pad="sm"
-              inset="bar"
-              gap="sm"
-              row
-              text="sm"
-              look="text-left hover:bg-surface-container-highest"
-              place="w-full"
-            >
+            <CardButton onClick={() => onPick(m)} pad="sm" place="w-full">
               <MemberAvatar members={items} ik={m.ik} size={24} />
               <Name of={p2pName(m.name, m.ik === me)} look="min-w-0 truncate" />
-            </Inset>
+            </CardButton>
           </li>
         ))}
         {found.length === 0 && (

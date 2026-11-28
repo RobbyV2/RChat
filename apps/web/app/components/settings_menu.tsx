@@ -11,7 +11,6 @@ import { ReAuthPrompt } from './backup_phrase/reauth_prompt'
 import { PhraseSettings } from './backup_phrase/phrase_settings'
 import { DeleteAccount } from './account_deletion'
 import type { LinkedProvider, ReAuthBody } from '../lib/types'
-import { Dialog } from './ui'
 import { ManageAccounts, SettingsAccountPicker } from './account_switcher'
 import { client } from '../lib/client/client'
 import { useAccount } from '../lib/client/react'
@@ -79,7 +78,7 @@ import { Choice, PrivacyChoices } from './friends'
 import { LinkSafetySection } from './link_safety_settings'
 import { AccountWords, PassSwitch } from './word_grid'
 import { PageRow, SettingsPage, type PageSection } from './settings_page'
-import { dangerBtn, FieldError, fieldCls, sectionCls } from './ui'
+import { dangerBtn, Dialog, FieldError, fieldCls, sectionCls } from './ui'
 
 const bioFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
@@ -943,12 +942,12 @@ function ProfileSection() {
       <PageRow id="user_account">
         <Stack gap="2xl">
           <AccountCard />
-          <button
-            className="self-start text-sm text-primary"
+          <Button
             onClick={() => account.store.getState().openDialog({ kind: 'account_switcher' })}
+            place="self-start"
           >
             Switch account
-          </button>
+          </Button>
           <ManageAccounts />
         </Stack>
       </PageRow>

@@ -976,7 +976,6 @@ body {
         [aria-current='true'],
         [aria-current='page'],
         [aria-selected='true'],
-        [aria-checked='true'],
         [aria-disabled='true']
       ) {
       @slot;

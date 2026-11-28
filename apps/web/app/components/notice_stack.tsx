@@ -4,7 +4,7 @@ import { Name } from './name'
 import { accountLabel, personCalled, serverCalled } from '../lib/names'
 import { Covered } from './covered'
 import { asAccount } from '../lib/people'
-import { IconButton } from './controls'
+import { IconButton, CardButton } from './controls'
 import { useCallback, useEffect, useRef, useState, type FocusEvent } from 'react'
 import { User, X } from 'lucide-react'
 import { openAccountNotice } from '../lib/client/notice_owner'
@@ -27,7 +27,7 @@ import {
 import { UserAvatar } from './user_avatar'
 import { Masked } from './ui'
 import { time } from '../lib/platform/time'
-import { Inset, Stack } from './layout'
+import { Stack } from './layout'
 
 function Pieces({ pieces }: { pieces: Piece[] }) {
   return pieces.map((p, i) => {
@@ -96,19 +96,14 @@ function NoticeCard({ notice, paused }: { notice: Notice; paused: boolean }) {
       }}
       className="group/notice relative overflow-hidden rounded-xl bg-surface-container-high shadow-elevation-2 hover:bg-surface-container-highest"
     >
-      <Inset
+      <CardButton
         onClick={() => {
           if (card.current?.contains(document.activeElement))
             (document.activeElement as HTMLElement).blur()
           dismiss(notice.id)
           openAccountNotice(owner, notice.go)
         }}
-        as="button"
-        row
         pad="md"
-        gap="md"
-        align="start"
-        look="text-left focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
         place="w-full"
       >
         {actor && !streamer ? (
@@ -134,7 +129,7 @@ function NoticeCard({ notice, paused }: { notice: Notice; paused: boolean }) {
             </span>
           )}
         </span>
-      </Inset>
+      </CardButton>
       <IconButton
         icon={X}
         label="Dismiss"

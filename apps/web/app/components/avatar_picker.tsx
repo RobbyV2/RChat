@@ -6,8 +6,9 @@ import { useStore } from '../lib/store'
 import type { ReactNode } from 'react'
 import type { AvatarKind } from '../lib/types'
 import { ColorField } from './color_field'
-import { Row, Stack, Surface } from './layout'
+import { Row, Stack } from './layout'
 import { UserAvatar } from './user_avatar'
+import { CardButton } from './controls'
 
 interface Props {
   username: string
@@ -35,22 +36,14 @@ export function AvatarPicker({
 }: Props) {
   const theme = useStore(s => s.theme)
   const option = (value: AvatarKind, label: string) => (
-    <Surface
-      as="button"
-      type="button"
+    <CardButton
       title={`${label} avatar`}
-      aria-pressed={kind === value}
       disabled={disabled}
       onClick={() => onKind(value)}
+      tone="outlined"
+      column
       pad="md"
-      gap="sm"
-      tone="plain"
-      align="center"
-      look={`transition-colors border ${
-        kind === value
-          ? 'border-primary bg-primary-container/30'
-          : 'border-outline-variant hover:bg-surface-container-high'
-      }`}
+      pressed={kind === value}
       place="flex-1"
     >
       {avatar ? (
@@ -66,7 +59,7 @@ export function AvatarPicker({
         />
       )}
       <span className="text-xs text-on-surface-variant">{label}</span>
-    </Surface>
+    </CardButton>
   )
   return (
     <Stack gap="sm">

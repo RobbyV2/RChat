@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { Download, FileDown, Printer } from 'lucide-react'
-import { Button } from '../controls'
+import { Button, Cover } from '../controls'
 import { Row, Stack, Surface } from '../layout'
 import {
   KEY_DOT,
@@ -144,13 +144,11 @@ export function PhraseQr({
   const cover = `${box} ${coverBoxLook}`
   if (!onShow) return <div className={cover}>Hidden in streamer mode</div>
   return (
-    <button
-      type="button"
-      onClick={onShow}
-      className={`${cover} hover:bg-surface-container-highest hover:text-on-surface`}
-    >
-      Hidden in streamer mode. Show QR code
-    </button>
+    <div className={`${box} flex`}>
+      <Cover onClick={onShow} place="h-full">
+        Hidden in streamer mode. Show QR code
+      </Cover>
+    </div>
   )
 }
 

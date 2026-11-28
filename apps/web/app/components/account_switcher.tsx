@@ -48,8 +48,6 @@ function useRows() {
 }
 const NARROW = '(max-width: 767px)'
 const keyOf = (row: SwitcherRow) => JSON.stringify([row.origin, row.username, row.local])
-const smallButton =
-  'inline-flex size-9 items-center justify-center rounded-lg text-on-surface-variant hover:bg-surface-container-highest disabled:opacity-35'
 
 export function AccountSwitcherTile() {
   const account = useAccount()
@@ -185,14 +183,10 @@ function OrderHandle({
     : mask(name)
   return (
     <span className="inline-flex shrink-0 items-center">
-      <button
-        type="button"
+      <IconButton
         draggable
         data-order-target={JSON.stringify(target)}
         data-order-index={index}
-        aria-label={'Drag ' + label}
-        title={'Drag ' + label}
-        className={smallButton + ' touch-none cursor-grab'}
         onDragStart={e => {
           e.dataTransfer.setData('application/x-rchat-order', JSON.stringify(target))
           e.dataTransfer.effectAllowed = 'move'
@@ -209,9 +203,12 @@ function OrderHandle({
           const other = parseJson(el.dataset.dropTarget ?? '', ORDER_TARGET)
           if (other.ok && sameLevel(target, other.value)) reorder(target, other.value)
         }}
-      >
-        <GripVertical size={16} />
-      </button>
+        icon={GripVertical}
+        label={'Drag ' + label}
+        size="lg"
+        shape="square"
+        grip
+      ></IconButton>
       <IconButton
         icon={ArrowUp}
         label={'Move ' + label + ' up'}
@@ -384,21 +381,13 @@ function AccountList({
                   >
                     <Surface tone="plain" radius="none" pad="2xs" inset="bar">
                       <Row gap="2xs">
-                        <Surface
-                          as="button"
-                          type="button"
+                        <CardButton
                           data-account-row={key}
-                          aria-current={r.active ? 'true' : undefined}
                           {...longPress(() => setActions(key))}
                           onClick={() => select(r)}
-                          pad="sm"
-                          inset="sides"
-                          gap="md"
-                          row
-                          tone="plain"
-                          radius="md"
-                          look="min-h-12 text-left hover:bg-surface-container-highest"
                           place="min-w-0 flex-1"
+                          pad="sm"
+                          current={r.active}
                         >
                           <ActorAvatar row={r} size={r.local ? 24 : 32} />
                           <span className="min-w-0 flex-1">
@@ -446,7 +435,7 @@ function AccountList({
                             <span aria-label="Unread" className="size-2 rounded-full bg-primary" />
                           )}
                           {r.active && <Check size={16} aria-label="Acting as" />}
-                        </Surface>
+                        </CardButton>
                         {manage && own && r.saved && ordered.length > 1 && (
                           <OrderHandle
                             label={r.display}

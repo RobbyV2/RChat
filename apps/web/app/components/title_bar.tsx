@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { desktopInfo, inShell, type DesktopOs } from '../lib/platform'
 import { Inset } from './layout'
+import { WindowButton } from './controls'
 
 type Win = Awaited<ReturnType<typeof loadWindow>>
 
@@ -52,13 +53,6 @@ function useMaximized(win: Win | null) {
 function Controls({ os, win }: { os: DesktopOs; win: Win | null }) {
   const maximized = useMaximized(win)
   const windows = os === 'windows'
-  const focus = '-outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary'
-  const btn = windows
-    ? `${focus} flex h-full w-11.5 items-center justify-center text-on-surface hover:bg-on-surface/10 active:bg-on-surface/20`
-    : `${focus} flex size-6 items-center justify-center rounded-full bg-on-surface/10 text-on-surface hover:bg-on-surface/20 active:bg-on-surface/30`
-  const close = windows
-    ? `${focus} flex h-full w-11.5 items-center justify-center text-on-surface hover:bg-window-close hover:text-on-window-close active:bg-window-close/80 active:text-on-window-close`
-    : btn
   const size = windows ? 10 : 8
   const maxLabel = maximized ? 'Restore' : 'Maximize'
   return (
@@ -69,33 +63,27 @@ function Controls({ os, win }: { os: DesktopOs; win: Win | null }) {
       gap={windows ? 'none' : 'md'}
       place="h-full shrink-0"
     >
-      <button
-        type="button"
-        title="Minimize"
-        aria-label="Minimize"
+      <WindowButton
         onClick={() => void win?.minimize()}
-        className={btn}
+        kind={windows ? 'bar' : 'dot'}
+        label="Minimize"
       >
         {glyph(MIN, size)}
-      </button>
-      <button
-        type="button"
-        title={maxLabel}
-        aria-label={maxLabel}
+      </WindowButton>
+      <WindowButton
         onClick={() => void win?.toggleMaximize()}
-        className={btn}
+        kind={windows ? 'bar' : 'dot'}
+        label={maxLabel}
       >
         {glyph(maximized ? RESTORE : MAX, size)}
-      </button>
-      <button
-        type="button"
-        title="Close"
-        aria-label="Close"
+      </WindowButton>
+      <WindowButton
         onClick={() => void win?.close()}
-        className={close}
+        kind={windows ? 'bar-close' : 'dot'}
+        label="Close"
       >
         {glyph(CLOSE, size)}
-      </button>
+      </WindowButton>
     </Inset>
   )
 }

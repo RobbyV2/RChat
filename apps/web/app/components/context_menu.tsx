@@ -34,7 +34,7 @@ import {
 import { EDITABLE } from '../lib/follow'
 import { withActionElement } from '../lib/masked_reveal'
 import { dnd, type DragSpec } from './drag'
-import { IconButton } from './controls'
+import { IconButton, ListRow } from './controls'
 import { Inset, Row, Stack, Surface } from './layout'
 import { Overlay, Sheet } from './ui'
 import { time } from '../lib/platform/time'
@@ -371,7 +371,7 @@ function MenuRow({
 }) {
   const size = coarse ? 20 : 16
   return (
-    <Inset
+    <ListRow
       role={roleOf(it)}
       aria-checked={it.checked}
       aria-haspopup={it.submenu ? 'menu' : undefined}
@@ -382,38 +382,32 @@ function MenuRow({
       onMouseEnter={onEnter ? e => onEnter(e.currentTarget) : undefined}
       onClick={e => onPick(e.currentTarget, e.detail === 0)}
       data-level={level}
-      as="button"
-      row
-      pad={coarse ? 'xl' : 'lg'}
-      inset="chip"
-      gap="md"
-      look={`text-left outline-none focus-visible:bg-surface-container-highest ${coarse ? 'min-h-13 text-base' : 'text-sm'} ${it.disabled ? 'cursor-default opacity-40' : coarse ? 'active:bg-surface-container-highest' : 'hover:bg-surface-container-highest'} ${open && !coarse ? 'bg-surface-container-highest' : ''} ${it.danger ? 'text-error' : 'text-on-surface'}`}
-      place="w-full"
-    >
-      {it.swatch ? (
-        <span
-          aria-hidden
-          data-swatch={it.swatch}
-          style={{ background: it.swatch, width: size, height: size }}
-          className="shrink-0 rounded-full border border-outline-variant"
-        />
-      ) : (
-        swatches && <span aria-hidden className="shrink-0" style={{ width: size }} />
-      )}
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate">{it.label}</span>
-        {it.subtitle && (
+      variant={coarse ? 'menu-touch' : 'menu'}
+      tone={it.danger ? 'danger' : 'plain'}
+      leading={
+        it.swatch ? (
           <span
-            className={`text-on-surface-variant ${
-              it.wrap ? `text-pretty ${coarse ? '' : 'max-w-64'}` : 'truncate'
-            } ${coarse ? 'text-sm' : 'text-xs'}`}
+            aria-hidden
+            data-swatch={it.swatch}
+            style={{ background: it.swatch, width: size, height: size }}
+            className="shrink-0 rounded-full border border-outline-variant"
+          />
+        ) : (
+          swatches && <span aria-hidden className="shrink-0" style={{ width: size }} />
+        )
+      }
+      label={it.label}
+      description={
+        it.subtitle && (
+          <span
+            className={`block ${it.wrap ? `text-pretty ${coarse ? '' : 'max-w-64'}` : 'truncate'} ${coarse ? 'text-sm' : ''}`}
           >
             {it.subtitle}
           </span>
-        )}
-      </span>
-      <Indicator it={it} size={size} />
-    </Inset>
+        )
+      }
+      trailing={<Indicator it={it} size={size} />}
+    />
   )
 }
 

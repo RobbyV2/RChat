@@ -16,6 +16,7 @@ export type IconButtonTone =
   | 'error'
   | 'tonal'
   | 'raised'
+  | 'banner'
   | 'filled'
   | 'filled-danger'
   | 'overlay'
@@ -206,13 +207,17 @@ export const placed = (base: string, look: string, place?: string) => {
   return [...kept, look, ...own].join(' ')
 }
 
-const FOCUS = 'outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary'
+// The focus ring without its color, for a control that sets the ring's color itself.
+const FOCUS_BARE = 'outline-offset-2 focus-visible:outline-2'
+const FOCUS = `${FOCUS_BARE} focus-visible:outline-primary`
 const HOVER = 'hover-idle:bg-on-surface/8'
 // The state layer on a colored surface (a banner): a tint of the text color it inherits.
 const HOVER_OWN = 'hover-idle:bg-current/10'
 // What a control that is on shows, whichever ARIA attribute says so.
 const ON =
-  'pressed:bg-secondary-container pressed:text-on-secondary-container current:bg-secondary-container current:text-on-secondary-container selected:bg-secondary-container selected:text-on-secondary-container checked:bg-secondary-container checked:text-on-secondary-container'
+  'pressed:bg-secondary-container pressed:text-on-secondary-container current:bg-secondary-container current:text-on-secondary-container selected:bg-secondary-container selected:text-on-secondary-container'
+// The chosen one of a few icon buttons that are radio items.
+const CHECKED = 'checked:bg-secondary-container checked:text-on-secondary-container'
 // A control that stays focusable while it cannot be used (`aria-disabled`) is dimmed like a
 // disabled one.
 const OFF = 'disabled:opacity-40 soft-off:cursor-not-allowed soft-off:opacity-40'
@@ -253,6 +258,9 @@ const ICON_TONE: Record<IconButtonTone, string> = {
     'bg-surface-container-high text-on-surface-variant hover-idle:bg-surface-container-highest hover-idle:text-on-surface',
   raised:
     'bg-surface-container-highest text-on-surface shadow-elevation-2 hover-idle:bg-surface-bright',
+  // On a server's banner: a chip of the color the header sets in `--gear-chip`.
+  banner:
+    'bg-gear-chip text-on-surface shadow-elevation-1 hover-idle:bg-surface-container-highest focus-visible:outline-hdr-gear',
   filled: 'bg-primary text-on-primary hover-idle:opacity-90',
   'filled-danger': 'bg-error text-on-error hover-idle:opacity-90',
   overlay: 'bg-scrim/70 text-on-scrim hover-idle:bg-scrim/85',
@@ -294,7 +302,7 @@ export const iconButtonLook = (
   shape: IconButtonShape = 'round',
   tight = false
 ) =>
-  `${ICON_BOX[size]} shrink-0 items-center justify-center ${shape === 'round' ? 'rounded-full' : 'rounded-lg'} ${ICON_TONE[tone]} ${FOCUS} expanded:bg-on-surface/8 ${ON} ${OFF} pointer-coarse:size-11${size === 'xs' ? ' pointer-coarse:-m-3' : ''}${tight ? ' pointer-coarse:-mx-1.5' : ''}`
+  `${ICON_BOX[size]} shrink-0 items-center justify-center ${shape === 'round' ? 'rounded-full' : 'rounded-lg'} ${ICON_TONE[tone]} ${tone === 'banner' ? FOCUS_BARE : FOCUS} expanded:bg-on-surface/8 ${ON} ${CHECKED} ${OFF} pointer-coarse:size-11${size === 'xs' ? ' pointer-coarse:-m-3' : ''}${tight ? ' pointer-coarse:-mx-1.5' : ''}`
 
 const ROW_TONE: Record<RowTone, string> = {
   plain: 'text-on-surface',

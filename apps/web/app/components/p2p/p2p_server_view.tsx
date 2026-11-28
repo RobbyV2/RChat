@@ -20,7 +20,7 @@ import {
 } from '../../lib/place/channels'
 import { ChannelList } from '../channel_list'
 import { VoiceRow } from '../voice_row'
-import { Button, IconButton, LinkButton, Tile } from '../controls'
+import { Button, IconButton, LinkButton, Tile, CardButton } from '../controls'
 import MemberSidebar from '../member_sidebar'
 
 import { useCallback, useMemo, useState, type CSSProperties } from 'react'
@@ -427,29 +427,25 @@ function ServerHead({ v }: { v: ServerView }) {
       look="h-14"
       place="shrink-0"
     >
-      <Surface
-        as="button"
+      <CardButton
         {...longPress(open)}
         onClick={e => {
           const r = e.currentTarget.getBoundingClientRect()
           open(r.left + 12, r.bottom)
         }}
-        pad="2xs"
-        inset="bar"
-        tone="plain"
-        radius="md"
-        align="start"
-        look="text-left hover:bg-surface-container"
         place="min-w-0 flex-1"
+        pad="sm"
       >
-        <Row as="span" gap="xs" place="w-full">
-          <Name data-p2p-server-name of={roomName(v.name, own)} look="truncate font-medium" />
-          <P2pBadge />
-        </Row>
-        <span data-p2p-online-count className="truncate text-xs text-on-surface-variant">
-          {v.online} of {v.joined} online
+        <span className="flex min-w-0 flex-col items-start">
+          <Row as="span" gap="xs" place="w-full">
+            <Name data-p2p-server-name of={roomName(v.name, own)} look="truncate font-medium" />
+            <P2pBadge />
+          </Row>
+          <span data-p2p-online-count className="truncate text-xs text-on-surface-variant">
+            {v.online} of {v.joined} online
+          </span>
         </span>
-      </Surface>
+      </CardButton>
       {can(v, P.Invite) && (
         <IconButton
           icon={UserPlus}

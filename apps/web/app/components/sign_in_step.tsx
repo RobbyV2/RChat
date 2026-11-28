@@ -1,7 +1,7 @@
 'use client'
 import { instanceAddress } from '../lib/names'
 import { Name } from './name'
-import { Button } from './controls'
+import { Button, Chip } from './controls'
 import { Stack, Surface } from './layout'
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { ArrowRight } from 'lucide-react'
@@ -130,25 +130,18 @@ export function SignInStep({
   }
 
   const tab = (value: Mode, label: string) => (
-    <Surface
-      type="button"
+    <Chip
       disabled={busy}
       onClick={() => {
         setMode(value)
         setError(null)
         setNameError(null)
       }}
-      as="button"
-      pad="sm"
-      tone="plain"
-      radius="full"
-      align="center"
-      text="sm"
-      look={`font-medium outline-offset-2 transition-colors focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11 ${mode === value ? 'bg-primary-container text-on-primary-container' : 'text-on-surface-variant hover-idle:bg-on-surface/8'}`}
+      on={mode === value}
       place="flex-1"
     >
       {label}
-    </Surface>
+    </Chip>
   )
 
   return (

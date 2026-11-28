@@ -1,7 +1,7 @@
 'use client'
 
 import { Covered } from './covered'
-import { Button, IconButton } from './controls'
+import { Button, IconButton, Chip, CardButton, TriButton } from './controls'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Check, Slash, X } from 'lucide-react'
 import {
@@ -34,15 +34,6 @@ import { fieldCls, smallFieldCls } from './ui'
 
 const TRI_ICON = { allow: Check, inherit: Slash, deny: X } as const
 
-const triCls = (tri: Tri, on: boolean) =>
-  on
-    ? tri === 'allow'
-      ? 'bg-primary text-on-primary'
-      : tri === 'deny'
-        ? 'bg-error text-on-error'
-        : 'bg-surface-container-highest text-on-surface'
-    : 'text-on-surface-variant enabled:hover:bg-surface-container-highest'
-
 function TriControl({
   item,
   value,
@@ -66,18 +57,16 @@ function TriControl({
         const block = on ? null : blockOf(tri)
         const name = `${TRI_TEXT[tri]} ${item.label}`
         return (
-          <button
+          <TriButton
             key={tri}
-            type="button"
-            aria-pressed={on}
-            aria-label={name}
-            title={block ?? name}
+            icon={Icon}
+            tone={tri === 'allow' ? 'allow' : tri === 'deny' ? 'deny' : 'neutral'}
+            on={on}
+            label={name}
+            tooltip={block ?? name}
             disabled={!!block}
             onClick={() => !on && onPick(tri)}
-            className={`flex h-8 w-9 items-center justify-center disabled:opacity-40 pointer-coarse:h-11 pointer-coarse:w-11 ${triCls(tri, on)}`}
-          >
-            <Icon size={14} aria-hidden />
-          </button>
+          />
         )
       })}
     </div>
@@ -196,23 +185,14 @@ export function RuleEditor({
               radius="lg"
             >
               <Row gap="2xs">
-                <Surface
-                  as="button"
-                  type="button"
-                  aria-pressed={s === current}
+                <CardButton
                   onClick={() => setSelected(s)}
-                  pad="sm"
-                  inset="sides"
-                  gap="xs"
-                  row
-                  tone="plain"
-                  radius="lg"
-                  text="sm"
-                  look="min-h-9 text-left pointer-coarse:min-h-11"
                   place="min-w-0 flex-1"
+                  pad="sm"
+                  pressed={s === current}
                 >
                   {render(s)}
-                </Surface>
+                </CardButton>
                 <IconButton
                   icon={X}
                   label={`Remove ${name}`}
@@ -286,25 +266,17 @@ export function RuleEditor({
                     : modeBlock(view, current)
                   : 'Set a permission first'
                 return (
-                  <Surface
+                  <Chip
                     key={text}
-                    type="button"
-                    aria-pressed={on}
                     disabled={!!block}
                     title={block ?? text}
                     onClick={() =>
                       row && !on && put(current, { allow: row.allow, deny: row.deny }, merge)
                     }
-                    as="button"
-                    pad="md"
-                    inset="chip"
-                    tone="plain"
-                    radius="full"
-                    text="xs"
-                    look={`disabled:opacity-60 pointer-coarse:min-h-11 ${on ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant enabled:hover:bg-surface-container-highest'}`}
+                    on={on}
                   >
                     {text}
-                  </Surface>
+                  </Chip>
                 )
               })}
             </Row>

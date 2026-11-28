@@ -6,7 +6,7 @@ import { CUSTOM, SLOWMODE_PRESETS, customSeconds, isPreset, slowLabel } from '..
 import { restrictionItems, type RestrictKey } from '../lib/channel_access'
 import { hasBit, maskXor } from '../lib/perms'
 import type { Space } from '../lib/layout'
-import { Button } from './controls'
+import { Button, SwitchRow } from './controls'
 import { Row, Surface } from './layout'
 import { colorSwatchCls, fieldCls, smallFieldCls } from './ui'
 
@@ -28,48 +28,14 @@ export function SettingSwitch({
 }) {
   const hintId = useId()
   return (
-    <Surface
-      as="button"
-      role="switch"
-      aria-checked={value}
-      aria-label={label}
-      aria-describedby={hint ? hintId : undefined}
-      title={label}
+    <SwitchRow
+      checked={value}
+      label={label}
+      hint={hint}
+      hintId={hintId}
       disabled={disabled}
       onClick={() => onChange(!value)}
-      pad="sm"
-      inset="bar"
-      gap="md"
-      row
-      tone="plain"
-      radius="lg"
-      justify="between"
-      look="text-left outline-offset-2 enabled:hover:bg-surface-container focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-50 pointer-coarse:min-h-11"
-      place="w-full"
-    >
-      {hint ? (
-        <span className="flex min-w-0 flex-col">
-          <span className="text-sm">{label}</span>
-          <span id={hintId} className="text-xs text-on-surface-variant">
-            {hint}
-          </span>
-        </span>
-      ) : (
-        <span className="text-sm">{label}</span>
-      )}
-      <Surface
-        as="span"
-        row
-        pad="2xs"
-        tone="plain"
-        radius="full"
-        justify={value ? 'end' : 'start'}
-        look={`h-7 w-12 transition-colors ${value ? 'bg-primary' : 'border border-outline bg-surface-container-highest'}`}
-        place="shrink-0"
-      >
-        <span className={`h-5 w-5 rounded-full ${value ? 'bg-on-primary' : 'bg-outline'}`} />
-      </Surface>
-    </Surface>
+    />
   )
 }
 

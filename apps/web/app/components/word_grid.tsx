@@ -3,8 +3,9 @@
 import { ask, asked } from '../lib/asks'
 import { KeyRound, LayoutGrid, X } from 'lucide-react'
 import type { PassKind } from '../lib/password'
-import { Grid, Row, Stack, Surface, Inset } from './layout'
+import { Grid, Row, Stack } from './layout'
 import { Loaded, useAccountRequest } from './loaded'
+import { Button, Chip, CardButton } from './controls'
 
 interface Props {
   words: string[]
@@ -23,18 +24,13 @@ export function WordGrid({ words, selected, onChange }: Props) {
         {words.map(word => {
           const idx = selected.indexOf(word)
           return (
-            <Surface
+            <CardButton
               key={word}
-              type="button"
               onClick={() => toggle(word)}
-              as="button"
+              tone="low"
               pad="sm"
-              tone="plain"
-              radius="lg"
-              align="center"
-              justify="center"
-              text="xs"
-              look={`break-words text-center leading-tight min-[360px]:text-sm transition-colors ${idx >= 0 ? 'bg-primary-container text-on-primary-container' : 'bg-surface-container-high text-on-surface hover:bg-surface-container-highest'}`}
+              column
+              pressed={idx >= 0}
               place="relative min-w-0"
             >
               {word}
@@ -43,30 +39,22 @@ export function WordGrid({ words, selected, onChange }: Props) {
                   {idx + 1}
                 </span>
               )}
-            </Surface>
+            </CardButton>
           )
         })}
       </Grid>
       <Row gap="sm" wrap>
         {selected.map((word, i) => (
-          <Surface
+          <Button
             key={word}
-            type="button"
             title={`Remove ${word}`}
             onClick={() => onChange(selected.filter(w => w !== word))}
-            as="button"
-            row
-            pad="sm"
-            inset="chip"
-            gap="2xs"
-            tone="secondary"
-            radius="md"
-            text="xs"
+            variant="tonal"
           >
             <span className="font-medium">{i + 1}.</span>
             {word}
             <X size={12} />
-          </Surface>
+          </Button>
         ))}
         <span className="flex min-h-8 items-center text-xs text-on-surface-variant">
           {selected.length}/7 words in order
@@ -86,22 +74,10 @@ export function PassSwitch({
   label?: string
 }) {
   const tab = (kind: PassKind, text: string, icon: React.ReactNode) => (
-    <Inset
-      type="button"
-      aria-pressed={value === kind}
-      onClick={() => onChange(kind)}
-      as="button"
-      row
-      pad="sm"
-      gap="sm"
-      justify="center"
-      text="sm"
-      look={`border border-outline transition-colors first:rounded-l-full last:rounded-r-full ${value === kind ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
-      place="flex-1"
-    >
+    <Chip onClick={() => onChange(kind)} on={value === kind} plain place="flex-1">
       {icon}
       {text}
-    </Inset>
+    </Chip>
   )
   return (
     <Row role="group" aria-label={label} gap="none" align="stretch">

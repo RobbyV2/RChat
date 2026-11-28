@@ -52,7 +52,7 @@ import { TypingEllipsis } from '../typing_indicator'
 import { MutedIcon } from '../notify_menu'
 import { P2pDmPane } from './p2p_dm_pane'
 import { VoiceDock } from '../voice_grid'
-import { Dialog, fieldCls, Masked, textBtn, useBackdrop } from '../ui'
+import { Dialog, fieldCls, Masked, useBackdrop } from '../ui'
 import { AddContactDialog } from './add_contact'
 import { VerifyDialog } from './verify_dialog'
 import { P2pFolderDialog, ServerInviteDialog, ServerNewDialog } from './p2p_invite_dialog'
@@ -83,7 +83,7 @@ import { DmListSkeleton } from '../skeletons'
 import { Row, Stack, Surface, Inset } from '../layout'
 import { GateNote } from '../gate_note'
 import { time } from '../../lib/platform/time'
-import { Button, IconButton, Tile } from '../controls'
+import { Button, IconButton, LinkButton, Tile, CardButton } from '../controls'
 
 // When the conversation with a contact last had a message (0 without one).
 export const lastTsOf =
@@ -353,12 +353,11 @@ function DroppedNote({ n }: { n: number }) {
         <span className="text-xs text-on-surface-variant">
           {n === 1 ? '1 request was' : `${n} requests were`} dropped to limit spam.
         </span>
-        <button
-          onClick={() => void p2p.clearDropped()}
-          className="text-xs text-on-surface-variant underline"
-        >
-          Dismiss
-        </button>
+        <span className="text-xs">
+          <LinkButton onClick={() => void p2p.clearDropped()} tone="muted" underlined>
+            Dismiss
+          </LinkButton>
+        </span>
       </Row>
     </Surface>
   )
@@ -410,10 +409,9 @@ function ContactRowBody({
   const closeDrawer = useDrawerClose()
   return (
     <li>
-      <Surface
+      <CardButton
         data-contact={c.ik}
         data-unread={unread ? '' : undefined}
-        aria-current={active || undefined}
         onClick={() => {
           if (c.state !== 'mutual') return p2p.openDialog({ kind: 'contact', ik: c.ik })
           closeDrawer()
@@ -422,18 +420,8 @@ function ContactRowBody({
         {...longPress((x, y) =>
           peerContact.forIdentity(identity).openContactMenu(x, y, c, me, acct)
         )}
-        as="button"
-        row
         pad={where === 'dms' ? 'sm' : 'md'}
-        inset="bar"
-        gap={where === 'dms' ? 'sm' : 'md'}
-        tone="plain"
-        radius={where === 'dms' ? 'md' : 'lg'}
-        look={
-          where === 'dms'
-            ? `text-left text-sm ${active ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}`
-            : `text-left ${active ? 'bg-surface-container-highest' : 'hover:bg-surface-container-high'}`
-        }
+        current={!!active}
         place="w-full"
       >
         <span className="relative shrink-0">
@@ -479,7 +467,7 @@ function ContactRowBody({
             className="h-2 w-2 shrink-0 rounded-full bg-on-surface"
           />
         )}
-      </Surface>
+      </CardButton>
     </li>
   )
 }
@@ -574,9 +562,9 @@ function DmList() {
         look="h-14"
         place="shrink-0"
       >
-        <button onClick={p2pDm.closeDm} className="font-medium hover:underline">
+        <LinkButton onClick={p2pDm.closeDm} tone="inherit">
           Contacts
-        </button>
+        </LinkButton>
         <P2pBadge />
       </Surface>
       {loading && !list.length ? (
@@ -677,14 +665,14 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
         )}
         <span className="flex-1" />
         {enabled && (
-          <button
-            className={textBtn + (actor ? ' shrink-0' : '')}
+          <Button
             title="Add a P2P identity"
             onClick={() => p2p.openDialog({ kind: 'enable' })}
+            place="shrink-0"
           >
             {actor && <Fingerprint size={20} className="sm:hidden" aria-hidden />}
             <span className={actor ? 'max-sm:sr-only' : undefined}>Add a P2P identity</span>
-          </button>
+          </Button>
         )}
         {adds && (
           <>
@@ -843,18 +831,7 @@ function ContactDialog({ ik }: { ik: string }) {
             </p>
           </div>
         </Row>
-        <Surface
-          as="button"
-          onClick={() => p2p.openDialog({ kind: 'verify', ik })}
-          pad="md"
-          inset="bar"
-          gap="sm"
-          row
-          tone="base"
-          radius="lg"
-          text="sm"
-          look="text-left hover:bg-surface-container-highest"
-        >
+        <CardButton onClick={() => p2p.openDialog({ kind: 'verify', ik })} tone="base" pad="md">
           <ContactShield kind={shield} />
           <span className="flex-1">
             {shieldText(shield)}
@@ -866,7 +843,7 @@ function ContactDialog({ ik }: { ik: string }) {
             )}
           </span>
           <span className="text-primary">Verify</span>
-        </Surface>
+        </CardButton>
         <BadgeRow ik={c.ik} />
         {notice && (
           <p className="text-sm text-on-surface-variant">

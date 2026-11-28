@@ -1,5 +1,5 @@
 'use client'
-import { Button } from './controls'
+import { Button, LinkButton } from './controls'
 import { useStoreApi } from '../lib/client/react'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -56,21 +56,20 @@ export function ChannelTopic({
   if (!line) return null
   return (
     <>
-      <button
+      <LinkButton
         ref={trigger}
-        type="button"
         data-topic
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
-        className={`min-w-0 rounded-md text-left text-on-surface-variant outline-offset-2 hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary ${
-          variant === 'header'
-            ? 'w-full truncate text-xs md:w-auto md:max-w-full md:text-sm'
-            : 'line-clamp-2 text-sm'
-        }`}
+        tone="muted"
       >
-        <Masked text={line} />
-      </button>
+        <span
+          className={variant === 'header' ? 'truncate text-xs md:text-sm' : 'line-clamp-2 text-sm'}
+        >
+          <Masked text={line} />
+        </span>
+      </LinkButton>
       {open && (
         <TopicWindow
           channel={channel}

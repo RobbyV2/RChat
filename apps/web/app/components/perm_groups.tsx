@@ -1,9 +1,10 @@
 'use client'
 
+import { SwitchRow } from './controls'
 import { useState } from 'react'
 import { groupItems, matchItems, type PermItem } from '../lib/perm_source'
 import { hasBit, maskXor } from '../lib/perms'
-import { Stack, Surface } from './layout'
+import { Stack } from './layout'
 import { fieldCls } from './ui'
 
 // A role's or @everyone's permissions in groups, with a search: one switch each. `blockOf(next)`
@@ -45,47 +46,16 @@ export function PermGroups({
             const next = maskXor(value, item.bit)
             const block = locked ?? blockOf?.(next) ?? null
             return (
-              <Surface
+              <SwitchRow
                 key={item.name}
-                type="button"
-                role="switch"
-                aria-checked={on}
-                aria-label={item.label}
+                checked={on}
+                label={item.label}
+                hint={item.hint}
                 title={block ?? item.hint ?? item.label}
                 disabled={!!block}
                 data-perm={item.name}
                 onClick={() => onChange(next)}
-                as="button"
-                row
-                pad="sm"
-                inset="chip"
-                gap="md"
-                tone="plain"
-                radius="lg"
-                justify="between"
-                look="text-left enabled:hover:bg-surface-container-highest disabled:opacity-60 pointer-coarse:min-h-11"
-                place="w-full"
-              >
-                <span className="flex min-w-0 flex-col">
-                  <span className="text-sm">{item.label}</span>
-                  {item.hint && (
-                    <span className="text-xs text-on-surface-variant">{item.hint}</span>
-                  )}
-                </span>
-                <Surface
-                  aria-hidden
-                  as="span"
-                  row
-                  pad="3xs"
-                  tone="plain"
-                  radius="full"
-                  justify={on ? 'end' : 'start'}
-                  look={`h-6 w-10 transition-colors ${on ? 'bg-primary' : 'border border-outline bg-surface-container-highest'}`}
-                  place="shrink-0"
-                >
-                  <span className={`h-5 w-5 rounded-full ${on ? 'bg-on-primary' : 'bg-outline'}`} />
-                </Surface>
-              </Surface>
+              />
             )
           })}
         </Stack>

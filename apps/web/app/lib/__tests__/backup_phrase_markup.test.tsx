@@ -21,7 +21,9 @@ const setState = (patch: Partial<typeof initial>) => {
 
 const labelled = (html: string) => [...html.matchAll(/<input[^>]*aria-label="Word (\d+)"[^>]*>/g)]
 const classes = (tag: string) => (/class="([^"]*)"/.exec(tag)?.[1] ?? '').split(' ')
-const buttons = (html: string) => [...html.matchAll(/<button[^>]*>[^<]*<\/button>/g)].map(m => m[0])
+// The words shown in buttons: each word's own tag inside its button.
+const buttons = (html: string) =>
+  [...html.matchAll(/<button[^>]*>(<span[^>]*>)[^<]*<\/span><\/button>/g)].map(m => m[1])
 
 describe('backup phrase markup', () => {
   test('PhraseWords numbers the words 1 to 12', () => {

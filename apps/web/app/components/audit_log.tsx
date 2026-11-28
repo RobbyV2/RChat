@@ -1,7 +1,7 @@
 'use client'
 
 import { Covered } from './covered'
-import { IconButton } from './controls'
+import { IconButton, CardButton } from './controls'
 import { ask } from '../lib/asks'
 import { personCalled, personName, serverCalled } from '../lib/names'
 import { Name, NameInput } from './name'
@@ -206,23 +206,15 @@ export function ActorHit({
 }) {
   const m = useShownMembers(server)(account)
   return (
-    <Surface
-      type="button"
+    <CardButton
       onMouseDown={e => e.preventDefault()}
       onClick={() => onPick(m)}
-      as="button"
-      row
       pad="sm"
-      inset="chip"
-      gap="sm"
-      tone="plain"
-      radius="md"
-      look="text-left hover:bg-surface-container-high"
       place="w-full"
     >
       <UserAvatar person={m} size={20} />
       <Name of={personName(m)} withUsername look="min-w-0 flex-1 truncate text-sm" />
-    </Surface>
+    </CardButton>
   )
 }
 
@@ -364,17 +356,11 @@ export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?:
   return (
     <li className="rounded-xl hover:bg-surface-container-highest">
       {expandable ? (
-        <Inset
-          as="button"
-          type="button"
+        <CardButton
           onClick={() => setOpen(o => !o)}
-          aria-expanded={open}
           title={open ? 'Hide details' : 'Show details'}
           pad="sm"
-          gap="md"
-          row
-          align="start"
-          look="text-left"
+          open={open}
           place="w-full"
         >
           {body}
@@ -383,7 +369,7 @@ export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?:
             aria-hidden
             className={`shrink-0 text-on-surface-variant transition-transform ${open ? 'rotate-180' : ''}`}
           />
-        </Inset>
+        </CardButton>
       ) : (
         <Surface tone="plain" pad="sm">
           <Row gap="md" align="start">

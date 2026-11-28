@@ -1,4 +1,5 @@
 'use client'
+import { tileLook } from '../lib/controls'
 import { Name } from './name'
 import { useNameLabel } from './name'
 import { instanceName, serverCalled, serverName } from '../lib/names'
@@ -71,10 +72,6 @@ import { RailPingBadge, pingLabel } from './ping_badge'
 import { MutedIcon } from './notify_menu'
 import { P2pRailTile } from './p2p/p2p_home'
 import { P2pJoinTile, P2pServerRail } from './p2p/p2p_server_view'
-
-const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
-const idle =
-  'bg-surface-container-high text-on-surface hover:bg-primary-container hover:text-on-primary-container'
 
 const NO_DETAILS: Record<string, ServerDetail> = {}
 const SERVER = serverKey('')
@@ -651,7 +648,7 @@ export function ServerRail() {
                         data-p2p-tile
                         data-p2p-join
                         title="Create or join a P2P server"
-                        className={tile + ' relative ' + idle}
+                        className={`flex ${tileLook('idle')}`}
                       >
                         <Plus size={22} />
                         <select

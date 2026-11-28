@@ -1,10 +1,9 @@
 'use client'
 
 import { useId, useState } from 'react'
-import { Check } from 'lucide-react'
 import { validColor } from '../lib/profile'
 import { onColor } from '../lib/server_colors'
-import { Button } from './controls'
+import { Button, Swatch } from './controls'
 import { Row, Stack } from './layout'
 import { smallFieldCls } from './ui'
 
@@ -45,20 +44,15 @@ export function ColorField({
           {presets.map(p => {
             const on = current === p.color
             return (
-              <button
+              <Swatch
                 key={p.color}
-                type="button"
-                title={p.label}
-                aria-label={`${label}: ${p.label}`}
-                aria-pressed={on}
+                color={p.color}
+                ink={onColor(p.color)}
+                on={on}
+                label={`${label}: ${p.label}`}
+                tooltip={p.label}
                 onClick={() => onChange(p.color)}
-                style={{ background: p.color, color: onColor(p.color) }}
-                className={`flex h-8 w-8 items-center justify-center rounded-full border border-outline-variant outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-container-high ${
-                  on ? 'ring-2 ring-primary ring-offset-2 ring-offset-surface-container-high' : ''
-                }`}
-              >
-                {on && <Check size={16} aria-hidden />}
-              </button>
+              />
             )
           })}
         </Row>

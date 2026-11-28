@@ -81,7 +81,7 @@ import { TypingEllipsis, useHostedTypers } from './typing_indicator'
 import { ServerGlyph } from './server_rail'
 import StatusClock from './status_clock'
 import { UserAvatar } from './user_avatar'
-import { Button, IconButton, ListRow, LinkButton } from './controls'
+import { Button, IconButton, ListRow, Chip, LinkButton, CardButton, MediaButton } from './controls'
 import { Masked, fieldCls, useOwnServer } from './ui'
 import { RowsSkeleton } from './skeletons'
 import { Row, Stack, Surface, Inset, Grid } from './layout'
@@ -110,8 +110,6 @@ import { useAddingAllowed } from './add_instance'
 import { AccountTag, ActorAvatar } from './account_tag'
 import { holder } from '../lib/stable_key'
 import { time } from '../lib/platform/time'
-import { homeActionLook } from '../lib/controls'
-import { homeP2pActionLook } from '../lib/controls'
 
 function showOwner(account: AccountSession, peer?: P2pApp | null) {
   if (client.shown() !== account) client.show(account)
@@ -265,10 +263,6 @@ function Tips() {
   )
 }
 
-const actionCls = homeActionLook
-
-const p2pActionCls = homeP2pActionLook
-
 const useP2pCard = () => {
   const enabled = useP2p(s => s.enabled)
   const loading = useP2p(s => s.loading)
@@ -379,45 +373,40 @@ function QuickActions({
     <Stack as="section" gap="sm" aria-label="Quick actions">
       {as}
       <Grid cols={palette && !p2pOn ? { base: 2, lg: 4 } : { base: 2, lg: 3 }} gap="sm">
-        <button
-          type="button"
+        <CardButton
           onClick={() => {
             showOwner(acct)
             openDialog({ kind: 'add_server', tab: 'create' })
           }}
-          className={actionCls}
+          tone="low"
+          pad="lg"
         >
           <Plus size={18} className="shrink-0 text-primary" />
           <span className="min-w-0 leading-tight">Create server</span>
-        </button>
-        <button
-          type="button"
+        </CardButton>
+        <CardButton
           onClick={() => {
             showOwner(acct)
             openDialog({ kind: 'add_server', tab: 'join' })
           }}
-          className={actionCls}
+          tone="low"
+          pad="lg"
         >
           <Compass size={18} className="shrink-0 text-primary" />
           <span className="min-w-0 leading-tight">Join server</span>
-        </button>
-        <button
-          type="button"
-          aria-expanded={asking}
-          onClick={() => setAsking(a => !a)}
-          className={actionCls}
-        >
+        </CardButton>
+        <CardButton aria-expanded={asking} onClick={() => setAsking(a => !a)} tone="low" pad="lg">
           <MessageCircle size={18} className="shrink-0 text-primary" />
           <span className="min-w-0 leading-tight">Message someone</span>
-        </button>
+        </CardButton>
         {palette && (
-          <button
-            type="button"
+          <CardButton
             onClick={() => {
               showOwner(acct)
               palette(acct)
             }}
-            className={actionCls}
+            tone="low"
+            pad="lg"
           >
             <Command size={18} className="shrink-0 text-primary" />
             <span className="min-w-0 leading-tight">Command palette</span>
@@ -430,28 +419,28 @@ function QuickActions({
             >
               {paletteShortcut(isMac())}
             </Inset>
-          </button>
+          </CardButton>
         )}
         {p2pOn && (
           <>
-            <button
-              type="button"
+            <CardButton
               data-p2p-action="contact"
               onClick={() => openCode('contact')}
-              className={p2pActionCls}
+              tone="p2p"
+              pad="lg"
             >
               <UserPlus size={18} className="shrink-0 text-tertiary" />
               <span className="min-w-0 leading-tight">Add P2P contact</span>
-            </button>
-            <button
-              type="button"
+            </CardButton>
+            <CardButton
               data-p2p-action="join"
               onClick={() => openCode('invite')}
-              className={p2pActionCls}
+              tone="p2p"
+              pad="lg"
             >
               <Waypoints size={18} className="shrink-0 text-tertiary" />
               <span className="min-w-0 leading-tight">Join P2P server</span>
-            </button>
+            </CardButton>
           </>
         )}
       </Grid>
@@ -1272,20 +1261,19 @@ function P2pCard({ actor }: { actor?: HomeActor } = {}) {
                     const label = streamer ? 'Message contact' : `Message ${mask(displayName(c))}`
                     return (
                       <li key={c.ik} className="flex">
-                        <button
-                          type="button"
+                        <MediaButton
                           data-p2p-home-contact={c.ik}
                           title={label}
-                          aria-label={label}
                           onClick={() => void p2pDm?.openDm(c.ik)}
                           {...longPress((x, y) =>
                             openActionMenu(x, y, { kind: 'p2p_contact', c, me }, {}, acct, identity)
                           )}
-                          className="relative flex rounded-full focus-visible:outline-2 focus-visible:outline-primary"
+                          shape="round"
+                          label={label}
                         >
                           <KeyAvatar person={identityPerson(c.ik, 'contact')} />
                           <PresenceDot presence="online" />
-                        </button>
+                        </MediaButton>
                       </li>
                     )
                   })}
@@ -1445,22 +1433,9 @@ function ActorChips({
   return (
     <Row aria-label="Account" gap="2xs" align="stretch" wrap place="max-w-full">
       {accounts.map(actor => (
-        <Surface
-          key={actor.key}
-          type="button"
-          aria-pressed={actor === active}
-          onClick={() => onPick(actor.key)}
-          as="button"
-          row
-          pad="sm"
-          inset="chip"
-          gap="2xs"
-          tone="plain"
-          radius="full"
-          look="outline-offset-2 hover-idle:bg-on-surface/8 focus-visible:outline-2 focus-visible:outline-primary pressed:bg-secondary-container pointer-coarse:min-h-11"
-        >
+        <Chip key={actor.key} onClick={() => onPick(actor.key)} on={actor === active} plain>
           <HomeActorLabel actor={actor} />
-        </Surface>
+        </Chip>
       ))}
     </Row>
   )
@@ -1601,26 +1576,23 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
       <Greeting total={total} accounts={accounts.length} />
       <Row gap="sm" align="stretch" aria-label="Accounts" place="overflow-x-auto">
         {actors.map(a => (
-          <Surface
-            as="button"
-            type="button"
+          <CardButton
             key={a.key}
-            aria-pressed={a.row.active}
             onClick={() => void switchActor(a.row, shown)}
-            pad="sm"
-            gap="2xs"
-            tone="low"
-            radius="lg"
-            look="text-left outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary pressed:bg-secondary-container"
             place="shrink-0"
+            tone="low"
+            pad="sm"
+            pressed={a.row.active}
           >
-            <Row as="span" gap="2xs">
-              <HomeActorLabel actor={a} />
-            </Row>
-            <span className="text-xs">
-              {a.row.status} {a.row.badge > 0 && <PingBadge count={a.row.badge} />}
+            <span className="flex min-w-0 flex-col">
+              <Row as="span" gap="2xs">
+                <HomeActorLabel actor={a} />
+              </Row>
+              <span className="text-xs">
+                {a.row.status} {a.row.badge > 0 && <PingBadge count={a.row.badge} />}
+              </span>
             </span>
-          </Surface>
+          </CardButton>
         ))}
         {canAdd && (
           <Button onClick={() => shown.store.getState().openDialog({ kind: 'add_instance' })}>
