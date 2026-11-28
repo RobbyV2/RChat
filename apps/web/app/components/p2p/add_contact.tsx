@@ -1,4 +1,6 @@
 'use client'
+import { Name } from '../name'
+import { p2pKey, p2pName } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
 import { Button, Tab } from '../controls'
 import { Row, Stack, Surface } from '../layout'
@@ -13,7 +15,7 @@ import { useStore } from '../../lib/store'
 import { looksLikeCard, type Card } from '../../lib/p2p/card'
 import { fingerprint } from '../../lib/p2p/keys'
 import { CopyButton, QrCode } from '../config_sync'
-import { Dialog, FieldError, fieldCls, Masked } from '../ui'
+import { Dialog, FieldError, fieldCls } from '../ui'
 import { KeyAvatar } from './p2p_badge'
 import { QrScan } from './qr_scan'
 
@@ -63,12 +65,12 @@ function Preview({ card }: { card: Card }) {
       <Row gap="md">
         <KeyAvatar person={identityPerson(card.ik, 'contact')} />
         <div className="min-w-0">
-          <p className="streamer truncate text-sm font-medium">
-            <Masked text={card.name || 'Unnamed'} />
-          </p>
-          <p className="streamer truncate font-mono text-2xs text-on-surface-variant">
-            {fingerprint(card.ik)}
-          </p>
+          <Name as="p" of={p2pName(card.name || 'Unnamed')} look="truncate text-sm font-medium" />
+          <Name
+            as="p"
+            of={p2pKey(fingerprint(card.ik))}
+            look="truncate font-mono text-2xs text-on-surface-variant"
+          />
         </div>
       </Row>
     </Surface>

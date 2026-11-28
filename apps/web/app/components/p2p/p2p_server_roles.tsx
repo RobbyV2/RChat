@@ -1,4 +1,6 @@
 'use client'
+import { Name } from '../name'
+import { p2pName } from '../../lib/names'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -306,9 +308,10 @@ function RolesTabBody({ v }: { v: ServerView }) {
             </span>
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="text-sm font-medium">Owners</span>
-              <span className="streamer truncate text-xs text-on-surface-variant">
-                {owners.map(ik => memberName(v.id, ik)).join(', ')}
-              </span>
+              <Name
+                of={p2pName(owners.map(ik => memberName(v.id, ik)).join(', '))}
+                look="truncate text-xs text-on-surface-variant"
+              />
             </span>
             <span className="shrink-0 text-xs text-on-surface-variant">Every permission</span>
           </Row>
@@ -438,16 +441,13 @@ function MemberCardBody({ room, ik }: { room: string; ik: string }) {
       <Row gap="sm">
         <MemberAvatar members={v.members} ik={m.ik} size={40} />
         <span className="flex min-w-0 flex-1 flex-col">
-          <span
-            className="streamer truncate text-sm font-semibold"
-            style={{ color: nameColor(m, v.roles) }}
-          >
-            <Masked text={m.name} own={self} />
-          </span>
+          <Name
+            of={p2pName(m.name, self)}
+            color={nameColor(m, v.roles)}
+            look="truncate text-sm font-semibold"
+          />
           {global && global !== m.name && (
-            <span data-p2p-member-global className="streamer truncate text-xs">
-              <Masked text={global} own={self} />
-            </span>
+            <Name data-p2p-member-global of={p2pName(global, self)} look="truncate text-xs" />
           )}
           <span className="text-xs text-on-surface-variant">
             {m.owner ? 'Owner' : m.m === 'join' ? 'Member' : 'Invited'}
@@ -567,9 +567,7 @@ function SubjectName({ v, subj }: { v: ServerView; subj: string }) {
   return (
     <Row as="span" gap="xs" place="flex-1">
       <MemberAvatar members={v.members} ik={ik} size={20} />
-      <span className="streamer truncate text-sm">
-        <Masked text={memberName(v.id, ik)} own={ik === me} />
-      </span>
+      <Name of={p2pName(memberName(v.id, ik), ik === me)} look="truncate text-sm" />
     </Row>
   )
 }
@@ -614,9 +612,7 @@ function MemberPickerBody({
               place="w-full"
             >
               <MemberAvatar members={items} ik={m.ik} size={24} />
-              <span className="streamer min-w-0 truncate">
-                <Masked text={m.name} own={m.ik === me} />
-              </span>
+              <Name of={p2pName(m.name, m.ik === me)} look="min-w-0 truncate" />
             </Inset>
           </li>
         ))}

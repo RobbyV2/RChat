@@ -128,6 +128,7 @@ function Drawn<const S extends string, const L extends string>({
   return createElement(
     as,
     {
+      id: rest.id,
       title:
         typeof titled === 'string'
           ? view.streamer

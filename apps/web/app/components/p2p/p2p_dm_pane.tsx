@@ -1,4 +1,6 @@
 'use client'
+import { Name } from '../name'
+import { p2pName } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
 import { PeerActorTag } from '../view_actor'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -30,7 +32,6 @@ import { IncomingCallBar, P2pCallButtons } from './p2p_call'
 import { P2pDm } from '../../lib/place/place'
 import { PlaceProvider } from '../../lib/place/react'
 import { NoteBar, P2pChatBody, P2pIntro } from './p2p_chat'
-import { Masked } from '../ui'
 import { Row, Surface, Inset } from '../layout'
 
 const NONE: string[] = []
@@ -38,8 +39,8 @@ const NONE: string[] = []
 const IntroBanner = ({ name }: { name: string }) => (
   <P2pIntro id={P2P_DM_INTRO}>
     This conversation is stored only on your device and{' '}
-    <span className="streamer font-medium">{name}</span>&apos;s. Messages are delivered when you are
-    both online, and the instance never sees them.
+    <Name of={p2pName(name)} look="font-medium" />
+    &apos;s. Messages are delivered when you are both online, and the instance never sees them.
   </P2pIntro>
 )
 
@@ -48,7 +49,7 @@ const statusLine = (online: boolean, name: string): ReactNode =>
     'Connected'
   ) : (
     <>
-      Offline. Messages wait until <span className="streamer">{name}</span> is online
+      Offline. Messages wait until <Name of={p2pName(name)} /> is online
     </>
   )
 
@@ -89,18 +90,12 @@ export function useDmFacts() {
       <NoteBar>This contact was removed.</NoteBar>
     ) : peer.state === 'blocked' ? (
       <NoteBar>
-        You blocked{' '}
-        <span className="streamer font-medium">
-          <Masked text={peerRaw} />
-        </span>
-        . Remove the block to message them again.
+        You blocked <Name of={p2pName(peerRaw)} look="font-medium" />. Remove the block to message
+        them again.
       </NoteBar>
     ) : peer.state !== 'mutual' ? (
       <NoteBar>
-        <span className="streamer font-medium">
-          <Masked text={peerRaw} />
-        </span>{' '}
-        isn&apos;t a mutual contact right now.
+        <Name of={p2pName(peerRaw)} look="font-medium" /> isn&apos;t a mutual contact right now.
       </NoteBar>
     ) : null
 
@@ -210,13 +205,13 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
         </span>
         <span className="flex min-w-0 flex-col text-left max-[360px]:hidden">
           <Row as="span" gap="xs">
-            <span
+            <Name
               id={nameId}
-              title={streamer ? undefined : peerName}
-              className={`streamer min-w-0 truncate text-sm font-medium ${chip ? 'sm:max-w-3/5 sm:shrink-0' : ''}`}
-            >
-              <Masked text={peerRaw} />
-            </span>
+              of={p2pName(peerRaw)}
+              titled
+              place={chip ? 'min-w-0 sm:max-w-3/5 sm:shrink-0' : 'min-w-0'}
+              look="truncate text-sm font-medium"
+            />
             {peer && <ContactShield id={shieldId} kind={shieldOf(peer)} size={14} />}
             <span className="flex min-w-0 max-sm:hidden">
               <AccountChip ik={peerIk} />
@@ -280,11 +275,7 @@ function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => 
       online={online}
       gapOffline={
         <>
-          Older messages unavailable until{' '}
-          <span className="streamer">
-            <Masked text={peerRaw} />
-          </span>{' '}
-          is online
+          Older messages unavailable until <Name of={p2pName(peerRaw)} /> is online
         </>
       }
       empty={

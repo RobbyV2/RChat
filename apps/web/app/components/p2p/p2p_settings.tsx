@@ -1,4 +1,6 @@
 'use client'
+import { Name } from '../name'
+import { instanceName, p2pKey, p2pName } from '../../lib/names'
 import { useAccount } from '../../lib/client/react'
 import { confirmIdentityRemoval, identityRecords } from '../../lib/client/identity_enrollment'
 import { client } from '../../lib/client/client'
@@ -161,8 +163,8 @@ function BadgeSetting() {
             `Off. Peers who have it may show it until ${badgeDate(tail)}.`
           ) : (
             <>
-              Lets contacts see which account on <span className="streamer">{label}</span> holds
-              your P2P identity. Off by default.
+              Lets contacts see which account on <Name of={instanceName(label)} /> holds your P2P
+              identity. Off by default.
             </>
           )}
         </p>
@@ -269,8 +271,8 @@ function FilesSettings() {
     return (
       <Surface pad="sm" inset="bar" tone="plain" radius="none">
         <p className="text-xs text-on-surface-variant">
-          Attachments are turned off on <span className="streamer">{label}</span>, so P2P files are
-          hidden too.
+          Attachments are turned off on <Name of={instanceName(label)} />, so P2P files are hidden
+          too.
         </p>
       </Surface>
     )
@@ -425,8 +427,8 @@ export function P2pOffSection() {
       <p className={sectionCls}>Peer-to-peer</p>
       <Surface pad="sm" inset="bar" gap="sm" tone="plain" radius="none" align="start">
         <p className="text-xs text-on-surface-variant">
-          P2P is off on <span className="streamer">{label}</span>. Your P2P data stays on this
-          device until you remove it.
+          P2P is off on <Name of={instanceName(label)} />. Your P2P data stays on this device until
+          you remove it.
         </p>
         {result &&
           (result.ok ? (
@@ -444,8 +446,7 @@ export function P2pOffSection() {
               'Remove P2P data from this browser'
             ) : (
               <>
-                Remove P2P data for <span className="streamer">{nameOf(slot.id)}</span> from this
-                browser
+                Remove P2P data for <Name of={p2pName(nameOf(slot.id))} /> from this browser
               </>
             )}
           </Button>
@@ -497,7 +498,7 @@ function P2pSectionBody() {
       <div className={sectionCls}>
         <Row as="p" gap="sm">
           Peer-to-peer <P2pBadge />{' '}
-          {enabled && <span className="streamer">{name || record?.name || identity.localId}</span>}
+          {enabled && <Name of={p2pName(name || record?.name || identity.localId, true)} />}
         </Row>
       </div>
       {!enabled ? (
@@ -557,7 +558,12 @@ function P2pSectionBody() {
           <Surface pad="sm" inset="bar" gap="2xs" tone="plain" radius="none">
             <p className="text-sm font-medium">Name shown to contacts</p>
             <NameField />
-            <p className="streamer font-mono text-2xs text-on-surface-variant">Key {fp}</p>
+            <Name
+              as="p"
+              of={p2pKey(fp)}
+              before="Key "
+              look="font-mono text-2xs text-on-surface-variant"
+            />
           </Surface>
           <P2pServerProfiles />
           <BadgeSetting />

@@ -1,5 +1,5 @@
 'use client'
-import { handleName, p2pName, serverName } from '../lib/names'
+import { handleName, p2pName, roomName, serverName } from '../lib/names'
 import { asAccount, shownUser } from '../lib/people'
 import { personName } from '../lib/names'
 import { Name } from './name'
@@ -910,9 +910,7 @@ function VoiceDockBody() {
                 {roomVoice && sv && (
                   <>
                     <span className="shrink-0">/</span>
-                    <span className="streamer min-w-0 truncate">
-                      <Masked text={sv.name} own={ownSv} />
-                    </span>
+                    <Name of={roomName(sv.name, ownSv)} look="min-w-0 truncate" />
                   </>
                 )}
               </Row>
@@ -1728,10 +1726,7 @@ function ContactCallBanner() {
               <span className="text-sm">
                 <Row as="span" gap="2xs">
                   Calling
-                  <span className="streamer truncate font-medium">
-                    <Masked text={name} />
-                  </span>
-                  …
+                  <Name of={p2pName(name)} look="truncate font-medium" />…
                 </Row>
               </span>
               <CallType video={c.video} p2p chip={<P2pBadge />} />
@@ -1758,9 +1753,7 @@ function ContactCallBanner() {
       <span className="max-sm:hidden">{avatar(72)}</span>
       <span className="sm:hidden">{avatar(40)}</span>
       <div className="flex min-w-0 flex-col items-center gap-0.5 max-sm:flex-1 max-sm:items-start">
-        <span className="streamer w-full truncate text-base font-semibold">
-          <Masked text={name} />
-        </span>
+        <Name of={p2pName(name)} look="w-full truncate text-base font-semibold" />
         <CallType video={c.video} p2p incoming chip={<P2pBadge />} />
         <Row
           as="button"
@@ -1774,9 +1767,7 @@ function ContactCallBanner() {
         >
           <MessageCircle size={12} aria-hidden className="shrink-0" />
           <span className="shrink-0">Conversation with</span>
-          <span className="streamer truncate">
-            <Masked text={name} />
-          </span>
+          <Name of={p2pName(name)} look="truncate" />
         </Row>
       </div>
       <div className="flex shrink-0 items-center gap-4 max-sm:gap-2 sm:mt-1">

@@ -1,4 +1,6 @@
 'use client'
+import { Name } from '../name'
+import { roomName } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
 import { PeerActorTag } from '../view_actor'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -449,9 +451,7 @@ function ServerHead({ v }: { v: ServerView }) {
         place="min-w-0 flex-1"
       >
         <Row as="span" gap="xs" place="w-full">
-          <span data-p2p-server-name className="streamer truncate font-medium">
-            <Masked text={v.name} own={own} />
-          </span>
+          <Name data-p2p-server-name of={roomName(v.name, own)} look="truncate font-medium" />
           <P2pBadge />
         </Row>
         <span data-p2p-online-count className="truncate text-xs text-on-surface-variant">
@@ -1027,9 +1027,7 @@ function ServerInviteRowsBody() {
                     />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="streamer truncate text-sm font-medium">
-                      <Masked text={i.name} />
-                    </p>
+                    <Name as="p" of={roomName(i.name)} look="truncate text-sm font-medium" />
                     <AboutLine text={i.about.text} oneLine />
                     <p className="truncate text-xs text-on-surface-variant">
                       From{' '}

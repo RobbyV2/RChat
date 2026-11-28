@@ -1,4 +1,6 @@
 'use client'
+import { Name } from '../name'
+import { p2pKey, p2pName } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
 import { ActorLabel, PeerActorTag, usePeerActor } from '../view_actor'
 import { IdentityEnrollment } from './identity_enrollment'
@@ -459,11 +461,15 @@ function ContactRowBody({
         </span>
         <span className="min-w-0 flex-1">
           <Row as="span" gap="xs">
-            <span
-              className={`streamer ${chip ? 'max-w-3/5 shrink-0' : ''} truncate text-sm ${unread || pings ? 'font-bold text-on-surface' : 'font-medium'}`}
-            >
-              <Masked text={displayName(c)} />
-            </span>
+            <Name
+              of={p2pName(displayName(c))}
+              place={chip ? 'max-w-3/5 shrink-0' : undefined}
+              look={
+                unread || pings
+                  ? 'truncate text-sm font-bold text-on-surface'
+                  : 'truncate text-sm font-medium'
+              }
+            />
             {yours && <span className="text-xs text-on-surface-variant">yours</span>}
             <ContactShield kind={shield} size={14} />
             <AccountChip ik={c.ik} />
@@ -506,17 +512,19 @@ function RequestRow({ c }: { c: Contact }) {
         <KeyAvatar person={identityPerson(c.ik, 'request')} />
         <div className="min-w-0 flex-1">
           <Row as="p" gap="xs">
-            <span
-              className={`streamer truncate text-sm font-medium ${chip ? 'max-w-3/5 shrink-0' : ''}`}
-            >
-              <Masked text={displayName(c)} />
-            </span>
+            <Name
+              of={p2pName(displayName(c))}
+              place={chip ? 'max-w-3/5 shrink-0' : undefined}
+              look="truncate text-sm font-medium"
+            />
             <ContactShield kind={shield} size={14} />
             <AccountChip ik={c.ik} />
           </Row>
-          <p className="streamer truncate font-mono text-2xs text-on-surface-variant">
-            {fingerprint(c.ik)}
-          </p>
+          <Name
+            as="p"
+            of={p2pKey(fingerprint(c.ik))}
+            look="truncate font-mono text-2xs text-on-surface-variant"
+          />
         </div>
         <button
           title="Accept"
@@ -853,13 +861,14 @@ function ContactDialog({ ik }: { ik: string }) {
             <PresenceDot presence={presence} />
           </span>
           <div className="min-w-0">
-            <p className="streamer truncate text-lg font-medium">
-              <Masked text={displayName(c)} />
-            </p>
+            <Name as="p" of={p2pName(displayName(c))} look="truncate text-lg font-medium" />
             {c.petname && c.name && (
-              <p className="streamer truncate text-xs text-on-surface-variant">
-                Calls themselves <Masked text={c.name} />
-              </p>
+              <Name
+                as="p"
+                of={p2pName(c.name)}
+                before="Calls themselves "
+                look="truncate text-xs text-on-surface-variant"
+              />
             )}
             <p className="text-xs text-on-surface-variant">
               {c.state === 'outgoing'
@@ -900,7 +909,11 @@ function ContactDialog({ ik }: { ik: string }) {
             <Masked text={notice} />
           </p>
         )}
-        <p className="streamer font-mono text-xs text-on-surface-variant">{fingerprint(c.ik)}</p>
+        <Name
+          as="p"
+          of={p2pKey(fingerprint(c.ik))}
+          look="font-mono text-xs text-on-surface-variant"
+        />
         <Row gap="sm" justify="end" wrap>
           {menuItems(
             ctxFor(

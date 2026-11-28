@@ -1,4 +1,6 @@
 'use client'
+import { Name } from '../name'
+import { personCalled } from '../../lib/names'
 import { shownUser } from '../../lib/people'
 import { PeerCodeButton } from './peer_code_button'
 import { useActorSuffix, usePeerActor } from '../view_actor'
@@ -412,9 +414,10 @@ function P2pSystemRow({ m, divider }: { m: Message; divider: boolean }) {
         </span>
         <p className="min-w-0 flex-1 text-sm text-on-surface-variant">
           {before}
-          <span className="streamer font-medium text-on-surface">
-            <Masked text={m.author.display_name} by={m.author.username} />
-          </span>
+          <Name
+            of={personCalled(m.author.display_name, m.author.username)}
+            look="font-medium text-on-surface"
+          />
           {after}
           <MessageTime ts={m.created_at} className="ml-2 text-xs opacity-70" />
         </p>
@@ -444,9 +447,10 @@ function P2pPinRow({
       divider={divider && <UnreadDivider />}
       press={longPress((x, y) => onMenu(p, x, y))}
       name={
-        <span className="streamer font-medium text-on-surface">
-          <Masked text={m.author.display_name} by={m.author.username} />
-        </span>
+        <Name
+          of={personCalled(m.author.display_name, m.author.username)}
+          look="font-medium text-on-surface"
+        />
       }
       place={place}
       ts={m.created_at}
@@ -496,9 +500,7 @@ export function P2pHiddenRow({ m, divider }: { m: Message; divider: boolean }) {
         </span>
         <p className="min-w-0 flex-1 text-sm text-on-surface-variant italic">
           {before}
-          <span className="streamer">
-            <Masked text={m.author.display_name} by={m.author.username} />
-          </span>
+          <Name of={personCalled(m.author.display_name, m.author.username)} />
           {after}
           <MessageTime ts={m.created_at} className="ml-2 text-xs not-italic opacity-70" />
         </p>
@@ -641,9 +643,10 @@ function P2pComposerBody({
   const bar = replyTo ? (
     <ComposerBar onClose={p2pDm.cancelReply} closeLabel="Cancel reply">
       Replying to{' '}
-      <span className="streamer font-semibold text-on-surface">
-        <Masked text={nameOf(replyTo.sender)} by={replyTo.sender} />
-      </span>
+      <Name
+        of={personCalled(nameOf(replyTo.sender), replyTo.sender)}
+        look="font-semibold text-on-surface"
+      />
     </ComposerBar>
   ) : channelTextOnly && (forwardClip?.has_media || forwardClip?.has_poll) ? (
     <ComposerBar onClose={() => store.getState().clearForward()} closeLabel="Discard forward">

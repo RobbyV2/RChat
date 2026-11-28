@@ -1,4 +1,6 @@
 'use client'
+import { Name } from '../name'
+import { p2pName, roomName } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
 import { Button, Tab } from '../controls'
 import { Row, Stack, Surface } from '../layout'
@@ -16,7 +18,7 @@ import { displayName } from '../../lib/p2p/contacts'
 import { P } from '../../lib/p2p/state'
 import { fieldMax } from '../../lib/p2p/event_v2'
 import { CopyButton, QrCode } from '../config_sync'
-import { Dialog, FieldError, fieldCls, Masked } from '../ui'
+import { Dialog, FieldError, fieldCls } from '../ui'
 import { FolderColorField } from '../folder_dialog'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { QrScan } from './qr_scan'
@@ -219,11 +221,8 @@ function ServerInviteDialogBody({ room }: { room: string }) {
       <Stack gap="xl">
         <Stack as="section" gap="md">
           <p className="text-sm text-on-surface-variant">
-            To{' '}
-            <span className="streamer font-medium text-on-surface">
-              <Masked text={v.name} />
-            </span>
-            . Make a code and share it. {NEEDS_INVITER} when someone uses it.
+            To <Name of={roomName(v.name)} look="font-medium text-on-surface" />. Make a code and
+            share it. {NEEDS_INVITER} when someone uses it.
           </p>
           <Row gap="sm" align="end" wrap>
             <Stack as="label" gap="2xs">
@@ -277,9 +276,7 @@ function ServerInviteDialogBody({ room }: { room: string }) {
                   <Surface as="li" key={c.ik} pad="sm" tone="plain" radius="lg">
                     <Row gap="md">
                       <KeyAvatar person={identityPerson(c.ik, 'contact')} size={32} />
-                      <span className="streamer min-w-0 flex-1 truncate text-sm">
-                        <Masked text={displayName(c)} />
-                      </span>
+                      <Name of={p2pName(displayName(c))} look="min-w-0 flex-1 truncate text-sm" />
                       <Button
                         disabled={pending}
                         onClick={() =>
@@ -486,9 +483,7 @@ function ServerNewDialogBody({
                       <Waypoints size={18} className="text-tertiary" />
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="streamer truncate text-sm font-medium">
-                        <Masked text={peek.name} />
-                      </p>
+                      <Name as="p" of={roomName(peek.name)} look="truncate text-sm font-medium" />
                       <p className="text-xs text-on-surface-variant">{NEEDS_INVITER}</p>
                     </div>
                     <P2pBadge />

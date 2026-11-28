@@ -1,4 +1,6 @@
 'use client'
+import { Name } from '../name'
+import { p2pName } from '../../lib/names'
 import { PeerActorTag } from '../view_actor'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
@@ -125,9 +127,7 @@ function Overview({ v }: { v: ServerView }) {
           {v.owners.map(ik => (
             <Row as="li" key={ik} gap="sm">
               <MemberAvatar members={v.members} ik={ik} size={24} />
-              <span className="streamer min-w-0 truncate text-sm">
-                <Masked text={memberName(v.id, ik)} own={ik === me} />
-              </span>
+              <Name of={p2pName(memberName(v.id, ik), ik === me)} look="min-w-0 truncate text-sm" />
               <Crown size={14} className="shrink-0 text-tertiary" aria-hidden />
             </Row>
           ))}
@@ -666,9 +666,7 @@ function ModerationLog({ v }: { v: ServerView }) {
             <Row gap="sm" align="start" place="min-w-0">
               <MemberAvatar members={v.members} ik={l.a} size={20} />
               <span className="min-w-0 flex-1 text-sm break-words">
-                <span className="streamer font-medium">
-                  <Masked text={memberName(v.id, l.a)} own={l.a === me} />
-                </span>{' '}
+                <Name of={p2pName(memberName(v.id, l.a), l.a === me)} look="font-medium" />{' '}
                 <span className="text-on-surface-variant">{l.act}</span>
                 {l.target && (
                   <>

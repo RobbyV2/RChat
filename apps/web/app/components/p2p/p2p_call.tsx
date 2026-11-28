@@ -1,4 +1,6 @@
 'use client'
+import { Name } from '../name'
+import { p2pName } from '../../lib/names'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
@@ -201,7 +203,7 @@ function IncomingCallBarBody({ room, name }: { room: string; name: string }) {
             <Phone size={16} className="shrink-0 text-status-green" aria-hidden />
           )}
           <span className="min-w-0 truncate text-sm">
-            <span className="streamer font-medium">{name}</span>{' '}
+            <Name of={p2pName(name)} look="font-medium" />{' '}
             {c.video ? 'is video calling you' : 'is calling you'}
           </span>
         </Row>

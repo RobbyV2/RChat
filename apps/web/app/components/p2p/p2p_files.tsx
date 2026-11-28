@@ -1,4 +1,6 @@
 'use client'
+import { Name } from '../name'
+import { instanceName } from '../../lib/names'
 import { altText, describableFile } from '../../lib/alt_text'
 import { AltField } from '../alt_text'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -120,7 +122,7 @@ function Tile({
   if (textOnly)
     return (
       <p className="msg-part text-xs text-on-surface-variant italic">
-        Attachment hidden: <span className="streamer">{label}</span> is text only
+        Attachment hidden: <Name of={instanceName(label)} /> is text only
       </p>
     )
   return (

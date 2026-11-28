@@ -1,4 +1,6 @@
 'use client'
+import { Name } from '../name'
+import { p2pName, roomName } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
 import { Button, IconButton, ListRow, LinkButton } from '../controls'
 import { localInput } from '../../lib/scheduled'
@@ -77,11 +79,7 @@ function Who({ room, ik }: { room: string; ik: string }) {
   const { memberName } = identity
 
   const own = useP2p(s => s.me === ik)
-  return (
-    <span className="streamer font-medium text-on-surface">
-      <Masked text={memberName(room, ik)} own={own} />
-    </span>
-  )
+  return <Name of={p2pName(memberName(room, ik), own)} look="font-medium text-on-surface" />
 }
 
 // Names inline: a few, then "and N more", which shows the rest 50 at a time.
@@ -428,18 +426,12 @@ function TransferAsksBody({ room }: { room?: string }) {
                 {a.kind === 'take' ? (
                   <>
                     wants to make you the owner of a new copy of{' '}
-                    <span className="streamer font-medium">
-                      <Masked text={a.name} />
-                    </span>
-                    .
+                    <Name of={roomName(a.name)} look="font-medium" />.
                   </>
                 ) : (
                   <>
-                    wants to transfer{' '}
-                    <span className="streamer font-medium">
-                      <Masked text={a.name} />
-                    </span>{' '}
-                    to <Who room={a.room} ik={a.to} />. {TRANSFER_CO_OWNERS_TEXT}
+                    wants to transfer <Name of={roomName(a.name)} look="font-medium" /> to{' '}
+                    <Who room={a.room} ik={a.to} />. {TRANSFER_CO_OWNERS_TEXT}
                   </>
                 )}
               </p>
@@ -497,10 +489,7 @@ function CoOwnerAsksBody() {
                       {c ? <Masked text={displayName(c)} /> : 'A contact'}
                     </span>{' '}
                     wants you as a co-owner of{' '}
-                    <span className="streamer font-medium">
-                      <Masked text={a.name || 'a new server'} />
-                    </span>
-                    .
+                    <Name of={roomName(a.name || 'a new server')} look="font-medium" />.
                   </p>
                   <Row as="span" gap="2xs" align="stretch" place="ml-auto">
                     <Button size="md" onClick={() => p2pServer.answerCoOwner(a.key, false)}>
@@ -561,9 +550,7 @@ function CoOwnerPickerBody({
                       }
                     />
                     <KeyAvatar person={identityPerson(c.ik, 'contact')} size={24} />
-                    <span className="streamer min-w-0 flex-1 truncate text-sm">
-                      <Masked text={displayName(c)} />
-                    </span>
+                    <Name of={p2pName(displayName(c))} look="min-w-0 flex-1 truncate text-sm" />
                     {!online && <span className="text-xs text-on-surface-variant">Offline</span>}
                   </Row>
                 </Surface>
@@ -739,9 +726,11 @@ function LostDeviceDialogBody({ dk }: { dk: string }) {
                 radius="lg"
               >
                 <Stack gap="2xs">
-                  <p className="streamer text-sm font-medium">
-                    <Masked text={servers[p.room]?.name ?? 'P2P server'} />
-                  </p>
+                  <Name
+                    as="p"
+                    of={roomName(servers[p.room]?.name ?? 'P2P server')}
+                    look="text-sm font-medium"
+                  />
                   {p.acts.length === 0 && p.content === 0 ? (
                     <p className="text-xs text-on-surface-variant">Nothing since then.</p>
                   ) : (

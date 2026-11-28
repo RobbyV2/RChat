@@ -1,4 +1,6 @@
 'use client'
+import { Name } from '../name'
+import { p2pName } from '../../lib/names'
 import { Button, Tab } from '../controls'
 import { Grid, Row, Stack, Surface } from '../layout'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -13,7 +15,7 @@ import { displayName, shieldOf, warningText } from '../../lib/p2p/contacts'
 import { fingerprint } from '../../lib/p2p/keys'
 import { safetyGroups } from '../../lib/p2p/safety'
 import { QrCode } from '../config_sync'
-import { Dialog, FieldError, fieldCls, Masked } from '../ui'
+import { Dialog, FieldError, fieldCls } from '../ui'
 import { ContactShield, shieldText } from './p2p_badge'
 import { QrScan } from './qr_scan'
 
@@ -49,9 +51,7 @@ function VerifyDialogBody({ ik }: { ik: string }) {
       <Stack gap="lg">
         <Row gap="sm">
           <ContactShield kind={shield} size={20} />
-          <span className="streamer min-w-0 truncate font-medium">
-            <Masked text={displayName(contact)} />
-          </span>
+          <Name of={p2pName(displayName(contact))} look="min-w-0 truncate font-medium" />
           <span className="text-sm text-on-surface-variant">{shieldText(shield)}</span>
         </Row>
         {contact.warning && (
@@ -90,11 +90,8 @@ function VerifyDialogBody({ ik }: { ik: string }) {
         ) : mode === 'number' ? (
           <Stack gap="sm">
             <p className="text-sm text-on-surface-variant">
-              Compare these numbers with{' '}
-              <span className="streamer">
-                <Masked text={displayName(contact)} />
-              </span>
-              , in person or on a call. If they match, nobody is in between.
+              Compare these numbers with <Name of={p2pName(displayName(contact))} />, in person or
+              on a call. If they match, nobody is in between.
             </p>
             <div data-safety-number className="streamer font-mono text-base tracking-wider">
               <Surface pad="lg" tone="base" radius="lg">
@@ -112,11 +109,8 @@ function VerifyDialogBody({ ik }: { ik: string }) {
         ) : mode === 'show' ? (
           <Stack gap="sm">
             <p className="text-sm text-on-surface-variant">
-              Let{' '}
-              <span className="streamer">
-                <Masked text={displayName(contact)} />
-              </span>{' '}
-              scan this. When it matches, you both see each other as verified.
+              Let <Name of={p2pName(displayName(contact))} /> scan this. When it matches, you both
+              see each other as verified.
             </p>
             {code && <QrCode text={code} label="Your verification code" wide />}
           </Stack>
