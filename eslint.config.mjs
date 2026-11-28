@@ -171,7 +171,26 @@ const motionSyntax = [
   { selector: 'JSXAttribute[name.name=/^data-motion/]', message: SLOT_MESSAGE },
   { selector: 'Property[key.value=/^data-motion/]', message: SLOT_MESSAGE },
 ]
-const clockSyntax = { 'no-restricted-syntax': ['error', DATE_SYNTAX, ...motionSyntax] }
+// A value that passed a check has a type only its check gives (app/lib/p2p/proven.ts): nothing
+// else may cast to one.
+const PROVEN_MESSAGE =
+  'Only the check that proves a value gives it this type: validate, validate2 or the room verdict (app/lib/p2p/proven.ts).'
+const provenSyntax = [
+  {
+    selector:
+      'TSAsExpression > TSTypeReference[typeName.name=/^(CheckedWire|CheckedWire2|Admitted|Judged|Proven)$/]',
+    message: PROVEN_MESSAGE,
+  },
+]
+const PROVERS = [
+  'apps/web/app/lib/p2p/event_v1.ts',
+  'apps/web/app/lib/p2p/event_v2.ts',
+  'apps/web/app/lib/p2p/acl_room.ts',
+  'apps/web/app/lib/p2p/server/receive.ts',
+]
+const clockSyntax = {
+  'no-restricted-syntax': ['error', DATE_SYNTAX, ...motionSyntax, ...provenSyntax],
+}
 // App code names a request and hands it on; only the code that owns requests holds the client
 // that sends them.
 const ASK_MESSAGE =
@@ -367,6 +386,10 @@ export default tseslint.config(
       'no-restricted-syntax': [...clockOnly['no-restricted-syntax'], ...askSyntax],
       ...sinkRule([], true),
     },
+  },
+  {
+    files: PROVERS,
+    rules: { 'no-restricted-syntax': ['error', DATE_SYNTAX, ...motionSyntax, ...askSyntax] },
   },
   { files: REQUEST_SINKS, rules: sinkRule(['TO_REQUEST']) },
   { files: STORE_SINKS, rules: sinkRule(['TO_STORE']) },

@@ -8,6 +8,7 @@ import { buildEvent2, contentEvOf, validate2, type ChainFields, type WireV2 } fr
 import { keyId, newKeyPair, type KeyPair } from '../p2p/keys'
 import type { Agreed } from '../p2p/limits'
 import { EVERYONE_BITS } from '../p2p/server'
+import { sound } from './helpers/proven'
 
 // Server worlds for the rules tests: real signed v2 events received by the evaluator
 // the host serves (acl_room.ts), built as honest clients build them (its plan) unless a test
@@ -135,8 +136,8 @@ export class ServerWorld {
     this.wires.set(id, wire)
     const out =
       wire.ev.L === 'a'
-        ? this.room.receiveAcl(id, wire, this.now)
-        : this.room.receiveContent(id, wire, this.now)
+        ? this.room.receiveAcl(id, sound(wire), this.now)
+        : this.room.receiveContent(id, sound(wire), this.now)
     if (out.s === 'A') this.acl.push({ id, w: wire, rec: out.rec })
     if (out.s === 'U' && wire.ev.L === 'a') this.acl.push({ id, w: wire })
     if (out.s === 'C') this.contents.push(contentEvOf(id, wire))

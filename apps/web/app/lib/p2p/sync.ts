@@ -9,7 +9,14 @@ import {
   type Inserted,
 } from './dag'
 import type { EventRecord, P2pStore } from './db'
-import { claimedId, redacted, validate, type Devices, type Wire } from './event_v1'
+import {
+  claimedId,
+  redacted,
+  validate,
+  type CheckedWire,
+  type Devices,
+  type Wire,
+} from './event_v1'
 import { isEventId } from './content'
 import type { Message } from './frames'
 import { LOCAL, type Local } from './limits'
@@ -19,7 +26,7 @@ import type { Clock, Session } from './session'
 // The outcome of checking an event from a peer: stored next, refused (a strike), or not stored
 // for now (`later`: no strike, it may be fine once we know more).
 export type Check =
-  | { ok: true; id: string; wire: Wire; revoked: boolean }
+  | { ok: true; id: string; wire: CheckedWire; revoked: boolean }
   | { ok: false; later: boolean; id: string | null }
 
 export interface Walked {
@@ -93,7 +100,7 @@ export interface SyncDeps {
   // Checks an event from a peer (DMs: the two members and their devices).
   check?: (link: Link, raw: unknown) => Promise<Check>
   // Stores a checked event (DMs: insertEvent with the conversation's caps).
-  insert?: (link: Link, id: string, wire: Wire, receivedAt: number) => Promise<Inserted>
+  insert?: (link: Link, id: string, wire: CheckedWire, receivedAt: number) => Promise<Inserted>
   serving?: Serving
   // Servers: the ACL heads, sent with `heads` and pulled first, and ACL events we wait for (the
   // missing parents of pending events).
@@ -610,7 +617,7 @@ export class Sync {
     return { ok: false, later: v.why === 'device' && sender === link.ik, id }
   }
 
-  private insertDm(link: Link, id: string, wire: Wire, now: number) {
+  private insertDm(link: Link, id: string, wire: CheckedWire, now: number) {
     return insertEvent(this.deps.store.db, id, wire, now, {
       me: this.deps.me(),
       peer: link.ik,

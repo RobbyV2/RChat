@@ -12,7 +12,7 @@ import {
 import { IMPL, trimContent, type AclItem } from '../acl_room'
 import { cacheKey, countOf, moveCounts, unindexAll, resetHeld, storedSize } from '../dag'
 import { serverWire, type RoomRecord, type ServerCache } from '../db'
-import { contentEvOf, headerOk, validate2, type WireV2 } from '../event_v2'
+import { contentEvOf, headerOk, validate2, type CheckedWire2 } from '../event_v2'
 import { cutOut } from '../flows'
 import { cleanName } from '../keys'
 import { roomExtras, sameExtras } from '../../profile_fields'
@@ -57,7 +57,7 @@ export async function load(cx: ServerCtx, r: RoomRecord, records = true): Promis
   const bad: string[] = []
   const acl: (AclItem & { order: number })[] = []
   const contents: ContentEv[] = []
-  const check: { id: string; w: WireV2 }[] = []
+  const check: { id: string; w: CheckedWire2 }[] = []
   const bodiless: string[] = []
   // Bodies evicted for space: wanted back only when viewed, after a start too.
   const evicted: string[] = []
@@ -93,6 +93,7 @@ export async function load(cx: ServerCtx, r: RoomRecord, records = true): Promis
     const content = w.ev.L === 'c'
     const unchecked =
       x.imp || (rules === RULES_VERSION && (content ? x.contentRules !== rules : !x.acl))
+    let sound: CheckedWire2 | null = null
     if (unchecked) {
       imported.push(x.id)
       if (content && rules === RULES_VERSION) checkedContent.add(x.id)
@@ -101,9 +102,10 @@ export async function load(cx: ServerCtx, r: RoomRecord, records = true): Promis
         bad.push(x.id)
         continue
       }
+      sound = v.wire
     }
     if (x.layer === 'c' || w.ev.L === 'c') {
-      if (unchecked) check.push({ id: x.id, w })
+      if (sound) check.push({ id: x.id, w: sound })
       else {
         // Without its body, it keeps its channel and target (the record's).
         const m = contentEvOf(x.id, w)

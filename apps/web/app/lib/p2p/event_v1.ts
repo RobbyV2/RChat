@@ -1,5 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import { isRecord } from '../bytes'
+import type { Proven } from './proven'
 import { b64u, bytesOf, canonicalBytes, concat, hasKeys, utf8, isInt } from './canonical'
 import { isKeyId, keyBytes, keyId, sign, verify, type Cert, type Revocation } from './keys'
 import {
@@ -120,7 +121,10 @@ export type Invalid =
 // The signature alone can't tell that from a backdated event made with a stolen key, so the
 // caller keeps it only when it is already stored or a good device of the sender vouches for it.
 export type Checked =
-  { ok: true; id: string; wire: Wire; revoked: boolean } | { ok: false; why: Invalid }
+  { ok: true; id: string; wire: CheckedWire; revoked: boolean } | { ok: false; why: Invalid }
+
+// A v1 event that passed `validate`.
+export type CheckedWire = Proven<Wire, 'checked'>
 
 const bad = (why: Invalid): Checked => ({ ok: false, why })
 
@@ -190,12 +194,8 @@ export const validate = (raw: unknown, auth: RoomAuth): Checked => {
     }
     if (hash !== ev.ch) return bad('content')
   }
-  return {
-    ok: true,
-    id: b64u(idBytes),
-    wire: { ev, c: (c as Content | null) ?? null, sig: sig as string },
-    revoked: rev !== undefined,
-  }
+  const wire: Wire = { ev, c: (c as Content | null) ?? null, sig: sig as string }
+  return { ok: true, id: b64u(idBytes), wire: wire as CheckedWire, revoked: rev !== undefined }
 }
 
 // The id an event claims, when its core is well formed (so a refused event isn't asked for again).

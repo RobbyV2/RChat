@@ -15,6 +15,7 @@ import { headerOk } from '../p2p/event_v2'
 import { messageActs, type P2pMessage } from '../p2p/dm'
 
 import { ServerWorld, type Sent } from './p2p_server_world'
+import { sound } from './helpers/proven'
 
 // Storage rules of P2P servers as the ACL core decides them (the orphan rule and headers,
 // proofs and shares, dropped headers, stability), on the host's evaluator with real
@@ -287,7 +288,7 @@ describe('void relays cited by a removed member’s hidden content', () => {
     // kept its header, and one that went without it.
     for (const id of [hdrs[0], d.acl.find(x => !x.header)!.id]) {
       const x = relays.find(y => y.id === id)!
-      const back = r.receiveAcl(x.id, x.wire, w.now)
+      const back = r.receiveAcl(x.id, sound(x.wire), w.now)
       expect(back.s).toBe('A')
       expect(r.r.ev(x.id).c.rec).toBe(x.wire.c?.rec)
       dropped.delete(x.id)
@@ -372,7 +373,7 @@ describe('headers outside the index', () => {
     expect(r.aclDiff([mark.id], [], 1000)).toEqual([])
     // an imported copy of content citing the header (restore's check)
     const r2 = new AclRoom(w.srv)
-    const out2 = r2.restore(st.acl, st.contents, [{ id: msg.id, w: msg.wire }])
+    const out2 = r2.restore(st.acl, st.contents, [{ id: msg.id, w: sound(msg.wire) }])
     expect(out2.lost).toEqual([])
     expect(r2.r.acl.isHeader(mark.id)).toBe(false)
   })
@@ -386,7 +387,7 @@ describe('headers outside the index', () => {
     const whole = new Map<string, AclItem>()
     const deliver = (id: string): void => {
       const wire = w.wires.get(id)!
-      const v = r.receiveAcl(id, wire, w.now)
+      const v = r.receiveAcl(id, sound(wire), w.now)
       if (v.s === 'P') {
         for (const p of v.missing) deliver(p)
         deliver(id)
@@ -416,7 +417,7 @@ describe('headers outside the index', () => {
     r.restore(st.acl, [...st.contents, contentEvOf(msg.id, msg.wire)])
     expect(r.r.indexed(mark.id)).toBe(true)
     expect(r.r.ev(mark.id).c.note).toBeUndefined()
-    expect(r.receiveAcl(mark.id, mark.wire, w.now).s).toBe('A')
+    expect(r.receiveAcl(mark.id, sound(mark.wire), w.now).s).toBe('A')
     const ix = r.r.acl.ix
     expect([r.r.ev(mark.id).c.note, ix.ev[ix.at.get(mark.id)!].c.note]).toEqual([note, note])
   })

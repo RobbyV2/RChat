@@ -12,13 +12,13 @@ import {
   type Restored,
   type Plan,
   type PlanReq,
-  type Received,
+  type Judged,
   type Shown,
 } from './acl_room'
 import type { AdmitOpts } from './acl/admit'
 import type { EvalLimits } from './acl/rules'
 import type { ContentEv } from './acl/visibility'
-import type { WireV2 } from './event_v2'
+import type { CheckedWire2 } from './event_v2'
 
 // Where the ACL evaluator of P2P servers runs. In the browser a Web Worker keeps an AclRoom per
 // room (its index, evaluation and merge caches), so an evaluation never blocks the page; elsewhere
@@ -33,12 +33,12 @@ export interface AclHost {
     room: string,
     acl: AclItem[],
     contents: ContentEv[],
-    check?: { id: string; w: WireV2 }[],
+    check?: { id: string; w: CheckedWire2 }[],
     bodiless?: string[],
     evicted?: string[]
   ): Promise<Loaded>
-  acl(room: string, id: string, w: WireV2, now: number): Promise<Decided>
-  content(room: string, id: string, w: WireV2, now: number): Promise<Received>
+  acl(room: string, id: string, w: CheckedWire2, now: number): Promise<Decided>
+  content(room: string, id: string, w: CheckedWire2, now: number): Promise<Judged>
   plan(room: string, q: PlanReq): Promise<Plan>
   display(room: string, ids: string[]): Promise<(Shown | null)[]>
   history(room: string, ik: string, ids: string[]): Promise<boolean[]>
@@ -76,7 +76,7 @@ export interface Dropped extends Drops {
 }
 
 export interface Decided {
-  out: Received
+  out: Judged
   delta: SumDelta | null
 }
 
@@ -91,11 +91,11 @@ export type HostRequest =
       room: string
       acl: AclItem[]
       contents: ContentEv[]
-      check?: { id: string; w: WireV2 }[]
+      check?: { id: string; w: CheckedWire2 }[]
       bodiless?: string[]
       evicted?: string[]
     }
-  | { id: number; op: 'acl' | 'content'; room: string; ev: string; w: WireV2; now: number }
+  | { id: number; op: 'acl' | 'content'; room: string; ev: string; w: CheckedWire2; now: number }
   | { id: number; op: 'plan'; room: string; q: PlanReq }
   | { id: number; op: 'display'; room: string; ids: string[] }
   | { id: number; op: 'history'; room: string; ik: string; ids: string[] }
@@ -251,7 +251,7 @@ abstract class Base implements AclHost {
     room: string,
     acl: AclItem[],
     contents: ContentEv[],
-    check?: { id: string; w: WireV2 }[],
+    check?: { id: string; w: CheckedWire2 }[],
     bodiless?: string[],
     evicted?: string[]
   ) {
@@ -265,11 +265,11 @@ abstract class Base implements AclHost {
       ...(evicted?.length ? { evicted } : {}),
     })
   }
-  acl(room: string, ev: string, w: WireV2, now: number) {
+  acl(room: string, ev: string, w: CheckedWire2, now: number) {
     return this.call<Decided>({ op: 'acl', room, ev, w, now })
   }
-  content(room: string, ev: string, w: WireV2, now: number) {
-    return this.call<Received>({ op: 'content', room, ev, w, now })
+  content(room: string, ev: string, w: CheckedWire2, now: number) {
+    return this.call<Judged>({ op: 'content', room, ev, w, now })
   }
   plan(room: string, q: PlanReq) {
     return this.call<Plan>({ op: 'plan', room, q })

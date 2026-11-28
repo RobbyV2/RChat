@@ -12,6 +12,7 @@ import { Dms, dmRoomId, loadMessages } from '../p2p/dm'
 import * as dag from '../p2p/dag'
 import { insertEvent } from '../p2p/dag'
 import { LOCAL } from '../p2p/limits'
+import { sound } from './helpers/proven'
 
 // Real-time tests (sessions, IndexedDB): budgets for a loaded machine.
 setDefaultTimeout(60_000)
@@ -103,7 +104,11 @@ const eventOn = async (
 const legacyEvent = async (p: Peer, room: string, body: string) => {
   const author = p.node.author()!
   const { id, wire } = await eventOn(p, room, author, 'msg', { body })
-  await insertEvent(p.store.db, id, wire, Date.now(), { me: p.node.ik, peer: '', lim: LOCAL.dag })
+  await insertEvent(p.store.db, id, sound(wire), Date.now(), {
+    me: p.node.ik,
+    peer: '',
+    lim: LOCAL.dag,
+  })
   await p.store.db.put('outbox', { id, room, created: Date.now(), deliveredTo: [] })
   return { id, wire }
 }
@@ -228,12 +233,14 @@ describe('storage limits', () => {
     const me = a.node.author()!
     const ctx = { me: a.node.ik, peer: b.node.ik, lim: { ...LOCAL.dag, roomBytes: 2000 } }
     const big = await eventOn(a, room, me, 'msg', { body: 'x'.repeat(2500) })
-    expect((await insertEvent(a.store.db, big.id, big.wire, Date.now(), ctx)).status).toBe('full')
+    expect((await insertEvent(a.store.db, big.id, sound(big.wire), Date.now(), ctx)).status).toBe(
+      'full'
+    )
     expect((await a.store.room(room))?.full).toBe(true)
     const small = await eventOn(a, room, me, 'msg', { body: 'y' })
-    expect((await insertEvent(a.store.db, small.id, small.wire, Date.now(), ctx)).status).toBe(
-      'new'
-    )
+    expect(
+      (await insertEvent(a.store.db, small.id, sound(small.wire), Date.now(), ctx)).status
+    ).toBe('new')
     expect((await a.store.room(room))?.full).toBe(false)
   })
 
@@ -465,10 +472,10 @@ describe('revoked devices', () => {
       { body: 'early' },
       { ts: revokedAt - 5000 }
     )
-    await insertEvent(b.store.db, early.id, early.wire, revokedAt - 5000, ctx)
+    await insertEvent(b.store.db, early.id, sound(early.wire), revokedAt - 5000, ctx)
     const good = await eventOn(b, room, bob, 'msg', { body: 'good' }, { ts: revokedAt + 10 })
     expect(good.wire.ev.prev).toEqual([early.id])
-    await insertEvent(b.store.db, good.id, good.wire, revokedAt + 10, ctx)
+    await insertEvent(b.store.db, good.id, sound(good.wire), revokedAt + 10, ctx)
     await sessB.send({ t: 'push', room, ev: good.wire })
     await eventually(async () => (await bodies(a, b)).join() === 'early,good', 'both kept')
     expect(sessionOf(a, room).strikes).toBe(0)
@@ -485,14 +492,14 @@ describe('revoked devices', () => {
       { body: 'early' },
       { ts: revokedAt - 5000 }
     )
-    await insertEvent(b.store.db, early.id, early.wire, revokedAt - 5000, ctx)
+    await insertEvent(b.store.db, early.id, sound(early.wire), revokedAt - 5000, ctx)
     // Bob's heads name it: Alice pulls it, can't keep it yet, and stops asking.
     const linkB = b.dms.sync.linksOf(room)[0]
     await (b.dms.sync as unknown as { sendHeads: (l: unknown) => Promise<void> }).sendHeads(linkB)
     const linkA = a.dms.sync.linksOf(room)[0]
     await eventually(async () => linkA.unavailable.has(early.id), 'not stored yet')
     const good = await eventOn(b, room, bob, 'msg', { body: 'good' }, { ts: revokedAt + 10 })
-    await insertEvent(b.store.db, good.id, good.wire, revokedAt + 10, ctx)
+    await insertEvent(b.store.db, good.id, sound(good.wire), revokedAt + 10, ctx)
     await sessionOf(b, room).send({ t: 'push', room, ev: good.wire })
     await eventually(async () => (await bodies(a, b)).join() === 'early,good', 'both kept')
     expect(sessionOf(a, room).strikes).toBe(0)
@@ -538,8 +545,12 @@ describe('events a peer pushes', () => {
     const msg = await eventOn(a, room, alice, 'msg', { body: 'original' })
     const edit = await eventOn(a, room, bob, 'edit', { target: msg.id, body: 'hacked' })
     const ctx = { me: a.node.ik, peer: b.node.ik, lim: LOCAL.dag }
-    expect((await insertEvent(a.store.db, edit.id, edit.wire, Date.now(), ctx)).status).toBe('new')
-    expect((await insertEvent(a.store.db, msg.id, msg.wire, Date.now(), ctx)).status).toBe('new')
+    expect((await insertEvent(a.store.db, edit.id, sound(edit.wire), Date.now(), ctx)).status).toBe(
+      'new'
+    )
+    expect((await insertEvent(a.store.db, msg.id, sound(msg.wire), Date.now(), ctx)).status).toBe(
+      'new'
+    )
     expect(await bodies(a, b)).toEqual(['original'])
   })
 

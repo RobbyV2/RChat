@@ -2,7 +2,7 @@ import { reasonField } from '../../audit_format'
 import { isRecord } from '../../bytes'
 import { deviceCertOk, genesisBundle, genesisSrv } from '../acl/binding'
 import { aclContentOk, knownRules, RULES_VERSION } from '../acl/rules'
-import type { Plan, Received } from '../acl_room'
+import type { Judged, Plan } from '../acl_room'
 import type { Summary } from '../acl/summary'
 import { b64u, bytesOf, randomBytes } from '../canonical'
 import { blankRoom, chainKey, insertServer, type DevChain } from '../dag'
@@ -141,15 +141,16 @@ export async function emitOne(
   // The wire checks peers apply (a strike there): one of ours that fails them is never kept.
   const v = validate2(wire, room, cx.sumOf(room).rules ?? RULES_VERSION)
   if (!v.ok) throw new ServerError(v.why === 'size' ? TOO_BIG_TEXT : CANT_TEXT)
+  const sound = v.wire
   // Our own content needs room too: evicted for in the stated order.
-  for (let full = L === 'c' ? await cx.contentFull(room, wire) : null; full;) {
-    if (!(await cx.evictForSpace(room, sizeOfWire(wire), full === 'total'))) break
-    full = await cx.contentFull(room, wire)
+  for (let full = L === 'c' ? await cx.contentFull(room, sound) : null; full;) {
+    if (!(await cx.evictForSpace(room, sizeOfWire(sound), full === 'total'))) break
+    full = await cx.contentFull(room, sound)
   }
-  let out: Received
+  let out: Judged
   let delta = null
-  if (L === 'a') ({ out, delta } = await cx.host.acl(room, id, wire, ts))
-  else out = await cx.host.content(room, id, wire, ts)
+  if (L === 'a') ({ out, delta } = await cx.host.acl(room, id, sound, ts))
+  else out = await cx.host.content(room, id, sound, ts)
   if (out.s === 'R') {
     if (out.why === 'forked') cx.conflicted(room)
     throw new ServerError(refusalText(out.why))
@@ -157,13 +158,13 @@ export async function emitOne(
   if (out.s !== 'A' && out.s !== 'C') throw new ServerError(CANT_TEXT)
   let res
   try {
-    res = await insertServer(cx.db, room, id, wire, now, {
+    res = await insertServer(cx.db, room, id, sound, now, {
       me: cx.me,
       ...(out.s === 'C' && cx.sumOf(room).rules === RULES_VERSION
         ? { contentRules: RULES_VERSION }
         : {}),
       chain,
-      ...(out.s === 'A' ? { aseq: out.aseq, acl: out.rec } : {}),
+      verdict: out,
       lim: cx.storeLimits(),
     })
   } catch (e) {
@@ -187,9 +188,9 @@ export async function emitOne(
   if (delta) await cx.applyDelta(room, delta)
   if (L === 'c') {
     await cx.purgeRedacted(room, res.rec)
-    await cx.fillViews(room, typeof wire.c?.ch === 'string' ? wire.c.ch : '')
+    await cx.fillViews(room, typeof sound.c?.ch === 'string' ? sound.c.ch : '')
   }
-  cx.sync.push(room, id, wire as unknown as Wire)
+  cx.sync.push(room, id, sound as unknown as Wire)
   cx.sync.announce(room)
   cx.changed(room)
   cx.aimed([res.rec])
@@ -243,7 +244,8 @@ export async function create(
   const content = { ...bare, owners: owners.map((o, i) => ({ ...o, dcert: dcerts[i] })) }
   const now = cx.clock.now()
   const { id: room, wire } = buildEvent2(author, null, 'genesis', 'a', content, { seq: 0 }, now)
-  if (!validate2(wire, null).ok) throw new ServerError(TOO_BIG_TEXT)
+  const genesis = validate2(wire, null)
+  if (!genesis.ok) throw new ServerError(TOO_BIG_TEXT)
   await cx.putRoom({
     ...blankRoom(room, '', now),
     kind: 'server',
@@ -253,7 +255,7 @@ export async function create(
     since: now,
   })
   await cx.locked(room, async () => {
-    const res = await cx.withDevice(dk, () => cx.take(room, room, wire, now))
+    const res = await cx.withDevice(dk, () => cx.take(room, room, genesis.wire, now))
     if (res.status !== 'new') throw new ServerError("Couldn't create the server")
     await cx.db.put('outbox', { id: room, room, created: now, deliveredTo: [] })
   })

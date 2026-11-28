@@ -7,7 +7,7 @@ import { loadavg } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { AclReplica, identityHead, pastOf, type Verdict } from '../../app/lib/p2p/acl/admit'
 import { idOp, type AclContent, type AclEv } from '../../app/lib/p2p/acl/rules'
-import type { WireV2 } from '../../app/lib/p2p/event_v2'
+import type { CheckedWire2 } from '../../app/lib/p2p/event_v2'
 import { AGREED, type Agreed } from '../../app/lib/p2p/limits'
 import { ensurePerms } from '../../app/lib/__tests__/helpers/perms'
 
@@ -225,7 +225,7 @@ export class BenchWorld {
 }
 
 // A v2 wire that aclEvOf maps back to e (the page checked signatures before the worker).
-export const wireOf = (e: AclEv): WireV2 =>
+export const wireOf = (e: AclEv): CheckedWire2 =>
   ({
     ev: {
       v: 2,
@@ -243,7 +243,7 @@ export const wireOf = (e: AclEv): WireV2 =>
     },
     c: e.c,
     sig: '',
-  }) as unknown as WireV2
+  }) as unknown as CheckedWire2
 
 // ----- Command line and output -----
 

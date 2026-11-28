@@ -52,7 +52,8 @@ import {
 } from './acl/summary'
 import { ContentView, type ContentEv, type Hidden } from './acl/visibility'
 import type { RoomCtx } from './acl_room_ctx'
-import { aclEvOf, contentEvOf, type WireV2 } from './event_v2'
+import { aclEvOf, contentEvOf, type CheckedWire2, type WireV2 } from './event_v2'
+import type { Proven } from './proven'
 import { AGREED } from './limits'
 import * as flows from './acl_room_flows'
 import * as storage from './acl_room_storage'
@@ -119,6 +120,15 @@ export type Received =
   | { s: 'M'; why: string }
   | { s: 'U'; rules: number }
   | { s: 'P'; missing: string[] }
+
+type Stored = 'A' | 'C' | 'U'
+
+// A verdict the store takes an event with: admitted, counted content, or an event of rules this
+// build doesn't know. Only the room's own judgement gives one.
+export type Admitted = Proven<Extract<Received, { s: Stored }>, 'admitted'>
+
+// What the room answers about an event.
+export type Judged = Admitted | Exclude<Received, { s: Stored }>
 
 // What a message shows: hidden or not, its last edit, its reactions and its pin, and whether its
 // mention of everyone counts.
@@ -425,7 +435,7 @@ export class AclRoom {
   restore(
     items: readonly AclItem[],
     contents: readonly ContentEv[],
-    check: readonly { id: string; w: WireV2 }[] = [],
+    check: readonly { id: string; w: CheckedWire2 }[] = [],
     bodiless: readonly string[] = [],
     evicted: readonly string[] = []
   ): Restored {
@@ -688,7 +698,11 @@ export class AclRoom {
 
   // ----- Receipt (the page checked the wire and that every ACL parent is held) -----
 
-  receiveAcl(id: string, w: WireV2, now: number): Received {
+  receiveAcl(id: string, w: CheckedWire2, now: number): Judged {
+    return this.aclVerdict(id, w, now) as Judged
+  }
+
+  private aclVerdict(id: string, w: CheckedWire2, now: number): Received {
     const e = aclEvOf(id, w)
     // A dropped event fetched again: admitted as it was (a header is indexed again, whole, once
     // no parent is only a header; one indexed from its header gets its content back).
@@ -760,7 +774,11 @@ export class AclRoom {
     }
   }
 
-  receiveContent(id: string, w: WireV2, now: number): Received {
+  receiveContent(id: string, w: CheckedWire2, now: number): Judged {
+    return this.contentVerdict(id, w, now) as Judged
+  }
+
+  private contentVerdict(id: string, w: CheckedWire2, now: number): Received {
     if (this.r.unknownRules !== undefined) return { s: 'U', rules: this.r.unknownRules }
     const m = contentEvOf(id, w)
     const known = this.contents.has(id)

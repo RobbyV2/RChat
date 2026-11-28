@@ -1,10 +1,18 @@
-import type { Drops, PackedRec } from './acl_room'
+import type { Admitted, Drops } from './acl_room'
 import { LOCAL, type Local } from './limits'
 import { headerContent } from './acl/storage'
 import { shareAdd, shareKey, shareLive, withinShare, type Share } from './shares'
 import { attsOf, isEventId, LIMITS as EV, shownReaction, TARGETED } from './content'
-import { authorizeTarget, effTsOf, redacted, sortKeyOf, targetOf, type Wire } from './event_v1'
-import { type WireV2 } from './event_v2'
+import {
+  authorizeTarget,
+  effTsOf,
+  redacted,
+  sortKeyOf,
+  targetOf,
+  type CheckedWire,
+  type Wire,
+} from './event_v1'
+import { type CheckedWire2, type WireV2 } from './event_v2'
 import type { IDBPTransaction } from 'idb'
 import {
   indexEvent,
@@ -194,7 +202,7 @@ export type InsertTx = IDBPTransaction<
 export const insertEvent = async (
   db: P2pDatabase,
   id: string,
-  wire: Wire,
+  wire: CheckedWire,
   receivedAt: number,
   ctx: InsertCtx
 ): Promise<Inserted> => {
@@ -389,17 +397,15 @@ export const cacheKey = (room: string) => `cache\n${room}`
 export interface ServerInsert {
   contentRules?: number
   me: string
-  // An admitted ACL event: its admission order and record (absent: content, or a server of
-  // unknown rules, whose events are stored unchecked).
-  aseq?: number
-  acl?: PackedRec
+  // The room's verdict on the event: an admitted ACL event carries its admission order and
+  // record, and the events of a server of unknown rules are stored unchecked.
+  verdict: Admitted
   // Our own event: the device chain must still be where it was read when the event was built.
   chain?: DevChain | null
   // Content caps (per room and for every server together) and shares; ACL events always fit,
   // and so do the events of a server of unknown rules (stored unchecked) up to
   // `unknownEvents` and `unknownBytes`.
   lim: StoreLimits
-  unknown?: boolean
 }
 
 export type ServerInserted = Inserted | { status: 'stale' }
@@ -533,7 +539,7 @@ export const insertServer = async (
   db: P2pDatabase,
   room: string,
   id: string,
-  wire: WireV2,
+  wire: CheckedWire2,
   receivedAt: number,
   ctx: ServerInsert
 ): Promise<ServerInserted> => {
@@ -553,6 +559,9 @@ export const insertServer = async (
     tx.abort()
     return { status: 'invalid', why: 'auth' }
   }
+  const { verdict } = ctx
+  const unknown = verdict.s === 'U'
+  const aseq = verdict.s === 'A' ? verdict.aseq : undefined
   const ev = wire.ev
   const meta = tx.objectStore('meta')
   const ck = chainKey(room, ev.dev)
@@ -568,7 +577,7 @@ export const insertServer = async (
   const roomBytes = r.bytes ?? 0
   const cc = await contentCounts(meta, r)
   const dag = ctx.lim.dag
-  const full: FullWhy | null = ctx.unknown
+  const full: FullWhy | null = unknown
     ? r.count >= dag.unknownEvents || total >= dag.serverCap
       ? 'events'
       : roomBytes + size > dag.unknownBytes || totalBytes + size > dag.serverBytes
@@ -589,7 +598,7 @@ export const insertServer = async (
   }
   // Someone else's content counts against its share; past it, not stored for now (no strike).
   const share =
-    !acl && !ctx.unknown && ev.a !== ctx.me
+    !acl && !unknown && ev.a !== ctx.me
       ? await shareOf(k => meta.get(k), room, ev.a, size, receivedAt, ctx.lim)
       : null
   if (share && !share.ok) {
@@ -611,7 +620,7 @@ export const insertServer = async (
   const seq = r.lastSeq + 1
   // Display order among equal times follows the content parents, and for ACL events (join and
   // leave lines) their admission order.
-  const depth = acl ? (ctx.aseq ?? 0) : 1 + Math.max(-1, ...parents.map(x => x.depth))
+  const depth = acl ? (aseq ?? 0) : 1 + Math.max(-1, ...parents.map(x => x.depth))
   const tid = !acl && c && TARGETED.includes(ev.t) && typeof c.target === 'string' ? c.target : null
   const target = tid ? await events.get(tid) : undefined
   // An edit of a message purged here by its author goes without its body too.
@@ -635,8 +644,8 @@ export const insertServer = async (
     dseq: ev.seq,
   }
   if (!acl && ctx.contentRules !== undefined) rec.contentRules = ctx.contentRules
-  if (acl && ctx.aseq !== undefined) rec.aseq = ctx.aseq
-  if (acl && ctx.acl) rec.acl = ctx.acl
+  if (acl && aseq !== undefined) rec.aseq = aseq
+  if (acl && verdict.s === 'A') rec.acl = verdict.rec
   if (!acl && typeof c?.ch === 'string') rec.chan = c.ch
   // Aimed at an event of another room held here: what we hold decides it, not the wire, so the
   // relay may be honest: refused, no strike.
@@ -656,7 +665,7 @@ export const insertServer = async (
   await events.put(rec)
   // The search index's rows count as the room's storage. An event stored sealed gets keyed rows.
   const indexed =
-    !acl && !ctx.unknown
+    !acl && !unknown
       ? await indexEvent(
           tx.objectStore('search'),
           events,
@@ -667,7 +676,7 @@ export const insertServer = async (
       : 0
   const storedBytes = (gone ? storedSize(stored) : size) + indexed
   // Only a body eviction can free counts.
-  if (!acl && !ctx.unknown && !isRedacted) await heldAdd(meta, room, ev.a, size + indexed)
+  if (!acl && !unknown && !isRedacted) await heldAdd(meta, room, ev.a, size + indexed)
   const next: DevChain = { seq: Math.max(chain?.seq ?? -1, ev.seq) }
   const keep = (x: string | undefined, mine: boolean) => (mine ? id : x)
   const later = ev.seq >= (chain?.seq ?? -1)
@@ -708,7 +717,7 @@ export const insertServer = async (
       lastSeq: seq,
       lastTs: !acl && ev.t === 'msg' ? Math.max(r.lastTs, effTs) : r.lastTs,
       // ACL events of a server of known rules are stored whatever the room holds.
-      full: acl && !ctx.unknown ? r.full : false,
+      full: acl && !unknown ? r.full : false,
     },
     { ...countOf({ layer: ev.L, ...(gone ? { purged: true } : {}) }), bytes: storedBytes }
   )

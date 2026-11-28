@@ -230,10 +230,10 @@ export async function takeInvite(cx: ServerCtx, room: string) {
   if (!wire) return
   const m = cx.myMembership(room)
   if (m !== 'invite' && m !== 'join') {
-    const v = await cx.check(room, wire)
+    const v = await cx.checkWire(room, wire)
     // Before the genesis is here it can't be judged: kept until a stored event retries it.
     if (!v.ok && v.later) return
-    if (v.ok) await cx.take(room, v.id, wire, cx.clock.now())
+    if (v.ok) await cx.take(room, v.id, v.wire, cx.clock.now())
   }
   await cx.updateRoom(room, cur =>
     cur.joining?.ev ? { ...cur, joining: { at: cur.joining.at, via: cur.joining.via } } : null

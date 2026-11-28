@@ -5,8 +5,8 @@ import { aimedAt, capped, refitFull, type DevChain, type Inserted, type StoreLim
 import type { EventRecord, IdentRecord, P2pDatabase, RoomRecord } from '../db'
 import type { PageOpts } from '../jump'
 import type { Attachment, Fwd, MsgContent } from '../content'
-import type { Wire } from '../event_v1'
-import type { WireV2 } from '../event_v2'
+import type { CheckedWire, Wire } from '../event_v1'
+import type { CheckedWire2, WireV2 } from '../event_v2'
 import { CANT_TEXT, cutOut, TOO_OFTEN_TEXT, type Reached } from '../flows'
 import type { Message } from '../frames'
 import { Gossip, type LinkKind } from '../gossip'
@@ -424,7 +424,7 @@ export class Servers {
         const due = [...rt.held].filter(([, h]) => h.due <= now)
         for (const [id, h] of due) {
           rt.held.delete(id)
-          void this.insert(r.id, id, h.wire as unknown as Wire, now).catch(() => {})
+          void this.insert(r.id, id, h.wire, now).catch(() => {})
         }
       }
       void this.lapseRedeems(r.id).catch(() => {})
@@ -1014,7 +1014,7 @@ export class Servers {
     return storage.wantPass(ctx(this), room)
   }
 
-  private restoreBody(room: string, id: string, w: WireV2): Promise<Inserted> {
+  private restoreBody(room: string, id: string, w: CheckedWire2): Promise<Inserted> {
     return storage.restoreBody(ctx(this), room, id, w)
   }
 
@@ -1104,11 +1104,20 @@ export class Servers {
     return receive.check(ctx(this), room, raw)
   }
 
-  insert(room: string, id: string, wire: Wire, receivedAt: number): Promise<Inserted> {
+  private checkWire(room: string, raw: unknown) {
+    return receive.checkWire(ctx(this), room, raw)
+  }
+
+  insert(
+    room: string,
+    id: string,
+    wire: CheckedWire | CheckedWire2,
+    receivedAt: number
+  ): Promise<Inserted> {
     return receive.insert(ctx(this), room, id, wire, receivedAt)
   }
 
-  private decidePeer(room: string, id: string, w: WireV2, now: number) {
+  private decidePeer(room: string, id: string, w: CheckedWire2, now: number) {
     return receive.decidePeer(ctx(this), room, id, w, now)
   }
 
@@ -1120,7 +1129,13 @@ export class Servers {
     return receive.admittedHere(ctx(this), room, id)
   }
 
-  private take(room: string, id: string, w: WireV2, now: number, peer = false): Promise<Inserted> {
+  private take(
+    room: string,
+    id: string,
+    w: CheckedWire2,
+    now: number,
+    peer = false
+  ): Promise<Inserted> {
     return receive.take(ctx(this), room, id, w, now, peer)
   }
 
@@ -1128,7 +1143,7 @@ export class Servers {
     return receive.reject(ctx(this), room, id, why)
   }
 
-  private park(room: string, id: string, w: WireV2, missing: string[]) {
+  private park(room: string, id: string, w: CheckedWire2, missing: string[]) {
     return receive.park(ctx(this), room, id, w, missing)
   }
 
@@ -1143,7 +1158,7 @@ export class Servers {
   private decide(
     room: string,
     id: string,
-    w: WireV2,
+    w: CheckedWire2,
     now: number,
     retried = false
   ): Promise<Inserted> {
@@ -1175,11 +1190,11 @@ export class Servers {
     return receive.saveSoon(ctx(this), room)
   }
 
-  private contentFull(room: string, w: WireV2): Promise<'room' | 'total' | null> {
+  private contentFull(room: string, w: CheckedWire2): Promise<'room' | 'total' | null> {
     return receive.contentFull(ctx(this), room, w)
   }
 
-  private hold(room: string, id: string, w: WireV2): Inserted {
+  private hold(room: string, id: string, w: CheckedWire2): Inserted {
     return receive.hold(ctx(this), room, id, w)
   }
 

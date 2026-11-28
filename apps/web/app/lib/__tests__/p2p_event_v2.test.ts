@@ -20,6 +20,7 @@ import { b64u, concat, utf8 } from '../p2p/canonical'
 import { keyId, newKeyPair, sign } from '../p2p/keys'
 import { P } from '../p2p/acl/rules'
 import { genesisBundle, genesisSrv, signDeviceCert2 } from '../p2p/acl/binding'
+import { sound } from './helpers/proven'
 
 // The v2 event format of P2P servers: cores, ids, signatures, schemas, and the
 // way into the ACL core.
@@ -84,7 +85,7 @@ describe('v2 events', () => {
       { seq: 1, ap: [srv], aprev: srv },
       2
     )
-    expect(validate2(add.wire, srv)).toEqual({ ok: true, id: add.id, wire: add.wire })
+    expect(validate2(add.wire, srv)).toEqual({ ok: true, id: add.id, wire: sound(add.wire) })
     expect(validate2(add.wire, add.id).ok).toBe(false)
     expect(validate2({ ...add.wire, c: { to: 'someone else' } }, srv)).toEqual({
       ok: false,

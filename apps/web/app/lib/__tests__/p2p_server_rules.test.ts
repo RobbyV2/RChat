@@ -17,6 +17,7 @@ import { buildEvent2 } from '../p2p/event_v2'
 import { signRevocation2 } from '../p2p/event_v2'
 import { LOCAL } from '../p2p/limits'
 import { MIN, ServerWorld } from './p2p_server_world'
+import { sound } from './helpers/proven'
 
 // The rules of P2P servers as the host's evaluator applies them to real signed events
 // (receipt outcomes, honest parents, watermarks and visibility, storage): the
@@ -241,8 +242,8 @@ describe('admission records (the evaluation cache)', () => {
     expect(live.display(ids).filter(s => s?.hidden).length).toBeGreaterThan(0)
     // Both go on alike.
     const next = w.build('O', 'mark', {})
-    const a = live.receiveAcl(next.id, next.wire, w.now)
-    const b = r.receiveAcl(next.id, next.wire, w.now)
+    const a = live.receiveAcl(next.id, sound(next.wire), w.now)
+    const b = r.receiveAcl(next.id, sound(next.wire), w.now)
     expect(b).toEqual(a)
   })
 
@@ -325,12 +326,12 @@ describe('admission records (the evaluation cache)', () => {
     const deltas: (SumDelta | null)[] = [room.delta()]
     copy = applySummary(copy, deltas[0])
     const msg = w.build('E', 'msg', { body: 'more', ch: 'AAAAAAAAAAA' })
-    room.receiveContent(msg.id, msg.wire, w.now)
+    room.receiveContent(msg.id, sound(msg.wire), w.now)
     expect(room.delta()).toBeNull()
     const kick = w.build('O', 'kick', p => ({ to: w.who('E').a, seen: p.seen ?? {} }), {
       to: w.who('E').a,
     })
-    room.receiveAcl(kick.id, kick.wire, w.now)
+    room.receiveAcl(kick.id, sound(kick.wire), w.now)
     const d = room.delta()
     expect(Object.keys(d?.put?.members ?? {})).toEqual([w.who('E').a])
     copy = applySummary(copy, d)

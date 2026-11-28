@@ -21,6 +21,7 @@ export interface ServerCtx {
   carryRoles: Servers['carryRoles']
   changed: Servers['changed']
   check: Servers['check']
+  checkWire: Servers['checkWire']
   checkMigrated: Servers['checkMigrated']
   checkVoice: Servers['checkVoice']
   clock: Servers['clock']

@@ -33,6 +33,7 @@ import { LOCAL } from '../p2p/limits'
 import { openDB } from 'idb'
 import { DB_VERSION, P2pStore as Store, UPGRADES } from '../p2p/db'
 import { SYNC } from '../p2p/sync'
+import { sound } from './helpers/proven'
 
 // Real-time tests (sessions, IndexedDB): budgets for a loaded machine.
 setDefaultTimeout(60_000)
@@ -487,9 +488,13 @@ describe('P2P DMs', () => {
     const msg = buildEvent(author, room, 'msg', { body: 'gone' }, [], 0, clock.now())
     const red = buildEvent(author, room, 'redact', { target: msg.id }, [msg.id], 1, clock.now())
     const ctx = { me: b.node.ik, peer: a.node.ik, lim: LOCAL.dag }
-    expect((await insertEvent(b.store.db, red.id, red.wire, clock.now(), ctx)).status).toBe('new')
+    expect((await insertEvent(b.store.db, red.id, sound(red.wire), clock.now(), ctx)).status).toBe(
+      'new'
+    )
     expect((await roomOf(b, room)).missing).toEqual([msg.id])
-    expect((await insertEvent(b.store.db, msg.id, msg.wire, clock.now(), ctx)).status).toBe('new')
+    expect((await insertEvent(b.store.db, msg.id, sound(msg.wire), clock.now(), ctx)).status).toBe(
+      'new'
+    )
     const stored = (await b.store.event(msg.id))!
     expect(stored.redacted).toBe(true)
     expect(stored.wire.c).toBeNull()
@@ -506,8 +511,8 @@ describe('P2P DMs', () => {
       2,
       clock.now()
     )
-    await insertEvent(b.store.db, bobs.id, bobs.wire, clock.now(), ctx)
-    await insertEvent(b.store.db, msg2.id, msg2.wire, clock.now(), ctx)
+    await insertEvent(b.store.db, bobs.id, sound(bobs.wire), clock.now(), ctx)
+    await insertEvent(b.store.db, msg2.id, sound(msg2.wire), clock.now(), ctx)
     expect((await b.store.event(msg2.id))!.redacted).toBe(false)
   })
 

@@ -1095,7 +1095,7 @@ export class Dms {
     if (!v.ok) throw new DmError(INVALID_TEXT[v.why] ?? "Couldn't send the message")
     let res: Inserted
     try {
-      res = await insertEvent(this.db, id, wire, now, {
+      res = await insertEvent(this.db, id, v.wire, now, {
         me: this.me,
         peer: rec.peer,
         lim: this.dag,

@@ -24,6 +24,7 @@ import { insertEvent } from '../p2p/dag'
 import { LOCAL } from '../p2p/limits'
 import { accountLimits } from '../p2p/user_limits'
 import { keyId, newKeyPair, signCert } from '../p2p/keys'
+import { sound } from './helpers/proven'
 
 // Real-time tests (sessions, IndexedDB): budgets for a loaded machine.
 setDefaultTimeout(60_000)
@@ -1116,10 +1117,10 @@ describe('attachments in direct messages', () => {
     const att = await attOf(bytes(5, 5))
     const msg = buildEvent(author, room, 'msg', { body: '', att: [att] }, [], 0, clock.now())
     const ctx = { me: a.node.ik, peer: other, lim: LOCAL.dag }
-    const first = await insertEvent(a.store.db, msg.id, msg.wire, clock.now(), ctx)
+    const first = await insertEvent(a.store.db, msg.id, sound(msg.wire), clock.now(), ctx)
     expect(first.status === 'new' && first.rec.atts).toEqual([att.h])
     const red = buildEvent(author, room, 'redact', { target: msg.id }, [msg.id], 1, clock.now())
-    const res = await insertEvent(a.store.db, red.id, red.wire, clock.now(), ctx)
+    const res = await insertEvent(a.store.db, red.id, sound(red.wire), clock.now(), ctx)
     expect(res.status === 'new' && res.freed).toEqual([att.h])
     expect(await a.store.db.countFromIndex('events', 'att', att.h)).toBe(0)
   }, 60_000)

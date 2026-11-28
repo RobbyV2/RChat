@@ -1,3 +1,4 @@
+import type { Proven } from './proven'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { isRecord } from '../bytes'
 import { b64u, bytesOf, canonicalBytes, concat, hasKeys, utf8, isInt } from './canonical'
@@ -131,7 +132,10 @@ export const buildEvent2 = (
 
 export type Invalid2 = 'shape' | 'size' | 'server' | 'signature' | 'content'
 
-export type Checked2 = { ok: true; id: string; wire: WireV2 } | { ok: false; why: Invalid2 }
+// A v2 event that passed `validate2`.
+export type CheckedWire2 = Proven<WireV2, 'checked'>
+
+export type Checked2 = { ok: true; id: string; wire: CheckedWire2 } | { ok: false; why: Invalid2 }
 
 const ids = (x: unknown, min: number, max: number) =>
   Array.isArray(x) &&
@@ -359,7 +363,8 @@ export const validate2 = (
     }
     if (hash !== ev.ch) return { ok: false, why: 'content' }
   } else if (ev.L === 'a') return { ok: false, why: 'content' }
-  return { ok: true, id: b64u(idBytes), wire: { ev, c, sig: sig as string } }
+  const wire: WireV2 = { ev, c, sig: sig as string }
+  return { ok: true, id: b64u(idBytes), wire: wire as CheckedWire2 }
 }
 
 // The ACL types whose content has a schema (acl/rules.ts); others are stored and inert.

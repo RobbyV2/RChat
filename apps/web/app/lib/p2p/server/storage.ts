@@ -28,7 +28,7 @@ import {
   type Inserted,
 } from '../dag'
 import { serverWire, type RoomRecord } from '../db'
-import { signRevocation2, headerOk, type WireV2 } from '../event_v2'
+import { signRevocation2, headerOk, type CheckedWire2 } from '../event_v2'
 import { CANT_TEXT, VOUCH_WAIT_TEXT } from '../flows'
 import { memberBindingDue } from '../badge'
 import { cleanName, keyId } from '../keys'
@@ -183,7 +183,7 @@ export async function restoreBody(
   cx: ServerCtx,
   room: string,
   id: string,
-  w: WireV2
+  w: CheckedWire2
 ): Promise<Inserted> {
   // Room for it first: just its size, from bodies not fetched back lately.
   const full = await cx.contentFull(room, w)

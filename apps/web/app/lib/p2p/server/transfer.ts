@@ -8,7 +8,14 @@ import type { Carried } from '../acl_room'
 import { b64u, canonical, randomBytes } from '../canonical'
 import { blankRoom } from '../dag'
 import { serverWire, type Carry } from '../db'
-import { buildEvent2, signUpgrade, upgradeSigOk, validate2, type WireV2 } from '../event_v2'
+import {
+  buildEvent2,
+  signUpgrade,
+  upgradeSigOk,
+  validate2,
+  type CheckedWire2,
+  type WireV2,
+} from '../event_v2'
 import {
   CANT_TEXT,
   LONE_TEXT,
@@ -268,7 +275,12 @@ export async function successors(cx: ServerCtx, room: string) {
 
 // A new copy's genesis for `room`, signed by its owner `to`, of rules we know and naming the
 // room it follows; null otherwise.
-export function successorOk(cx: ServerCtx, room: string, g: unknown, to?: string): WireV2 | null {
+export function successorOk(
+  cx: ServerCtx,
+  room: string,
+  g: unknown,
+  to?: string
+): CheckedWire2 | null {
   const v = validate2(g, null)
   if (!v.ok || v.wire.ev.t !== 'genesis') return null
   const c = v.wire.c as { rules?: unknown; from?: { srv?: unknown } } | null
@@ -407,7 +419,7 @@ export async function followTo(cx: ServerCtx, room: string, g: WireV2) {
   if (owner) {
     await cx.locked(next, async () => {
       if (await cx.db.get('events', next)) return
-      await cx.withDevice(keyId((await cx.author()).dk.pk), () => cx.take(next, next, g, now))
+      await cx.withDevice(keyId((await cx.author()).dk.pk), () => cx.take(next, next, v.wire, now))
     })
     void cx.carryOver(next).catch(() => {})
   } else {

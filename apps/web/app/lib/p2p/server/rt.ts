@@ -1,7 +1,7 @@
 import type { Summary } from '../acl/summary'
 import type { RateWindow } from '../rate'
 import type { Carried, Reapply } from '../acl_room'
-import type { WireV2 } from '../event_v2'
+import type { CheckedWire2 } from '../event_v2'
 import type { Reached } from '../flows'
 import type { Migrated, Parked, Mod } from './types'
 
@@ -17,7 +17,7 @@ export interface SyncRt {
   pendingBytes: number
   waits: Map<string, Set<string>>
   // Admitted events dated in the future, until local time reaches them.
-  held: Map<string, { wire: WireV2; due: number }>
+  held: Map<string, { wire: CheckedWire2; due: number }>
   rejected: Set<string>
   // Invites (add ids, by inviter) another member posted: a tick posts a mark, so the invitee's
   // join has the acknowledgement of a third member it needs (W3(e)), while the invite is

@@ -13,7 +13,7 @@ import { b64u, bytesOf, canonical, fromB64u, randomBytes, utf8 } from '../canoni
 import { storedSize } from '../dag'
 import { serverWire, type ChanCounts, type Carry, type EventRecord, type P2pStore } from '../db'
 import type { Wire } from '../event_v1'
-import type { WireV2 } from '../event_v2'
+import type { CheckedWire2, WireV2 } from '../event_v2'
 import { CO_OWNERS_MAX, slowText } from '../flows'
 import type { GossipLimits } from '../gossip'
 import { LOCAL, type Local } from '../limits'
@@ -400,7 +400,7 @@ export interface Retired {
 }
 
 export interface Parked {
-  wire: WireV2
+  wire: CheckedWire2
   missing: Set<string>
   size: number
 }

@@ -1,7 +1,7 @@
 import { isRecord } from '../../bytes'
 import { richMessage, RULES_VERSION } from '../acl/rules'
 import { applySummary, type SumDelta } from '../acl/summary'
-import type { Received } from '../acl_room'
+import type { Judged } from '../acl_room'
 import {
   chainKey,
   contentCounts,
@@ -13,9 +13,9 @@ import {
   type Inserted,
 } from '../dag'
 import { serverWire, type ChanCounts, type EventRecord } from '../db'
-import { claimedId2, validate2, type WireV2 } from '../event_v2'
+import { claimedId2, validate2, type CheckedWire2 } from '../event_v2'
 import { shownReaction, type MsgContent } from '../content'
-import { type Wire } from '../event_v1'
+import { type CheckedWire } from '../event_v1'
 import { reachedBy } from '../flows'
 import type { Message } from '../frames'
 import { isKeyId, verifyCert, verifyProfile, type Cert, type Profile } from '../keys'
@@ -30,7 +30,13 @@ import { type Rt } from './rt'
 
 // The wire checks: schema, sizes, id, `ch` and the device's signature. Everything else is
 // admission's (insert). Malformed: a strike.
-export async function check(cx: ServerCtx, room: string, raw: unknown): Promise<Check> {
+export async function checkWire(
+  cx: ServerCtx,
+  room: string,
+  raw: unknown
+): Promise<
+  { ok: true; id: string; wire: CheckedWire2 } | { ok: false; later: boolean; id: string | null }
+> {
   const id = claimedId2(raw)
   const r = cx.rooms.get(room)
   if (!r || r.legacy) return { ok: false, later: true, id }
@@ -41,23 +47,35 @@ export async function check(cx: ServerCtx, room: string, raw: unknown): Promise<
   const v = genesis ? validate2(raw, null) : validate2(raw, room, rules)
   if (!v.ok) return { ok: false, later: false, id }
   if (genesis && v.id !== room) return { ok: false, later: false, id }
-  return { ok: true, id: v.id, wire: v.wire as unknown as Wire, revoked: false }
+  return { ok: true, id: v.id, wire: v.wire }
+}
+
+// The same answer in the terms the sync layer carries events in.
+export async function check(cx: ServerCtx, room: string, raw: unknown): Promise<Check> {
+  const v = await checkWire(cx, room, raw)
+  return v.ok ? { ...v, wire: v.wire as unknown as CheckedWire, revoked: false } : v
 }
 
 export function insert(
   cx: ServerCtx,
   room: string,
   id: string,
-  wire: Wire,
+  wire: CheckedWire | CheckedWire2,
   receivedAt: number
 ): Promise<Inserted> {
-  return cx.locked(room, () => cx.take(room, id, wire as unknown as WireV2, receivedAt, true))
+  return cx.locked(room, () => cx.take(room, id, wire as unknown as CheckedWire2, receivedAt, true))
 }
 
 // A peer's event (now, or released once its parents are here). One signed with this
 // device's key (checked by `check`), admitted and stored here, past this device's own chain:
 // another copy of this device (a profile restored from a backup) signs too.
-export async function decidePeer(cx: ServerCtx, room: string, id: string, w: WireV2, now: number) {
+export async function decidePeer(
+  cx: ServerCtx,
+  room: string,
+  id: string,
+  w: CheckedWire2,
+  now: number
+) {
   const mine = w.ev.a === cx.me && w.ev.dev === cx.myDev()
   const chain = mine
     ? ((await cx.db.get('meta', chainKey(room, w.ev.dev))) as DevChain | undefined)
@@ -85,7 +103,7 @@ export async function take(
   cx: ServerCtx,
   room: string,
   id: string,
-  w: WireV2,
+  w: CheckedWire2,
   now: number,
   peer = false
 ): Promise<Inserted> {
@@ -158,7 +176,7 @@ export function reject(cx: ServerCtx, room: string, id: string, why: string): In
 }
 
 // The pending store: bounded per room; the oldest goes first.
-export function park(cx: ServerCtx, room: string, id: string, w: WireV2, missing: string[]) {
+export function park(cx: ServerCtx, room: string, id: string, w: CheckedWire2, missing: string[]) {
   const rt = cx.ensureRt(room)
   if (rt.pending.has(id)) return
   const size = sizeOfWire(w)
@@ -222,7 +240,7 @@ export async function decide(
   cx: ServerCtx,
   room: string,
   id: string,
-  w: WireV2,
+  w: CheckedWire2,
   now: number,
   retried = false
 ): Promise<Inserted> {
@@ -243,7 +261,7 @@ export async function decide(
       return { status: 'full', why }
     }
   }
-  let out: Received
+  let out: Judged
   let delta = null
   if (w.ev.L === 'a') ({ out, delta } = await cx.host.acl(room, id, w, now))
   else out = await cx.host.content(room, id, w, now)
@@ -279,8 +297,7 @@ export async function decide(
       ...(out.s === 'C' && cx.sumOf(room).rules === RULES_VERSION
         ? { contentRules: RULES_VERSION }
         : {}),
-      ...(out.s === 'A' ? { aseq: out.aseq, acl: out.rec } : {}),
-      unknown: out.s === 'U',
+      verdict: out,
       lim: cx.storeLimits(),
     })
   } catch (e) {
@@ -376,7 +393,7 @@ export function saveSoon(cx: ServerCtx, room: string) {
 export async function contentFull(
   cx: ServerCtx,
   room: string,
-  w: WireV2
+  w: CheckedWire2
 ): Promise<'room' | 'total' | null> {
   const r = await cx.deps.store.room(room)
   if (!r) return 'room'
@@ -391,7 +408,7 @@ export async function contentFull(
 
 // The hold store: admitted, dated more than 5 minutes ahead of our clock; kept
 // until our clock reaches it, at most `heldPerDevice` per device.
-export function hold(cx: ServerCtx, room: string, id: string, w: WireV2): Inserted {
+export function hold(cx: ServerCtx, room: string, id: string, w: CheckedWire2): Inserted {
   const rt = cx.ensureRt(room)
   const lim = cx.local.server
   const n = [...rt.held.values()].filter(h => h.wire.ev.dev === w.ev.dev).length

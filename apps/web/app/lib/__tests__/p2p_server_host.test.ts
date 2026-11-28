@@ -7,6 +7,7 @@ import { applySummary, emptySummary, type Summary } from '../p2p/acl/summary'
 import { LocalHost, WorkerHost, type AclHost, type WorkerLike } from '../p2p/resolve_host'
 import { WASM } from './helpers/perms'
 import { ServerWorld } from './p2p_server_world'
+import { sound } from './helpers/proven'
 
 // The evaluator off the page's thread (in a worker): the same events give the same
 // verdicts, records and state in the worker, in this thread and after a cold start from the
@@ -41,10 +42,10 @@ const feed = async (host: AclHost, w: ServerWorld, from: number) => {
   copy = applySummary(copy, loaded.delta)
   for (const [id, wire] of all.slice(from)) {
     if (wire.ev.L === 'a') {
-      const d = await host.acl(room, id, wire, w.now)
+      const d = await host.acl(room, id, sound(wire), w.now)
       outs.push(d.out)
       copy = applySummary(copy, d.delta)
-    } else outs.push(await host.content(room, id, wire, w.now))
+    } else outs.push(await host.content(room, id, sound(wire), w.now))
   }
   return { outs, copy }
 }
