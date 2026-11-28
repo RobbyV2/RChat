@@ -1,6 +1,6 @@
 'use client'
 
-import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode, Ref } from 'react'
+import type { ButtonHTMLAttributes, CSSProperties, HTMLAttributes, ReactNode, Ref } from 'react'
 import { Check, ChevronRight, Eye, LoaderCircle, type LucideIcon } from 'lucide-react'
 import {
   BUTTON_ICON,
@@ -479,11 +479,13 @@ type Labelled = {
 }
 
 // A tile of the rail: a server, a folder, Home, an action. What it holds (a glyph, an avatar, an
-// icon, its badges) are its children.
+// icon, its badges) are its children. `tint` carries the colors of a folder's own color.
 export function Tile<const S extends string = never>({
   tone = 'idle',
+  tint,
   label,
   tooltip,
+  pressed,
   type = 'button',
   place,
   ref,
@@ -491,7 +493,13 @@ export function Tile<const S extends string = never>({
   ...rest
 }: NativeButton &
   Placed<S> &
-  Labelled & { tone?: TileTone; ref?: Ref<HTMLButtonElement>; children: ReactNode }) {
+  Labelled & {
+    tone?: TileTone
+    tint?: CSSProperties
+    pressed?: boolean
+    ref?: Ref<HTMLButtonElement>
+    children: ReactNode
+  }) {
   return (
     <button
       type={type}
@@ -499,6 +507,8 @@ export function Tile<const S extends string = never>({
       ref={ref}
       title={tooltip ?? label}
       aria-label={label}
+      aria-pressed={pressed}
+      style={tint}
       className={placed('flex', tileLook(tone), place)}
     >
       {children}

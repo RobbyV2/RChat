@@ -63,7 +63,7 @@ import { InstallButton } from './pwa_register'
 import { AccountSwitcherTile } from './account_switcher'
 import { ThemeToggle } from './status_clock'
 import { PaletteButton } from './palette'
-import { IconButton } from './controls'
+import { IconButton, Tile, RailToggle } from './controls'
 import { Stack, Surface, Inset, Grid } from './layout'
 import { Sentinel, useOwnServer } from './ui'
 import { ServerRailSkeleton } from './skeletons'
@@ -162,8 +162,7 @@ function ServerTile({
   const shown = useNameLabel(serverName({ name, display_name }, mine))
   const parent = folder === null ? null : folderKey(folder)
   return (
-    <button
-      title={`${mine ? `${shown} (Creator)` : shown}${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}${voiceLabel(voice)}`}
+    <Tile
       onClick={() => {
         if (client.shown() !== account) client.show(account)
         account.identities.viewed()?.p2p.closeHome()
@@ -181,7 +180,8 @@ function ServerTile({
         }
       )}
       data-drop-onto={folder === null ? 'Create folder' : undefined}
-      className={`${tile} relative text-lg font-semibold ${active ? 'bg-primary text-on-primary' : idle}`}
+      tone={active ? 'active' : 'idle'}
+      label={`${mine ? `${shown} (Creator)` : shown}${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}${voiceLabel(voice)}`}
     >
       <span
         className={`flex h-full w-full items-center justify-center rounded-inherit ${muted && !active ? 'opacity-50' : ''}`}
@@ -209,7 +209,7 @@ function ServerTile({
       )}
       {pings > 0 ? <RailPingBadge count={pings} /> : unread && <UnreadDot />}
       <RailVoiceBadge count={voice} />
-    </button>
+    </Tile>
   )
 }
 
@@ -224,10 +224,8 @@ function PreviewTile() {
   if (!name) return null
   const label = `Previewing ${shown}`
   return (
-    <button
+    <Tile
       data-preview-tile={name}
-      title={label}
-      aria-label={label}
       aria-current="page"
       onClick={() => {
         if (client.shown() !== account) client.show(account)
@@ -237,7 +235,8 @@ function PreviewTile() {
       {...longPress((x, y) =>
         openActionMenu(x, y, { kind: 'server', server: name, folder: null, at: -1 }, {}, account)
       )}
-      className={`${tile} relative border-2 border-dashed border-primary bg-surface-container-high text-lg font-semibold text-on-surface`}
+      tone="preview"
+      label={label}
     >
       <span className="flex h-full w-full items-center justify-center rounded-inherit opacity-60">
         <ServerGlyph name={name} displayName={display} />
@@ -248,7 +247,7 @@ function PreviewTile() {
       >
         <Eye size={11} strokeWidth={2.5} />
       </span>
-    </button>
+    </Tile>
   )
 }
 
@@ -292,7 +291,7 @@ export function FolderEntry({
   const theme = useStore(s => s.theme)
   const style = folderStyle(folder.color, theme) as CSSProperties | undefined
   const header = {
-    title: `${label}${voiceLabel(voice)}`,
+    label: `${label}${voiceLabel(voice)}`,
     'aria-expanded': folder.open,
     'data-drop-onto': 'Add to folder',
     onClick: () => toggleFolder(folder.id),
@@ -318,7 +317,7 @@ export function FolderEntry({
   }
   if (!folder.open) {
     return (
-      <button {...header} style={style} className={`${tile} folder-tile relative`}>
+      <Tile {...header} tone="folder" tint={style}>
         <Grid as="span" cols={2} gap="2xs" look="size-9 grid-rows-2">
           {servers.slice(0, 4).map(s => (
             <MiniIcon key={s.name} server={s} />
@@ -332,15 +331,15 @@ export function FolderEntry({
         </span>
         {pings > 0 ? <RailPingBadge count={pings} /> : unread && <UnreadDot />}
         <RailVoiceBadge count={voice} />
-      </button>
+      </Tile>
     )
   }
   return (
     <div data-drag-box style={style} className="folder-group w-14 shrink-0 rounded-group">
       <Inset pad="2xs" inset="bar" align="center">
-        <button {...header} className={`${tile} folder-icon`}>
+        <Tile {...header} tone="folder-open">
           <FolderOpen size={22} />
-        </button>
+        </Tile>
         <Stack data-drop-zone={key} data-drop-label="Add to folder" gap="sm" align="center">
           {servers.map(s => (
             <ServerTile key={s.name} server={s} folder={folder.id} at={at} />
@@ -357,17 +356,17 @@ function DmTile({ active, pings, unread }: { active: boolean; pings: number; unr
   const account = useAccount()
   const openLastDm = useStore(s => s.openLastDm)
   return (
-    <button
+    <Tile
       data-rail="dms"
-      title={pings ? `Direct messages, ${pingLabel(pings)}` : 'Direct messages'}
-      aria-label="Direct messages"
       onClick={openLastDm}
       {...longPress((x, y) => openActionMenu(x, y, { kind: 'home' }, {}, account))}
-      className={`${tile} relative ${active ? 'bg-primary text-on-primary' : idle}`}
+      tone={active ? 'active' : 'idle'}
+      label="Direct messages"
+      tooltip={pings ? `Direct messages, ${pingLabel(pings)}` : 'Direct messages'}
     >
       <MessageCircle size={22} />
       {pings > 0 ? <RailPingBadge count={pings} /> : unread && <UnreadDot />}
-    </button>
+    </Tile>
   )
 }
 
@@ -377,14 +376,9 @@ function ResumeAccount({ row }: { row: SwitcherRow }) {
     ? 'Show paused account'
     : 'Show ' + row.display + ' on ' + new URL(row.origin).host
   return (
-    <button
-      title={label}
-      aria-label={label}
-      className={tile + ' ' + idle}
-      onClick={() => void switchActor(row, client.shown())}
-    >
+    <Tile onClick={() => void switchActor(row, client.shown())} label={label}>
       <Play size={18} />
-    </button>
+    </Tile>
   )
 }
 
@@ -587,17 +581,16 @@ export function ServerRail() {
         className="min-h-0 flex-1 overflow-y-auto"
       >
         <Stack gap="sm" align="center">
-          <button
-            title="Home"
-            aria-label="Home"
+          <Tile
             aria-current={atHome ? 'page' : undefined}
             data-home-button
             data-rail="home"
             onClick={goHome}
-            className={`${tile} ${atHome ? 'bg-primary text-on-primary' : idle}`}
+            tone={atHome ? 'active' : 'idle'}
+            label="Home"
           >
             <House size={22} />
-          </button>
+          </Tile>
           {me && (
             <DmTile
               pings={activityRows.reduce((sum, row) => sum + row.pings, 0)}
@@ -605,25 +598,18 @@ export function ServerRail() {
               active={view?.kind === 'dm' && (!p2pHome || p2pBeside)}
             />
           )}
-          <button
+          <Tile
             data-rail="add-server"
-            title="Add a server"
-            aria-label="Add a server"
             onClick={() => openDialog({ kind: 'add_server' })}
-            className={`${tile} bg-primary-container text-on-primary-container shadow-elevation-1 hover:bg-primary hover:text-on-primary`}
+            tone="add"
+            label="Add a server"
           >
             <Plus size={22} />
-          </button>
+          </Tile>
           {canAdd && (
-            <button
-              type="button"
-              title="Add an instance"
-              aria-label="Add an instance"
-              className={`${tile} ${idle}`}
-              onClick={() => openDialog({ kind: 'add_instance' })}
-            >
+            <Tile onClick={() => openDialog({ kind: 'add_instance' })} label="Add an instance">
               <Globe size={22} />
-            </button>
+            </Tile>
           )}
           {(groupedPeers ? peerTiles.length > 0 : p2pOn) && (
             <div
@@ -640,19 +626,18 @@ export function ServerRail() {
                         </PeerBlockView>
                       ) : (
                         row && (
-                          <button
+                          <Tile
                             key={key}
                             data-p2p-tile
                             data-peer-home
-                            title={label + ' (paused)'}
-                            aria-label={label}
-                            aria-pressed={false}
-                            className={tile + ' relative ' + idle}
                             onClick={() => void switchActor(row, client.shown())}
+                            label={label}
+                            tooltip={label + ' (paused)'}
+                            pressed={false}
                           >
                             <ActorAvatar row={row} size={28} />
                             {row.badge > 0 && <RailPingBadge count={row.badge} />}
-                          </button>
+                          </Tile>
                         )
                       )
                     )}
@@ -712,17 +697,16 @@ export function ServerRail() {
             model.blocks.map(group => (
               <Stack key={group.origin} gap="sm" align="center" place="shrink-0">
                 {model.instanceHeaders && (
-                  <button
-                    title={streamer ? 'Instance' : group.name + ' (' + group.host + ')'}
-                    aria-expanded={!collapsed.has(group.origin)}
+                  <RailToggle
                     onClick={() => toggle(group.origin)}
-                    className="relative h-5 w-10 rounded bg-surface-container-high text-xs"
+                    open={!collapsed.has(group.origin)}
+                    tooltip={streamer ? 'Instance' : group.name + ' (' + group.host + ')'}
                   >
                     <Name of={instanceName(group.name.slice(0, 1))} />
                     {collapsed.has(group.origin) && group.pings > 0 && (
                       <RailPingBadge count={group.pings} />
                     )}
-                  </button>
+                  </RailToggle>
                 )}
                 {!collapsed.has(group.origin) &&
                   group.accounts.map(row => {
@@ -737,14 +721,7 @@ export function ServerRail() {
                       >
                         <Stack gap="sm" align="center">
                           {group.accounts.length > 1 && (
-                            <button
-                              aria-expanded={!collapsed.has(key)}
-                              title={
-                                streamer
-                                  ? 'Account'
-                                  : (row.username ?? 'Guest') + ' on ' + group.name
-                              }
-                              className="relative"
+                            <RailToggle
                               onClick={() => toggle(key)}
                               {...longPress((x, y) =>
                                 openActionMenu(
@@ -762,10 +739,17 @@ export function ServerRail() {
                                     : loginAccount
                                 )
                               )}
+                              chip={false}
+                              open={!collapsed.has(key)}
+                              tooltip={
+                                streamer
+                                  ? 'Account'
+                                  : (row.username ?? 'Guest') + ' on ' + group.name
+                              }
                             >
                               <ActorAvatar row={row} size={28} />
                               {row.badge > 0 && <RailPingBadge count={row.badge} />}
-                            </button>
+                            </RailToggle>
                           )}
                           {!collapsed.has(key) &&
                             (account ? (

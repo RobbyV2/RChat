@@ -38,7 +38,7 @@ export type TileTone =
   | 'p2p-server-active'
   | 'p2p-folder'
   | 'p2p-folder-open'
-export type SideRowTone = 'plain' | 'strong' | 'primary' | 'heading'
+export type SideRowTone = 'plain' | 'strong' | 'primary' | 'heading' | 'section'
 export type CallTone = 'idle' | 'on' | 'off' | 'danger' | 'accept' | 'quiet'
 export type CallSize = 'sm' | 'md' | 'lg' | 'bar' | 'wide'
 export type CardTone = 'plain' | 'low' | 'base' | 'outlined' | 'p2p'
@@ -486,14 +486,15 @@ const SIDE_TONE: Record<SideRowTone, string> = {
   plain: 'text-on-surface-variant',
   strong: 'font-semibold text-on-surface',
   primary: 'font-medium text-primary',
-  heading: 'text-on-surface-variant',
+  heading: 'text-xs text-on-surface-variant hover-idle:text-on-surface',
+  section: 'text-sm',
 }
 
 // A row of the channel sidebar one can press: the open one is filled, a `dim` one (muted) fades.
-// A `heading` folds the rows under it.
+// A `heading` (of a category) or a `section` (of the conversations) folds the rows under it.
 export const sideRowButtonLook = (tone: SideRowTone, dim = false) =>
-  tone === 'heading'
-    ? `min-w-0 flex-1 items-center gap-1 rounded-md px-2 py-1.5 text-left text-xs font-medium ${SIDE_TONE.heading} -outline-offset-2 hover-idle:text-on-surface focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11`
+  tone === 'heading' || tone === 'section'
+    ? `min-w-0 flex-1 items-center gap-1 rounded-md px-2 py-1.5 text-left font-medium ${SIDE_TONE[tone]} -outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11`
     : `${sideRowLook} shrink-0 text-left ${SIDE_TONE[tone]} -outline-offset-2 transition-colors hover-idle:bg-surface-container hover-idle:text-on-surface focus-visible:outline-2 focus-visible:outline-primary ${ON} ${dim ? 'opacity-60' : ''}`
 
 const CALL_TONE: Record<CallTone, string> = {

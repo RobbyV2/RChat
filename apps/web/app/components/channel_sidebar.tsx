@@ -72,7 +72,7 @@ import { channels as channelsFeature, noChannels, type ChannelEntry } from '../l
 import { FriendsEntry } from './friends'
 import { dragScope, useDrag, type DragSpec } from './drag'
 import { VoiceDock } from './voice_grid'
-import { Button, IconButton, LinkButton } from './controls'
+import { Button, IconButton, LinkButton, SideRow } from './controls'
 import { Row, Surface, Stack } from './layout'
 import { Sentinel, useOwnServer, renameFieldCls } from './ui'
 import { useAuthorMembers } from './message_pane'
@@ -87,7 +87,6 @@ import { ContactRow, lastTsOf } from './p2p/p2p_home'
 import { P2pBadge } from './p2p/p2p_badge'
 import { ChannelListSkeleton, DmListSkeleton, Held } from './skeletons'
 import { channelTarget } from '../lib/viewing'
-import { sideRowLook } from '../lib/controls'
 
 const base = 'flex h-full w-60 shrink-0 flex-col bg-surface-container-low'
 
@@ -112,9 +111,8 @@ export function DmRow({
   const { id, other, is_self } = dm
   const muted = useStore(s => scopeMuted(s, { kind: 'dm', id }))
   return (
-    <button
+    <SideRow
       data-dm={id}
-      aria-current={active ? 'page' : undefined}
       onClick={() => {
         const switching = client.shown() !== acct
         if (switching && !client.show(acct)) return
@@ -130,11 +128,8 @@ export function DmRow({
             placeDm(id, zone === 'pinned' ? 'pinned' : 'recent', index, shown?.()),
         }
       )}
-      className={`${sideRowLook} shrink-0 ${
-        active
-          ? 'bg-secondary-container text-on-secondary-container'
-          : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
-      } ${muted && !active ? 'opacity-60' : ''}`}
+      current={active}
+      dim={muted}
     >
       <UserAvatar person={asAccount(other, 'dm')} size={28} />
       <Name of={personName(asAccount(other, 'dm'))} withUsername look="truncate" />
@@ -157,7 +152,7 @@ export function DmRow({
       ) : (
         <DmRowEnd id={id} unread={unread} pings={pings} />
       )}
-    </button>
+    </SideRow>
   )
 }
 
@@ -303,16 +298,16 @@ function P2pDms({ peer, label }: { peer?: SwitcherRow; label?: string } = {}) {
           <span aria-hidden className="h-0 flex-1 border-t border-dashed border-tertiary/70" />
           <P2pBadge />
           {peer && (
-            <button
-              className="streamer truncate text-xs hover:underline"
+            <LinkButton
               onClick={() =>
                 void switchActor(peer, client.shown()).catch(e =>
                   owner.store.getState().setError(String(e))
                 )
               }
+              tone="inherit"
             >
-              {label}
-            </button>
+              <span className="streamer truncate text-xs">{label}</span>
+            </LinkButton>
           )}
           <span aria-hidden className="h-0 flex-1 border-t border-dashed border-tertiary/70" />
           {adds && (
@@ -357,16 +352,16 @@ function P2pDms({ peer, label }: { peer?: SwitcherRow; label?: string } = {}) {
         ))}
       </Surface>
       {section && section.requests > 0 && (
-        <button
+        <SideRow
           data-p2p-requests
           onClick={() => {
             selectIdentity()
             p2p?.openRequests()
           }}
-          className={`${sideRowLook} shrink-0 text-left font-medium text-primary hover:bg-surface-container`}
+          tone="primary"
         >
           Message requests ({section.requests})
-        </button>
+        </SideRow>
       )}
     </Stack>
   )
@@ -514,18 +509,10 @@ export function DmBlock({
           {label && (
             <Surface pad="md" inset="bar" tone="plain" radius="none">
               <Row gap="none">
-                <Row
-                  as="button"
-                  aria-expanded={!collapsed}
-                  onClick={() => collapse(!collapsed)}
-                  gap="2xs"
-                  text="sm"
-                  look="font-medium pointer-coarse:min-h-11"
-                  place="min-w-0 flex-1"
-                >
+                <SideRow onClick={() => collapse(!collapsed)} tone="section" open={!collapsed}>
                   {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                   <span className="streamer truncate">{label}</span>
-                </Row>
+                </SideRow>
                 <IconButton
                   icon={Plus}
                   label="New direct message"

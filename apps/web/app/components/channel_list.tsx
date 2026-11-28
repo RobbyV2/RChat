@@ -12,13 +12,13 @@ import {
   type ListEntry,
   type SeparatorEntry,
 } from '../lib/place/channels'
-import { CategoryLine, ChannelSeparatorRow, categoryNameCls } from './channel_separator'
+import { CategoryLine, ChannelSeparatorRow } from './channel_separator'
+import { categoryStyleOf } from '../lib/categories'
 import { longPress } from './context_menu'
-import { IconButton } from './controls'
+import { IconButton, SideRow } from './controls'
 import type { DragSpec } from './drag'
-import { Row, Stack, Surface, Inset } from './layout'
+import { Row, Stack, Surface } from './layout'
 import { Masked } from './ui'
-import { sideRowLook } from '../lib/controls'
 
 function PrivateIcon() {
   return (
@@ -81,18 +81,14 @@ export function ChannelList({
   const textRow = (c: ChannelEntry) => {
     const { muted, bold } = look(c)
     return (
-      <button
+      <SideRow
         key={c.key}
         {...rowProps?.(c)}
         onClick={() => channels.open(c.key)}
         {...longPress((x, y) => channels.channelMenu(c.key, x, y), drag?.channel(c))}
-        className={`${sideRowLook} ${
-          c.active
-            ? 'bg-secondary-container text-on-secondary-container'
-            : `hover:bg-surface-container hover:text-on-surface ${
-                bold ? 'font-semibold text-on-surface' : 'text-on-surface-variant'
-              } ${muted ? 'opacity-60' : ''}`
-        }`}
+        tone={bold ? 'strong' : 'plain'}
+        current={c.active}
+        dim={muted}
       >
         <Hash size={16} className="shrink-0" />
         <span className="truncate">
@@ -100,7 +96,7 @@ export function ChannelList({
         </span>
         {c.private && <PrivateIcon />}
         {end(c)}
-      </button>
+      </SideRow>
     )
   }
   const row = (c: ChannelEntry) => replace?.(c) ?? (c.kind === 'voice' ? voice(c) : textRow(c))
@@ -140,23 +136,16 @@ export function ChannelList({
       >
         <Surface pad="sm" inset="bar" tone="plain" radius="none">
           <Row gap="none">
-            <Inset
+            <SideRow
               {...categoryProps?.(category)}
-              aria-expanded={category.open}
               onClick={() => channels.setOpen(category.key, !category.open)}
               {...longPress(
                 (x, y) => channels.categoryMenu(category.key, x, y),
                 drag?.category(category)
               )}
-              as="button"
-              row
-              pad="sm"
-              inset="chip"
-              gap="2xs"
-              text="xs"
-              ink="muted"
-              look={`rounded-md font-medium -outline-offset-2 hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11 ${categoryNameCls(category.style)}`}
-              place="min-w-0 flex-1"
+              tone="heading"
+              open={category.open}
+              caps={categoryStyleOf(category.style) === 'default'}
             >
               {category.open ? (
                 <ChevronDown size={14} className="shrink-0" />
@@ -168,7 +157,7 @@ export function ChannelList({
               </span>
               <CategoryLine style={category.style} />
               {categoryEnd?.(category, hidden)}
-            </Inset>
+            </SideRow>
             {state.canManage && onAdd && (
               <IconButton
                 icon={Plus}

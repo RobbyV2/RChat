@@ -59,12 +59,11 @@ import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
 import { profileTrigger } from './profile_card'
 import { PingBadge } from './ping_badge'
-import { Button, IconButton, ListRow, Chip, Tab, LinkButton } from './controls'
+import { Button, IconButton, ListRow, Chip, Tab, LinkButton, SideRow } from './controls'
 import { Dialog, fieldCls, FieldError, PanelHeader, Sentinel, useEscape, smallFieldCls } from './ui'
 import { RowsSkeleton } from './skeletons'
 import { Row, Stack, Surface, Inset, Lift } from './layout'
 import { time } from '../lib/platform/time'
-import { sideRowLook } from '../lib/controls'
 
 // The unseen friend pings (requests and accepted requests), for badges.
 export const useFriendPings = () => useStore(s => scopePings(badgePings(s), FRIENDS_SCOPE))
@@ -603,21 +602,16 @@ export function FriendsEntry({ incomingTotal }: { incomingTotal?: number } = {})
   const incoming = incomingTotal ?? local
   const count = incomingTotal ?? Math.max(pings, incoming)
   return (
-    <button
+    <SideRow
       onClick={() => (active ? closePanel() : openFriends(incoming > 0 ? 'pending' : 'online'))}
-      aria-pressed={active}
-      className={`${sideRowLook} shrink-0 ${
-        active
-          ? 'bg-secondary-container text-on-secondary-container'
-          : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
-      }`}
+      pressed={active}
     >
       <span className="flex h-7 w-7 items-center justify-center">
         <Users size={18} />
       </span>
       <span className="truncate">Friends</span>
       <PingBadge count={count} className="ml-auto" />
-    </button>
+    </SideRow>
   )
 }
 

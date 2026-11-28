@@ -37,7 +37,7 @@ import { hostedLockMessage } from '../lib/client/hosted_policy'
 import { useAddingAllowed } from './add_instance'
 import { longPress, useMedia } from './context_menu'
 import { RailInstance } from './instance_badge'
-import { Button, IconButton, ListRow } from './controls'
+import { Button, IconButton, ListRow, CardButton } from './controls'
 import { Row, Stack, Surface, Inset } from './layout'
 import { Masked, Sheet, useEscape, smallFieldCls } from './ui'
 import { obj, opt, parseJson, str, type Schema } from '../lib/schema'
@@ -70,45 +70,42 @@ export function AccountSwitcherTile() {
       ').' +
       (model.otherBadge ? ' ' + model.otherBadge + ' mentions on other accounts' : '')
   return (
-    <Surface
-      type="button"
-      aria-haspopup="dialog"
-      title={title}
-      aria-label={title}
-      data-switcher-tile
-      onClick={() => account.store.getState().openDialog({ kind: 'account_switcher' })}
-      as="button"
-      pad="xs"
-      gap="3xs"
-      tone="plain"
-      radius="lg"
-      align="center"
-      look="w-16 text-center hover:bg-surface-container-high"
-    >
-      <span className="relative">
-        <ActorAvatar row={row} size={36} />
-        <span className="absolute -right-2 -bottom-1">
-          <InstanceTag origin={group.origin} name={group.name} />
+    <div className="w-16">
+      <CardButton
+        aria-haspopup="dialog"
+        data-switcher-tile
+        onClick={() => account.store.getState().openDialog({ kind: 'account_switcher' })}
+        column
+        pad="sm"
+        title={title}
+        label={title}
+        place="w-full"
+      >
+        <span className="relative">
+          <ActorAvatar row={row} size={36} />
+          <span className="absolute -right-2 -bottom-1">
+            <InstanceTag origin={group.origin} name={group.name} />
+          </span>
+          {model.otherBadge > 0 && (
+            <Inset
+              as="span"
+              pad="2xs"
+              inset="sides"
+              look="rounded-full bg-danger text-3xs font-bold text-on-danger"
+              place="absolute -left-2 -top-1"
+            >
+              {model.otherBadge}
+            </Inset>
+          )}
         </span>
-        {model.otherBadge > 0 && (
-          <Inset
-            as="span"
-            pad="2xs"
-            inset="sides"
-            look="rounded-full bg-danger text-3xs font-bold text-on-danger"
-            place="absolute -left-2 -top-1"
-          >
-            {model.otherBadge}
-          </Inset>
-        )}
-      </span>
-      <span className="streamer w-full truncate text-xs font-semibold">
-        <Masked text={row.display} />
-      </span>
-      <span className="streamer w-full truncate text-3xs text-on-surface-variant">
-        <Masked text={group.name} />
-      </span>
-    </Surface>
+        <span className="streamer w-full truncate text-xs font-semibold">
+          <Masked text={row.display} />
+        </span>
+        <span className="streamer w-full truncate text-3xs text-on-surface-variant">
+          <Masked text={group.name} />
+        </span>
+      </CardButton>
+    </div>
   )
 }
 

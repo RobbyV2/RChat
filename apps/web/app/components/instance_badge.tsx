@@ -9,6 +9,7 @@ import { accountNoticeLabel, instanceLabel, labelParts } from '../lib/instance_l
 import { openActionMenu } from '../lib/actions/menu'
 import { longPress } from './context_menu'
 import { Row, Stack, Surface } from './layout'
+import { CardButton } from './controls'
 
 // What the copy calls this instance: its name, or its host when the name tells nothing.
 export function useInstanceLabel() {
@@ -78,32 +79,28 @@ export function RailInstance() {
   const signedIn = useStore(s => s.me !== null)
   const named = label !== host
   return (
-    <Surface
-      title={streamer ? 'Instance' : named ? `${label} (${host})` : host}
-      aria-label={`Instance ${label}${named ? ` on ${host}` : ''}`}
-      onClick={() => openDialog({ kind: 'settings' })}
-      {...(signedIn
-        ? longPress((x, y) => openActionMenu(x, y, { kind: 'home' }, undefined, acct))
-        : {})}
-      as="button"
-      pad="2xs"
-      gap="3xs"
-      tone="plain"
-      radius="lg"
-      align="center"
-      ink="muted"
-      look="w-15 hover:bg-surface-container-high hover:text-on-surface"
-      place="shrink-0"
-    >
-      <Globe size={16} className="shrink-0" />
-      <Name
-        of={instanceName(label)}
-        look="w-full truncate text-center text-3xs leading-3 font-semibold text-on-surface"
-      />
-      {named && (
-        <Name of={instanceAddress(host)} look="w-full truncate text-center text-3xs leading-3" />
-      )}
-    </Surface>
+    <div className="w-15 shrink-0">
+      <CardButton
+        onClick={() => openDialog({ kind: 'settings' })}
+        {...(signedIn
+          ? longPress((x, y) => openActionMenu(x, y, { kind: 'home' }, undefined, acct))
+          : {})}
+        column
+        pad="sm"
+        title={streamer ? 'Instance' : named ? `${label} (${host})` : host}
+        label={`Instance ${label}${named ? ` on ${host}` : ''}`}
+        place="w-full"
+      >
+        <Globe size={16} className="shrink-0" />
+        <Name
+          of={instanceName(label)}
+          look="w-full truncate text-center text-3xs leading-3 font-semibold text-on-surface"
+        />
+        {named && (
+          <Name of={instanceAddress(host)} look="w-full truncate text-center text-3xs leading-3" />
+        )}
+      </CardButton>
+    </div>
   )
 }
 

@@ -67,9 +67,6 @@ export function ChannelSeparatorRow({
 
 // How a category header's name is cased: small capitals by default, as written with a
 // decorative style.
-export const categoryNameCls = (style: CategoryStyle | undefined) =>
-  categoryStyleOf(style) === 'default' ? 'tracking-wider uppercase' : ''
-
 // The line after a decorative category header's name.
 export function CategoryLine({ style }: { style: CategoryStyle | undefined }) {
   const shown = categoryStyleOf(style)

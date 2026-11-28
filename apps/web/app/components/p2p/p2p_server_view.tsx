@@ -20,7 +20,7 @@ import {
 } from '../../lib/place/channels'
 import { ChannelList } from '../channel_list'
 import { VoiceRow } from '../voice_row'
-import { Button, IconButton } from '../controls'
+import { Button, IconButton, LinkButton, Tile } from '../controls'
 import MemberSidebar from '../member_sidebar'
 
 import { useCallback, useMemo, useState, type CSSProperties } from 'react'
@@ -89,9 +89,6 @@ import { time } from '../../lib/platform/time'
 // badge, folders of their own), and the open server: channels, the channel's messages and the
 // member list, laid out like an instance server.
 
-const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
-const idle =
-  'bg-surface-container-high text-on-surface hover:bg-primary-container hover:text-on-primary-container'
 
 // ----- Counts -----
 
@@ -176,11 +173,9 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
   const own = useP2p(s => ownsP2pServer(v, s.me))
   const mask = useMask(own)
   return (
-    <button
+    <Tile
       data-p2p-tile
       data-p2p-server={v.id}
-      title={`${mask(v.name)}, peer-to-peer${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}${voiceLabel(voice)}`}
-      aria-label={`${mask(v.name)}, peer-to-peer${voiceLabel(voice)}`}
       aria-current={active ? 'page' : undefined}
       onClick={() => p2pServer.open(v.id)}
       {...longPress(
@@ -195,9 +190,9 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
         }
       )}
       data-drop-onto={folder === null ? 'Create folder' : undefined}
-      className={`${tile} relative border-2 border-dashed text-lg font-semibold ${
-        active ? 'border-on-primary bg-primary text-on-primary' : `border-tertiary ${idle}`
-      }`}
+      tone={active ? 'p2p-server-active' : 'p2p-server'}
+      label={`${mask(v.name)}, peer-to-peer${voiceLabel(voice)}`}
+      tooltip={`${mask(v.name)}, peer-to-peer${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}${voiceLabel(voice)}`}
     >
       <span
         className={`flex h-full w-full items-center justify-center rounded-inherit ${muted && !active ? 'opacity-50' : ''}`}
@@ -234,7 +229,7 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
         )
       )}
       <RailVoiceBadge count={voice} />
-    </button>
+    </Tile>
   )
 }
 
@@ -263,7 +258,7 @@ function P2pFolderEntryBody({
   const theme = useStore(s => s.theme)
   const style = folderStyle(folder.color, theme) as CSSProperties | undefined
   const header = {
-    title: `${streamer ? folder.name || 'Folder' : label}${voiceLabel(voice)}`,
+    label: `${streamer ? folder.name || 'Folder' : label}${voiceLabel(voice)}`,
     'aria-expanded': folder.open,
     'data-drop-onto': 'Add to folder',
     'data-p2p-tile': '',
@@ -281,11 +276,7 @@ function P2pFolderEntryBody({
   }
   if (!folder.open)
     return (
-      <button
-        {...header}
-        style={style}
-        className={`${tile} folder-tile relative border-2 border-dashed border-tertiary`}
-      >
+      <Tile {...header} tone="p2p-folder" tint={style}>
         <Grid as="span" cols={2} gap="2xs" look="size-8 grid-rows-2">
           {list.slice(0, 4).map(v => (
             <span
@@ -314,14 +305,14 @@ function P2pFolderEntryBody({
           )
         )}
         <RailVoiceBadge count={voice} />
-      </button>
+      </Tile>
     )
   return (
     <div data-drag-box style={style} className="folder-group w-14 shrink-0 rounded-group">
       <Surface pad="2xs" gap="sm" tone="plain" radius="none" align="center">
-        <button {...header} className={`${tile} folder-icon-p2p`}>
+        <Tile {...header} tone="p2p-folder-open">
           <FolderOpen size={22} />
-        </button>
+        </Tile>
         <Stack
           data-drop-zone={zoneOfFolder(folder.id)}
           data-drop-label="Add to folder"
@@ -343,16 +334,15 @@ function P2pJoinTileBody() {
   const { p2p } = identity
 
   return (
-    <button
+    <Tile
       data-p2p-tile
       data-p2p-join
-      title="Create or join a P2P server"
-      aria-label="Create or join a P2P server"
       onClick={() => p2p.openDialog({ kind: 'server_new' })}
-      className={`${tile} bg-surface-container-high text-tertiary hover:bg-tertiary-container hover:text-on-tertiary-container`}
+      tone="p2p"
+      label="Create or join a P2P server"
     >
       <Plus size={22} />
-    </button>
+    </Tile>
   )
 }
 
@@ -848,12 +838,11 @@ function P2pChannelPaneBody({
                   <span data-p2p-readonly className="text-sm">
                     {v.readOnly}
                   </span>
-                  <button
+                  <LinkButton
                     onClick={() => peerServer.forIdentity(identity).confirmForget(v, acct)}
-                    className="text-sm font-medium text-primary hover:underline"
                   >
                     Remove from this device
-                  </button>
+                  </LinkButton>
                 </>
               ) : waiting ? (
                 <>

@@ -24,8 +24,8 @@ import { UserAvatar } from './user_avatar'
 import { LiveBadge } from './voice_grid'
 import { VoiceStatusIcons } from './voice_status'
 import { Surface } from './layout'
-import { sideRowLook } from '../lib/controls'
 import { sideSeatLook } from '../lib/controls'
+import { SideRow } from './controls'
 
 const seatCls = sideSeatLook
 const opensCls =
@@ -153,10 +153,10 @@ function Row({
   const count = seats.length
   return (
     <div data-drag-box className="flex flex-col rounded-lg">
-      <button
+      <SideRow
         data-voice-channel={channel.name}
         title={locked ? NO_CONNECT : connected ? 'Open voice channel' : 'Join voice channel'}
-        aria-label={`${connected ? 'Open' : 'Join'} voice channel ${mask(channel.name)}${
+        label={`${connected ? 'Open' : 'Join'} voice channel ${mask(channel.name)}${
           count ? `, ${count} connected` : ''
         }${locked ? `. ${NO_CONNECT}` : ''}`}
         aria-disabled={locked || undefined}
@@ -164,11 +164,8 @@ function Row({
           if (!locked) voice.enter(channel.key)
         }}
         {...longPress(menu, drag)}
-        className={`group ${sideRowLook} w-side-row -outline-offset-2 transition-colors focus-visible:outline-2 focus-visible:outline-primary active:scale-98 pointer-coarse:min-h-11 ${
-          channel.active
-            ? 'bg-secondary-container text-on-secondary-container'
-            : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
-        }`}
+        current={channel.active}
+        place="group"
       >
         <Volume2 size={16} className={`shrink-0 ${connected ? 'text-status-green' : ''}`} />
         <span className="truncate">
@@ -200,7 +197,7 @@ function Row({
             {count}
           </Surface>
         )}
-      </button>
+      </SideRow>
       {seats.map(seat =>
         seat.face.kind === 'account' ? (
           <AccountSeat

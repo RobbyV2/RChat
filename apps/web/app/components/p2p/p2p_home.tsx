@@ -82,9 +82,8 @@ import { DmListSkeleton } from '../skeletons'
 import { Row, Stack, Surface, Inset } from '../layout'
 import { GateNote } from '../gate_note'
 import { time } from '../../lib/platform/time'
-import { Button, IconButton } from '../controls'
+import { Button, IconButton, Tile } from '../controls'
 
-const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
 
 // When the conversation with a contact last had a message (0 without one).
 export const lastTsOf =
@@ -117,12 +116,9 @@ function P2pRailTileBody({ actorLabel }: { actorLabel?: string }) {
     .filter(Boolean)
     .join(', ')
   return (
-    <button
+    <Tile
       data-p2p-tile
       data-peer-home
-      title={label}
-      aria-label={actorLabel ?? 'Peer-to-peer'}
-      aria-pressed={open}
       onClick={() => {
         const alreadyShown = client.shown() === acct && acct.identities.viewed() === identity
         if (!alreadyShown && actorLabel) {
@@ -135,11 +131,10 @@ function P2pRailTileBody({ actorLabel }: { actorLabel?: string }) {
       {...(enabled
         ? longPress((x, y) => openActionMenu(x, y, { kind: 'p2p_home' }, undefined, acct, identity))
         : {})}
-      className={`${tile} relative ${
-        open
-          ? 'bg-tertiary text-on-tertiary'
-          : 'bg-surface-container-high text-tertiary hover:bg-tertiary-container hover:text-on-tertiary-container'
-      }`}
+      tone={open ? 'p2p-active' : 'p2p'}
+      label={actorLabel ?? 'Peer-to-peer'}
+      tooltip={label}
+      pressed={open}
     >
       {actorLabel ? (
         <span className="streamer rounded-full outline-2 outline-dashed outline-tertiary">
@@ -152,7 +147,7 @@ function P2pRailTileBody({ actorLabel }: { actorLabel?: string }) {
         <Waypoints size={22} />
       )}
       {badge > 0 && <RailPingBadge count={badge} />}
-    </button>
+    </Tile>
   )
 }
 
