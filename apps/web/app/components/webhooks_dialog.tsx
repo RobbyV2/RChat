@@ -1,5 +1,6 @@
 'use client'
 
+import { ask, sendTo } from '../lib/asks'
 import { asAccount, pictured } from '../lib/people'
 import { instanceName, personCalled, personName } from '../lib/names'
 import { Name } from './name'
@@ -244,7 +245,8 @@ function HookEditor({
 }
 
 function Incoming({ server }: { server: string }) {
-  const { api, shareOrigin } = useAccount()
+  const account = useAccount()
+  const { shareOrigin } = account
   const all = useStore(s => s.servers[server]?.channels)
   const channels = useMemo(() => textChannels(all), [all])
   const askConfirm = useStore(s => s.askConfirm)
@@ -257,8 +259,7 @@ function Incoming({ server }: { server: string }) {
   const [secret, setSecret] = useState<{ name: string; url: string } | null>(null)
 
   const load = useCallback(() => {
-    api
-      .listWebhooks(server)
+    sendTo(account, ask.listWebhooks(server))
       .then(setList)
       .catch((e: unknown) => setError(errorText(e)))
   }, [server])
@@ -272,12 +273,15 @@ function Incoming({ server }: { server: string }) {
     if (f.channel === null) return 'Pick a channel'
     setBusy(true)
     try {
-      const made = await api.createWebhook(server, {
-        channel_id: f.channel,
-        name: f.name.trim(),
-        avatar_kind: f.kind,
-        avatar_color: f.kind === 'color' ? f.color : null,
-      })
+      const made = await sendTo(
+        account,
+        ask.createWebhook(server, {
+          channel_id: f.channel,
+          name: f.name.trim(),
+          avatar_kind: f.kind,
+          avatar_color: f.kind === 'color' ? f.color : null,
+        })
+      )
       setCreating(false)
       reveal(made.name, made.path)
       load()
@@ -292,12 +296,15 @@ function Incoming({ server }: { server: string }) {
   const save = async (hook: Webhook, f: HookForm) => {
     setBusy(true)
     try {
-      await api.updateWebhook(server, hook.id, {
-        name: f.name.trim(),
-        channel_id: f.channel ?? hook.channel_id,
-        avatar_kind: f.kind,
-        avatar_color: f.kind === 'color' ? f.color : null,
-      })
+      await sendTo(
+        account,
+        ask.updateWebhook(server, hook.id, {
+          name: f.name.trim(),
+          channel_id: f.channel ?? hook.channel_id,
+          avatar_kind: f.kind,
+          avatar_color: f.kind === 'color' ? f.color : null,
+        })
+      )
       setEditing(null)
       load()
       return null
@@ -327,8 +334,7 @@ function Incoming({ server }: { server: string }) {
       body: `Make a new URL for ${hook.name}? The current URL stops working right away.${takesOver(hook.creator, me) ? ` ${OWNER_NOTE}` : ''}`,
       confirm: 'Make new URL',
       action: () =>
-        void api
-          .resetWebhookToken(server, hook.id)
+        void sendTo(account, ask.resetWebhookToken(server, hook.id))
           .then(made => {
             reveal(made.name, made.path)
             load()
@@ -342,8 +348,7 @@ function Incoming({ server }: { server: string }) {
       body: `Delete ${hook.name}? Its URL stops working. Messages it posted stay.`,
       confirm: 'Delete',
       action: () =>
-        void api
-          .deleteWebhook(server, hook.id)
+        void sendTo(account, ask.deleteWebhook(server, hook.id))
           .then(load)
           .catch((e: unknown) => setError(errorText(e))),
     })
@@ -650,12 +655,11 @@ function DeliveryNote({ children }: { children: ReactNode }) {
 }
 
 function DeliveryLog({ server, hook }: { server: string; hook: number }) {
-  const { api } = useAccount()
+  const account = useAccount()
   const [list, setList] = useState<Delivery[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const load = useCallback(() => {
-    api
-      .listDeliveries(server, hook)
+    sendTo(account, ask.listDeliveries(server, hook))
       .then(setList)
       .catch((e: unknown) => setError(errorText(e)))
   }, [server, hook])
@@ -695,10 +699,10 @@ function DeliveryLog({ server, hook }: { server: string; hook: number }) {
 }
 
 function Outgoing({ server }: { server: string }) {
+  const account = useAccount()
   const {
-    api,
     lifetime: { inSession },
-  } = useAccount()
+  } = account
   const { label } = useInstanceLabel()
   const askConfirm = useStore(s => s.askConfirm)
   const showToast = useStore(s => s.showToast)
@@ -713,8 +717,7 @@ function Outgoing({ server }: { server: string }) {
   const [taking, setTaking] = useState<{ id: number; kind: 'on' | 'secret' } | null>(null)
 
   const load = useCallback(() => {
-    api
-      .listOutgoing(server)
+    sendTo(account, ask.listOutgoing(server))
       .then(setData)
       .catch((e: unknown) => setError(errorText(e)))
   }, [server])
@@ -735,22 +738,28 @@ function Outgoing({ server }: { server: string }) {
 
   const create = (f: OutForm) =>
     run(async () => {
-      const made = await api.createOutgoing(server, {
-        name: f.name.trim(),
-        url: f.url.trim(),
-        events: f.events,
-      })
+      const made = await sendTo(
+        account,
+        ask.createOutgoing(server, {
+          name: f.name.trim(),
+          url: f.url.trim(),
+          events: f.events,
+        })
+      )
       setCreating(false)
       setSecret({ name: made.name, value: made.secret })
     })
 
   const save = (hook: OutgoingWebhook, f: OutForm) =>
     run(async () => {
-      await api.updateOutgoing(server, hook.id, {
-        name: f.name.trim(),
-        url: outgoingUrl(hook, f.url),
-        events: f.events,
-      })
+      await sendTo(
+        account,
+        ask.updateOutgoing(server, hook.id, {
+          name: f.name.trim(),
+          url: outgoingUrl(hook, f.url),
+          events: f.events,
+        })
+      )
       setEditing(null)
     })
 
@@ -768,7 +777,9 @@ function Outgoing({ server }: { server: string }) {
   }
 
   const flip = (hook: OutgoingWebhook) =>
-    void run(() => api.updateOutgoing(server, hook.id, { enabled: !hook.enabled })).then(setError)
+    void run(() =>
+      sendTo(account, ask.updateOutgoing(server, hook.id, { enabled: !hook.enabled }))
+    ).then(setError)
 
   const toggle = (hook: OutgoingWebhook) =>
     hook.enabled || !takesOver(hook.creator, me)
@@ -777,9 +788,10 @@ function Outgoing({ server }: { server: string }) {
 
   const takeOver = (hook: OutgoingWebhook, kind: 'on' | 'secret', url: string) =>
     run(async () => {
-      if (kind === 'on') await api.updateOutgoing(server, hook.id, { enabled: true, url })
+      if (kind === 'on')
+        await sendTo(account, ask.updateOutgoing(server, hook.id, { enabled: true, url }))
       else {
-        const made = await api.resetOutgoingSecret(server, hook.id, url)
+        const made = await sendTo(account, ask.resetOutgoingSecret(server, hook.id, url))
         setSecret({ name: made.name, value: made.secret })
       }
       setTaking(null)
@@ -788,7 +800,7 @@ function Outgoing({ server }: { server: string }) {
   const test = (hook: OutgoingWebhook) => {
     const queued = inSession(showToast)
     void run(async () => {
-      await api.testOutgoing(server, hook.id)
+      await sendTo(account, ask.testOutgoing(server, hook.id))
       setLog(hook.id)
       queued('Test event queued')
     }).then(setError)
@@ -802,8 +814,7 @@ function Outgoing({ server }: { server: string }) {
           body: `Make a new secret for ${hook.name}? Requests are signed with it from now on.`,
           confirm: 'Make new secret',
           action: () =>
-            void api
-              .resetOutgoingSecret(server, hook.id)
+            void sendTo(account, ask.resetOutgoingSecret(server, hook.id))
               .then(made => {
                 setSecret({ name: made.name, value: made.secret })
                 load()
@@ -817,8 +828,7 @@ function Outgoing({ server }: { server: string }) {
       body: `Delete ${hook.name}? Pending deliveries are dropped.`,
       confirm: 'Delete',
       action: () =>
-        void api
-          .deleteOutgoing(server, hook.id)
+        void sendTo(account, ask.deleteOutgoing(server, hook.id))
           .then(load)
           .catch((e: unknown) => setError(errorText(e))),
     })

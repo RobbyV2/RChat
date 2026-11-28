@@ -1,4 +1,5 @@
 'use client'
+import { ask, sendTo } from '../../lib/asks'
 import { useAccount, accountBoundStore } from '../../lib/client/react'
 import { useEffect } from 'react'
 import { applyWarning, configPatch, controlOf } from '../../lib/admin_config'
@@ -20,8 +21,7 @@ export const useConfigSync = (open: boolean) => {
     if (!open) return
     let live = true
     const mark = ownerSession.lifetime.sessionMark()
-    ownerSession.api
-      .adminConfig()
+    sendTo(ownerSession, ask.adminConfig())
       .then(config => {
         if (live && mark === ownerSession.lifetime.sessionMark())
           ownerSession.adminConfig.setState({ config })

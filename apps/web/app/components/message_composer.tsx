@@ -21,7 +21,7 @@ import {
 } from 'lucide-react'
 import { errorText, type UploadMode, useMask, useStore, viewKey } from '../lib/store'
 import { limitsOf } from '../lib/instance_limits'
-import { postGuest } from '../lib/guest_chat'
+import { postGuestFrom } from '../lib/guest_chat'
 import { useAccount } from '../lib/client/react'
 import { TextComposer } from './text_composer'
 import { outgoing } from '../lib/link_safety'
@@ -333,7 +333,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           cancelReply={() => cancelReply(draftKey)}
           send={async content => {
             const message = await account.lifetime.live(
-              postGuest(account.api, view.server, `/channels/${channelId}/guest-messages`, {
+              postGuestFrom(account, view.server, `/channels/${channelId}/guest-messages`, {
                 content: outgoing(linkPrefs, content),
                 reply_to: quote?.id,
                 thread_root_id: thread && rootId !== null ? rootId : undefined,

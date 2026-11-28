@@ -107,6 +107,9 @@ const clockSyntax = {
     { selector: "NewExpression[callee.name='Date'][arguments.length=0]", message: CLOCK_MESSAGE },
   ],
 }
+// A component names a request and hands it on; it never holds the client that sends it.
+const ASK_MESSAGE =
+  'Components name a request with ask (app/lib/asks) and give it to a load (components/loaded.tsx) or to sendTo. They never hold the API client.'
 const NETWORK_FILES = ['apps/web/app/lib/api.ts', 'apps/web/app/lib/api/**']
 const CLOCK_FILES = ['apps/web/app/lib/clock.ts', 'apps/web/app/lib/platform/time.ts']
 
@@ -180,6 +183,11 @@ export default tseslint.config(
     files: ['apps/web/app/components/**'],
     ignores: TEST_FILES,
     rules: {
+      'no-restricted-syntax': [
+        ...clockSyntax['no-restricted-syntax'],
+        { selector: "MemberExpression[computed=false][property.name='api']", message: ASK_MESSAGE },
+        { selector: "ObjectPattern > Property[key.name='api']", message: ASK_MESSAGE },
+      ],
       '@typescript-eslint/no-restricted-imports': [
         'error',
         {

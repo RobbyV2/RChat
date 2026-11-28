@@ -1,5 +1,6 @@
 'use client'
 
+import { ask, asked } from '../../lib/asks'
 import type { ReactNode } from 'react'
 import type { ServerSummaryLite } from '../../lib/types'
 import { Stack } from '../layout'
@@ -15,7 +16,7 @@ function Matches({
   row: (server: ServerSummaryLite) => ReactNode
 }) {
   const load = useAccountRequest(
-    async api => (await api.adminServers(null, text)).items.slice(0, limit),
+    () => asked(ask.adminServers(null, text), found => found.items.slice(0, limit)),
     [text, limit],
     { delayMs: 300, empty: found => found.length === 0 }
   )

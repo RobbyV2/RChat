@@ -1,4 +1,6 @@
 'use client'
+import type { Announcement } from '../../lib/announcements'
+import { ask, asked, sendTo } from '../../lib/asks'
 import { useAccount, useConn } from '../../lib/client/react'
 import { useEffect, useRef, useState } from 'react'
 import { orMissing } from '../../lib/api_errors'
@@ -27,7 +29,7 @@ function Editor() {
   const brand = useStore(s => s.brand)
   const mounted = useRef(false)
   const [load, source] = useAccountSource(
-    api => api.adminAnnouncements().catch(orMissing(null)),
+    () => asked(ask.adminAnnouncements(), rows => rows as Announcement[] | null, orMissing(null)),
     [brand],
     { everyMs: 30000 }
   )
@@ -45,13 +47,13 @@ function Editor() {
     setBusy(true)
     setError('')
     try {
-      if (id) await ownerSession.api.removeAnnouncement(id)
+      if (id) await sendTo(ownerSession, ask.removeAnnouncement(id))
       else {
         const starts_at = start ? new Date(start).getTime() / 1000 : 0
         const ends_at = new Date(end).getTime() / 1000
         if (!Number.isFinite(ends_at) || ends_at <= starts_at)
           throw new Error('Choose an end time after the start.')
-        await ownerSession.api.scheduleAnnouncement({ message, starts_at, ends_at })
+        await sendTo(ownerSession, ask.scheduleAnnouncement({ message, starts_at, ends_at }))
         if (current()) {
           setMessage('')
           setStart('')

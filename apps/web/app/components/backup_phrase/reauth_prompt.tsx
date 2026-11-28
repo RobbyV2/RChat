@@ -1,4 +1,5 @@
 'use client'
+import { ask, asked, known, sendTo } from '../../lib/asks'
 import { Button } from '../controls'
 import { Loaded, useAccountRequest } from '../loaded'
 import { statusOf } from '../../lib/api_errors'
@@ -49,7 +50,7 @@ export function ReAuthPrompt({
   const [busy, setBusy] = useState(false),
     pending = useRef(false)
   const phrase = useAccountRequest(
-    async api => (checkPhrase ? (await api.recoveryStatus()).set : false),
+    () => (checkPhrase ? asked(ask.recoveryStatus(), status => status.set) : known(false)),
     [checkPhrase]
   )
   const confirm = async (get: () => Promise<ReAuthBody>, freshProvider?: string) => {
@@ -141,7 +142,10 @@ export function ReAuthPrompt({
               type="button"
               onClick={() =>
                 void confirm(async () => {
-                  const { ticket } = await acct.api.ssoTicket({ provider, purpose: 'reauth' })
+                  const { ticket } = await sendTo(
+                    acct,
+                    ask.ssoTicket({ provider, purpose: 'reauth' })
+                  )
                   if (!current()) throw new Error('Sign-in expired')
                   const { code } = await beginPopup(acct, provider, 'reauth', ticket, current)
                   return { idp: { provider, code } }
@@ -164,7 +168,10 @@ export function ReAuthPrompt({
                 disabled={!words}
                 onClick={() =>
                   void confirm(async () => {
-                    const { nonce, username } = await acct.api.recoveryChallenge(me.username)
+                    const { nonce, username } = await sendTo(
+                      acct,
+                      ask.recoveryChallenge(me.username)
+                    )
                     const key = derive(await seed(words!), 'account')
                     const sig = b64u(
                       sign(

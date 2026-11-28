@@ -1,4 +1,5 @@
 'use client'
+import { ask, asked } from '../lib/asks'
 import { Refreshed, useAccountRequest } from './loaded'
 
 import { asAccount, pictured, type Person } from '../lib/people'
@@ -624,11 +625,11 @@ function HostedResetDialog({ server, user }: { server: string; user: UserRef }) 
   const listed = useLook(server, user.username)
   // The card's facts say what is there to reset, and whether a lock runs.
   const load = useAccountRequest(
-    async api => {
-      const p = await api.userProfile(user.username, server)
-      note(server, user.username, p.member?.profile_locked_until)
-      return p.member?.profile ?? null
-    },
+    () =>
+      asked(ask.userProfile(user.username, server), p => {
+        note(server, user.username, p.member?.profile_locked_until)
+        return p.member?.profile ?? null
+      }),
     [note, server, user.username]
   )
   const now = useNow(known !== undefined, 30_000)

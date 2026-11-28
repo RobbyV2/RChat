@@ -15,6 +15,7 @@ import {
   type RequestOptions,
 } from '../lib/load'
 import type { Key } from '../lib/lists'
+import { sendTo, type Ask } from '../lib/asks'
 import { useAccount } from '../lib/client/react'
 import type { AccountSession } from '../lib/client/session'
 import type { Live } from '../lib/place/live'
@@ -55,17 +56,17 @@ export function useSource<T>(
 const never = new Promise<never>(() => {})
 const NO_EVENTS: readonly string[] = []
 
-// `run` against the account's instance. An answer that arrives after the account's session
+// `work` for the account, as a session of it. An answer that arrives after the account's session
 // changed never shows.
 function useInSession<A extends unknown[], T>(
-  run: (api: AccountSession['api'], ...args: A) => Promise<T>
+  work: (account: AccountSession, ...args: A) => Promise<T>
 ): [(...args: A) => Promise<T>, AccountSession, unknown] {
   const account = useAccount()
   const mark = account.lifetime.sessionMark()
   const current = <V,>(value: V) => (mark === account.lifetime.sessionMark() ? value : never)
   return [
     (...args) =>
-      run(account.api, ...args).then(current, (error: unknown) =>
+      work(account, ...args).then(current, (error: unknown) =>
         Promise.resolve(current(null)).then(() => Promise.reject(error))
       ),
     account,
@@ -73,23 +74,38 @@ function useInSession<A extends unknown[], T>(
   ]
 }
 
-// What one request to the account's instance fetches, asked again when the account, its session
-// or `deps` change.
+// The requests `name` gives, sent to the account's instance.
+const useAsked = <A extends unknown[], T>(name: (...args: A) => Ask<T>) =>
+  useInSession((account, ...args: A) => sendTo(account, name(...args)))
+
+// What the account's own code fetches (`work` is a function of app/lib that takes the account),
+// for a request with rules of its own, under the same guard.
+export function useAccountWork<T>(
+  work: (account: AccountSession, signal: AbortSignal) => Promise<T>,
+  deps: readonly unknown[],
+  options?: RequestOptions<T>
+): [Load<T>, LoadSource<T>] {
+  const [guarded, account, mark] = useInSession(work)
+  return useSource(guarded, [account, mark, ...deps], options)
+}
+
+// What one request to the account's instance fetches (`name` says which, from `ask`), asked again
+// when the account, its session or `deps` change.
 export function useAccountRequest<T>(
-  run: (api: AccountSession['api'], signal: AbortSignal) => Promise<T>,
+  name: (signal: AbortSignal) => Ask<T>,
   deps: readonly unknown[],
   options?: RequestOptions<T>
 ): Load<T> {
-  const [guarded, account, mark] = useInSession(run)
+  const [guarded, account, mark] = useAsked(name)
   return useRequest(guarded, [account, mark, ...deps], options)
 }
 
 export function useAccountSource<T>(
-  run: (api: AccountSession['api'], signal: AbortSignal) => Promise<T>,
+  name: (signal: AbortSignal) => Ask<T>,
   deps: readonly unknown[],
   options?: RequestOptions<T>
 ): [Load<T>, LoadSource<T>] {
-  const [guarded, account, mark] = useInSession(run)
+  const [guarded, account, mark] = useAsked(name)
   return useSource(guarded, [account, mark, ...deps], options)
 }
 
@@ -152,12 +168,12 @@ function Loading({
 
 // A list of the account's instance, fetched a page at a time.
 export function useAccountPages<T>(
-  run: (api: AccountSession['api'], cursor: string | null, signal: AbortSignal) => Promise<Page<T>>,
+  name: (cursor: string | null, signal: AbortSignal) => Ask<Page<T>>,
   keyOf: (item: T) => Key,
   deps: readonly unknown[],
   options?: PagesOptions
 ): [Load<Pages<T>>, PagesSource<T>] {
-  const [guarded, account, mark] = useInSession(run)
+  const [guarded, account, mark] = useAsked(name)
   return usePages(guarded, keyOf, [account, mark, ...deps], options)
 }
 

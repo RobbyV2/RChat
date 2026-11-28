@@ -77,6 +77,21 @@ export function guestSessionHeaders(
   return secret ? { 'X-Guest-Session': secret } : {}
 }
 
+// Until when this guest may not post in `channel` (null: they may now).
+export const guestPostingUntil = (session: { api: ApiClient }, server: string, channel: number) =>
+  session.api.req<number | null>(
+    'GET',
+    `/channels/${channel}/guest-messages`,
+    undefined,
+    guestSessionHeaders(session.api, server)
+  )
+
+// The same from a session of the instance.
+export const postGuestFrom = (
+  session: { api: ApiClient },
+  ...rest: Parameters<typeof postGuest> extends [ApiClient, ...infer R] ? R : never
+) => postGuest(session.api, ...rest)
+
 export async function postGuest(
   client: ApiClient,
   server: string,

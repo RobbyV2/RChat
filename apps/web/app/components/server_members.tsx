@@ -1,4 +1,5 @@
 'use client'
+import { ask, asked, known } from '../lib/asks'
 import { Loaded, More, Refreshed, useAccountPages, useAccountRequest } from './loaded'
 
 import { useMemo, useState, type ReactNode } from 'react'
@@ -7,7 +8,6 @@ import { openActionMenu } from '../lib/actions/menu'
 import { roleColor, useStore } from '../lib/store'
 import { memberState } from '../lib/selectors'
 import { NO_FILTERS, allowedFilters, hostedQuery, type MemberFilters } from '../lib/member_filters'
-import { memberSearchPage } from '../lib/asks'
 import { Perm, hasPerm, type MemberHit, type Role, type ServerPassword } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { Badge } from './profile_card'
@@ -30,10 +30,12 @@ function useHostedSearch(server: string, query: string) {
   const { store } = useAccount()
   const rememberMember = useStore(s => s.rememberMember)
   const [found] = useAccountPages(
-    memberSearchPage(server, query, members => {
-      for (const m of members) rememberMember(server, m.username, m)
-      store.menu.noteMemberTimeouts(server, members)
-    }),
+    (cursor, signal) =>
+      asked(ask.searchMembers(server, query, cursor, signal), page => {
+        for (const m of page.items) rememberMember(server, m.username, m)
+        store.menu.noteMemberTimeouts(server, page.items)
+        return page
+      }),
     hit => hit.username,
     [server, query, store, rememberMember],
     { delayMs: SEARCH_DEBOUNCE }
@@ -91,7 +93,8 @@ export function HostedMembers({
 }) {
   const invites = hasPerm(perms, Perm.ManageInvites)
   const load = useAccountRequest(
-    async api => (invites ? (await api.listPasswords(server)).passwords : NO_PASSWORDS),
+    () =>
+      invites ? asked(ask.listPasswords(server), found => found.passwords) : known(NO_PASSWORDS),
     [server, invites]
   )
   return (

@@ -1,4 +1,5 @@
 'use client'
+import { ask, asked } from '../../lib/asks'
 import { Name, NameInput } from '../name'
 import { handleName, personCalled } from '../../lib/names'
 import { asAccount } from '../../lib/people'
@@ -23,7 +24,7 @@ function UserServers({ username }: { username: string }) {
   const openServer = useStore(s => s.openServer)
   const openAdmin = useStore(s => s.openAdmin)
   const [load] = useAccountPages(
-    (api, cursor) => api.adminUserServers(username, cursor),
+    cursor => ask.adminUserServers(username, cursor),
     (sv: ServerSummaryLite) => sv.name,
     [username]
   )
@@ -147,7 +148,7 @@ export function UserPage({ username }: { username: string }) {
   const listed = useStore(s => s.adminUsers.list.find(u => u.username === username))
   const rev = useAccountChanges(s => s.rev)
   const [load, source] = useAccountSource(
-    api => api.adminAccount(username).catch(orMissing(null)),
+    () => asked(ask.adminAccount(username), found => found as AdminAccount | null, orMissing(null)),
     [username, rev]
   )
   useRefreshOn(source, { front: true })
@@ -225,7 +226,7 @@ function FilteredAccounts({
   rev: number
 }) {
   const [load] = useAccountPages(
-    (api, cursor) => api.adminUsers(cursor, q, filter),
+    cursor => ask.adminUsers(cursor, q, filter),
     (u: UserRef) => u.username,
     [q, filter, rev],
     { delayMs: 300 }

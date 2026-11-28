@@ -1,4 +1,5 @@
 'use client'
+import { ask, asked, known } from '../lib/asks'
 import { Refreshed, useAccountRequest } from './loaded'
 
 import { IconButton } from './controls'
@@ -125,15 +126,19 @@ export function ServerText({
   const { textPreviews } = account
   const key = JSON.stringify([account.conn.origin, 'media', server, id])
   const load = useAccountRequest<TextFile | null | undefined>(
-    async (api, signal) => {
+    signal => {
       const kept = textPreviews.get(key)
-      if (kept !== undefined) return kept
+      if (kept !== undefined) return known(kept)
       const mark = account.lifetime.sessionMark()
-      const { bytes, cut, total } = await api.mediaStart(id, server, PREVIEW_TEXT_MAX, signal)
-      const text = decodeText(bytes, cut)
-      const file = text === null ? null : { text, cut, total }
-      if (mark === account.lifetime.sessionMark()) textPreviews.keep(key, file)
-      return file
+      return asked(
+        ask.mediaStart(id, server, PREVIEW_TEXT_MAX, signal),
+        ({ bytes, cut, total }) => {
+          const text = decodeText(bytes, cut)
+          const file = text === null ? null : { text, cut, total }
+          if (mark === account.lifetime.sessionMark()) textPreviews.keep(key, file)
+          return file
+        }
+      )
     },
     [id, server, key, textPreviews]
   )

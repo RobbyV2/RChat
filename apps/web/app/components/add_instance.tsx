@@ -1,5 +1,6 @@
 'use client'
 
+import { ask, sendTo } from '../lib/asks'
 import { Name, NameInput } from './name'
 import { handleName, instanceAddress, instanceName } from '../lib/names'
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react'
@@ -177,7 +178,7 @@ export function AddInstanceFlow({
         info,
         origin === own?.origin
       )
-      const settings = siteSettings(await conn.api.getSettings())
+      const settings = siteSettings(await sendTo(conn, ask.getSettings()))
       if (token !== generation.current) return
       const t = { origin, info, conn, settings }
       setTarget(t)

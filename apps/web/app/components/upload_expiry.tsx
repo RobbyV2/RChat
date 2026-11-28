@@ -1,6 +1,7 @@
 'use client'
 
-import { Loaded, useRequest } from './loaded'
+import { ask, sendTo } from '../lib/asks'
+import { Loaded, useAccountRequest } from './loaded'
 import { instanceName } from '../lib/names'
 import { Name } from './name'
 import { useAccount } from '../lib/client/react'
@@ -55,8 +56,7 @@ const UNITS: { value: ExpiryUnit; label: string }[] = [
 
 // How long files uploaded in a server stay. For people with the Delete server permission.
 export function ServerUploadExpiry({ server }: { server: string }) {
-  const { api } = useAccount()
-  const load = useRequest(() => api.uploadExpiry(server), [api, server])
+  const load = useAccountRequest(() => ask.uploadExpiry(server), [server])
   return (
     <>
       <p className={sectionCls}>File expiry</p>
@@ -68,7 +68,8 @@ export function ServerUploadExpiry({ server }: { server: string }) {
 }
 
 function ExpiryFields({ server, first }: { server: string; first: UploadExpiryState }) {
-  const { store, api, lifetime } = useAccount()
+  const account = useAccount()
+  const { store, lifetime } = account
   const { label } = useInstanceLabel()
   const base = useStore(s => limitsOf(s.instance).media_retention_secs)
   const cap = useStore(s => s.settings.upload_expiry_max_days ?? 0)
@@ -85,8 +86,7 @@ function ExpiryFields({ server, first }: { server: string; first: UploadExpirySt
     if (!choice) return setError('Choose a whole number from 1 hour to 365 days.')
     setSaving(true)
     setError(null)
-    api
-      .setUploadExpiry(server, choice)
+    sendTo(account, ask.setUploadExpiry(server, choice))
       .then(
         lifetime.inSession(s => {
           setSaved(s)

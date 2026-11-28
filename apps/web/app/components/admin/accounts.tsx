@@ -1,5 +1,6 @@
 'use client'
 
+import { ask, asked, sendTo } from '../../lib/asks'
 import { Name, NameInput } from '../name'
 import { handleName, serverCalled } from '../../lib/names'
 import { useId, useState } from 'react'
@@ -170,9 +171,13 @@ function RoleToggles({
   roles: number[]
   onChange: (roles: number[]) => void
 }) {
-  const load = useAccountRequest(async api => (await api.getServer(server)).roles, [server], {
-    empty: all => all.length === 0,
-  })
+  const load = useAccountRequest(
+    () => asked(ask.getServer(server), found => found.roles),
+    [server],
+    {
+      empty: all => all.length === 0,
+    }
+  )
   return (
     <Loaded load={load} skeleton={null} empty={null} what="this server's roles">
       {all => (
@@ -237,10 +242,10 @@ const labelCls = 'text-sm font-medium text-on-surface'
 
 // Makes an account, then shows its temporary password once.
 export function CreateAccountDialog() {
+  const account = useAccount()
   const {
-    api,
     lifetime: { inSession },
-  } = useAccount()
+  } = account
   const closeDialog = useStore(s => s.closeDialog)
   const loadAdminOverview = useStore(s => s.loadAdminOverview)
   const passwords = useStore(s => s.settings.password_login)
@@ -283,8 +288,7 @@ export function CreateAccountDialog() {
           if (wrong || busy) return
           setBusy(true)
           setRefused(null)
-          api
-            .adminCreateUser(accountRequest(form))
+          sendTo(account, ask.adminCreateUser(accountRequest(form)))
             .then(created => {
               setMade({
                 username: created.user.username,
@@ -363,10 +367,10 @@ export function CreateAccountDialog() {
 
 // Asks before replacing an account's password, then shows the new temporary one once.
 export function TempPasswordDialog({ username }: { username: string }) {
+  const account = useAccount()
   const {
-    api,
     lifetime: { inSession },
-  } = useAccount()
+  } = account
   const closeDialog = useStore(s => s.closeDialog)
   const loadAdminOverview = useStore(s => s.loadAdminOverview)
   const changed = useAccountChanges(s => s.changed)
@@ -400,8 +404,7 @@ export function TempPasswordDialog({ username }: { username: string }) {
             onClick={() => {
               setBusy(true)
               setRefused(null)
-              api
-                .adminResetPassword(username)
+              sendTo(account, ask.adminResetPassword(username))
                 .then(made => {
                   setIssued(made)
                   changed()
@@ -421,10 +424,10 @@ export function TempPasswordDialog({ username }: { username: string }) {
 
 // Adds an account to one server, with roles.
 export function AddToServerDialog({ username }: { username: string }) {
+  const account = useAccount()
   const {
-    api,
     lifetime: { inSession },
-  } = useAccount()
+  } = account
   const closeDialog = useStore(s => s.closeDialog)
   const showToast = useStore(s => s.showToast)
   const changed = useAccountChanges(s => s.changed)
@@ -442,8 +445,7 @@ export function AddToServerDialog({ username }: { username: string }) {
           if (!entry || busy) return
           setBusy(true)
           setRefused(null)
-          api
-            .adminAddToServer(username, entry)
+          sendTo(account, ask.adminAddToServer(username, entry))
             .then(() => {
               changed()
               showToast('Added to the server')

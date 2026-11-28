@@ -1,5 +1,6 @@
 'use client'
-import { useAccount, useApi } from '../lib/client/react'
+import { ask, sendTo } from '../lib/asks'
+import { useAccount } from '../lib/client/react'
 import { useMemo, useState } from 'react'
 import { sharing } from '../lib/platform'
 import { useStore, errorText } from '../lib/store'
@@ -39,11 +40,11 @@ export function WidgetSettings({ server, channels }: WidgetSettingsProps) {
 }
 
 function WidgetPicker({ server, channels }: WidgetSettingsProps) {
-  const api = useApi()
+  const account = useAccount()
   const [selected, setSelected] = useState('')
   const channelNames = useMemo(() => new Map(channels.map(c => [c.id, c.name])), [channels])
   const [load, source] = useAccountPages(
-    (from, cursor, signal) => from.widgets(server, cursor, signal),
+    (cursor, signal) => ask.widgets(server, cursor, signal),
     (row: Widget) => row.id,
     [server],
     { showEmpty: false }
@@ -75,7 +76,7 @@ function WidgetPicker({ server, channels }: WidgetSettingsProps) {
             widget={pages.items.find(w => w.id === selected)}
             channels={channels}
             save={async body => {
-              const w = await api.saveWidget(server, selected || null, body)
+              const w = await sendTo(account, ask.saveWidget(server, selected || null, body))
               source.change(rows => [...rows.filter(row => row.id !== w.id), w])
               setSelected(w.id)
             }}

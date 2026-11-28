@@ -1,4 +1,5 @@
 'use client'
+import { ask, sendTo, apiOriginOf } from '../../lib/asks'
 import { NameArea, NameInput } from '../name'
 import { useAccount } from '../../lib/client/react'
 import { useId, useRef, useState, type ReactNode } from 'react'
@@ -435,14 +436,16 @@ function ImageControl({
       if (typeof made === 'string') return setError(made)
       let last: unknown = null
       for (const { kind, image } of made)
-        last = await ownerSession.lifetime.live(ownerSession.api.adminPutBrandAsset(kind, image))
+        last = await ownerSession.lifetime.live(
+          sendTo(ownerSession, ask.adminPutBrandAsset(kind, image))
+        )
       setBrand(last)
     })
   const remove = () =>
     run(async () => {
       for (const kind of kinds)
-        await ownerSession.lifetime.live(ownerSession.api.adminDeleteBrandAsset(kind))
-      setBrand(await ownerSession.lifetime.live(ownerSession.api.brand()))
+        await ownerSession.lifetime.live(sendTo(ownerSession, ask.adminDeleteBrandAsset(kind)))
+      setBrand(await ownerSession.lifetime.live(sendTo(ownerSession, ask.brand())))
     })
   return (
     <PageRow id={id} className="bg-surface-container">
@@ -465,7 +468,7 @@ function ImageControl({
               <span className="text-xs text-on-surface-variant">None</span>
             ) : (
               <img
-                src={assetUrl(ownerSession.api.origin(), path)}
+                src={assetUrl(apiOriginOf(ownerSession), path)}
                 alt={`${label} uploaded now`}
                 className={round ? 'h-16 w-16 object-cover' : 'max-h-12 w-auto max-w-48'}
               />

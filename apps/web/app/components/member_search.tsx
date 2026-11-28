@@ -1,5 +1,6 @@
 'use client'
 
+import { ask, sendTo } from '../lib/asks'
 import { Name } from './name'
 import { personCalled } from '../lib/names'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -25,10 +26,10 @@ interface MemberSearch {
 }
 
 export function useMemberSearch(server: string, q: string, admins = false, enabled = true) {
+  const account = useAccount()
   const {
-    api,
     lifetime: { inSession },
-  } = useAccount()
+  } = account
   const needle = q.trim()
   const active = enabled && (needle !== '' || admins)
   const [state, setState] = useState<MemberSearch>({ list: [], next: null, loading: false })
@@ -41,10 +42,13 @@ export function useMemberSearch(server: string, q: string, admins = false, enabl
       const showError = inSession(setError)
       setState(s => ({ ...s, loading: true }))
       try {
-        const page = await api.listMembers(server, cursor, {
-          q: needle || undefined,
-          admins,
-        })
+        const page = await sendTo(
+          account,
+          ask.listMembers(server, cursor, {
+            q: needle || undefined,
+            admins,
+          })
+        )
         if (epoch.current !== mine) return
         setState(s => {
           const base = cursor === null ? [] : s.list

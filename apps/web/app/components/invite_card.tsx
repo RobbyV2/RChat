@@ -77,7 +77,7 @@ import {
   type PreviewChange,
   type RemoteView,
 } from '../lib/invite_load'
-import { Loaded, useAccountSource, useRequest } from './loaded'
+import { Loaded, useAccountWork, useRequest } from './loaded'
 import { ErrorNotice } from './notices'
 
 type InviteVariant = 'embed' | 'page'
@@ -152,7 +152,7 @@ function useInviteLoad(
   useEffect(() => {
     asked.current.version = version
   }, [version])
-  const [load, source] = useAccountSource<InviteView>(() => {
+  const [load, source] = useAccountWork<InviteView>(() => {
     const maxAge = asked.current.maxAge
     asked.current.maxAge = INVITE_TTL
     return fetchInvite(

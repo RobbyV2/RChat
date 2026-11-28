@@ -1,9 +1,9 @@
 'use client'
+import { ask, asked, together, type Ask } from '../lib/asks'
 import { OwnLoadNotice } from './own_load'
 
-import { Loaded, useAccountRequest, useRequest } from './loaded'
+import { Loaded, useAccountRequest } from './loaded'
 import { orMissing } from '../lib/api_errors'
-import type { AccountSession } from '../lib/client/session'
 import { Name, NameSelect } from './name'
 import { handleName, personCalled } from '../lib/names'
 import { asAccount } from '../lib/people'
@@ -686,15 +686,24 @@ function AccountFriendsSection({ max }: { max: number }) {
 
 // The mini profile of `name` and how the account stands with them. A profile that cannot be
 // seen is `hidden`; any other failure is the load's.
-const previewOf = async (api: AccountSession['api'], name: string): Promise<FriendPreviewState> => {
-  const [seen, relation] = await Promise.all([
-    api
-      .userProfile(name, null)
-      .then(profile => ({ profile, hidden: false }), orMissing({ profile: null, hidden: true })),
-    api.friendship(name).then(r => r.status, orMissing('none' as const)),
-  ])
-  return { ...seen, relation }
-}
+type PreviewPart = Partial<FriendPreviewState>
+
+const previewOf = (name: string): Ask<readonly [string, FriendPreviewState]> =>
+  asked(
+    together<PreviewPart>([
+      asked(
+        ask.userProfile(name, null),
+        (profile): PreviewPart => ({ profile, hidden: false }),
+        orMissing<PreviewPart>({ profile: null, hidden: true })
+      ),
+      asked(
+        ask.friendship(name),
+        (r): PreviewPart => ({ relation: r.status }),
+        orMissing<PreviewPart>({ relation: 'none' })
+      ),
+    ]),
+    parts => [name, Object.assign({}, ...parts) as FriendPreviewState] as const
+  )
 
 function PreviewLoading({ name }: { name: string }) {
   return (
@@ -786,10 +795,7 @@ function AddFriends({ dialog }: { dialog: AddFriendsAsk }) {
   const closeDialog = useStore(s => s.closeDialog)
   const single = names.length === 1
   const load = useAccountRequest(
-    async api =>
-      Object.fromEntries(
-        await Promise.all(names.map(async name => [name, await previewOf(api, name)] as const))
-      ),
+    () => asked(together(names.map(previewOf)), found => Object.fromEntries(found)),
     [names.join(' ')]
   )
   return (
@@ -876,7 +882,6 @@ function AddFriendsForm({
 
 // The friend row for a profile card: Add friend, Accept, Cancel request or Remove friend.
 export function ProfileFriendButton({ user, onDone }: { user: UserRef; onDone: () => void }) {
-  const { api } = useAccount()
   const rev = useStore(
     s =>
       s.friends.list.length +
@@ -885,9 +890,9 @@ export function ProfileFriendButton({ user, onDone }: { user: UserRef; onDone: (
       s.friendCounts.incoming +
       s.friendCounts.outgoing
   )
-  const load = useRequest(
-    () => api.friendship(user.username).then(r => r.status),
-    [api, user.username, rev]
+  const load = useAccountRequest(
+    () => asked(ask.friendship(user.username), r => r.status),
+    [user.username, rev]
   )
   return (
     <Loaded load={load} skeleton={null} what="the friend status">

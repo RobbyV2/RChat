@@ -1,4 +1,5 @@
 'use client'
+import { ask, asked, sendTo } from '../lib/asks'
 import { instanceName } from '../lib/names'
 import { Name } from './name'
 import { Loaded, useAccountRequest } from './loaded'
@@ -522,7 +523,8 @@ function ExportBlock({
 }
 
 function ShareBlock({ doc }: { doc: ConfigDoc }) {
-  const { api, shareOrigin } = useAccount()
+  const account = useAccount()
+  const { shareOrigin } = account
   const { label } = useInstanceLabel()
   const [links, setLinks] = useState<ConfigShare[] | null>(null)
   const [expiry, setExpiry] = useState(EXPIRY_CHOICES[2].seconds)
@@ -534,13 +536,13 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
 
   const load = useCallback(async () => {
     try {
-      const list = await api.configShares()
+      const list = await sendTo(account, ask.configShares())
       setLinks(list)
       setNow(time().now())
     } catch (e) {
       setError(errorText(e))
     }
-  }, [api])
+  }, [account])
 
   useEffect(() => {
     void load()
@@ -555,7 +557,7 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
         setError('Too large for a link. Leave out some sections or use the text below')
         return
       }
-      const made = await api.createConfigShare(blob, expiry)
+      const made = await sendTo(account, ask.createConfigShare(blob, expiry))
       setShown(made.id)
       await load()
     } catch (e) {
@@ -568,7 +570,7 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
   const revoke = async (id: string) => {
     setError(null)
     try {
-      await api.deleteConfigShare(id)
+      await sendTo(account, ask.deleteConfigShare(id))
       if (shown === id) setShown(null)
     } catch (e) {
       setError(errorText(e))
@@ -688,7 +690,8 @@ function ImportBlock() {
   const identity = useP2pApp()
   const p2p = identity?.p2p
 
-  const { api, shareOrigin, lifetime } = useAccount()
+  const account = useAccount()
+  const { shareOrigin, lifetime } = account
   const mark = lifetime.sessionMark()
   const [text, setText] = useState('')
   const [result, setResult] = useState<{
@@ -719,7 +722,7 @@ function ImportBlock() {
     let input = raw
     if (id) {
       try {
-        input = (await api.configShare(id)).blob
+        input = (await sendTo(account, ask.configShare(id))).blob
       } catch {
         if (current(request)) setError('This link has expired or was revoked')
         return
@@ -967,12 +970,16 @@ function LinkCard({ id }: { id: string }) {
   const [done, setDone] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const load = useAccountRequest<SharedConfig | null>(
-    api =>
-      api.configShare(id).then(async res => {
-        const decoded = await decodeLink(res.blob)
-        if (!decoded.ok) throw new Error(decoded.error)
-        return { doc: decoded.doc, expiresAt: res.expires_at }
-      }, orMissing(null)),
+    () =>
+      asked(
+        ask.configShare(id),
+        async (res): Promise<SharedConfig | null> => {
+          const decoded = await decodeLink(res.blob)
+          if (!decoded.ok) throw new Error(decoded.error)
+          return { doc: decoded.doc, expiresAt: res.expires_at }
+        },
+        orMissing(null)
+      ),
     [id]
   )
 

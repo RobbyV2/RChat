@@ -1,4 +1,5 @@
 'use client'
+import { ask, sendTo } from '../../lib/asks'
 import { useState } from 'react'
 import { useAccount } from '../../lib/client/react'
 import { derive, generate, seed } from '../../lib/backup_phrase'
@@ -89,7 +90,7 @@ function PhraseDialog({
           context={key}
           links={links}
           onBody={async reauth => {
-            await acct.api.setRecovery(key, reauth)
+            await sendTo(acct, ask.setRecovery(key, reauth))
             if (current()) done()
           }}
         />

@@ -1,5 +1,6 @@
 'use client'
 
+import { ask, sendTo } from '../lib/asks'
 import { iconButtonLook } from '../lib/controls'
 import { useAccount } from '../lib/client/react'
 
@@ -465,7 +466,7 @@ export function VoterRow({ v }: { v: PollVoter }) {
 }
 
 function VoterList({ id, option }: { id: number; option: number | null }) {
-  const { api } = useAccount()
+  const account = useAccount()
   const [list, setList] = useState<PollVoter[]>([])
   const [next, setNext] = useState<string | null>(null)
   const [more, setMore] = useState(true)
@@ -475,7 +476,7 @@ function VoterList({ id, option }: { id: number; option: number | null }) {
     if (loading.current || !more) return
     loading.current = true
     try {
-      const page = await api.pollVoters(id, option, next)
+      const page = await sendTo(account, ask.pollVoters(id, option, next))
       setList(cur => [
         ...cur,
         ...page.items.filter(v => !cur.some(c => c.user.username === v.user.username)),

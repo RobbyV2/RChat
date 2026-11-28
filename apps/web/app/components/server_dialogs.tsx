@@ -1,4 +1,5 @@
 'use client'
+import { ask, sendTo } from '../lib/asks'
 import { NameInput, NameSelect } from './name'
 import { refusalOf, refusalView } from '../lib/api_errors'
 
@@ -50,7 +51,6 @@ function AddServerDialog({
 }) {
   const acting = selectedAs ?? owner
   const {
-    api,
     lifetime: { inSession },
   } = acting
   const { guest, createServer, joinServer, guestJoinServer } = acting.store.getState()
@@ -88,10 +88,10 @@ function AddServerDialog({
       if (!valid()) return
       try {
         if (joining) {
-          const matches = await api.searchServers(id, controller.signal)
+          const matches = await sendTo(acting, ask.searchServers(id, controller.signal))
           if (valid()) setSuggestions(matches)
         } else {
-          const result = await api.serverAvailable(id, controller.signal)
+          const result = await sendTo(acting, ask.serverAvailable(id, controller.signal))
           if (valid()) setTaken({ id, taken: !result.available })
         }
       } catch (error) {
@@ -103,7 +103,7 @@ function AddServerDialog({
       timer()
       controller.abort()
     }
-  }, [id, joining, selecting, selection, acting, api])
+  }, [id, joining, selecting, selection, acting])
 
   const rename = (value: string) => {
     setName(value)

@@ -1,5 +1,6 @@
 'use client'
 
+import { ask, sendTo } from '../lib/asks'
 import { Name, NameInput } from './name'
 import { handleName } from '../lib/names'
 import { useEffect, useId, useState, type ReactNode } from 'react'
@@ -7,7 +8,7 @@ import { Check, Copy, Lock, LockOpen, Plus } from 'lucide-react'
 import { readLocal, writeLocal } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
 import { Loaded, useAccountSource } from './loaded'
-import { useAccount, useApi } from '../lib/client/react'
+import { useAccount } from '../lib/client/react'
 import { inviteUrl } from '../lib/invite'
 import { passwordDone, passwordPrompt } from '../lib/rules'
 import { goingPublic, protectedDetail, publicDetail } from '../lib/joining'
@@ -257,7 +258,7 @@ function PermanentPassword({
   canRemove: boolean
   refresh: () => void
 }) {
-  const api = useApi()
+  const account = useAccount()
   const askConfirm = useStore(s => s.askConfirm)
   const siteAdmin = useStore(s => s.me?.is_site_admin ?? false)
   const [password, setPassword] = useState('')
@@ -284,27 +285,28 @@ function PermanentPassword({
             action: choice => {
               const members = choice.startsWith('remove') ? 'remove' : 'keep'
               const keepGuests = choice === `keep${WITH_OPTION}`
-              api
-                .updateServer(server, {
+              sendTo(
+                account,
+                ask.updateServer(server, {
                   password: next,
                   protected: true,
                   members,
                   keep_guests: keepGuests,
                 })
-                .then(
-                  res => {
-                    setPassword('')
-                    const guests =
-                      changed && members === 'keep'
-                        ? keepGuests
-                          ? ' Guests kept access.'
-                          : ' Guests lost access.'
-                        : ''
-                    setDone(passwordDone(prompt.confirm, members, res.removed, res.kept) + guests)
-                    refresh()
-                  },
-                  (err: unknown) => setError(errorText(err))
-                )
+              ).then(
+                res => {
+                  setPassword('')
+                  const guests =
+                    changed && members === 'keep'
+                      ? keepGuests
+                        ? ' Guests kept access.'
+                        : ' Guests lost access.'
+                      : ''
+                  setDone(passwordDone(prompt.confirm, members, res.removed, res.kept) + guests)
+                  refresh()
+                },
+                (err: unknown) => setError(errorText(err))
+              )
             },
           })
         }}
@@ -352,7 +354,8 @@ function NewPasswordDialog({
   onClose: () => void
   onCreated: (created: CreatedPassword) => void
 }) {
-  const { shareOrigin, api } = useAccount()
+  const account = useAccount()
+  const { shareOrigin } = account
   const ids = useId()
   const streamer = useStore(s => s.streamer)
   const [label, setLabel] = useState('')
@@ -396,7 +399,7 @@ function NewPasswordDialog({
       body.max_uses = n
     } else if (uses !== 'unlimited') body.max_uses = Number(uses)
     setBusy(true)
-    api.createPassword(server, body).then(
+    sendTo(account, ask.createPassword(server, body)).then(
       res => {
         setBusy(false)
         setCreated(res)
@@ -581,13 +584,13 @@ function PublicReading({
   hasPassword: boolean
   option: PublicRead
 }) {
-  const api = useApi()
+  const account = useAccount()
   const settings = useStore(s => s.settings)
   const [error, setError] = useState<string | null>(null)
   const label = 'Anyone can read this server'
   const pick = (choice: ReadingChoice) => {
     if (choice === choiceOf(option)) return
-    void api.updateServer(server, { public_read: optionOf(choice) }).then(
+    void sendTo(account, ask.updateServer(server, { public_read: optionOf(choice) })).then(
       () => setError(null),
       (err: unknown) => setError(errorText(err))
     )
@@ -611,15 +614,14 @@ function PublicReading({
 }
 
 export function GuestParticipation({ server }: { server: string }) {
-  const api = useApi()
+  const account = useAccount()
   const detail = useStore(s => s.servers[server])
   const site = useStore(s => s.settings)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const pick = (patch: { guest_voice_opt_in?: boolean; guest_chat_opt_in?: boolean }) => {
     setBusy(true)
-    void api
-      .updateServer(server, patch)
+    void sendTo(account, ask.updateServer(server, patch))
       .then(
         () => setError(null),
         (err: unknown) => setError(errorText(err))
@@ -661,14 +663,13 @@ export function GuestParticipation({ server }: { server: string }) {
 
 // "Members can be seen by people outside this server": on or off.
 function MemberPrivacy({ server, visible }: { server: string; visible: boolean }) {
-  const api = useApi()
+  const account = useAccount()
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const flip = (next: boolean) => {
     if (busy || next === visible) return
     setBusy(true)
-    void api
-      .updateServer(server, { members_visible: next })
+    void sendTo(account, ask.updateServer(server, { members_visible: next }))
       .then(
         () => setError(null),
         (err: unknown) => setError(errorText(err))
@@ -704,7 +705,7 @@ interface AccessProps {
 export function ServerAccessSection(props: AccessProps) {
   const { server, hasPassword, canSettings, canInvites } = props
   const [load, source] = useAccountSource(
-    api => api.listPasswords(server),
+    () => ask.listPasswords(server),
     [server, hasPassword, canSettings, canInvites]
   )
   return (
@@ -724,7 +725,8 @@ function AccessBody({
   publicRead,
   membersVisible,
 }: AccessProps & { data: ServerPasswords; refresh: () => void }) {
-  const { api, conn: home } = useAccount()
+  const account = useAccount()
+  const { conn: home } = account
   const username = useStore(s => s.me?.username ?? null)
   const key = username && home.scoped(secretsKey(username))
   const askConfirm = useStore(s => s.askConfirm)
@@ -760,18 +762,20 @@ function AccessBody({
             body: 'Current members stay. Nobody new can join until you set a permanent password or add one below.',
             confirm: 'Require password',
             action: () =>
-              void api
-                .updateServer(server, { protected: true })
-                .then(refresh, (err: unknown) => setError(errorText(err))),
+              void sendTo(account, ask.updateServer(server, { protected: true })).then(
+                refresh,
+                (err: unknown) => setError(errorText(err))
+              ),
           }
         : {
             title: 'Make Server Public',
             body: `${goingPublic(settings, publicReadable)} The permanent password is removed and every other password is revoked.`,
             confirm: 'Make public',
             action: () =>
-              void api
-                .updateServer(server, { protected: false })
-                .then(refresh, (err: unknown) => setError(errorText(err))),
+              void sendTo(account, ask.updateServer(server, { protected: false })).then(
+                refresh,
+                (err: unknown) => setError(errorText(err))
+              ),
           }
     )
   }
@@ -782,9 +786,9 @@ function AccessBody({
       body: `Revoke "${passwordName(p.label)}"? Nobody new can join with it and guests who used it lose access. Members stay.`,
       confirm: 'Revoke',
       action: () =>
-        void api
-          .revokePassword(server, p.id)
-          .then(refresh, (err: unknown) => setError(errorText(err))),
+        void sendTo(account, ask.revokePassword(server, p.id)).then(refresh, (err: unknown) =>
+          setError(errorText(err))
+        ),
     })
 
   const live = data.passwords.filter(p => statusAt(p, now) === 'live').length

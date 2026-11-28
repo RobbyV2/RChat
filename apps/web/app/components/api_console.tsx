@@ -1,4 +1,5 @@
 'use client'
+import { apiBaseOf } from '../lib/asks'
 import { instanceName } from '../lib/names'
 import { Name } from './name'
 
@@ -331,7 +332,8 @@ function ResponseBody({ res }: { res: ApiResponse }) {
 }
 
 function CurlButton({ op, values }: { op: Operation; values: Values }) {
-  const { api, store } = useAccount()
+  const account = useAccount()
+  const { store } = account
   const guest = useStore(s => s.guest)
   const [withToken, setWithToken] = useState(false)
   const [copied, flash] = useCopied()
@@ -340,7 +342,7 @@ function CurlButton({ op, values }: { op: Operation; values: Values }) {
     if (!built.ok) return
     // Secrets (the token, and secret path, query, header and body values) only when asked.
     const request = withToken ? built.request : hideSecrets(op, values, built.request)
-    const url = requestUrl(new URL(api.base, window.location.href).href, request)
+    const url = requestUrl(new URL(apiBaseOf(account), window.location.href).href, request)
     if (!url) return
     const token = withToken ? (store.getState().token?.reveal(TO_SCREEN) ?? null) : null
     void sharing()

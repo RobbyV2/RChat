@@ -1,6 +1,7 @@
 'use client'
 
 import { IconButton } from './controls'
+import { ask, mediaUrlOf, sendTo } from '../lib/asks'
 import { Name } from './name'
 import { personCalled } from '../lib/names'
 import { PeerCodeButton } from './p2p/peer_code_button'
@@ -916,7 +917,6 @@ export function MediaAttachment({
 }) {
   const account = useAccount()
   const {
-    api,
     media: { mediaModeFor, saveMedia },
   } = account
   const previews = useStore(s => s.settings.asset_previews)
@@ -945,7 +945,7 @@ export function MediaAttachment({
     })
   const primary = fetched
     ? { label: 'Download' as const, onClick: save }
-    : { label: 'Download' as const, href: api.mediaUrl(id), download: filename }
+    : { label: 'Download' as const, href: mediaUrlOf(account, id), download: filename }
   const menu = { download: save, link: mediaLink(account, id), remove }
   if (removed) {
     return (
@@ -1008,7 +1008,7 @@ export function MediaAttachment({
           alt: altText(media.alt),
         }}
         menu={cardMenu(filename, { primary, progress: null, menu })}
-        bytes={() => api.mediaBlob(id, server)}
+        bytes={() => sendTo(account, ask.mediaBlob(id, server))}
         className="max-h-80 max-w-full rounded-xl"
       >
         {expiry}
@@ -1067,8 +1067,9 @@ export function MediaAttachment({
             remember={
               fetched
                 ? {
-                    key: account.media.key(api.mediaUrl(id), server, 'video'),
-                    live: src => account.media.peek(api.mediaUrl(id), server, 'video') === src,
+                    key: account.media.key(mediaUrlOf(account, id), server, 'video'),
+                    live: src =>
+                      account.media.peek(mediaUrlOf(account, id), server, 'video') === src,
                   }
                 : undefined
             }
@@ -1103,7 +1104,7 @@ export function MediaAttachment({
                   />
                 ) : (
                   <a
-                    href={api.mediaUrl(id)}
+                    href={mediaUrlOf(account, id)}
                     download={filename}
                     title={`Download ${filename}`}
                     aria-label="Download"
@@ -1137,7 +1138,7 @@ export function MediaAttachment({
 // The address of an uploaded file, for whoever may read it.
 const mediaLink = (account: AccountSession, id: string) => {
   try {
-    return new URL(account.api.mediaUrl(id), account.shareOrigin).href
+    return new URL(mediaUrlOf(account, id), account.shareOrigin).href
   } catch {
     return null
   }

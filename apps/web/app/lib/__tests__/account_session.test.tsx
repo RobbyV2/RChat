@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { client } from '../client/client'
-import { AccountProvider, useAccount, useApi, useConn, useStoreApi } from '../client/react'
+import { AccountProvider, useAccount, useConn, useStoreApi } from '../client/react'
 import { home } from './home_instance'
 import { useStore } from '../store'
 import { serverDetail, textChannel, user } from './fixtures'
@@ -10,7 +10,7 @@ import { testAccount } from './test_account'
 function Reader() {
   const account = useAccount()
   expect(useStoreApi()).toBe(account.store)
-  expect(useApi()).toBe(account.conn.api)
+  expect(useAccount().api).toBe(account.conn.api)
   expect(useConn()).toBe(account.conn)
   expect(useStore()).toBe(account.store.getInitialState())
   return <span>{useStore(s => s.me?.username ?? 'guest')}</span>

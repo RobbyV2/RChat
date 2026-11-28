@@ -1,5 +1,6 @@
 'use client'
 
+import { ask, sendTo } from '../lib/asks'
 import { Button } from './controls'
 import { Name } from './name'
 import { personCalled } from '../lib/names'
@@ -42,10 +43,10 @@ type Target = { channel: Channel } | { category: Category }
 const idOf = (t: Target) => ('channel' in t ? t.channel.id : t.category.id)
 
 function useHostedRows(target: Target, reloadKey: unknown) {
+  const account = useAccount()
   const {
-    api,
     lifetime: { inSession },
-  } = useAccount()
+  } = account
   const setError = useStore(s => s.setError)
   const askStaffView = useStore(s => s.askStaffView)
   const [rows, setRows] = useState<ChannelPerm[] | null>(null)
@@ -58,14 +59,14 @@ function useHostedRows(target: Target, reloadKey: unknown) {
     () =>
       reads.read(async live => {
         const showError = inSession(setError)
-        const ask = inSession(askStaffView)
+        const askStaff = inSession(askStaffView)
         try {
           const all: ChannelPerm[] = []
           let cursor: string | null = null
           do {
             const page: Page<ChannelPerm> = channel
-              ? await api.channelPerms(id, cursor)
-              : await api.categoryPerms(id, cursor)
+              ? await sendTo(account, ask.channelPerms(id, cursor))
+              : await sendTo(account, ask.categoryPerms(id, cursor))
             all.push(...page.items)
             cursor = page.next
           } while (cursor !== null)
@@ -81,7 +82,7 @@ function useHostedRows(target: Target, reloadKey: unknown) {
           }
           setRows([])
           setShut(true)
-          ask(staff)
+          askStaff(staff)
         }
       }),
     [reads, channel, id, setError, askStaffView]

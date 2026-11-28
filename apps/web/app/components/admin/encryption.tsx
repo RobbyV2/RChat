@@ -1,5 +1,6 @@
 'use client'
 
+import { ask, sendTo } from '../../lib/asks'
 import { Loaded, useRequest } from '../loaded'
 import { KeyRound, TriangleAlert } from 'lucide-react'
 import { type ReactNode } from 'react'
@@ -103,7 +104,7 @@ export function EncryptionStatus({
 export function EncryptionSection() {
   const owner = useAccount()
   const load = useRequest(async () => {
-    const view = parseAdminEncryption(await owner.api.adminEncryption())
+    const view = parseAdminEncryption(await sendTo(owner, ask.adminEncryption()))
     if (!view) throw new Error('The key status came back in a form this page cannot read')
     return view
   }, [owner])

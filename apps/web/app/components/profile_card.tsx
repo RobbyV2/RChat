@@ -1,4 +1,5 @@
 'use client'
+import { ask, asked, known as answered } from '../lib/asks'
 import { personCalled } from '../lib/names'
 import { Name } from './name'
 
@@ -242,13 +243,14 @@ function Card({ target }: { target: ProfileTarget }) {
     profile: cachedProfile(profileKey(username, server), sessionMark()),
     hidden: false,
   }))
-  const load = useAccountRequest<Seen>(
-    async api => {
-      if (hook) return known
-      const key = profileKey(username, server)
-      const at = sessionMark()
-      try {
-        const p = await api.userProfile(username, server)
+  const load = useAccountRequest<Seen>(() => {
+    if (hook) return answered(known)
+    const key = profileKey(username, server)
+    const at = sessionMark()
+    return asked(
+      ask.userProfile(username, server),
+      (p): Seen => {
+        // What the card found is kept for the rest of the app.
         const mark = sessionMark()
         rememberProfile(key, p, at, mark)
         if (at !== mark) return { profile: p, hidden: false }
@@ -261,14 +263,14 @@ function Card({ target }: { target: ProfileTarget }) {
           st.profile?.user.username === username ? { profile: { ...st.profile, user: p.user } } : {}
         )
         return { profile: p, hidden: false }
-      } catch (e) {
+      },
+      (e: unknown): Seen => {
         if (!missing(e)) throw e
         if (at === sessionMark()) forgetProfile(key, at)
         return { profile: null, hidden: true }
       }
-    },
-    [username, server, rev, hook]
-  )
+    )
+  }, [username, server, rev, hook])
   return (
     <Refreshed load={load} known={known} what="this profile">
       {(seen, notice) => (

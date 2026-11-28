@@ -1,4 +1,5 @@
 'use client'
+import { ask, sendTo } from '../../lib/asks'
 import { NameInput } from '../name'
 import { useAccount } from '../../lib/client/react'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
@@ -31,8 +32,7 @@ export function AuditSection() {
     (cursor: string | null) => {
       if (busy.current) return
       busy.current = true
-      ownerSession.api
-        .adminAudit(cursor)
+      sendTo(ownerSession, ask.adminAudit(cursor))
         .then(page => {
           setPages(cur => {
             const base = cursor === null ? [] : (cur ?? [])

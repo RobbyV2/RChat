@@ -1,4 +1,5 @@
 'use client'
+import { ask, asked, sendTo } from '../lib/asks'
 import { Loaded, useAccountSource } from './loaded'
 
 import { asAccount } from '../lib/people'
@@ -705,10 +706,10 @@ export function ServerPasswordField({
   publicRead: PublicRead
   refresh?: () => void
 }) {
+  const account = useAccount()
   const {
-    api,
     lifetime: { inSession },
-  } = useAccount()
+  } = account
   const askConfirm = useStore(s => s.askConfirm)
   const siteAdmin = useStore(s => s.me?.is_site_admin ?? false)
   const settings = useStore(s => s.settings)
@@ -744,7 +745,10 @@ export function ServerPasswordField({
               action: choice => {
                 const members = choice.startsWith('remove') ? 'remove' : 'keep'
                 const keepGuests = choice === `keep${WITH_OPTION}`
-                api.updateServer(server, { password: next, members, keep_guests: keepGuests }).then(
+                sendTo(
+                  account,
+                  ask.updateServer(server, { password: next, members, keep_guests: keepGuests })
+                ).then(
                   inSession(res => {
                     setPassword('')
                     const guests =
@@ -806,10 +810,10 @@ export function ServerAppearance({
   detail?: ServerDetail
   refresh?: () => void
 }) {
+  const account = useAccount()
   const {
-    api,
     lifetime: { inSession },
-  } = useAccount()
+  } = account
   const detail = useStore(s => s.servers[server]) ?? fetched
   const theme = useStore(s => s.theme)
   const showGear = useStore(s => serverAdminPerms(s, server) !== 0)
@@ -914,11 +918,13 @@ export function ServerAppearance({
             onClick={() => {
               setSaving(true)
               setError(null)
-              api
-                .updateServer(server, {
+              sendTo(
+                account,
+                ask.updateServer(server, {
                   ...(banner !== savedBanner ? { banner_color: banner } : {}),
                   ...(!rchat && name !== savedName ? { name_color: name } : {}),
                 })
+              )
                 .then(
                   inSession(() => {
                     setDone(true)
@@ -958,7 +964,7 @@ export function ServerAppearance({
 
 // The About section for a hosted server.
 function HostedAbout({ server }: { server: string }) {
-  const { api } = useAccount()
+  const account = useAccount()
   const detail = useStore(s => s.servers[server])
   const own = useOwnServer(server)
   if (!detail) return null
@@ -971,7 +977,7 @@ function HostedAbout({ server }: { server: string }) {
       editable
       own={own}
       locked=""
-      onSave={change => api.updateServer(server, hostedAboutPatch(change))}
+      onSave={change => sendTo(account, ask.updateServer(server, hostedAboutPatch(change)))}
     />
   )
 }
@@ -980,10 +986,10 @@ function StandingInvite({ server, manage }: { server: string; manage: boolean })
   const { shareOrigin } = useAccount()
   const mode = useStore(s => s.servers[server]?.join_mode)
   const [load, source] = useAccountSource(
-    async api => {
-      const invite = await api.standingInvite(server)
-      return invite ? codeUrl(invite.code, shareOrigin) : null
-    },
+    () =>
+      asked(ask.standingInvite(server), invite =>
+        invite ? codeUrl(invite.code, shareOrigin) : null
+      ),
     [server, mode, shareOrigin]
   )
   return (
@@ -1014,7 +1020,8 @@ function StandingLink({
   link: string | null
   onChange: (link: string | null) => void
 }) {
-  const { api, shareOrigin } = useAccount()
+  const account = useAccount()
+  const { shareOrigin } = account
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -1025,10 +1032,10 @@ function StandingLink({
     setCopied(false)
     try {
       if (remove) {
-        await api.revokeInvite(server)
+        await sendTo(account, ask.revokeInvite(server))
         onChange(null)
       } else {
-        const invite = await api.renewInvite(server)
+        const invite = await sendTo(account, ask.renewInvite(server))
         onChange(codeUrl(invite.code, shareOrigin))
       }
     } catch (err) {
@@ -1363,14 +1370,14 @@ export default function ServerSettings() {
 // What members may set in their own profile of the server. For people with Manage server, while
 // the site has server profiles on.
 function ServerProfilesSetting({ server }: { server: string }) {
-  const { api } = useAccount()
+  const account = useAccount()
   const mode = useStore(s => s.servers[server]?.profiles_mode ?? 'all')
   const on = useStore(s => s.settings.server_profiles !== false)
   if (!on) return null
   return (
     <ProfilesModeField
       mode={mode}
-      onChange={next => api.updateServer(server, { profiles_mode: next })}
+      onChange={next => sendTo(account, ask.updateServer(server, { profiles_mode: next }))}
     />
   )
 }

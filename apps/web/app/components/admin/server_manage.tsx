@@ -1,4 +1,5 @@
 'use client'
+import { ask, sendTo } from '../../lib/asks'
 import { Name, NameInput } from '../name'
 import { personCalled } from '../../lib/names'
 import { asAccount } from '../../lib/people'
@@ -91,8 +92,7 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
 
   const refresh = useCallback(
     () =>
-      ownerSession.api
-        .getServer(name)
+      sendTo(ownerSession, ask.getServer(name))
         .then(setDetail)
         .catch(ownerSession.lifetime.inSession((e: unknown) => setError(errorText(e)))),
     [ownerSession, name, setError]

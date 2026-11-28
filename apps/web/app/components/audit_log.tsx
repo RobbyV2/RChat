@@ -1,6 +1,7 @@
 'use client'
 
 import { IconButton } from './controls'
+import { ask } from '../lib/asks'
 import { personName } from '../lib/names'
 import { Name } from './name'
 
@@ -42,7 +43,6 @@ import { nameWithUsername } from '../lib/display_name'
 import { useMemberSearch } from './member_search'
 import { UserAvatar } from './user_avatar'
 import { Dialog, Masked, fieldCls } from './ui'
-import { auditPage } from '../lib/asks'
 import { Loaded, More, useAccountPages } from './loaded'
 import { Grid, Inset, Row, Stack, Surface } from './layout'
 import { useLooksFor, useShown, useShownMembers } from './shown_user'
@@ -102,7 +102,11 @@ function AuditLog({ server }: { server: string }) {
   const target = useDebounced(targetText, TEXT_DEBOUNCE)
   const filters: AuditFilters = { ...NO_FILTERS, group, actor, target, from, to }
   const query = useStable(auditQuery(filters))
-  const [log] = useAccountPages(auditPage(server, query), entry => entry.id, [server, query])
+  const [log] = useAccountPages(
+    cursor => ask.listAudit(server, cursor, query),
+    entry => entry.id,
+    [server, query]
+  )
 
   const filtered = Object.keys(query).length > 0
   const back = () => openDialog({ kind: 'server_settings', server, section: 'audit' })

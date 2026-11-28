@@ -1,4 +1,5 @@
 'use client'
+import { ask, sendTo } from '../../lib/asks'
 import { Name, NameInput } from '../name'
 import { serverCalled } from '../../lib/names'
 import { useAccount } from '../../lib/client/react'
@@ -31,8 +32,8 @@ import { SourceNote } from './source'
 import { time } from '../../lib/platform/time'
 
 // Whether a server has the key `key`.
-const serverExists = (api: ReturnType<typeof useAccount>['api'], key: string) =>
-  api.getServer(key).then(
+const serverExists = (session: ReturnType<typeof useAccount>, key: string) =>
+  sendTo(session, ask.getServer(key)).then(
     () => true,
     (e: unknown) => {
       if (missing(e)) return false
@@ -171,7 +172,7 @@ function DefaultServers() {
                 void addTypedServer(
                   () => listOf(defaultControl(ownerSession)?.value),
                   typed,
-                  key => serverExists(ownerSession.api, key)
+                  key => serverExists(ownerSession, key)
                 )
                   .then(edit => {
                     const current = defaultControl(ownerSession)
@@ -253,12 +254,14 @@ function CreateServer({ onCreated }: { onCreated: () => void }) {
           setWrong(error)
           if (error !== null || busy) return
           setBusy(true)
-          ownerSession.api
-            .adminCreateServer({
+          sendTo(
+            ownerSession,
+            ask.adminCreateServer({
               name: form.name.trim(),
               owner: form.owner.trim().replace(/^@+/, ''),
               ...(form.password === '' ? {} : { password: form.password }),
             })
+          )
             .then(detail => {
               setForm(EMPTY_FORM)
               showToast('Server created:', detail.display_name)

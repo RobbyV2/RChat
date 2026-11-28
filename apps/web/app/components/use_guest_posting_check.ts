@@ -1,13 +1,14 @@
 import { useAccount } from '../lib/client/react'
 import { useEffect } from 'react'
-import { guestCanPost, guestSessionHeaders } from '../lib/guest_chat'
+import { guestCanPost, guestPostingUntil } from '../lib/guest_chat'
 import { keyed } from '../lib/lists'
 import { useStore } from '../lib/store'
 import { time } from '../lib/platform/time'
 import type { Cancel } from '../lib/clock'
 
 export function useGuestPostingCheck(server: string | null, channel: number | null) {
-  const { store, api } = useAccount()
+  const account = useAccount()
+  const { store } = account
   const detail = useStore(s => (s.guest && server !== null ? s.servers[server] : undefined))
   const writable = useStore(s => guestCanPost(s.settings, detail, channel))
   useEffect(() => {
@@ -22,12 +23,7 @@ export function useGuestPostingCheck(server: string | null, channel: number | nu
     let timer: Cancel
     const check = async () => {
       try {
-        const until = await api.req<number | null>(
-          'GET',
-          `/channels/${channel}/guest-messages`,
-          undefined,
-          guestSessionHeaders(api, detail.name)
-        )
+        const until = await guestPostingUntil(account, detail.name, channel)
         if (!live) return
         store.setState(s => ({
           guestPosting: { ...s.guestPosting, [channel]: until ? 'paused' : 'ready' },
@@ -48,5 +44,5 @@ export function useGuestPostingCheck(server: string | null, channel: number | nu
       live = false
       timer?.()
     }
-  }, [api, store, channel, detail, writable])
+  }, [account, store, channel, detail, writable])
 }

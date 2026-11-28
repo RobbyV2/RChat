@@ -1,4 +1,5 @@
 'use client'
+import { ask, known, sendTo } from '../../lib/asks'
 import { useId, useState, type ReactNode } from 'react'
 import { useAccount, useStore } from '../../lib/client/react'
 import { beginPopup, canUnlink, DEFAULT_AUTH, linkable } from '../../lib/sso'
@@ -36,7 +37,7 @@ export function SignInLinks({
       (s.me?.has_password !== undefined || !!s.instance?.auth?.providers.length)
   )
   const [load, source] = useAccountSource<LinkedProvider[] | null>(
-    api => (supported ? api.ssoLinks() : Promise.resolve(null)),
+    () => (supported ? ask.ssoLinks() : known(null)),
     [supported, hasPassword]
   )
   return (
@@ -155,7 +156,7 @@ export function SignInMethods({
                   if (!current()) return
                   setBusy(true)
                   try {
-                    await acct.api.ssoUnlink(op.p.id)
+                    await sendTo(acct, ask.ssoUnlink(op.p.id))
                     if (current()) {
                       cancel()
                       list.refresh()
@@ -259,11 +260,11 @@ function LinkPrompt({
       context={provider}
       links={links}
       onBody={async reauth => {
-        const { ticket } = await acct.api.ssoTicket({ provider, purpose: 'link', reauth })
+        const { ticket } = await sendTo(acct, ask.ssoTicket({ provider, purpose: 'link', reauth }))
         if (!current()) return
         const result = await beginPopup(acct, provider, 'link', ticket, current)
         if (!current()) return
-        const reply = await acct.api.ssoExchange(result)
+        const reply = await sendTo(acct, ask.ssoExchange(result))
         if (reply.kind !== 'linked' || reply.provider !== provider)
           throw new Error('Sign-in was not linked')
         if (current()) done()

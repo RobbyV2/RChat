@@ -1,5 +1,6 @@
 'use client'
 
+import { ask, asked } from '../lib/asks'
 import { KeyRound, LayoutGrid, X } from 'lucide-react'
 import type { PassKind } from '../lib/password'
 import { Grid, Row, Stack, Surface, Inset } from './layout'
@@ -123,9 +124,13 @@ export function AccountWords({
   onChange: (selected: string[]) => void
   delayMs?: number
 }) {
-  const load = useAccountRequest(async api => (await api.words(username)).words, [username], {
-    delayMs,
-  })
+  const load = useAccountRequest(
+    () => asked(ask.words(username), found => found.words),
+    [username],
+    {
+      delayMs,
+    }
+  )
   return (
     <Loaded
       load={load}
