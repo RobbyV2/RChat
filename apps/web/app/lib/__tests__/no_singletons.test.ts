@@ -3,7 +3,6 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
-import allowances from './fixtures/singletons_allowlist.json'
 
 const app = fileURLToPath(new URL('../../', import.meta.url))
 const sideStores = new Set(
@@ -213,9 +212,10 @@ function scan() {
   return baseline
 }
 
-test('singleton access and module state match their allowances', () => {
-  expect(allowances).toEqual({})
-  expect(scan()).toEqual(allowances)
+// Account state lives in the per-account session factories: no module keeps state of its own
+// or reaches an account's store from outside one.
+test('no module holds state outside a factory or reaches a store as a singleton', () => {
+  expect(scan()).toEqual({})
 }, 60_000)
 
 test('the scan distinguishes module state from state created by a factory', () => {
