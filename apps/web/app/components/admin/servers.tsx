@@ -26,7 +26,7 @@ import { Button, IconButton, ListRow } from '../controls'
 import { Row, Stack, Surface } from '../layout'
 import { FieldError, Sentinel, fieldCls } from '../ui'
 import { useControl } from './config_state'
-import { ServerMatches } from './server_matches'
+import { AdminServerGlyph, ServerMatches } from './server_matches'
 import { ServerManage } from './server_manage'
 import { SourceNote } from './source'
 import { time } from '../../lib/platform/time'
@@ -209,6 +209,7 @@ function DefaultServers() {
               row={sv => (
                 <ListRow
                   key={sv.name}
+                  leading={<AdminServerGlyph server={sv} />}
                   disabled={pinned || full || list.includes(sv.name)}
                   onClick={() => add(sv.name)}
                   label={

@@ -365,6 +365,31 @@ describe('storage', () => {
   })
 })
 
+describe('picture files made here', () => {
+  test('a replaced picture file goes, and one a message also carries stays', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await node(hub, 'pic-a', clock)
+    const b = blobsOn(a, clock)
+    const put = async (data: Uint8Array, picture: boolean) => {
+      const h = await hashBytes(data)
+      await b.putOwn(new Blob([data as BlobPart]), h, undefined, picture)
+      if (picture) await b.markPicture(h.h, 'identity')
+      return h.h
+    }
+    const old = await put(bytes(64, 1), true)
+    const shared = await put(bytes(64, 2), true)
+    await put(bytes(64, 2), false)
+    const next = await put(bytes(64, 3), true)
+    await b.releasePicture('identity', [next])
+    expect(await a.store.db.get('blobs', old)).toBeUndefined()
+    const kept = await a.store.db.get('blobs', shared)
+    expect(kept?.pic ?? []).toEqual([])
+    expect(kept?.picOnly).toBeUndefined()
+    expect((await a.store.db.get('blobs', next))?.pic).toEqual(['identity'])
+  })
+})
+
 describe('bulk transfers', () => {
   test('files probed for holders and never downloaded are not kept forever', async () => {
     const clock = new ManualClock()

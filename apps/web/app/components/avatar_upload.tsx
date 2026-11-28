@@ -16,6 +16,7 @@ import {
 import { Button } from './controls'
 import { Row, Stack } from './layout'
 import { Dialog, FieldError } from './ui'
+import { useMotionAllowed } from '../lib/motion/use_motion'
 import { notAName } from '../lib/names'
 
 // Where a profile editor keeps an uploaded picture: an account or a server profile on an
@@ -33,6 +34,9 @@ export interface PictureSource {
 }
 
 const STAGE = 256
+// Files that may hold an animation.
+const ANIMATED_SOURCES = ['image/gif', 'image/webp', 'image/png', 'image/apng']
+
 const PREVIEWS = [128, 64, 32] as const
 
 const draw = (canvas: HTMLCanvasElement | null, image: ImageBitmap, crop: AvatarCrop) => {
@@ -44,14 +48,55 @@ const draw = (canvas: HTMLCanvasElement | null, image: ImageBitmap, crop: Avatar
 }
 
 // Chooses the square of a picture: drag to move, the slider, the wheel or the keys to zoom.
+// The chosen square of the file at `src`, `side` pixels across: the file itself, so an animation
+// plays in the preview.
+function MovingPreview({
+  src,
+  image,
+  crop,
+  side,
+}: {
+  src: string
+  image: ImageBitmap
+  crop: AvatarCrop
+  side: number
+}) {
+  const scale = side / crop.size
+  return (
+    <span
+      aria-hidden
+      data-avatar-moving
+      style={{ width: side, height: side }}
+      className="relative block overflow-hidden rounded-full bg-surface-container-highest"
+    >
+      <img
+        src={src}
+        alt=""
+        draggable={false}
+        style={{
+          position: 'absolute',
+          width: image.width * scale,
+          height: image.height * scale,
+          left: -crop.x * scale,
+          top: -crop.y * scale,
+          maxWidth: 'none',
+        }}
+      />
+    </span>
+  )
+}
+
 function CropDialog({
   image,
+  file,
   busy,
   error,
   onUse,
   onClose,
 }: {
   image: ImageBitmap
+  // The chosen file: an animated one plays in the preview.
+  file: File
   busy: boolean
   error: string | null
   onUse: (crop: AvatarCrop) => void
@@ -64,6 +109,14 @@ function CropDialog({
   const drag = useRef<{ x: number; y: number } | null>(null)
   const zoomId = useId()
   const most = maxZoom(width, height)
+  const moves = useMotionAllowed() === 'full' && ANIMATED_SOURCES.includes(file.type)
+  const [src, setSrc] = useState<string | null>(null)
+  useEffect(() => {
+    if (!moves) return
+    const url = URL.createObjectURL(file)
+    setSrc(url)
+    return () => URL.revokeObjectURL(url)
+  }, [file, moves])
   useEffect(() => {
     draw(stage.current, image, crop)
     for (const canvas of previews.current) draw(canvas, image, crop)
@@ -134,7 +187,9 @@ function CropDialog({
         <Row gap="lg" align="end" justify="center" aria-label="Preview" role="group">
           {PREVIEWS.map((side, i) => (
             <Stack key={side} gap="xs" align="center">
+              {src && <MovingPreview src={src} image={image} crop={crop} side={side} />}
               <canvas
+                hidden={!!src}
                 ref={el => {
                   previews.current[i] = el
                 }}
@@ -246,6 +301,7 @@ export function PictureField({
       {picked && (
         <CropDialog
           image={picked.image}
+          file={picked.file}
           busy={busy}
           error={error}
           onClose={close}

@@ -201,10 +201,14 @@ export function createAttachmentsPart(
       const kept: P2pFile[] = []
       for (const file of files) {
         const hashed = await hashFile(file)
-        await d.blobs.putOwn(file, hashed)
+        await d.blobs.putOwn(file, hashed, undefined, true)
         await d.blobs.markPicture(hashed.h, scope)
         kept.push({ h: hashed.h, size: hashed.size })
       }
+      await d.blobs.releasePicture(
+        scope,
+        kept.map(f => f.h)
+      )
       return kept
     },
 

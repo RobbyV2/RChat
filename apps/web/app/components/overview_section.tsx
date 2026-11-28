@@ -15,9 +15,9 @@ import { FieldError } from './ui'
 
 function Glyph({ glyph }: { glyph: AboutGlyph }) {
   if (glyph.kind === 'hosted')
-    return <ServerGlyph name={glyph.server} displayName={glyph.displayName} />
+    return <ServerGlyph name={glyph.server} displayName={glyph.displayName} animate />
   return (
-    <P2pServerGlyph pic={glyph.pic}>
+    <P2pServerGlyph pic={glyph.pic} animate>
       <ServerIcon seed={glyph.seed} name={glyph.name} kind={glyph.icon} color={glyph.color} />
     </P2pServerGlyph>
   )

@@ -1793,10 +1793,17 @@ export class Blobs {
   // Keeps a file we are about to send to `room`, whole, as it was hashed. Blocks of an unfinished
   // download of the same file go: the whole file replaces them. A file sealed rooms refer to is
   // kept as sealed blocks instead (sealed_files.ts), also when it was kept plain before.
-  async putOwn(file: Blob, hashed: Hashed, room?: string) {
+  // `picture`: it is kept for a picture made here, not for a message.
+  async putOwn(file: Blob, hashed: Hashed, room?: string, picture = false) {
     const free = (await this.deps.room?.()) ?? null
     const sealed = await sealsFile(this.db, hashed.h, room)
     const rec0 = await this.db.get('blobs', hashed.h)
+    if (rec0?.picOnly && !picture)
+      await this.store.updateBlob(hashed.h, cur => {
+        if (!cur?.picOnly) return null
+        const { picOnly: _, ...rest } = cur
+        return rest
+      })
     if (rec0?.done) {
       if (sealed) await this.sealStored(hashed.h)
       return
@@ -1820,6 +1827,7 @@ export class Blobs {
       ...(sealed ? {} : { file }),
       type: safeType(head),
       own: true,
+      ...(picture ? { picOnly: true as const } : {}),
       wanted: false,
       created: now,
       lastUsed: now,
@@ -1852,6 +1860,20 @@ export class Blobs {
         ? { ...cur, pic: [...(cur.pic ?? []), scope] }
         : null
     )
+  }
+
+  // The picture `scope` names only the files `keep` now: the others stop being it, and one kept
+  // only for pictures that no picture names any more is deleted.
+  async releasePicture(scope: string, keep: readonly string[]) {
+    for (const rec of await this.db.getAll('blobs')) {
+      if (!rec.pic?.includes(scope) || keep.includes(rec.h)) continue
+      const pic = rec.pic.filter(s => s !== scope)
+      if (pic.length === 0 && rec.picOnly) await this.remove(rec.h)
+      else
+        await this.store.updateBlob(rec.h, cur =>
+          cur ? { ...cur, pic: (cur.pic ?? []).filter(s => s !== scope) } : null
+        )
+    }
   }
 
   // Deletes a file here: its record, its blocks, its hashes and any download of it.

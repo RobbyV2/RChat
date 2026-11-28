@@ -9,15 +9,18 @@ import { PictureOver } from '../avatar_picture'
 // A P2P server's icon with its uploaded picture over it, where this device shows pictures.
 export function P2pServerGlyph({
   pic,
+  animate = false,
   children,
 }: {
   pic: P2pPic | undefined
+  // Plays an animated picture without a pointer over it (a server's about page).
+  animate?: boolean
   children: ReactNode
 }) {
   const view = useAvatarView()
   const src = useP2pServerPicture(pic, view)
   const box = useRef<HTMLSpanElement>(null)
-  const plays = usePlays(box, useP2pAnimated(pic, view))
+  const plays = usePlays(box, useP2pAnimated(pic, view), animate)
   const animation = useP2pAnimation(pic, plays)
   return (
     <PictureOver src={src} moving={animation} boxRef={box} size="fill">

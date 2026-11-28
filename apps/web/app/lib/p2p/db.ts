@@ -279,6 +279,9 @@ export interface BlobRecord {
   // The pictures this file was made for on this device (`identity`, `profile:<room>`,
   // `about:<room>`): the picture gate serves it only as one of those.
   pic?: string[]
+  // Kept only for pictures made here (no message of ours carries it): it goes once no picture
+  // names it.
+  picOnly?: true
   // The user (or auto-download) asked for it: an unfinished download resumes when a holder is
   // online.
   wanted: boolean

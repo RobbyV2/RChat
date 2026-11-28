@@ -30,7 +30,7 @@ import { Dialog, FieldError, fieldCls } from '../ui'
 import { useCopied } from '../../lib/use_copied'
 import { useAccountChanges } from './account_state'
 import { useControl } from './config_state'
-import { ServerMatches } from './server_matches'
+import { AdminServerGlyph, ServerMatches } from './server_matches'
 import { Loaded, useAccountRequest } from '../loaded'
 import { time } from '../../lib/platform/time'
 
@@ -145,6 +145,7 @@ function ServerSearch({
           taken.includes(sv.name) ? null : (
             <ListRow
               key={sv.name}
+              leading={<AdminServerGlyph server={sv} />}
               variant="card"
               onClick={() => {
                 setQ('')
