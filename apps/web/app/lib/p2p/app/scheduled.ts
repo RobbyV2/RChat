@@ -78,15 +78,18 @@ export function createScheduledPart(parts: Pick<P2pParts, 'store' | 'dms'>, scop
     return false
   }
 
-  // Whether there is a page to hear coming back online or into view from.
-  const wakes =
-    typeof window !== 'undefined' &&
-    typeof window.addEventListener === 'function' &&
-    typeof document !== 'undefined' &&
-    typeof document.addEventListener === 'function'
   const onWake = () => state.scheduled?.poke()
-  const onShown = () => {
-    if (document.visibilityState === 'visible') onWake()
+  let unlisten: (() => void) | null = null
+  const listen = (w: Window, d: Document) => {
+    const onShown = () => {
+      if (d.visibilityState === 'visible') onWake()
+    }
+    w.addEventListener('online', onWake)
+    d.addEventListener('visibilitychange', onShown)
+    unlisten = () => {
+      w.removeEventListener('online', onWake)
+      d.removeEventListener('visibilitychange', onShown)
+    }
   }
 
   // At the end of a boot in the tab that runs the node.
@@ -103,10 +106,14 @@ export function createScheduledPart(parts: Pick<P2pParts, 'store' | 'dms'>, scop
       if (now.servers !== was.servers || now.rooms !== was.rooms || now.contacts !== was.contacts)
         publish()
     })
-    if (wakes) {
-      window.addEventListener('online', onWake)
-      document.addEventListener('visibilitychange', onShown)
-    }
+    // Only where there is a page to hear coming back online or into view from.
+    if (
+      typeof window !== 'undefined' &&
+      typeof window.addEventListener === 'function' &&
+      typeof document !== 'undefined' &&
+      typeof document.addEventListener === 'function'
+    )
+      listen(window, document)
     await sch.start()
     if (!alive() && state.scheduled === sch) await stopScheduled()
   }
@@ -117,10 +124,8 @@ export function createScheduledPart(parts: Pick<P2pParts, 'store' | 'dms'>, scop
     put.scheduled(null)
     unwatch?.()
     unwatch = null
-    if (wakes) {
-      window.removeEventListener('online', onWake)
-      document.removeEventListener('visibilitychange', onShown)
-    }
+    unlisten?.()
+    unlisten = null
     if (scope.current()) useP2p.setState({ scheduled: [], scheduledMissed: [] })
     return sch ? sch.stop() : Promise.resolve()
   }
