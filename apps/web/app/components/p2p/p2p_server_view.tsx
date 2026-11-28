@@ -24,7 +24,7 @@ import { VoiceRow } from '../voice_row'
 import { Button, IconButton, LinkButton, Tile, CardButton } from '../controls'
 import MemberSidebar from '../member_sidebar'
 
-import { useCallback, useMemo, useState, type CSSProperties } from 'react'
+import { useCallback, useMemo, useState, type ComponentProps, type CSSProperties } from 'react'
 import {
   Clock,
   Folder as FolderIcon,
@@ -864,17 +864,16 @@ function P2pChannelPaneBody({
     )
   }
 
-  const { acts: canAct } = useGate(composeAt(P2pRoom.open(identity, v.id), 'main'))
-
   return (
     <ChannelCanContext.Provider value={held}>
-      <P2pChatBody
+      <RoomChatBody
+        identity={identity}
+        room={v.id}
         chat={chat}
         channelTextOnly={channel.text_only}
         header={header}
         above={<ServerNotices v={v} />}
         intro={<ServerIntro />}
-        canAct={canAct}
         timedOut={timedOut !== null}
         title={`#${mask(channel.name)}`}
         placeholder={`Message #${mask(channel.name)}`}
@@ -901,6 +900,19 @@ function P2pChannelPaneBody({
       />
     </ChannelCanContext.Provider>
   )
+}
+
+// The chat of an open room channel, with what the room's composer gate lets the reader do.
+function RoomChatBody({
+  identity,
+  room,
+  ...body
+}: Omit<ComponentProps<typeof P2pChatBody>, 'canAct'> & {
+  identity: Parameters<typeof P2pRoom.open>[0]
+  room: string
+}) {
+  const { acts } = useGate(composeAt(P2pRoom.open(identity, room), 'main'))
+  return <P2pChatBody {...body} canAct={acts} />
 }
 
 // Invites from contacts, for the P2P home.
