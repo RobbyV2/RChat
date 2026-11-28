@@ -87,9 +87,10 @@ import { peerContact } from '../../lib/actions/p2p_contact'
 import { LabelText, useInstanceLabel } from '../instance_badge'
 import { useDrawerClose } from '../drawer'
 import { DmListSkeleton } from '../skeletons'
-import { Row, Stack, Surface } from '../layout'
+import { Row, Stack, Surface, Inset } from '../layout'
 import { NoteBar } from './p2p_chat'
 import { time } from '../../lib/platform/time'
+import { IconButton } from '../controls'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
 
@@ -351,7 +352,7 @@ function EnableDialogBody() {
         p2p.closeDialog()
       }}
       onKeyDown={event => event.stopPropagation()}
-      className="fixed inset-0 m-auto max-h-dvh-85 w-[min(24rem,calc(100%-2rem))] max-w-full overflow-y-auto rounded-3xl bg-surface-container-high text-on-surface shadow-elevation-3 backdrop:bg-scrim/60"
+      className="fixed inset-0 m-auto max-h-dvh-85 w-dialog max-w-full overflow-y-auto rounded-3xl bg-surface-container-high text-on-surface shadow-elevation-3 backdrop:bg-scrim/60"
       {...backdrop}
     >
       <Surface pad="md" tone="plain" radius="none">
@@ -428,7 +429,7 @@ function ContactRowBody({
   const closeDrawer = useDrawerClose()
   return (
     <li>
-      <button
+      <Surface
         data-contact={c.ik}
         data-unread={unread ? '' : undefined}
         aria-current={active || undefined}
@@ -440,17 +441,19 @@ function ContactRowBody({
         {...longPress((x, y) =>
           peerContact.forIdentity(identity).openContactMenu(x, y, c, me, acct)
         )}
-        className={
+        as="button"
+        row
+        pad={where === 'dms' ? 'sm' : 'md'}
+        inset="bar"
+        gap={where === 'dms' ? 'sm' : 'md'}
+        tone="plain"
+        radius={where === 'dms' ? 'md' : 'lg'}
+        look={
           where === 'dms'
-            ? `flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm ${
-                active
-                  ? 'bg-secondary-container text-on-secondary-container'
-                  : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
-              }`
-            : `flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left ${
-                active ? 'bg-surface-container-highest' : 'hover:bg-surface-container-high'
-              }`
+            ? `text-left text-sm ${active ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}`
+            : `text-left ${active ? 'bg-surface-container-highest' : 'hover:bg-surface-container-high'}`
         }
+        place="w-full"
       >
         <span className="relative shrink-0">
           <KeyAvatar
@@ -495,7 +498,7 @@ function ContactRowBody({
             className="h-2 w-2 shrink-0 rounded-full bg-on-surface"
           />
         )}
-      </button>
+      </Surface>
     </li>
   )
 }
@@ -542,14 +545,16 @@ function RequestRow({ c }: { c: Contact }) {
         >
           <X size={18} />
         </button>
-        <button
+        <Inset
           title="Block"
           aria-label="Block"
           onClick={() => void p2p.block(c.ik)}
-          className="rounded-full p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-error"
+          as="button"
+          pad="sm"
+          look="rounded-full text-on-surface-variant hover:bg-surface-container-high hover:text-error"
         >
           <Ban size={18} />
-        </button>
+        </Inset>
       </Row>
       {shield === 'warning' && (
         <p className="text-xs text-error">Uses the same name or account as one of your contacts.</p>
@@ -677,20 +682,24 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
 
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-surface">
-      <header
-        className={
-          'flex h-14 shrink-0 items-center border-b border-outline-variant ' +
-          (actor ? 'gap-1 px-2 sm:gap-3 sm:px-4' : 'gap-3 px-4')
-        }
+      <Inset
+        as="header"
+        row
+        pad="lg"
+        inset="sides"
+        gap={actor ? '2xs' : 'md'}
+        border="bottom"
+        look="h-14"
+        place="shrink-0"
       >
-        <button
-          title="Menu"
-          aria-label="Menu"
+        <IconButton
+          icon={Menu}
+          label="Menu"
           onClick={onMenu}
-          className="rounded-full p-1.5 hover:bg-surface-container-high md:hidden"
-        >
-          <Menu size={20} />
-        </button>
+          size="lg"
+          tone="inherit"
+          place="md:hidden"
+        />
         <ActorLabel actor={actor} header />
         <span className="font-medium">Contacts</span>
         <P2pBadge />
@@ -711,7 +720,7 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
         <span className="flex-1" />
         {enabled && (
           <button
-            className={textBtn + (actor ? ' shrink-0 max-sm:p-2' : '')}
+            className={textBtn + (actor ? ' shrink-0' : '')}
             title="Add a P2P identity"
             onClick={() => p2p.openDialog({ kind: 'enable' })}
           >
@@ -739,7 +748,7 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
             </button>
           </>
         )}
-      </header>
+      </Inset>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {!enabled ? (
           <Off />
@@ -929,11 +938,7 @@ function ContactDialog({ ik }: { ik: string }) {
               <button
                 key={item.label}
                 onClick={item.action}
-                className={
-                  item.danger
-                    ? 'rounded-full px-3 py-1.5 text-sm font-medium text-error hover:bg-surface-container-highest'
-                    : textBtn
-                }
+                className={item.danger ? dangerBtn : textBtn}
               >
                 {item.label}
               </button>

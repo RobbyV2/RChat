@@ -2470,7 +2470,7 @@ describe('P2P placeholders while loading', () => {
     expect(render(<P2pMemberList />)).toContain('data-skeleton="members"')
     const rail = render(<ServerRail />)
     expect(rail).toContain('data-skeleton="servers"')
-    expect(rail).toContain('<div hidden="" class="contents"><div class="my-1 h-px w-8')
+    expect(rail).toContain('<div hidden="" class="contents"><div class="h-px w-8')
     p2pState({ ...open, servers: { [SRV]: server() }, countsLoaded: {} })
     const read = render(<P2pServerSidebar />) + render(<P2pMemberList />) + render(<ServerRail />)
     expect(read).not.toContain('data-skeleton')

@@ -41,6 +41,9 @@ export const fieldCls =
 // A small field or select beside others on a toolbar line (a search filter).
 export const smallFieldCls =
   'rounded-lg border border-outline bg-transparent px-2 py-1 text-base outline-none placeholder:text-on-surface-variant focus:border-primary md:text-xs'
+// The field a name is edited in where it stands (a channel in the sidebar).
+export const renameFieldCls =
+  'rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm'
 // A text field inside a box that draws the field (a search box, a composer): no border or sides of
 // its own.
 export const bareFieldCls =

@@ -70,8 +70,8 @@ import { FriendsEntry } from './friends'
 import { dragScope, useDrag, type DragSpec } from './drag'
 import { VoiceDock } from './voice_grid'
 import { Button, IconButton, LinkButton } from './controls'
-import { Row, Surface } from './layout'
-import { Sentinel, useOwnServer } from './ui'
+import { Row, Surface, Stack } from './layout'
+import { Sentinel, useOwnServer, renameFieldCls } from './ui'
 import { useAuthorMembers } from './message_pane'
 import { PingBadge } from './ping_badge'
 import { ChannelEnd, useHostedTypers } from './typing_indicator'
@@ -84,6 +84,7 @@ import { ContactRow, lastTsOf } from './p2p/p2p_home'
 import { P2pBadge } from './p2p/p2p_badge'
 import { ChannelListSkeleton, DmListSkeleton, Held } from './skeletons'
 import { channelTarget } from '../lib/viewing'
+import { sideRowLook } from '../lib/controls'
 
 const base = 'flex h-full w-60 shrink-0 flex-col bg-surface-container-low'
 
@@ -126,7 +127,7 @@ export function DmRow({
             placeDm(id, zone === 'pinned' ? 'pinned' : 'recent', index, shown?.()),
         }
       )}
-      className={`mx-2 flex shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 text-sm pointer-coarse:min-h-11 ${
+      className={`${sideRowLook} shrink-0 ${
         active
           ? 'bg-secondary-container text-on-secondary-container'
           : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
@@ -137,9 +138,17 @@ export function DmRow({
       <MutedIcon scope={{ kind: 'dm', id }} />
       {is_self ? (
         <>
-          <span className="ml-auto shrink-0 rounded-full bg-secondary-container px-2 py-0.5 text-xs text-on-secondary-container">
+          <Surface
+            as="span"
+            pad="sm"
+            inset="chip"
+            tone="secondary"
+            radius="full"
+            text="xs"
+            place="ml-auto shrink-0"
+          >
             you
-          </span>
+          </Surface>
           <PingBadge count={pings} />
         </>
       ) : (
@@ -278,10 +287,13 @@ function P2pDms({ peer, label }: { peer?: SwitcherRow; label?: string } = {}) {
     owner.identities.show(identity)
   }
   return (
-    <section
+    <Stack
       data-p2p-dms
       aria-label="P2P direct messages"
-      className={'flex shrink-0 flex-col pb-1' + (label ? '' : ' max-h-9/20')}
+      as="section"
+      gap="none"
+      look={label ? '' : 'max-h-9/20'}
+      place="shrink-0"
     >
       <Surface pad="lg" inset="bar" tone="plain" radius="none" place="shrink-0">
         <Row gap="sm">
@@ -348,12 +360,12 @@ function P2pDms({ peer, label }: { peer?: SwitcherRow; label?: string } = {}) {
             selectIdentity()
             p2p?.openRequests()
           }}
-          className="mx-2 shrink-0 rounded-lg px-2 py-1.5 text-left text-sm font-medium text-primary hover:bg-surface-container pointer-coarse:min-h-11"
+          className={`${sideRowLook} shrink-0 text-left font-medium text-primary hover:bg-surface-container`}
         >
           Message requests ({section.requests})
         </button>
       )}
-    </section>
+    </Stack>
   )
 }
 
@@ -478,14 +490,16 @@ export function DmBlock({
   )
   return (
     <>
-      <div
+      <Stack
         onPointerEnter={() => setPointerIn(true)}
         onPointerLeave={() => setPointerIn(false)}
         onFocus={e => setKeyFocus(e.target.matches(':focus-visible'))}
         onBlur={e => {
           if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setKeyFocus(false)
         }}
-        className="flex min-h-0 flex-1 flex-col pb-3 last:pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+        gap="none"
+        look="safe-end"
+        place="min-h-0 flex-1"
       >
         <div
           data-dm-scroll
@@ -526,12 +540,12 @@ export function DmBlock({
           {!collapsed && (
             <>
               {pinned.length > 0 && (
-                <div
+                <Stack
                   data-drop-zone="pinned"
                   data-drop-label="Pin"
-                  className={`flex shrink-0 flex-col pb-1 transition-colors ${
-                    pinning ? 'bg-primary-container/40' : ''
-                  }`}
+                  gap="none"
+                  look={`transition-colors ${pinning ? 'bg-primary-container/40' : ''}`}
+                  place="shrink-0"
                 >
                   <Surface
                     pad="lg"
@@ -548,7 +562,7 @@ export function DmBlock({
                     </p>
                   </Surface>
                   {pinned.map(row)}
-                </div>
+                </Stack>
               )}
               <div
                 data-drop-zone={pinZone ? 'pinned' : undefined}
@@ -627,7 +641,7 @@ export function DmBlock({
                     }}
                     onBlur={accounts.length > 1 ? undefined : submitDm}
                     placeholder={accounts.length > 1 ? 'username or username@host' : 'username'}
-                    className="shrink-0 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
+                    className={`${renameFieldCls} shrink-0`}
                   />
                   {accounts.length > 1 && (
                     <Button onClick={submitDm} place="self-start">
@@ -681,7 +695,7 @@ export function DmBlock({
           ) : (
             <P2pDms />
           ))}
-      </div>
+      </Stack>
     </>
   )
 }
@@ -908,7 +922,7 @@ export function ChannelSidebar() {
       }}
       onBlur={editingHere?.mode === 'rename' ? submit : undefined}
       placeholder="channel name"
-      className="min-w-0 flex-1 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
+      className={`${renameFieldCls} min-w-0 flex-1`}
     />
   )
 

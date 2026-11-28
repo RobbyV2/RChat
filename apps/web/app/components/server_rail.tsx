@@ -64,7 +64,7 @@ import { AccountSwitcherTile } from './account_switcher'
 import { ThemeToggle } from './status_clock'
 import { PaletteButton } from './palette'
 import { IconButton } from './controls'
-import { Stack, Surface } from './layout'
+import { Stack, Surface, Inset, Grid } from './layout'
 import { Sentinel, useOwnServer } from './ui'
 import { ServerRailSkeleton } from './skeletons'
 import { RailPingBadge, pingLabel } from './ping_badge'
@@ -194,12 +194,18 @@ function ServerTile({
         className="absolute -bottom-1 -left-1 size-5 items-center justify-center rounded-full border-2 border-rail-cut bg-surface-container-highest text-on-surface-variant"
       />
       {mine && (
-        <span
+        <Surface
           title="Creator"
-          className="absolute -right-1 -bottom-0.5 rounded-full bg-tertiary-container px-1.5 text-3xs leading-4 font-bold text-on-tertiary-container"
+          as="span"
+          pad="xs"
+          inset="sides"
+          tone="plain"
+          radius="full"
+          look="bg-tertiary-container text-3xs leading-4 font-bold text-on-tertiary-container"
+          place="absolute -right-1 -bottom-0.5"
         >
           C
-        </span>
+        </Surface>
       )}
       {pings > 0 ? <RailPingBadge count={pings} /> : unread && <UnreadDot />}
       <RailVoiceBadge count={voice} />
@@ -312,12 +318,12 @@ export function FolderEntry({
   }
   if (!folder.open) {
     return (
-      <button {...header} style={style} className={`${tile} folder-tile relative p-1.5`}>
-        <span className="grid size-9 grid-cols-2 grid-rows-2 gap-1">
+      <button {...header} style={style} className={`${tile} folder-tile relative`}>
+        <Grid as="span" cols={2} gap="2xs" look="size-9 grid-rows-2">
           {servers.slice(0, 4).map(s => (
             <MiniIcon key={s.name} server={s} />
           ))}
-        </span>
+        </Grid>
         <span
           aria-hidden
           className="folder-badge absolute -right-1 -bottom-1 flex size-4.5 items-center justify-center rounded-full border-2 border-rail-cut"
@@ -330,23 +336,17 @@ export function FolderEntry({
     )
   }
   return (
-    <div
-      data-drag-box
-      style={style}
-      className="folder-group flex w-14 shrink-0 flex-col items-center rounded-group py-1"
-    >
-      <button {...header} className={`${tile} folder-icon`}>
-        <FolderOpen size={22} />
-      </button>
-      <div
-        data-drop-zone={key}
-        data-drop-label="Add to folder"
-        className="flex flex-col items-center gap-2 pt-2"
-      >
-        {servers.map(s => (
-          <ServerTile key={s.name} server={s} folder={folder.id} at={at} />
-        ))}
-      </div>
+    <div data-drag-box style={style} className="folder-group w-14 shrink-0 rounded-group">
+      <Inset pad="2xs" inset="bar" align="center">
+        <button {...header} className={`${tile} folder-icon`}>
+          <FolderOpen size={22} />
+        </button>
+        <Stack data-drop-zone={key} data-drop-label="Add to folder" gap="sm" align="center">
+          {servers.map(s => (
+            <ServerTile key={s.name} server={s} folder={folder.id} at={at} />
+          ))}
+        </Stack>
+      </Inset>
     </div>
   )
 }
@@ -584,7 +584,7 @@ export function ServerRail() {
           )
             p2pView?.closeHome()
         }}
-        className="min-h-0 flex-1 overflow-y-auto pb-2"
+        className="min-h-0 flex-1 overflow-y-auto"
       >
         <Stack gap="sm" align="center">
           <button
@@ -797,7 +797,7 @@ export function ServerRail() {
             : p2pOn && <P2pServerRail />}
         </Stack>
       </div>
-      <div className="shrink-0 border-t border-outline-variant pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      <Inset pad="sm" border="top" safe place="shrink-0">
         <Stack gap="sm" align="center">
           <PaletteButton rail />
           <ThemeToggle />
@@ -837,7 +837,7 @@ export function ServerRail() {
             }}
           />
         </Stack>
-      </div>
+      </Inset>
     </nav>
   )
 }

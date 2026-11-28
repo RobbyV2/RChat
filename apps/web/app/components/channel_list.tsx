@@ -12,8 +12,9 @@ import {
 import { longPress } from './context_menu'
 import { IconButton } from './controls'
 import type { DragSpec } from './drag'
-import { Row, Stack, Surface } from './layout'
+import { Row, Stack, Surface, Inset } from './layout'
 import { Masked } from './ui'
+import { sideRowLook } from '../lib/controls'
 
 function PrivateIcon() {
   return (
@@ -80,7 +81,7 @@ export function ChannelList({
         {...rowProps?.(c)}
         onClick={() => channels.open(c.key)}
         {...longPress((x, y) => channels.channelMenu(c.key, x, y), drag?.channel(c))}
-        className={`mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm pointer-coarse:min-h-11 ${
+        className={`${sideRowLook} ${
           c.active
             ? 'bg-secondary-container text-on-secondary-container'
             : `hover:bg-surface-container hover:text-on-surface ${
@@ -118,7 +119,7 @@ export function ChannelList({
       >
         <Surface pad="sm" inset="bar" tone="plain" radius="none">
           <Row gap="none">
-            <button
+            <Inset
               {...categoryProps?.(category)}
               aria-expanded={category.open}
               onClick={() => channels.setOpen(category.key, !category.open)}
@@ -126,7 +127,15 @@ export function ChannelList({
                 (x, y) => channels.categoryMenu(category.key, x, y),
                 drag?.category(category)
               )}
-              className="flex min-w-0 flex-1 items-center gap-1 rounded-md py-1 pr-1 pl-2 text-xs font-medium tracking-wider text-on-surface-variant uppercase -outline-offset-2 hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11"
+              as="button"
+              row
+              pad="sm"
+              inset="chip"
+              gap="2xs"
+              text="xs"
+              ink="muted"
+              look="rounded-md font-medium tracking-wider uppercase -outline-offset-2 hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11"
+              place="min-w-0 flex-1"
             >
               {category.open ? (
                 <ChevronDown size={14} className="shrink-0" />
@@ -137,7 +146,7 @@ export function ChannelList({
                 <Masked text={category.name} own={state.ownPlace} />
               </span>
               {categoryEnd?.(category, hidden)}
-            </button>
+            </Inset>
             {state.canManage && onAdd && (
               <IconButton
                 icon={Plus}
@@ -164,7 +173,7 @@ export function ChannelList({
 
   const loose = drag?.zoneOf(null)
   return (
-    <div ref={drag?.scope} className="flex-1 overflow-y-auto pb-3">
+    <div ref={drag?.scope} className="flex-1 overflow-y-auto">
       <Stack gap="md">
         <div
           data-drop-zone={loose}

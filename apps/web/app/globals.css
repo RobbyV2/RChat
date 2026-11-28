@@ -613,6 +613,22 @@ body {
   font-weight: 500;
 }
 
+/* A row of the channel sidebar as wide as the sidebar inside its side inset. */
+@utility w-side-row {
+  width: calc(100% - 2 * var(--space-sm));
+}
+
+/* The last list of a column keeps clear of the home indicator. */
+@utility safe-end {
+  &:last-child {
+    padding-bottom: max(var(--space-md), env(safe-area-inset-bottom));
+  }
+}
+
+@utility w-dialog {
+  width: min(24rem, calc(100% - 2rem));
+}
+
 /* The columns of the member table: the member, up to two dates, the row's menu. */
 @utility cols-member-0 {
   grid-template-columns: minmax(0, 1fr) 2.25rem;
@@ -876,6 +892,7 @@ body {
 }
 
 .folder-tile {
+  padding: var(--space-xs);
   background: var(
     --folder-tile,
     color-mix(in srgb, var(--color-primary) 26%, var(--color-surface-container-lowest))

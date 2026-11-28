@@ -20,7 +20,7 @@ import {
 } from '../../lib/place/channels'
 import { ChannelList } from '../channel_list'
 import { VoiceRow } from '../voice_row'
-import { IconButton } from '../controls'
+import { IconButton, Button } from '../controls'
 import { P2pRoom } from '../../lib/place/place'
 import MemberSidebar from '../member_sidebar'
 
@@ -67,8 +67,8 @@ import { voiceLabel } from '../../lib/voice_rail'
 import { MutedIcon } from '../notify_menu'
 import { PinsButton } from '../pins'
 import { ThreadsButton } from '../threads'
-import { iconBtn, Masked } from '../ui'
-import { Row, Stack, Surface } from '../layout'
+import { iconBtn, Masked, renameFieldCls } from '../ui'
+import { Row, Stack, Surface, Inset, Grid } from '../layout'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { ElsewhereNotice, MovingBanner } from './p2p_home'
 import { ServerNotices } from './p2p_server_flows'
@@ -282,9 +282,9 @@ function P2pFolderEntryBody({
       <button
         {...header}
         style={style}
-        className={`${tile} folder-tile relative border-2 border-dashed border-tertiary p-1.5`}
+        className={`${tile} folder-tile relative border-2 border-dashed border-tertiary`}
       >
-        <span className="grid size-8 grid-cols-2 grid-rows-2 gap-1">
+        <Grid as="span" cols={2} gap="2xs" look="size-8 grid-rows-2">
           {list.slice(0, 4).map(v => (
             <span
               key={v.id}
@@ -293,7 +293,7 @@ function P2pFolderEntryBody({
               <ServerIcon seed={v.id} name={v.name} kind={v.about.icon} color={hex(v.color)} />
             </span>
           ))}
-        </span>
+        </Grid>
         <span
           aria-hidden
           className="absolute -right-1 -bottom-1 flex size-4.5 items-center justify-center rounded-full border-2 border-rail-cut folder-badge-p2p"
@@ -369,7 +369,7 @@ function P2pServerRailBody({ actorLabel }: { actorLabel?: string }) {
   const items = railItems(list, v => v.id, layout.servers)
   const section = (
     <>
-      <div className="my-1 h-px w-8 shrink-0 border-t border-dashed border-tertiary" />
+      <div className="h-px w-8 shrink-0 border-t border-dashed border-tertiary" />
       {actorLabel && (
         <span
           data-peer-section
@@ -589,7 +589,7 @@ function P2pServerSidebarBody() {
                     onBlur={submit}
                     placeholder="channel name"
                     aria-label="New channel name"
-                    className="min-w-0 flex-1 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
+                    className={`${renameFieldCls} min-w-0 flex-1`}
                   />
                 </Row>
               </Surface>
@@ -785,35 +785,55 @@ function P2pChannelPaneBody({
   if (!v)
     return (
       <main className="flex min-w-0 flex-1 flex-col bg-surface">
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-outline-variant px-3 md:px-4">
-          <button
-            title="Menu"
-            aria-label="Menu"
+        <Inset
+          as="header"
+          row
+          pad="md"
+          inset="sides"
+          gap="sm"
+          border="bottom"
+          look="h-14"
+          place="shrink-0"
+        >
+          <IconButton
+            icon={Menu}
+            label="Menu"
             onClick={onMenu}
-            className="rounded-full p-1.5 hover:bg-surface-container-high md:hidden"
-          >
-            <Menu size={20} />
-          </button>
-        </header>
+            size="lg"
+            tone="inherit"
+            place="md:hidden"
+          />
+        </Inset>
         {openRoom && loading && <MessageListSkeleton seed={openRoom} className="min-h-0 flex-1" />}
       </main>
     )
 
   const others = v.members.some(m => m.m === 'join' && m.online && m.ik !== me)
   const header = (
-    <header className="flex h-14 shrink-0 items-center gap-2 border-b border-outline-variant px-3 md:px-4">
-      <button
-        title={menuPings ? `Menu, ${pingLabel(menuPings)}` : 'Menu'}
-        aria-label="Menu"
+    <Inset
+      as="header"
+      row
+      pad="md"
+      inset="sides"
+      gap="sm"
+      border="bottom"
+      look="h-14"
+      place="shrink-0"
+    >
+      <IconButton
+        icon={Menu}
+        label="Menu"
+        tooltip={menuPings ? `Menu, ${pingLabel(menuPings)}` : 'Menu'}
         onClick={onMenu}
-        className="relative rounded-full p-1.5 hover:bg-surface-container-high md:hidden"
+        size="lg"
+        tone="inherit"
+        place="relative md:hidden"
       >
-        <Menu size={20} />
         <PingBadge
           count={menuPings}
           className="absolute -top-1 -right-1.5 border-2 border-surface"
         />
-      </button>
+      </IconButton>
       <PeerActorTag header />
       {voiceCh ? (
         <Volume2 size={20} className="shrink-0 text-on-surface-variant" />
@@ -860,27 +880,28 @@ function P2pChannelPaneBody({
           </PlaceProvider>
         )}
         {!v.readOnly && (
-          <button
-            title="Search"
-            aria-label="Search"
+          <IconButton
+            icon={Search}
+            label="Search"
             aria-pressed={searchOpen}
             onClick={() => (searchOpen ? p2pSearch.close() : p2pSearch.open())}
-            className={`rounded-full p-1.5 ${searchOpen ? 'bg-secondary-container text-on-secondary-container' : 'hover:bg-surface-container-high'}`}
-          >
-            <Search size={20} />
-          </button>
+            size="lg"
+            tone="inherit"
+            pressed={searchOpen}
+          />
         )}
-        <button
-          title={membersOpen ? 'Hide members' : 'Show members'}
-          aria-label="Members"
+        <IconButton
+          icon={Users}
+          label="Members"
+          tooltip={membersOpen ? 'Hide members' : 'Show members'}
           aria-pressed={membersOpen}
           onClick={onMembers}
-          className={`rounded-full p-1.5 ${membersOpen ? 'bg-secondary-container text-on-secondary-container' : 'hover:bg-surface-container-high'}`}
-        >
-          <Users size={20} />
-        </button>
+          size="lg"
+          tone="inherit"
+          pressed={membersOpen}
+        />
       </Row>
-    </header>
+    </Inset>
   )
 
   if (voiceCh && !v.readOnly && !v.upgraded && v.me === 'join')
@@ -1037,18 +1058,10 @@ function ServerInviteRowsBody() {
                       . Someone in it must be online to let you in.
                     </p>
                   </div>
-                  <button
-                    onClick={() => void p2pServer.declineInvite(i.room)}
-                    className="rounded-full px-3 py-1.5 text-sm text-on-surface-variant hover:bg-surface-container-highest"
-                  >
-                    Decline
-                  </button>
-                  <button
-                    onClick={() => void p2pServer.acceptInvite(i.room)}
-                    className="rounded-full bg-primary px-3 py-1.5 text-sm font-medium text-on-primary"
-                  >
+                  <Button onClick={() => void p2pServer.declineInvite(i.room)}>Decline</Button>
+                  <Button onClick={() => void p2pServer.acceptInvite(i.room)} variant="filled">
                     Join
-                  </button>
+                  </Button>
                 </Row>
               </Surface>
             </li>
