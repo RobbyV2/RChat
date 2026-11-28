@@ -4,7 +4,6 @@ import rule, { classList, handSpacing } from '../apps/web/eslint/spacing.mjs'
 
 RuleTester.describe = describe
 RuleTester.it = test
-RuleTester.itOnly = test.only
 
 const tester = new RuleTester({
   languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
