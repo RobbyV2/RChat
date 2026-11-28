@@ -371,7 +371,7 @@ async fn app_return_and_wrong_verifier() {
         assert_eq!(res.status(), 400);
         assert_eq!(
             body(res).await,
-            json!({"error":"Sign-in expired. Try again"})
+            json!({"error":"Sign-in expired. Try again","reason":{"kind":"conflict"}})
         );
     }
 }

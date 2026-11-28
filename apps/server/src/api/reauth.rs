@@ -8,7 +8,7 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 
 use crate::api::auth::{note_change_failure, session_key, throttle_change, verify_password};
-use crate::api::{ApiError, bad, bearer_token, session_for_token, unauthorized};
+use crate::api::{ApiError, bearer_token, session_for_token, unauthorized};
 use crate::db::{Db, User};
 use crate::state::AppState;
 
@@ -126,7 +126,7 @@ impl TryFrom<ReAuthBody> for ReAuth {
             (None, None, None, false, Some(IdpCode { provider, code })) => {
                 Ok(ReAuth::FreshIdp { provider, code })
             }
-            _ => Err(bad(ONE_WAY)),
+            _ => Err(ApiError::invalid(ONE_WAY, "reauth")),
         }
     }
 }

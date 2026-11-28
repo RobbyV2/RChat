@@ -13,7 +13,7 @@ use crate::api::friends;
 use crate::api::lookup;
 use crate::api::pings::announce_counts;
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, OkResp, Paged, UserRef, bad, cursor_int, decode_cursor,
+    ApiError, ApiErrorBody, Authed, OkResp, Paged, UserRef, cursor_int, decode_cursor,
     encode_cursor, ok, placeholders,
 };
 use crate::db::{AvatarKind, Db, User, get_user};
@@ -235,7 +235,7 @@ pub(crate) async fn block_user(
         (None, found) => found?,
     };
     if other.username == user.username {
-        return Err(bad("You cannot block yourself"));
+        return Err(ApiError::invalid("You cannot block yourself", "username"));
     }
     let at = state.clock.unix();
     let mut tx = state.db.begin().await?;
@@ -257,7 +257,11 @@ pub(crate) async fn block_user(
         .fetch_optional(&mut *tx)
         .await?;
     let Some(stored) = stored else {
-        return Err(bad("You can block at most 1000 users"));
+        return Err(ApiError::limit(
+            StatusCode::BAD_REQUEST,
+            "You can block at most 1000 users",
+            crate::api::error::Cap::Blocks,
+        ));
     };
     let ended = friends::end_rows(&mut tx, &user.username, &other.username).await?;
     tx.commit().await?;

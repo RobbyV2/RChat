@@ -24,7 +24,7 @@ use crate::api::system_messages::{SystemKind, announce_system, post_system};
 use crate::api::temp_passwords::TempView;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, DmSummary, LIST_PAGE, Member, NAME_MAX, OkResp,
-    ProfanityTarget, ServerSummary, Settings, UserRef, bad, check_len, check_profanity, names, ok,
+    ProfanityTarget, ServerSummary, Settings, UserRef, check_len, check_profanity, names, ok,
     request_token, valid_color,
 };
 use crate::db::{
@@ -472,7 +472,7 @@ pub(crate) fn check_avatar(
             Ok(Some(color.to_lowercase()))
         }
         (AvatarKind::Identicon, Some(_)) | (AvatarKind::Color, _) => {
-            Err(bad("Invalid avatar color"))
+            Err(ApiError::invalid("Invalid avatar color", "avatar_color"))
         }
     }
 }
@@ -498,12 +498,15 @@ pub(crate) fn secret_from(
             if validate_words {
                 let set = word_set(username);
                 if words.len() != 7 || words.iter().any(|w| !set.contains(w)) {
-                    return Err(bad(PICK_WORDS));
+                    return Err(ApiError::invalid(PICK_WORDS, "words"));
                 }
             }
             Ok((words.join(" "), "words"))
         }
-        (_, _) => Err(bad("Provide exactly one of password or words")),
+        (_, _) => Err(ApiError::invalid(
+            "Provide exactly one of password or words",
+            "password",
+        )),
     }
 }
 
@@ -652,7 +655,7 @@ pub(crate) async fn register(
     rare::take(&state, Rare::SignUp, None)?;
     let key = username_key(&username)?;
     if password.as_deref() == Some("") {
-        return Err(bad("Password required"));
+        return Err(ApiError::invalid("Password required", "password"));
     }
     let (secret, password_kind) = secret_from(&username, password, words, true)?;
     let avatar_color = check_avatar(avatar_kind, avatar_color)?;
@@ -702,19 +705,22 @@ pub(crate) async fn register(
 /// blank, over 100 characters, with an `@`, a NUL or a hidden character.
 pub(crate) fn username_key(username: &str) -> Result<String, ApiError> {
     if username.trim().is_empty() || username.contains('\0') {
-        return Err(bad("Username required"));
+        return Err(ApiError::invalid("Username required", "username"));
     }
     check_len(username, NAME_MAX, "Username")?;
     let key = username.to_lowercase();
     check_len(&key, NAME_MAX, "Username")?;
     if username.contains('@') {
-        return Err(bad("Usernames can't contain @"));
+        return Err(ApiError::invalid("Usernames can't contain @", "username"));
     }
     if username.chars().any(names::hidden_char) {
-        return Err(bad("Username has invalid characters"));
+        return Err(ApiError::invalid(
+            "Username has invalid characters",
+            "username",
+        ));
     }
     if names::name_keys(username).iter().any(String::is_empty) {
-        return Err(bad("Username required"));
+        return Err(ApiError::invalid("Username required", "username"));
     }
     Ok(key)
 }
@@ -1106,13 +1112,14 @@ async fn change_password_at(
         words: new_words,
     } = new;
     if new_password.as_deref() == Some("") {
-        return Err(bad("Password required"));
+        return Err(ApiError::invalid("Password required", "password"));
     }
     let (new_secret, new_kind) = secret_from(&user.username, new_password, new_words, true)?;
     let token = request_token(headers).unwrap_or_default();
     rare::check(state, Rare::Password, Some(&user))?;
     if crate::sso::accounts::has_password(&user) {
-        let Secret { password, words } = current.ok_or_else(|| bad("Current password required"))?;
+        let Secret { password, words } =
+            current.ok_or_else(|| ApiError::invalid("Current password required", "current"))?;
         let (secret, _) = secret_from(&user.username, password, words, false)?;
         let session = session_key(&token);
         throttle_change(&state.db, &session, t).await?;
@@ -1125,7 +1132,10 @@ async fn change_password_at(
         }
     } else {
         if current.is_some() {
-            return Err(bad("Omit current when setting a first password"));
+            return Err(ApiError::invalid(
+                "Omit current when setting a first password",
+                "current",
+            ));
         }
         if !crate::sso::accounts::may_set_password(state, &user).await {
             return Err(ApiError(
@@ -1325,8 +1335,10 @@ const USERNAME_BANNED: &str = "Username is banned";
 impl From<NotAdded> for ApiError {
     fn from(e: NotAdded) -> ApiError {
         match e {
-            NotAdded::Refused(Refusal::Taken) => bad(USERNAME_TAKEN),
-            NotAdded::Refused(Refusal::Banned) => bad(USERNAME_BANNED),
+            NotAdded::Refused(Refusal::Taken) => {
+                ApiError::conflict(StatusCode::BAD_REQUEST, USERNAME_TAKEN)
+            }
+            NotAdded::Refused(Refusal::Banned) => ApiError::invalid(USERNAME_BANNED, "username"),
             NotAdded::Db(e) => e.into(),
         }
     }
@@ -1339,13 +1351,16 @@ pub(crate) async fn shaped_display_name(db: &Db, raw: &str) -> Result<String, Ap
     let name = raw.trim().to_string();
     check_len(&name, DISPLAY_NAME_MAX, "Display name")?;
     if names::name_keys(&name).iter().any(String::is_empty) {
-        return Err(bad("Display name required"));
+        return Err(ApiError::invalid("Display name required", "display_name"));
     }
     if name.chars().any(names::hidden_char) {
-        return Err(bad("Display name has invalid characters"));
+        return Err(ApiError::invalid(
+            "Display name has invalid characters",
+            "display_name",
+        ));
     }
     if names::passes_for_staff(&name) {
-        return Err(bad("That name is reserved"));
+        return Err(ApiError::invalid("That name is reserved", "display_name"));
     }
     check_profanity(db, ProfanityTarget::Usernames, &name).await?;
     Ok(name)
@@ -1388,7 +1403,7 @@ pub(crate) async fn clean_name_for(
         }
     };
     if refused {
-        return Err(bad(USERNAME_TAKEN));
+        return Err(ApiError::conflict(StatusCode::BAD_REQUEST, USERNAME_TAKEN));
     }
     Ok(name)
 }
@@ -1415,7 +1430,10 @@ pub fn clean_multiline(text: &str, max: usize, what: &str) -> Result<Option<Stri
     }
     match out.chars().count() {
         0 => Ok(None),
-        n if n > max => Err(bad(&format!("{what} must be at most {max} characters"))),
+        n if n > max => Err(ApiError::invalid(
+            format!("{what} must be at most {max} characters"),
+            &what.to_lowercase().replace(' ', "_"),
+        )),
         _ => Ok(Some(out)),
     }
 }
@@ -1424,7 +1442,7 @@ pub(crate) fn check_banner(color: Option<String>) -> Result<Option<String>, ApiE
     match color {
         None => Ok(None),
         Some(color) if valid_color(&color) => Ok(Some(color.to_lowercase())),
-        Some(_) => Err(bad("Invalid banner color")),
+        Some(_) => Err(ApiError::invalid("Invalid banner color", "banner_color")),
     }
 }
 
@@ -2127,13 +2145,17 @@ mod tests {
 
     const HIDDEN_REFUSED: &str = "Username has invalid characters";
 
-    /// What a sign-up was refused with: the status, the text and whether it has no reason.
+    fn invalid(reason: Option<Box<crate::api::error::Reason>>) -> bool {
+        reason.is_some_and(|r| r.kind == crate::api::error::ReasonKind::Invalid)
+    }
+
+    /// What a sign-up was refused with: the status, the text and whether its reason is `invalid`.
     fn sign_up_refusal(
         res: Result<Json<AuthResp>, ApiError>,
     ) -> Option<(StatusCode, String, bool)> {
         match res {
             Ok(_) => None,
-            Err(ApiError(code, text, reason)) => Some((code, text, reason.is_none())),
+            Err(ApiError(code, text, reason)) => Some((code, text, invalid(reason))),
         }
     }
 
@@ -2251,7 +2273,7 @@ mod tests {
                 patch_me(State(state), Authed(user), Json(req))
                     .await
                     .map(|r| r.0.user.display_name)
-                    .map_err(|ApiError(code, text, reason)| (code, text, reason.is_none()))
+                    .map_err(|ApiError(code, text, reason)| (code, text, invalid(reason)))
             }
         };
         let refused = Err((

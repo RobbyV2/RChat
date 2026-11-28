@@ -15,7 +15,7 @@ use crate::api::reauth::{
     AuthedSession, NONCE_TTL_SECS, Purpose, RECOVER, ReAuth, ReAuthBody, Session, check_at,
     issue_nonce, phrase_sig_ok, take_nonce,
 };
-use crate::api::{ApiError, ApiErrorBody, NAME_MAX, Settings, bad, check_len, unauthorized};
+use crate::api::{ApiError, ApiErrorBody, NAME_MAX, Settings, check_len, unauthorized};
 use crate::db::{User, secret_key};
 use crate::state::AppState;
 use crate::ws::WsEvent;
@@ -67,7 +67,7 @@ pub(crate) async fn challenge_at(
 ) -> Result<Json<Challenge>, ApiError> {
     let ChallengeReq { username } = req;
     if username.trim().is_empty() || username.contains('\0') {
-        return Err(bad("Username required"));
+        return Err(ApiError::invalid("Username required", "username"));
     }
     check_len(&username, NAME_MAX, "Username")?;
     let username = username.to_lowercase();
@@ -152,7 +152,7 @@ pub(crate) async fn recover_at(
     let account = sign_in_account(db, &username).await?;
     throttle_attempt(db, &pace_keys(account.as_ref(), &username), t).await?;
     if password.as_deref() == Some("") {
-        return Err(bad("Password required"));
+        return Err(ApiError::invalid("Password required", "password"));
     }
     let (secret, password_kind) = secret_from(&key, password, words, true)?;
     let fresh = take_nonce(db, &key, &nonce, t).await?;
@@ -166,10 +166,14 @@ pub(crate) async fn recover_at(
         (_, _) => return Err(wrong_phrase()),
     };
     if !crate::sso::accounts::may_set_password(state, &user).await {
-        return Err(bad("Sign in with your provider instead"));
+        return Err(ApiError::off_account(
+            StatusCode::BAD_REQUEST,
+            "Sign in with your provider instead",
+            &rchat_settings::items::AUTH_PASSWORD_LOGIN,
+        ));
     }
     if password_kind == "words" && !in_word_set(&user.username, &secret) {
-        return Err(bad(PICK_WORDS));
+        return Err(ApiError::invalid(PICK_WORDS, "words"));
     }
     let password_hash = hash_password(&secret).await?;
     let token = new_token();
@@ -311,7 +315,7 @@ pub(crate) async fn set_phrase_at(
         return Err(not_found());
     }
     if crate::identity::p2p_key(&key).is_none() {
-        return Err(bad(BAD_KEY));
+        return Err(ApiError::invalid(BAD_KEY, "key"));
     }
     let reauth = ReAuth::try_from(reauth)?;
     let purpose = Purpose::SetPhrase { key: key.clone() };

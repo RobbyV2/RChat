@@ -5,7 +5,7 @@ use super::{
     provider::{Provider, bounded_json},
 };
 use crate::{
-    api::{ApiError, auth::new_token, bad, reauth::Session},
+    api::{ApiError, auth::new_token, reauth::Session},
     crypt::secrets::{Sealer, open_or, open_or_on},
     db::{Db, now, secret_key},
     state::AppState,
@@ -118,7 +118,10 @@ impl CallbackError {
     }
 }
 pub fn expired() -> ApiError {
-    bad("Sign-in expired. Try again")
+    ApiError::conflict(
+        axum::http::StatusCode::BAD_REQUEST,
+        "Sign-in expired. Try again",
+    )
 }
 fn random() -> String {
     URL_SAFE_NO_PAD.encode(rand::random::<[u8; 32]>())
@@ -261,7 +264,10 @@ pub async fn reauth_ticket(
     .fetch_optional(&state.db)
     .await?;
     if linked.is_none() {
-        return Err(bad("Not linked"));
+        return Err(ApiError::conflict(
+            axum::http::StatusCode::BAD_REQUEST,
+            "Not linked",
+        ));
     }
     issue_ticket(state, session, &cfg.id, FlowKind::Reauth).await
 }

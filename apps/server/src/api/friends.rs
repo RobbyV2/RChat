@@ -12,7 +12,7 @@ use utoipa::{IntoParams, ToSchema};
 use crate::api::blocks::{is_blocked, prefix_pattern};
 use crate::api::pings::{Ping, PingKind};
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, OkResp, Paged, UserRef, bad, cursor_int, decode_cursor,
+    ApiError, ApiErrorBody, Authed, OkResp, Paged, UserRef, cursor_int, decode_cursor,
     encode_cursor, ok,
 };
 use crate::db::{AvatarKind, Db, User, get_user};
@@ -868,7 +868,10 @@ pub(crate) async fn send_request(
         ));
     }
     if target == user.username {
-        return Err(bad("You cannot add yourself as a friend"));
+        return Err(ApiError::invalid(
+            "You cannot add yourself as a friend",
+            "username",
+        ));
     }
     let Some(other) = get_user(&state.db, &target).await? else {
         return Err(refused());
@@ -937,7 +940,11 @@ pub(crate) async fn send_request(
         .await?
             >= OUTGOING_MAX
         {
-            return Err(bad("You have too many pending friend requests"));
+            return Err(ApiError::limit(
+                StatusCode::BAD_REQUEST,
+                "You have too many pending friend requests",
+                crate::api::error::Cap::FriendRequestsOut,
+            ));
         }
         return Err(refused());
     }
@@ -1376,9 +1383,10 @@ pub(crate) async fn patch_privacy(
         profile,
     } = patch;
     let profile = match profile {
-        Some(choice) => {
-            Some(ProfilePolicy::named(&choice).ok_or_else(|| bad("Unknown profile choice"))?)
-        }
+        Some(choice) => Some(
+            ProfilePolicy::named(&choice)
+                .ok_or_else(|| ApiError::invalid("Unknown profile choice", "profile"))?,
+        ),
         None => None,
     };
     let cur = privacy_of(&state.db, &user.username).await?;

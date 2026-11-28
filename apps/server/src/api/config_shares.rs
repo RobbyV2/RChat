@@ -7,7 +7,7 @@ use utoipa::ToSchema;
 
 use crate::api::access::not_found;
 use crate::api::rare::{self, Rare};
-use crate::api::{ApiError, ApiErrorBody, Authed, OkResp, bad, ok};
+use crate::api::{ApiError, ApiErrorBody, Authed, OkResp, ok};
 use crate::state::AppState;
 
 /// Lifetimes a share link can have, in seconds: 10 minutes, 1 hour, 1 day, 7 days, 30 days.
@@ -69,7 +69,10 @@ pub fn valid_id(id: &str) -> bool {
 
 pub fn check_blob(blob: &str) -> Result<(), ApiError> {
     match blob.strip_prefix(BLOB_PREFIX) {
-        _ if blob.len() > BLOB_MAX => Err(bad("The config is too large to share (16 KiB max)")),
+        _ if blob.len() > BLOB_MAX => Err(ApiError::invalid(
+            "The config is too large to share (16 KiB max)",
+            "config",
+        )),
         Some(body)
             if !body.is_empty()
                 && body
@@ -78,15 +81,16 @@ pub fn check_blob(blob: &str) -> Result<(), ApiError> {
         {
             Ok(())
         }
-        _ => Err(bad("Not a config string")),
+        _ => Err(ApiError::invalid("Not a config string", "config")),
     }
 }
 
 pub fn check_expiry(expires_in: i64) -> Result<(), ApiError> {
     match EXPIRY_CHOICES.contains(&expires_in) {
         true => Ok(()),
-        false => Err(bad(
+        false => Err(ApiError::invalid(
             "Links can expire in 10 minutes, 1 hour, 1 day, 7 days or 30 days",
+            "expires_in",
         )),
     }
 }
@@ -145,8 +149,10 @@ pub(crate) async fn create_share(
     .rows_affected();
     tx.commit().await?;
     if inserted == 0 {
-        return Err(bad(
+        return Err(ApiError::limit(
+            axum::http::StatusCode::BAD_REQUEST,
             "You can have at most 20 active links. Revoke one first",
+            crate::api::error::Cap::ConfigShares,
         ));
     }
     Ok(Json(ConfigShare {

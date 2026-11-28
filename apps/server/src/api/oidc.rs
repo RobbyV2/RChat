@@ -105,7 +105,7 @@ pub(crate) async fn ticket(
     let provider = state
         .sso
         .provider(&q.provider)
-        .ok_or_else(|| bad("Not linked"))?;
+        .ok_or_else(|| ApiError::conflict(StatusCode::BAD_REQUEST, "Not linked"))?;
     let ticket = match q.purpose {
         TicketPurpose::Link => {
             let exists: Option<i32> = sqlx::query_scalar(
@@ -117,11 +117,14 @@ pub(crate) async fn ticket(
             .fetch_optional(&state.db)
             .await?;
             if exists.is_some() {
-                return Err(bad("Already linked"));
+                return Err(ApiError::conflict(
+                    StatusCode::BAD_REQUEST,
+                    "Already linked",
+                ));
             }
             let proof = q
                 .reauth
-                .ok_or_else(|| bad(super::reauth::ONE_WAY))?
+                .ok_or_else(|| ApiError::invalid(super::reauth::ONE_WAY, "reauth"))?
                 .try_into()?;
             super::reauth::check(
                 &state,
@@ -224,19 +227,22 @@ pub(crate) async fn start(
         (Some("web"), None) => Return::Web,
         (Some("app"), None) => Return::App,
         (Some("client"), Some(origin)) if valid_client_origin(&origin) => Return::Client { origin },
-        _ => return Err(bad("Invalid return origin")),
+        _ => return Err(ApiError::invalid("Invalid return origin", "return")),
     };
     let challenge = q
         .challenge
         .filter(|challenge| flow::valid_challenge(challenge))
-        .ok_or_else(|| bad("Invalid challenge"))?;
+        .ok_or_else(|| ApiError::invalid("Invalid challenge", "challenge"))?;
     if matches!(ret, Return::Client { .. }) && q.ticket.is_some() {
-        return Err(bad("Account tickets require a web or app return"));
+        return Err(ApiError::invalid(
+            "Account tickets require a web or app return",
+            "ticket",
+        ));
     }
     let confirm = match q.confirm.as_deref() {
         Some("1") if q.ticket.is_none() => true,
         None => false,
-        _ => return Err(bad("Invalid confirmation mode")),
+        _ => return Err(ApiError::invalid("Invalid confirmation mode", "confirm")),
     };
     let (kind, user, session_key) = if let Some(value) = q.ticket {
         let Some(ticket) = flow::take_ticket(&state.db, &value, &id).await? else {

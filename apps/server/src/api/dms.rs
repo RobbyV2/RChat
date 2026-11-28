@@ -14,7 +14,7 @@ use crate::api::messages::read_dm_latest;
 use crate::api::policy::DmCreation;
 use crate::api::servers::Page;
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, DmSummary, OkResp, Paged, bad, cursor_int, decode_cursor,
+    ApiError, ApiErrorBody, Authed, DmSummary, OkResp, Paged, cursor_int, decode_cursor,
     encode_cursor, ok, page_bounds, placeholders, split_list, user_from, user_refs,
 };
 use crate::db::{Db, LIVE_DM, User, get_user, is_sqlite};
@@ -88,7 +88,7 @@ impl DmOrder {
     }
 
     fn decode(self, raw: &str) -> Result<DmKey, ApiError> {
-        let invalid = || bad("Invalid cursor");
+        let invalid = || ApiError::invalid("Invalid cursor", "cursor");
         let parts = match self.tag() {
             None => decode_cursor(raw, 2)?,
             Some(tag) => match decode_cursor(raw, 3)? {
