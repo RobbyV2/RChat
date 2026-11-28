@@ -1,8 +1,7 @@
 'use client'
-import { Covered } from '../covered'
 import { ask, asked } from '../../lib/asks'
 import { Name, NameInput } from '../name'
-import { handleName, personCalled } from '../../lib/names'
+import { handleName, personCalled, serverCalled, serverName } from '../../lib/names'
 import { asAccount } from '../../lib/people'
 import { useAccount } from '../../lib/client/react'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
@@ -36,9 +35,15 @@ function UserServers({ username }: { username: string }) {
           {pages.items.map(sv => (
             <Surface key={sv.name} tone="base" radius="lg" pad="md">
               <Row gap="sm" wrap>
-                <Covered what="names" look="min-w-24 flex-1 truncate text-sm">
-                  {sv.display_name} <span className="text-on-surface-variant">({sv.name})</span>
-                </Covered>
+                <span className="min-w-24 flex-1 truncate text-sm">
+                  <Name of={serverName(sv)} />{' '}
+                  <Name
+                    of={serverCalled(sv.name)}
+                    before="("
+                    after=")"
+                    look="text-on-surface-variant"
+                  />
+                </span>
                 <Button onClick={() => void openServer(sv.name)}>Open</Button>
                 <Button onClick={() => openAdmin('servers', sv.name)}>Manage</Button>
               </Row>

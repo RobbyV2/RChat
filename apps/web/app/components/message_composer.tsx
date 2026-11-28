@@ -1,4 +1,5 @@
 'use client'
+import { personName } from '../lib/names'
 import { OwnLoadNotice } from './own_load'
 
 import { Name } from './name'
@@ -321,7 +322,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           key={draftKey}
           inputRef={inputRef}
           label={thread ? 'Reply in thread' : 'Message as a guest'}
-          reply={shownQuote?.display_name}
+          reply={shownQuote ? personName(shownQuote) : undefined}
           cancelReply={() => cancelReply(draftKey)}
           send={async content => {
             const message = await account.lifetime.live(

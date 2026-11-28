@@ -1,7 +1,7 @@
 'use client'
 import { OwnLoadNotice } from './own_load'
 import { Name } from './name'
-import { instanceAddress, instanceName, personCalled, handleName } from '../lib/names'
+import { instanceAddress, instanceName, personCalled, handleName, serverName } from '../lib/names'
 import { asAccount, pictured } from '../lib/people'
 import { useP2p } from '../lib/client/p2p_react'
 
@@ -79,7 +79,7 @@ import { Choice, PrivacyChoices } from './friends'
 import { LinkSafetySection } from './link_safety_settings'
 import { AccountWords, PassSwitch } from './word_grid'
 import { PageRow, SettingsPage, type PageSection } from './settings_page'
-import { dangerBtn, FieldError, fieldCls, Masked, sectionCls, useOwnServer } from './ui'
+import { dangerBtn, FieldError, fieldCls, sectionCls } from './ui'
 
 const bioFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
@@ -154,10 +154,9 @@ export function BannerPicker({
 
 function HostedProfileRow({ server }: { server: ServerSummary }) {
   const openDialog = useStore(s => s.openDialog)
-  const own = useOwnServer(server.name)
   return (
     <ServerProfileRow
-      name={<Masked text={server.display_name} own={own} />}
+      name={serverName(server)}
       onEdit={() => openDialog({ kind: 'server_profile', server: server.name })}
     />
   )

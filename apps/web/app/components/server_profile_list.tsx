@@ -1,6 +1,7 @@
 'use client'
 
-import { Covered } from './covered'
+import type { NameValue } from '../lib/names'
+import { Name } from './name'
 import type { ReactNode } from 'react'
 import { Button } from './controls'
 import { Stack, Row } from './layout'
@@ -32,13 +33,11 @@ export function ServerProfileList({
   )
 }
 
-export function ServerProfileRow({ name, onEdit }: { name: ReactNode; onEdit: () => void }) {
+export function ServerProfileRow({ name, onEdit }: { name: NameValue; onEdit: () => void }) {
   return (
     <li className="flex min-h-10 items-center">
       <Row gap="md" place="flex-1">
-        <Covered what="names" look="min-w-0 flex-1 truncate text-sm text-on-surface">
-          {name}
-        </Covered>
+        <Name of={name} look="min-w-0 flex-1 truncate text-sm text-on-surface" />
         <Button onClick={onEdit} place="shrink-0">
           Edit
         </Button>

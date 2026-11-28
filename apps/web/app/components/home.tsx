@@ -1,7 +1,15 @@
 'use client'
 import { Covered } from './covered'
-import { Name, NameSelect } from './name'
-import { handleName, instanceAddress, instanceName, personCalled } from '../lib/names'
+import { Name, NameSelect, useNameLabel } from './name'
+import {
+  handleName,
+  instanceAddress,
+  instanceName,
+  personCalled,
+  roomName,
+  serverName,
+  type NameValue,
+} from '../lib/names'
 import { asAccount, identityPerson } from '../lib/people'
 import { openPeerLink } from '../lib/client/peer_links'
 import { ViewActorTag } from './view_actor'
@@ -820,7 +828,6 @@ function UnreadRow({
   id,
   glyph,
   name,
-  streamer = false,
   p2p = false,
   detail,
   pings,
@@ -831,8 +838,8 @@ function UnreadRow({
 }: {
   id: string
   glyph: ReactNode
-  name: ReactNode
-  streamer?: boolean
+  // A place's name, or the app's own words for a kind of place.
+  name: NameValue | string
   p2p?: boolean
   detail: string
   pings: number
@@ -868,9 +875,11 @@ function UnreadRow({
         leading={glyph}
         label={
           <Row as="span" gap="xs">
-            <Covered what="names" on={streamer} look="truncate font-semibold">
-              {name}
-            </Covered>
+            {typeof name === 'string' ? (
+              <span className="truncate font-semibold">{name}</span>
+            ) : (
+              <Name of={name} look="truncate font-semibold" />
+            )}
             {p2p && <P2pBadge />}
           </Row>
         }
@@ -904,8 +913,8 @@ function ServerUnreadRow({
   )
   const openServer = useStore(s => s.openServer)
   const markServerRead = useStore(s => s.markServerRead)
-  const own = useOwnServer(name)
-  const shown = useMask(own)(display)
+  const called = serverName({ name, display_name: display })
+  const shown = useNameLabel(called, 'this server')
   return (
     <UnreadRow
       id={name}
@@ -916,8 +925,7 @@ function ServerUnreadRow({
           </span>
         </PlaceGlyph>
       }
-      name={<Masked text={display} own={own} />}
-      streamer
+      name={called}
       detail={serverDetail(channels, pings)}
       pings={pings}
       open={() => void openServer(name)}
@@ -974,7 +982,8 @@ function P2pServerUnreadRow({ v, pings, channels }: P2pUnreadRow) {
   const p2pServer = identity?.p2pServer
 
   const own = useP2p(s => ownsP2pServer(v, s.me))
-  const shown = useMask(own)(v.name)
+  const called = roomName(v.name, own)
+  const shown = useNameLabel(called, 'this server')
   return (
     <UnreadRow
       id={`p2p:${v.id}`}
@@ -991,8 +1000,7 @@ function P2pServerUnreadRow({ v, pings, channels }: P2pUnreadRow) {
           </span>
         </PlaceGlyph>
       }
-      name={<Masked text={v.name} own={own} />}
-      streamer
+      name={called}
       p2p
       detail={serverDetail(channels, pings)}
       pings={pings}

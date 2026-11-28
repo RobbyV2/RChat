@@ -1,5 +1,6 @@
 'use client'
-import { Covered } from './covered'
+import type { NameValue } from '../lib/names'
+import { Name } from './name'
 import { useRef, useState, type Ref } from 'react'
 import { errorText } from '../lib/store'
 import { Button, LinkButton } from './controls'
@@ -20,7 +21,7 @@ export function TextComposer({
   inputRef?: Ref<HTMLTextAreaElement>
   initialText?: string
   onTextChange?: (value: string) => void
-  reply?: string
+  reply?: NameValue
   cancelReply?: () => void
 }) {
   const [text, setText] = useState(initialText)
@@ -62,7 +63,7 @@ export function TextComposer({
       {reply && (
         <Row gap="sm" justify="between" text="xs">
           <span className="truncate">
-            Reply to <Covered what="names">{reply}</Covered>
+            Reply to <Name of={reply} />
           </span>
           <LinkButton onClick={cancelReply}>Cancel reply</LinkButton>
         </Row>

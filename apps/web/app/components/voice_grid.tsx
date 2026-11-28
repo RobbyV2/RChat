@@ -664,10 +664,11 @@ function StageHeader({
           />
           <Row as="span" gap="2xs">
             {active ? 'In call with' : 'Calling'}
-            <Covered what="names" look="truncate font-medium text-on-surface">
-              {name}
-              {!active && '…'}
-            </Covered>
+            <Name
+              of={p2pName(name)}
+              after={active ? undefined : '…'}
+              look="truncate font-medium text-on-surface"
+            />
           </Row>
           <span aria-hidden>·</span>
           <span className="shrink-0">{video ? 'Video call' : 'Voice call'}</span>

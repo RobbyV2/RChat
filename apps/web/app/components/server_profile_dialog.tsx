@@ -5,7 +5,7 @@ import { Refreshed, useAccountRequest } from './loaded'
 
 import { asAccount, pictured, type Person } from '../lib/people'
 import { Name, NameArea, NameInput } from './name'
-import { p2pName, personCalled, personName } from '../lib/names'
+import { handleName, p2pName, personCalled, personName, type NameValue } from '../lib/names'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import { Lock } from 'lucide-react'
 import { DEFAULT_COLOR } from '../lib/identicon'
@@ -455,7 +455,7 @@ export interface ProfileResetSource {
   // The member as the server shows them now, and the line under that name: their @username on
   // a hosted server, the name a P2P member gives themselves (null: none).
   user: UserRef
-  subtitle: string | null
+  subtitle: NameValue | null
   // The server name a reset of the name removes; null when they have none.
   name: string | null
   lock: LockState
@@ -506,14 +506,13 @@ export function ProfileReset({
               look="truncate text-sm font-medium text-on-surface"
             />
             {source.subtitle !== null && (
-              <Covered
-                what="names"
+              <Name
                 as="p"
+                of={source.subtitle}
+                before={source.subtitle.kind === 'person' ? '@' : undefined}
                 data-profile-reset-who
                 look="truncate text-xs text-on-surface-variant"
-              >
-                <Masked text={source.subtitle} />
-              </Covered>
+              />
             )}
           </div>
         </Row>
@@ -555,10 +554,12 @@ export function ProfileReset({
                 <span className="min-w-0">
                   {RESET_LABELS[f]}
                   {f === 'name' && source.name !== null && (
-                    <Covered what="names" look="text-on-surface-variant">
-                      {' '}
-                      (<Masked text={source.name} />)
-                    </Covered>
+                    <Name
+                      of={personCalled(source.name)}
+                      before=" ("
+                      after=")"
+                      look="text-on-surface-variant"
+                    />
                   )}
                 </span>
               </Row>
@@ -649,7 +650,7 @@ function HostedResetDialog({ server, user }: { server: string; user: UserRef }) 
           notice={notice}
           source={{
             user: shownUser(user, look),
-            subtitle: `@${user.username}`,
+            subtitle: handleName(user.username),
             name: look?.name ?? null,
             lock: lockState(known, Math.floor(now / 1000)),
             reasons: true,

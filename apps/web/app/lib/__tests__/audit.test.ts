@@ -108,7 +108,7 @@ describe('audit sentences', () => {
     )
     expect(renamed.filter(p => p.name)).toEqual([
       { text: 'Alice', name: true, by: 'alice', person: true },
-      { text: 'new', name: true },
+      { text: 'new', name: true, server: true },
     ])
   })
 

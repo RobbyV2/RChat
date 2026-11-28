@@ -1,5 +1,6 @@
 'use client'
 
+import { p2pName } from '../../lib/names'
 import type { Person } from '../../lib/people'
 import { useP2p, useP2pApp, withP2pIdentity } from '../../lib/client/p2p_react'
 import { draftOfExtras, extrasOf } from '../../lib/server_profile_editor'
@@ -59,7 +60,7 @@ function ProfileResetDialogBody({ room, ik }: { room: string; ik: string }) {
       onClose={p2p.closeDialog}
       source={{
         user,
-        subtitle: own !== user.display_name ? own : null,
+        subtitle: own !== user.display_name ? p2pName(own) : null,
         name: m.nick ?? null,
         lock: m.profileLocked ? p2pServer.profileLock(room, ik) : { locked: false },
         reasons: false,

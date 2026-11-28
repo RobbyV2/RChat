@@ -19,7 +19,7 @@ import {
 } from '../notices'
 import { user } from './fixtures'
 
-const line = (pieces: Piece[]) => pieces.map(p => (p.blur ? `[${p.text}]` : p.text)).join('')
+const line = (pieces: Piece[]) => pieces.map(p => (p.is ? `[${p.text}]` : p.text)).join('')
 
 const alert = (over: Partial<AlertInput> = {}): AlertInput => ({
   key: 'c1',

@@ -1,3 +1,4 @@
+import { handleName, p2pName } from '../names'
 import { afterEach, expect, test } from 'bun:test'
 import type { ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -236,7 +237,7 @@ test('the editor follows the mode of the place and waits for the stored profile'
 
 const resetSource = (over: Partial<ProfileResetSource> = {}): ProfileResetSource => ({
   user: user('bob', { display_name: 'Robert' }),
-  subtitle: '@bob',
+  subtitle: handleName('bob'),
   name: 'Robert',
   lock: { locked: false },
   reasons: true,
@@ -261,9 +262,9 @@ test('the reset dialog lists each part, the lock choices, a reason and the name 
   expect(p2p).not.toContain('Reason')
   expect(p2p).not.toContain('@bob')
   expect(p2p).not.toContain('data-profile-reset-who')
-  expect(/data-profile-reset-who[^>]*>Bob</.test(reset({ subtitle: 'Bob', reasons: false }))).toBe(
-    true
-  )
+  expect(
+    /data-profile-reset-who[^>]*>Bob</.test(reset({ subtitle: p2pName('Bob'), reasons: false }))
+  ).toBe(true)
   const locked = reset({ lock: { locked: true, until: null } })
   expect(locked).toContain('Locked until unlocked')
   expect(locked).toContain('>Unlock<')

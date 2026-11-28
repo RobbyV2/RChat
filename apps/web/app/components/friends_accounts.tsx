@@ -1,8 +1,7 @@
 'use client'
 
-import { Covered } from './covered'
 import { Name } from './name'
-import { accountLabel } from '../lib/names'
+import { accountLabel, instanceAddress, instanceName } from '../lib/names'
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { client } from '../lib/client/client'
 import { railBlocks } from '../lib/client/rail_blocks'
@@ -15,7 +14,6 @@ import { ownInstance } from '../lib/instances'
 import { useStore } from '../lib/store'
 import { useAddingAllowed } from './add_instance'
 import { AccountTag, InstanceTag } from './account_tag'
-import { Masked } from './ui'
 import { Row, Stack, Surface } from './layout'
 import { ContactRow } from './p2p/p2p_home'
 
@@ -65,17 +63,18 @@ export function FriendGroups({
       {Array.from(groups, ([origin, accounts]) => (
         <Stack key={origin} gap="md">
           {groups.size > 1 && (
-            <Covered what="names" as="h2" look="text-xs font-semibold">
+            <h2 className="text-xs font-semibold">
               <Surface as="span" tone="plain" radius="none" pad="sm" inset="bar">
                 <Row as="span" gap="sm">
                   <InstanceTag origin={origin} name={accounts[0].name} />
-                  <Masked text={accounts[0].name} />{' '}
-                  <span className="font-normal text-on-surface-variant">
-                    <Masked text={accounts[0].account.conn.host} />
-                  </span>
+                  <Name of={instanceName(accounts[0].name)} />{' '}
+                  <Name
+                    of={instanceAddress(accounts[0].account.conn.host)}
+                    look="font-normal text-on-surface-variant"
+                  />
                 </Row>
               </Surface>
-            </Covered>
+            </h2>
           )}
           {accounts.map(entry => (
             <FriendAccountSection key={entry.account.renderKey} entry={entry}>

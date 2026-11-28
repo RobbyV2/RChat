@@ -1,6 +1,6 @@
 'use client'
 
-import { Covered } from './covered'
+import { p2pName, type NameValue } from '../lib/names'
 import { personName } from '../lib/names'
 import { Name } from './name'
 import { Lock, Volume2 } from 'lucide-react'
@@ -39,7 +39,7 @@ function SeatBody({
 }: {
   seat: VoiceSeat
   face: React.ReactNode
-  name: React.ReactNode
+  name: NameValue
 }) {
   return (
     <>
@@ -53,12 +53,11 @@ function SeatBody({
       >
         {face}
       </span>
-      <Covered
-        what="names"
+      <Name
+        of={name}
+        withUsername
         look={seat.speaking ? 'min-w-0 flex-1 truncate text-on-surface' : 'min-w-0 flex-1 truncate'}
-      >
-        {name}
-      </Covered>
+      />
       {seat.live && (
         <LiveBadge
           size="sm"
@@ -94,7 +93,7 @@ function AccountSeat({
       <SeatBody
         seat={seat}
         face={<UserAvatar person={shown} size={22} />}
-        name={<Name of={personName(shown)} withUsername />}
+        name={personName(shown)}
       />
     </div>
   )
@@ -125,7 +124,7 @@ function KeySeat({
       <SeatBody
         seat={seat}
         face={<MemberAvatar members={face.of} ik={face.ik} size={22} />}
-        name={<Masked text={face.name} own={seat.self} />}
+        name={p2pName(face.name, seat.self)}
       />
     </div>
   )

@@ -1,8 +1,7 @@
 'use client'
 
-import { Covered } from './covered'
 import { Name, NameSelect } from './name'
-import { instanceName, personCalled } from '../lib/names'
+import { accountLabel, handleName, instanceAddress, instanceName, personCalled } from '../lib/names'
 import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
 import {
   ArrowDown,
@@ -40,7 +39,7 @@ import { longPress, useMedia } from './context_menu'
 import { RailInstance } from './instance_badge'
 import { Button, IconButton, ListRow, CardButton } from './controls'
 import { Row, Stack, Surface, Inset } from './layout'
-import { Masked, Sheet, useEscape, smallFieldCls } from './ui'
+import { Sheet, useEscape, smallFieldCls } from './ui'
 import { obj, opt, parseJson, str, type Schema } from '../lib/schema'
 
 function useRows() {
@@ -342,12 +341,14 @@ function AccountList({
                 >
                   <Row gap="sm">
                     <InstanceTag origin={g.origin} name={g.name} />
-                    <Covered what="names" look="min-w-0 flex-1 truncate text-sm font-semibold">
-                      <Masked text={g.name} />{' '}
-                      <small className="font-normal text-on-surface-variant">
-                        <Masked text={g.host} />
-                      </small>
-                    </Covered>
+                    <span className="min-w-0 flex-1 truncate text-sm font-semibold">
+                      <Name of={instanceName(g.name)} />{' '}
+                      <Name
+                        as="small"
+                        of={instanceAddress(g.host)}
+                        look="font-normal text-on-surface-variant"
+                      />
+                    </span>
                     {manage && model.groups.length > 1 && (
                       <OrderHandle
                         label={g.name}
@@ -401,14 +402,17 @@ function AccountList({
                         >
                           <ActorAvatar row={r} size={r.local ? 24 : 32} />
                           <span className="min-w-0 flex-1">
-                            <Covered what="names" look="block truncate text-sm font-medium">
-                              <Masked text={r.display} />{' '}
+                            <span className="block truncate text-sm font-medium">
+                              <Name of={accountLabel(r.display)} />{' '}
                               {!r.local && r.username && (
-                                <small className="font-normal text-on-surface-variant">
-                                  @<Masked text={r.username} />
-                                </small>
+                                <Name
+                                  as="small"
+                                  of={handleName(r.username, true)}
+                                  before="@"
+                                  look="font-normal text-on-surface-variant"
+                                />
                               )}
-                            </Covered>
+                            </span>
                             <span className="block text-xs text-on-surface-variant">
                               {r.local ? 'P2P · ' : ''}
                               {r.status}

@@ -30,7 +30,7 @@ export const groupOf = (action: string): AuditGroup | null => {
 // A sentence as text runs; `name` runs are usernames or server names (streamer blur), `by` the
 // account a person's name belongs to (your own is never masked). A `person` run names `by` as
 // they are now: drawn under the server's name for them, with the username after it.
-export type Part = { text: string; name?: boolean; by?: string; person?: boolean }
+export type Part = { text: string; name?: boolean; by?: string; person?: boolean; server?: boolean }
 
 export interface AuditChange {
   field: string
@@ -512,7 +512,11 @@ export function sentence(entry: AuditEntry): Part[] {
       const list = changesOf(entry)
       const only = list.length === 1 ? list[0] : null
       if (only?.field === 'name')
-        return [...actor, t(' renamed the server to '), { text: String(only.after), name: true }]
+        return [
+          ...actor,
+          t(' renamed the server to '),
+          { text: String(only.after), name: true, server: true },
+        ]
       if (only?.field === 'guest_voice')
         return [...actor, t(` turned voice ${only.after === 'off' ? 'off' : 'on'} for guests`)]
       if (only?.field === 'profiles_mode')

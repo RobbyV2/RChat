@@ -108,6 +108,10 @@ export const handleName = (username: string, own?: boolean): PersonName =>
 export const personCalled = (text: string, who?: string | null, own?: boolean): PersonName =>
   new PersonName(minted, text, null, own === undefined ? (who ?? null) : null, own, false)
 
+// A guest by the label the app gives them: the app's own words, shown as they are.
+export const guestCalled = (label: string): PersonName =>
+  new PersonName(minted, label, null, null, false, true)
+
 export const serverName = (
   server: { name: string; display_name?: string | null },
   own?: boolean

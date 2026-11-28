@@ -1,4 +1,6 @@
 'use client'
+import { Name } from './name'
+import { p2pName, personCalled, roomName, serverCalled } from '../lib/names'
 import { Covered } from './covered'
 import { useP2p } from '../lib/client/p2p_react'
 
@@ -88,6 +90,27 @@ function DesktopSwitch() {
   )
 }
 
+// What an override is for: a server, a room or a person by name, a channel by its own.
+function OverrideName({ o }: { o: Override }) {
+  switch (o.scope.kind) {
+    case 'server':
+      return <Name of={serverCalled(o.name, o.own)} />
+    case 'dm':
+      return <Name of={personCalled(o.name)} />
+    case 'p2p':
+      return <Name of={p2pName(o.name)} />
+    case 'p2ps':
+      return <Name of={roomName(o.name)} />
+    case 'channel':
+    case 'p2pc':
+      return (
+        <Covered what="channel">
+          <Masked text={o.name} />
+        </Covered>
+      )
+  }
+}
+
 function OverrideRow({ o, now }: { o: Override; now: number }) {
   const reset = useStore(s => s.resetNotify)
   return (
@@ -97,15 +120,11 @@ function OverrideRow({ o, now }: { o: Override; now: number }) {
           <Stack as="span" gap="none" place="min-w-0 flex-1">
             <span className="truncate text-sm text-on-surface">
               {o.prefix}
-              <Covered what="names">
-                <Masked text={o.name} own={o.own} />
-              </Covered>
+              <OverrideName o={o} />
               {o.hint && (
                 <span className="text-on-surface-variant">
                   {' · '}
-                  <Covered what="names">
-                    <Masked text={o.hint} />
-                  </Covered>
+                  <Name of={o.scope.kind === 'p2pc' ? roomName(o.hint) : serverCalled(o.hint)} />
                 </span>
               )}
             </span>

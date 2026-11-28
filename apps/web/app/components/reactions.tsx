@@ -1,8 +1,8 @@
 'use client'
 
-import { Covered } from './covered'
 import { Name } from './name'
-import { handleName } from '../lib/names'
+import { handleName, personCalled, personName } from '../lib/names'
+import { nameWithUsername } from '../lib/display_name'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { SmilePlus } from 'lucide-react'
@@ -17,12 +17,12 @@ import {
   reacted,
   reactionLabel,
   reactorNames,
-  reactorsText,
+  reactorsParts,
 } from '../lib/reactions'
 import { EmojiPicker, useEmojiNow, useTopEmojis } from './emoji_picker'
 import { COARSE_QUERY, longPress, useMedia } from './context_menu'
 import { ShownAvatar, useShown, useViewServer } from './shown_user'
-import { CloseButton, Masked, Sheet, useOwnCheck } from './ui'
+import { CloseButton, Sheet, useOwnCheck } from './ui'
 import { centerEmoji } from '../lib/emoji_center'
 import { useChat } from '../lib/place/use_chat'
 import { Surface, Row, Inset } from './layout'
@@ -127,11 +127,15 @@ function ReactionTooltip({
       <span aria-hidden className="text-sm leading-snug">
         {code && <span className="font-semibold">:{code}: </span>}
         reacted by{' '}
-        {streamer || names === null ? (
-          peopleText(r.count)
-        ) : (
-          <Covered what="names">{reactorsText(names, r.count)}</Covered>
-        )}
+        {streamer || names === null
+          ? peopleText(r.count)
+          : reactorsParts(users ?? [], r.count).map((p, i) =>
+              typeof p === 'string' ? (
+                p
+              ) : (
+                <Name key={i} of={personCalled(nameWithUsername(p.who), p.who.username)} />
+              )
+            )}
       </span>
     </Surface>,
     document.body
@@ -271,7 +275,7 @@ export function ReactionBar({
 // A reactor under the name the open server shows.
 function ReactorName({ user, server }: { user: UserRef; server: string | null }) {
   const shown = useShown(user, server)
-  return <Masked text={shown.display_name} by={shown.username} />
+  return <Name of={personName(shown)} look="block truncate text-sm font-medium text-on-surface" />
 }
 
 function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClose: () => void }) {
@@ -373,9 +377,7 @@ function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClo
           <Surface as="li" key={u.username} pad="sm" gap="md" row tone="plain" radius="lg">
             <ShownAvatar user={u} server={server} size={32} />
             <span className="min-w-0 flex-1">
-              <Covered what="names" look="block truncate text-sm font-medium text-on-surface">
-                <ReactorName user={u} server={server} />
-              </Covered>
+              <ReactorName user={u} server={server} />
               <Name
                 of={handleName(u.username)}
                 look="block truncate text-xs text-on-surface-variant"

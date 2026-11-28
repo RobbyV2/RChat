@@ -103,7 +103,7 @@ function Body({ of, withUsername, fit }: { of: NameValue; withUsername: boolean;
 const nameTriggerCls =
   'cursor-pointer rounded-sm outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'
 
-type Tag = 'span' | 'p' | 'div' | 'h1' | 'h2' | 'h3' | 'strong' | 'dt' | 'dd' | 'li'
+type Tag = 'span' | 'p' | 'div' | 'h1' | 'h2' | 'h3' | 'strong' | 'small' | 'dt' | 'dd' | 'li'
 
 type NameProps<S extends string, L extends string> = Omit<
   HTMLAttributes<HTMLElement>,

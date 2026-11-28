@@ -1,5 +1,6 @@
 'use client'
-import { Covered } from '../components/covered'
+import { guestCalled, handleName, personCalled } from '../lib/names'
+import { Name } from '../components/name'
 import { Button, IconButton } from '../components/controls'
 import { asAccount } from '../lib/people'
 import { useAccount } from '../lib/client/react'
@@ -24,7 +25,7 @@ import { ContextMenu, longPress } from '../components/context_menu'
 import { LightboxList, MediaLightbox } from '../components/media_lightbox'
 import { TextComposer } from '../components/text_composer'
 import { UserAvatar } from '../components/user_avatar'
-import { fieldCls, Masked } from '../components/ui'
+import { fieldCls } from '../components/ui'
 import { Grid, Row, Stack, Surface, Inset } from '../components/layout'
 import { audibleStreams, guestLabel, isGuestName } from '../lib/guest_voice'
 import { restoreStreamer } from '../lib/start'
@@ -207,12 +208,16 @@ function ChatRow({
           data-group-header={place.first ? '' : undefined}
           className={place.first ? 'widget-head' : 'sr-only'}
         >
-          <Covered what="names" as="strong" id={sender} look="min-w-0 max-w-full truncate text-sm">
-            <Masked
-              text={message.author.display_name}
-              own={message.author.username === client.account}
-            />
-          </Covered>
+          <Name
+            as="strong"
+            id={sender}
+            of={personCalled(
+              message.author.display_name,
+              null,
+              message.author.username === client.account
+            )}
+            look="min-w-0 max-w-full truncate text-sm"
+          />
           <time
             id={time}
             className="text-xs text-on-surface-variant"
@@ -232,12 +237,13 @@ function ChatRow({
           >
             {message.reply_to.author && (
               <>
-                <Covered what="names">
-                  <Masked
-                    text={message.reply_to.author.display_name}
-                    own={message.reply_to.author.username === client.account}
-                  />
-                </Covered>{' '}
+                <Name
+                  of={personCalled(
+                    message.reply_to.author.display_name,
+                    null,
+                    message.reply_to.author.username === client.account
+                  )}
+                />{' '}
                 ·{' '}
               </>
             )}
@@ -347,7 +353,15 @@ function WidgetChat({ client, rows }: { client: WidgetConnection; rows: Message[
             draft.text = value
           }}
           label={client.signedIn ? 'Message' : 'Message as a guest'}
-          reply={reply?.author.display_name}
+          reply={
+            reply
+              ? personCalled(
+                  reply.author.display_name,
+                  null,
+                  reply.author.username === client.account
+                )
+              : undefined
+          }
           cancelReply={() => setReply(null)}
           send={async text => {
             await client.send(text, reply?.id)
@@ -505,11 +519,17 @@ export default function WidgetPage() {
               <h2 className="text-sm font-medium">In voice</h2>
               <Stack as="ul" gap="2xs">
                 {room.users.map(u => (
-                  <Covered what="names" as="li" key={u} look="break-words">
-                    {isGuestName(u) ? guestLabel(u) : u}
+                  <li key={u} className="break-words">
+                    <Name
+                      of={
+                        isGuestName(u)
+                          ? guestCalled(guestLabel(u))
+                          : handleName(u, u === client.name)
+                      }
+                    />
                     {u === client.name ? ' (you)' : ''}
                     {client.statusOf(u).map(text => ` · ${text}`)}
-                  </Covered>
+                  </li>
                 ))}
               </Stack>
               {client.inVoice ? (

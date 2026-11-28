@@ -1,5 +1,7 @@
 'use client'
 
+import { Name } from './name'
+import { accountLabel, personCalled, serverCalled } from '../lib/names'
 import { Covered } from './covered'
 import { asAccount } from '../lib/people'
 import { IconButton } from './controls'
@@ -28,11 +30,24 @@ import { time } from '../lib/platform/time'
 import { Inset, Stack } from './layout'
 
 function Pieces({ pieces }: { pieces: Piece[] }) {
-  return pieces.map((p, i) => (
-    <Covered key={i} what="names" on={!!p.blur}>
-      <Masked text={p.text} />
-    </Covered>
-  ))
+  return pieces.map((p, i) => {
+    switch (p.is) {
+      case 'person':
+        return <Name key={i} of={personCalled(p.text)} />
+      case 'server':
+        return <Name key={i} of={serverCalled(p.text)} />
+      case 'account':
+        return <Name key={i} of={accountLabel(p.text)} />
+      case 'channel':
+        return (
+          <Covered key={i} what="channel">
+            <Masked text={p.text} />
+          </Covered>
+        )
+      case undefined:
+        return <span key={i}>{p.text}</span>
+    }
+  })
 }
 
 // Time left, from where the timer stood when this run of the toast began; pausing freezes it.

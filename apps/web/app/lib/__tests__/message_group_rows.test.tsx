@@ -18,7 +18,7 @@ import { msg, user } from './fixtures'
 const AT = 1_800_000_000
 const ms = AT * 1000
 
-const SR = '<span class="streamer sr-only">'
+const SR = '<span class="sr-only">'
 
 // The text of the screen-reader-only author name, or null without one.
 const srName = (html: string) => {

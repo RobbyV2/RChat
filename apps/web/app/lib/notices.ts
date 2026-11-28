@@ -116,19 +116,20 @@ export const nextNoticeEnd = (list: Notice[], now: number) =>
     return min === null || left < min ? left : min
   }, null)
 
-// Text pieces; `blur` pieces are names and get the streamer class.
+// Text pieces. `is` says what a piece names: someone, a server, one of the viewer's accounts, or
+// a channel. A piece without it is the app's own words.
 export interface Piece {
   text: string
-  blur?: boolean
+  is?: 'person' | 'server' | 'account' | 'channel'
 }
 
 export const headline = (n: Notice): Piece[] => {
-  if (n.lead !== undefined) return [{ text: `${n.lead} ` }, { text: n.name, blur: true }]
+  if (n.lead !== undefined) return [{ text: `${n.lead} ` }, { text: n.name, is: 'server' }]
   if (n.count === 1)
-    return [{ text: n.name, blur: true }, ...(n.action ? [{ text: ` ${n.action}` }] : [])]
+    return [{ text: n.name, is: 'person' }, ...(n.action ? [{ text: ` ${n.action}` }] : [])]
   const what = `${n.count} new ${n.messages ? 'messages' : 'notifications'}`
-  if (n.authors.length <= 1) return [{ text: `${what} from ` }, { text: n.name, blur: true }]
-  if (n.channel !== null) return [{ text: `${what} in ` }, { text: `#${n.channel}`, blur: true }]
+  if (n.authors.length <= 1) return [{ text: `${what} from ` }, { text: n.name, is: 'person' }]
+  if (n.channel !== null) return [{ text: `${what} in ` }, { text: `#${n.channel}`, is: 'channel' }]
   return [{ text: what }]
 }
 
@@ -136,10 +137,10 @@ const conversationContext = (n: Notice): Piece[] => {
   if (n.lead !== undefined) return []
   if (n.dm) return [{ text: 'Direct message' }]
   const out: Piece[] = []
-  if (n.server !== null) out.push({ text: n.server, blur: true })
+  if (n.server !== null) out.push({ text: n.server, is: 'server' })
   if (n.channel !== null) {
     if (out.length) out.push({ text: ' · ' })
-    out.push({ text: `#${n.channel}`, blur: true })
+    out.push({ text: `#${n.channel}`, is: 'channel' })
   }
   return out
 }
@@ -148,7 +149,7 @@ export const context = (n: Notice): Piece[] => {
   const pieces = conversationContext(n)
   if (n.recipient) {
     if (pieces.length) pieces.push({ text: ' · ' })
-    pieces.push({ text: n.recipient, blur: true })
+    pieces.push({ text: n.recipient, is: 'account' })
   }
   return pieces
 }

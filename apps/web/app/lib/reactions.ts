@@ -87,14 +87,26 @@ export const peopleText = (n: number) => `${n} ${n === 1 ? 'person' : 'people'}`
 
 // "alice", "alice and bob", "alice, bob and carol", "alice, bob, carol and 2 others".
 // `names` are the first reactors known (may be fewer than `total`).
-export function reactorsText(names: string[], total: number, shown = NAMES_SHOWN): string {
-  const count = Math.max(total, names.length)
-  const head = names.slice(0, Math.min(shown, count))
+// The same line in parts: the app's words as text, each reactor as `{ who }`.
+export function reactorsParts<T>(
+  reactors: T[],
+  total: number,
+  shown = NAMES_SHOWN
+): (string | { who: T })[] {
+  const count = Math.max(total, reactors.length)
+  const head = reactors.slice(0, Math.min(shown, count))
   const rest = count - head.length
-  if (!head.length) return peopleText(count)
-  if (rest > 0) return `${head.join(', ')} and ${othersText(rest)}`
-  if (head.length === 1) return head[0]
-  return `${head.slice(0, -1).join(', ')} and ${head[head.length - 1]}`
+  const listed = (list: T[]) => list.flatMap((who, i) => (i ? [', ', { who }] : [{ who }]))
+  if (!head.length) return [peopleText(count)]
+  if (rest > 0) return [...listed(head), ' and ', othersText(rest)]
+  if (head.length === 1) return listed(head)
+  return [...listed(head.slice(0, -1)), ' and ', { who: head[head.length - 1] }]
+}
+
+export function reactorsText(names: string[], total: number, shown = NAMES_SHOWN): string {
+  return reactorsParts(names, total, shown)
+    .map(p => (typeof p === 'string' ? p : p.who))
+    .join('')
 }
 
 // Reactors' names as the personal filter shows them: your own (`own`) never masked.

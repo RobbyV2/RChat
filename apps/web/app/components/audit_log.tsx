@@ -3,7 +3,7 @@
 import { Covered } from './covered'
 import { IconButton } from './controls'
 import { ask } from '../lib/asks'
-import { personName } from '../lib/names'
+import { personCalled, personName, serverCalled } from '../lib/names'
 import { Name, NameInput } from './name'
 
 import { useEffect, useState } from 'react'
@@ -43,7 +43,7 @@ import type { AuditEntry, UserRef } from '../lib/types'
 import { nameWithUsername } from '../lib/display_name'
 import { useMemberSearch } from './member_search'
 import { UserAvatar } from './user_avatar'
-import { Dialog, Masked, fieldCls } from './ui'
+import { Dialog, fieldCls } from './ui'
 import { Loaded, More, useAccountPages } from './loaded'
 import { Grid, Inset, Row, Stack, Surface } from './layout'
 import { useLooksFor, useShown, useShownMembers } from './shown_user'
@@ -339,13 +339,13 @@ export function AuditRow({ entry, server = null }: { entry: AuditEntry; server?:
         <span className="block text-sm break-words text-on-surface">
           {sentence(entry).map((p, i) =>
             p.name ? (
-              <Covered what="names" key={i} look="font-medium">
+              <span key={i} className="font-medium">
                 {p.person ? (
                   <AuditPerson part={p} server={server} />
                 ) : (
-                  <Masked text={p.text} by={p.by} />
+                  <Name of={p.server ? serverCalled(p.text) : personCalled(p.text, p.by)} />
                 )}
-              </Covered>
+              </span>
             ) : (
               <span key={i}>{p.text}</span>
             )

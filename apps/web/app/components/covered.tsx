@@ -22,8 +22,6 @@ export type CoveredKind =
   | 'address'
   // A value of a setting or of a log line, which may hold a name.
   | 'value'
-  // Several names together, or a box around names that are drawn inside it.
-  | 'names'
 
 type Tag = 'span' | 'p' | 'div' | 'h2' | 'h3' | 'li' | 'code' | 'strong' | 'dd'
 

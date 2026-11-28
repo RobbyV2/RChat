@@ -1,6 +1,6 @@
 'use client'
 import { Name, NameInput } from '../name'
-import { instanceName, p2pKey, p2pName, accountLabel } from '../../lib/names'
+import { instanceName, p2pKey, p2pName, accountLabel, roomName } from '../../lib/names'
 import { useAccount } from '../../lib/client/react'
 import { confirmIdentityRemoval, identityRecords } from '../../lib/client/identity_enrollment'
 import { client } from '../../lib/client/client'
@@ -29,7 +29,7 @@ import { fmtSize } from '../../lib/bytes'
 import { SettingSwitch } from '../settings_fields'
 import { Button } from '../controls'
 import { Row, Stack, Surface } from '../layout'
-import { fieldCls, Masked, sectionCls } from '../ui'
+import { fieldCls, sectionCls } from '../ui'
 import { ServerProfileList, ServerProfileRow } from '../server_profile_list'
 import { editsRoomProfile } from '../../lib/server_profile_editor'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
@@ -78,7 +78,7 @@ function P2pProfileRow({ room }: { room: string }) {
   if (!v) return null
   return (
     <ServerProfileRow
-      name={<Masked text={v.name} own={own} />}
+      name={roomName(v.name, own)}
       onEdit={() => {
         closeSettings()
         account.identities.show(identity)
