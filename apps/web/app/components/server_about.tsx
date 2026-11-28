@@ -1,6 +1,6 @@
 'use client'
 
-import { Name } from './name'
+import { Name, NameArea } from './name'
 import { serverCalled } from '../lib/names'
 import { useMemo, useState } from 'react'
 import { minidenticon } from 'minidenticons'
@@ -176,13 +176,13 @@ export function AboutEditor({
         {editable ? (
           <Stack as="label" gap="xs">
             <span className="text-sm text-on-surface">Description</span>
-            <textarea
+            <NameArea
               value={text}
               rows={3}
               onChange={e => edit(() => setText(e.target.value))}
               placeholder="What this server is about"
               aria-invalid={tooLong !== null}
-              className={`${fieldCls} streamer resize-y`}
+              className={`${fieldCls} resize-y`}
             />
           </Stack>
         ) : (

@@ -1,5 +1,5 @@
 'use client'
-import { Name } from '../name'
+import { Name, NameInput } from '../name'
 import { instanceName, p2pKey, p2pName } from '../../lib/names'
 import { useAccount } from '../../lib/client/react'
 import { confirmIdentityRemoval, identityRecords } from '../../lib/client/identity_enrollment'
@@ -56,12 +56,11 @@ function NameField() {
   const clean = cleanName(value)
   return (
     <Row gap="sm" align="stretch">
-      <input
+      <NameInput
         value={value}
         maxLength={32}
         onChange={e => setValue(e.target.value)}
         aria-label="P2P display name"
-        className={`${fieldCls} streamer`}
       />
       <Button onClick={() => void p2p.setName(value)} disabled={!clean || clean === name}>
         Save

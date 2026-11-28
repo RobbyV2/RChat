@@ -1,6 +1,12 @@
 'use client'
 
-import { createElement, type HTMLAttributes, type ReactNode, type Ref } from 'react'
+import {
+  createElement,
+  type ComponentProps,
+  type HTMLAttributes,
+  type ReactNode,
+  type Ref,
+} from 'react'
 import type { LayoutPlace, Look } from '../lib/controls'
 import {
   masksName,
@@ -13,7 +19,15 @@ import {
 } from '../lib/names'
 import { useMask, useStore } from '../lib/store'
 import { Row } from './layout'
-import { Masked, MaskedTogether, RevealScope, useOwn, useOwnServer, useRevealed } from './ui'
+import {
+  Masked,
+  MaskedTogether,
+  RevealScope,
+  fieldCls,
+  useOwn,
+  useOwnServer,
+  useRevealed,
+} from './ui'
 
 // Whether a name is the viewer's own: their account or identity, a server they named, one of
 // their accounts.
@@ -158,4 +172,36 @@ export function Name<const S extends string = never, const L extends string = ne
       <Drawn {...props} />
     </RevealScope>
   )
+}
+
+const fieldMark = (className: string | undefined, named: boolean) =>
+  `${named ? 'streamer ' : ''}${className ?? fieldCls}`.trim()
+
+// A form field that holds a name, an address or a secret: streamer mode hides what is typed in
+// it. `className` replaces the plain field's look; `named` false is a field whose text is a name
+// only sometimes.
+export function NameInput({
+  className,
+  named = true,
+  ...rest
+}: ComponentProps<'input'> & { named?: boolean }) {
+  return <input {...rest} className={fieldMark(className, named)} />
+}
+
+// The same for text of several lines.
+export function NameArea({
+  className,
+  named = true,
+  ...rest
+}: ComponentProps<'textarea'> & { named?: boolean }) {
+  return <textarea {...rest} className={fieldMark(className, named)} />
+}
+
+// The same for a choice among names (accounts, identities).
+export function NameSelect({
+  className,
+  named = true,
+  ...rest
+}: ComponentProps<'select'> & { named?: boolean }) {
+  return <select {...rest} className={fieldMark(className, named)} />
 }

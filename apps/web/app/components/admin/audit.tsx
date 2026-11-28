@@ -1,4 +1,5 @@
 'use client'
+import { NameInput } from '../name'
 import { useAccount } from '../../lib/client/react'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -12,7 +13,7 @@ import {
 } from '../../lib/instance_audit'
 import { errorText, useStore } from '../../lib/store'
 import type { InstanceAuditEntry } from '../../lib/types'
-import { Chips, Sentinel, fieldCls } from '../ui'
+import { Chips, Sentinel } from '../ui'
 import { Button } from '../controls'
 import { Row, Stack, Surface } from '../layout'
 
@@ -58,12 +59,11 @@ export function AuditSection() {
     <Stack gap="sm">
       <Chips label="Kind" value={kind} options={AUDIT_KINDS} onChange={setKind} />
       <Row gap="none">
-        <input
+        <NameInput
           value={person}
           onChange={e => setPerson(e.target.value)}
           placeholder="Filter by person"
           aria-label="Filter by person"
-          className={`${fieldCls} streamer`}
         />
       </Row>
       <Stack gap="2xs">

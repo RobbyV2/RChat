@@ -1,6 +1,6 @@
 'use client'
 
-import { Name } from './name'
+import { Name, NameInput } from './name'
 import { handleName, instanceAddress, instanceName } from '../lib/names'
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react'
 import { Shield } from 'lucide-react'
@@ -31,7 +31,7 @@ import { shellInfo } from '../lib/platform'
 import type { InstanceInfo, SiteSettings } from '../lib/types'
 import { Button } from './controls'
 import { Row, Stack, Surface } from './layout'
-import { Dialog, fieldCls } from './ui'
+import { Dialog } from './ui'
 import { SignInStep } from './sign_in_step'
 export { SignInStep } from './sign_in_step'
 
@@ -235,7 +235,7 @@ export function AddInstanceFlow({
         >
           <Stack as="label" gap="2xs">
             Instance address
-            <input
+            <NameInput
               autoFocus
               required
               disabled={busy || linkTarget}
@@ -246,7 +246,6 @@ export function AddInstanceFlow({
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              className={`streamer ${fieldCls}`}
             />
           </Stack>
           {!streamer && !linkTarget && (

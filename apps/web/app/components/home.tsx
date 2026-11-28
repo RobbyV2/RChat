@@ -1,5 +1,5 @@
 'use client'
-import { Name } from './name'
+import { Name, NameSelect } from './name'
 import { handleName, instanceAddress, instanceName, personCalled } from '../lib/names'
 import { asAccount, identityPerson } from '../lib/people'
 import { openPeerLink } from '../lib/client/peer_links'
@@ -1560,9 +1560,9 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
       place="inline-flex"
     >
       As <ActorAvatar row={actor.row} size={20} />
-      <select
+      <NameSelect
         aria-label="As"
-        className="streamer bg-transparent"
+        className="bg-transparent"
         value={actor.key}
         onChange={e => setChosen(e.target.value)}
       >
@@ -1579,7 +1579,7 @@ function MultiHome({ actors }: { actors: HomeActor[] }) {
                 a.instance}
           </option>
         ))}
-      </select>
+      </NameSelect>
     </Surface>
   )
   const total = accounts.reduce((n, a) => n + a.account.counts.value(), 0)

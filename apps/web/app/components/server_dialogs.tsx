@@ -1,4 +1,5 @@
 'use client'
+import { NameInput, NameSelect } from './name'
 import { background } from '../lib/api_errors'
 
 import { PeerCodeDialog } from './p2p/peer_code_dialog'
@@ -206,7 +207,7 @@ function AddServerDialog({
           </p>
           <Stack gap="sm">
             <Stack gap="2xs">
-              <input
+              <NameInput
                 autoFocus={step === 'name'}
                 value={name}
                 onChange={e => rename(e.target.value)}
@@ -216,7 +217,7 @@ function AddServerDialog({
                 placeholder={joining ? 'server name or invite link' : 'server name'}
                 aria-label={joining ? 'Server name or invite link' : 'Server name'}
                 aria-invalid={nameTaken}
-                className={`streamer w-full ${fieldCls}`}
+                className={`w-full ${fieldCls}`}
               />
               {nameTaken && <p className="text-xs text-error">That name is taken</p>}
             </Stack>
@@ -341,10 +342,10 @@ function AccountServerDialog({
       <label className="flex text-sm">
         <Row as="span" gap="sm" place="flex-1">
           As
-          <select
+          <NameSelect
             aria-label="As"
             value={(switching ?? acting).renderKey}
-            className={`streamer min-w-0 flex-1 ${smallFieldCls}`}
+            className={`min-w-0 flex-1 ${smallFieldCls}`}
             onChange={async e => {
               const mark = ++selection.current
               setSwitchError('')
@@ -375,7 +376,7 @@ function AccountServerDialog({
               </option>
             ))}
             {allowed && <option value="another">Another instance…</option>}
-          </select>
+          </NameSelect>
           {switchError && (
             <span role="alert" className="text-error">
               {switchError}

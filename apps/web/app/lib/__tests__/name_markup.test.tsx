@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { Name, useNameLabel } from '../../components/name'
+import { Name, NameArea, NameInput, NameSelect, useNameLabel } from '../../components/name'
 import { MaskedWords } from '../../components/ui'
 import {
   accountLabel,
@@ -146,5 +146,29 @@ describe('a label', () => {
     Object.assign(initial, { streamer: true })
     expect(html(<Label name={den} />)).toBe('<i>Server</i>')
     expect(html(<Label name={den} generic="A server" />)).toBe('<i>A server</i>')
+  })
+})
+
+describe('a field that holds a name', () => {
+  test('is marked for streamer mode, with the plain field look by default', () => {
+    const html = renderToStaticMarkup(<NameInput aria-label="Server" defaultValue="den" />)
+    expect(html).toContain(' class="streamer ')
+    expect(html).toContain('aria-label="Server"')
+  })
+
+  test('takes another look, and can be left unmarked', () => {
+    expect(renderToStaticMarkup(<NameArea className="box" />)).toBe(
+      '<textarea class="streamer box"></textarea>'
+    )
+    expect(
+      renderToStaticMarkup(
+        <NameSelect className="" aria-label="As">
+          <option>a</option>
+        </NameSelect>
+      )
+    ).toBe('<select aria-label="As" class="streamer"><option>a</option></select>')
+    expect(renderToStaticMarkup(<NameInput named={false} className="box" />)).toBe(
+      '<input class="box"/>'
+    )
   })
 })

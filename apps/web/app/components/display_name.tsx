@@ -1,5 +1,5 @@
 'use client'
-import { Name } from './name'
+import { Name, NameInput } from './name'
 import { handleName } from '../lib/names'
 import { Button } from './controls'
 import { Row, Stack } from './layout'
@@ -66,7 +66,7 @@ export function DisplayNameField({ focus }: { focus: boolean }) {
         Display name
       </label>
       <Row gap="sm" align="stretch">
-        <input
+        <NameInput
           id={id}
           ref={ref}
           value={text}
@@ -78,7 +78,7 @@ export function DisplayNameField({ focus }: { focus: boolean }) {
           autoComplete="nickname"
           aria-invalid={error !== null}
           aria-describedby={error ? `${id}-hint ${id}-error` : `${id}-hint`}
-          className={`${nameFieldCls} streamer min-w-0 flex-1 ${
+          className={`${nameFieldCls} min-w-0 flex-1 ${
             error !== null ? 'border-error' : 'border-outline focus:border-primary'
           }`}
         />

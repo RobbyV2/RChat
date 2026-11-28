@@ -1,6 +1,6 @@
 'use client'
 
-import { Name } from './name'
+import { Name, NameSelect } from './name'
 import { instanceName } from '../lib/names'
 import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
 import {
@@ -115,9 +115,9 @@ export function SettingsAccountPicker({ section }: { section: SettingsSection | 
   return (
     <Stack as="label" gap="2xs">
       <span className="text-xs text-on-surface-variant">Settings for</span>
-      <select
+      <NameSelect
         value={current ? keyOf(current.row) : ''}
-        className="streamer min-w-28 max-w-full rounded-lg bg-surface-container-high px-2 py-1 text-sm text-on-surface"
+        className="min-w-28 max-w-full rounded-lg bg-surface-container-high px-2 py-1 text-sm text-on-surface"
         onChange={e => {
           const next = rows.find(({ row }) => keyOf(row) === e.target.value)?.row
           if (!next) return
@@ -133,7 +133,7 @@ export function SettingsAccountPicker({ section }: { section: SettingsSection | 
             {mask(row.display)} · {mask(name)}
           </option>
         ))}
-      </select>
+      </NameSelect>
     </Stack>
   )
 }

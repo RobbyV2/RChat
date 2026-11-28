@@ -1,5 +1,5 @@
 'use client'
-import { Name } from '../name'
+import { Name, NameArea } from '../name'
 import { p2pKey, p2pName } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
 import { Button, Tab } from '../controls'
@@ -171,14 +171,14 @@ function AddContactDialogBody({
                 />
               )}
               {(tab === 'paste' || card) && (
-                <textarea
+                <NameArea
                   autoFocus={tab === 'paste'}
                   value={code}
                   onChange={e => setCode(e.target.value)}
                   rows={4}
                   placeholder="Paste a contact code (rcp1.…)"
                   aria-label="Contact code"
-                  className={`${areaCls} streamer`}
+                  className={areaCls}
                 />
               )}
               <FieldError message={error} />

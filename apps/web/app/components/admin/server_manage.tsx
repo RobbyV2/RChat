@@ -1,5 +1,5 @@
 'use client'
-import { Name } from '../name'
+import { Name, NameInput } from '../name'
 import { personCalled } from '../../lib/names'
 import { asAccount } from '../../lib/people'
 import { askKick } from '../../lib/place/moderation'
@@ -53,12 +53,13 @@ function NameForm({
         if (initial === undefined) setValue('')
       }}
     >
-      <input
+      <NameInput
         value={value}
         onChange={e => setValue(e.target.value)}
         placeholder={placeholder}
         aria-label={placeholder}
-        className={`${fieldCls} min-w-24 ${streamer ? 'streamer' : ''}`}
+        named={streamer}
+        className={`${fieldCls} min-w-24`}
       />
       <Button type="submit" place="shrink-0">
         {submitLabel}

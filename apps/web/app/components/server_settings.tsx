@@ -3,7 +3,7 @@ import { Loaded, useAccountSource } from './loaded'
 
 import { asAccount } from '../lib/people'
 import { personCalled, personName } from '../lib/names'
-import { Name } from './name'
+import { Name, NameInput } from './name'
 import { ViewActorTag } from './view_actor'
 import { useAccount } from '../lib/client/react'
 
@@ -1116,12 +1116,12 @@ function InviteLinkField({ server, hasPassword }: { server: string; hasPassword:
       <p className={sectionCls}>Invite</p>
       <Stack gap="xs">
         <Row gap="sm" align="stretch">
-          <input
+          <NameInput
             readOnly
             value={link}
             aria-label="Invite link"
             onFocus={e => e.currentTarget.select()}
-            className={`${fieldCls} streamer text-on-surface-variant`}
+            className={`${fieldCls} text-on-surface-variant`}
           />
           <button
             onClick={() => {
@@ -1520,12 +1520,7 @@ function Settings({ server, section }: { server: string; section: ServerSettings
           )
         }}
       >
-        <input
-          value={name}
-          onChange={e => setName(e.target.value)}
-          placeholder="Server name"
-          className={`${fieldCls} streamer`}
-        />
+        <NameInput value={name} onChange={e => setName(e.target.value)} placeholder="Server name" />
         <button className={filledBtn}>Rename</button>
       </Row>
       <FieldError message={renameError} />

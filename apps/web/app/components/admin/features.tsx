@@ -1,4 +1,5 @@
 'use client'
+import { NameInput } from '../name'
 
 import { useId, useState, type ReactNode } from 'react'
 import { X } from 'lucide-react'
@@ -309,7 +310,7 @@ function NamesControl({ row }: { row: AdminRow }) {
               save(edit.list)
             }}
           >
-            <input
+            <NameInput
               value={text}
               disabled={pinned}
               onChange={e => {
@@ -318,7 +319,7 @@ function NamesControl({ row }: { row: AdminRow }) {
               }}
               placeholder="Username or server:role"
               aria-label="Add a person or role"
-              className={`${fieldCls} streamer disabled:opacity-50`}
+              className={`${fieldCls} disabled:opacity-50`}
             />
             <Button type="submit" disabled={pinned} place="shrink-0">
               Add

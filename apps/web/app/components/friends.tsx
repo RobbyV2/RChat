@@ -4,7 +4,7 @@ import { OwnLoadNotice } from './own_load'
 import { Loaded, useAccountRequest, useRequest } from './loaded'
 import { orMissing } from '../lib/api_errors'
 import type { AccountSession } from '../lib/client/session'
-import { Name } from './name'
+import { Name, NameSelect } from './name'
 import { handleName, personCalled } from '../lib/names'
 import { asAccount } from '../lib/people'
 import { ViewActorTag } from './view_actor'
@@ -391,8 +391,8 @@ export function AddFriendBox({
       {(entries.length > 1 || !account) && (
         <Row as="label" gap="sm">
           <span className="text-sm">As</span>
-          <select
-            className="streamer rounded-lg bg-surface-container px-2 py-1 text-sm"
+          <NameSelect
+            className="rounded-lg bg-surface-container px-2 py-1 text-sm"
             value={account?.renderKey ?? ''}
             onChange={e => {
               setPicked(entries.find(x => String(x.account.renderKey) === e.target.value)!.account)
@@ -410,7 +410,7 @@ export function AddFriendBox({
                 {mask(x.row.display)} · {mask(x.name)}
               </option>
             ))}
-          </select>
+          </NameSelect>
         </Row>
       )}
       {hint && (

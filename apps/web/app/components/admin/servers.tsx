@@ -1,5 +1,5 @@
 'use client'
-import { Name } from '../name'
+import { Name, NameInput } from '../name'
 import { serverCalled } from '../../lib/names'
 import { useAccount } from '../../lib/client/react'
 import { useCallback, useEffect, useState } from 'react'
@@ -187,7 +187,7 @@ function DefaultServers() {
               }}
               gap="sm"
             >
-              <input
+              <NameInput
                 value={q}
                 disabled={pinned || full}
                 onChange={e => {
@@ -196,7 +196,7 @@ function DefaultServers() {
                 }}
                 placeholder={full ? 'The list is full' : 'Add a server by name'}
                 aria-label="Add a default server"
-                className={`${fieldCls} streamer disabled:opacity-50`}
+                className={`${fieldCls} disabled:opacity-50`}
               />
               <Button type="submit" disabled={pinned || full} place="shrink-0">
                 Add
@@ -272,22 +272,20 @@ function CreateServer({ onCreated }: { onCreated: () => void }) {
           The owner gets the server with every permission. This works whoever can create servers.
         </p>
         <Row gap="none">
-          <input
+          <NameInput
             value={form.name}
             onChange={field('name')}
             placeholder="Server name"
             aria-label="Server name"
-            className={`${fieldCls} streamer`}
           />
         </Row>
         <Row gap="none">
-          <input
+          <NameInput
             value={form.owner}
             onChange={field('owner')}
             placeholder="Owner's username"
             aria-label="Owner's username"
             autoCapitalize="none"
-            className={`${fieldCls} streamer`}
           />
         </Row>
         <Row gap="none">
@@ -360,12 +358,11 @@ export function ServersSection() {
       >
         <Stack gap="sm">
           <Row gap="none">
-            <input
+            <NameInput
               value={q}
               onChange={e => setQ(e.target.value)}
               placeholder="Search servers"
               aria-label="Search servers"
-              className={`${fieldCls} streamer`}
             />
           </Row>
           <Stack gap="2xs">

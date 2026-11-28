@@ -1,5 +1,5 @@
 'use client'
-import { Name } from '../name'
+import { Name, NameInput } from '../name'
 import { p2pKey, p2pName } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
 import { ActorLabel, PeerActorTag, usePeerActor } from '../view_actor'
@@ -986,7 +986,7 @@ function RenameDialog({ ik }: { ik: string }) {
     <Dialog title="Rename contact" onClose={p2p.closeDialog} compact>
       <Stack gap="xl">
         <Stack gap="xs">
-          <input
+          <NameInput
             autoFocus
             value={name}
             maxLength={p2p.limits().contacts.petnameMax}
@@ -996,7 +996,7 @@ function RenameDialog({ ik }: { ik: string }) {
             }}
             placeholder={c.name || 'Name'}
             aria-label="Name for this contact"
-            className={`${fieldCls} streamer w-full`}
+            className={`${fieldCls} w-full`}
           />
           <p className="text-xs text-on-surface-variant">
             Only you see this name. Leave empty to use theirs.

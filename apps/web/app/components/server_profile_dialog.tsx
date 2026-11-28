@@ -2,7 +2,7 @@
 import { Refreshed, useAccountRequest } from './loaded'
 
 import { asAccount, pictured, type Person } from '../lib/people'
-import { Name } from './name'
+import { Name, NameArea, NameInput } from './name'
 import { p2pName, personCalled, personName } from '../lib/names'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import { Lock } from 'lucide-react'
@@ -229,14 +229,14 @@ export function ProfileEditor({
                 Server name
               </label>
               <Row gap="sm" align="stretch">
-                <input
+                <NameInput
                   id={nameId}
                   value={draft.name}
                   maxLength={PROFILE_FIELDS.name.max * 2}
                   onChange={e => change({ name: e.target.value })}
                   placeholder={account.display_name}
                   autoComplete="off"
-                  className={`${boxCls} streamer min-w-0 flex-1 border-outline focus:border-primary`}
+                  className={`${boxCls} min-w-0 flex-1 border-outline focus:border-primary`}
                 />
                 {draft.name !== '' && (
                   <Button onClick={() => change({ name: '' })}>Use {origin} name</Button>
@@ -313,7 +313,7 @@ export function ProfileEditor({
             <label htmlFor={bioId} className={labelCls}>
               Description
             </label>
-            <textarea
+            <NameArea
               id={bioId}
               rows={3}
               value={draft.bio}
@@ -321,7 +321,7 @@ export function ProfileEditor({
               placeholder={source.accountBio ?? 'Tell this server a little about yourself'}
               aria-invalid={left < 0}
               aria-describedby={`${bioId}-count`}
-              className={`${boxCls} streamer resize-none ${
+              className={`${boxCls} resize-none ${
                 left < 0 ? 'border-error' : 'border-outline focus:border-primary'
               }`}
             />

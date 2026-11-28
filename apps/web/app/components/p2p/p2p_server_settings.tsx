@@ -1,5 +1,5 @@
 'use client'
-import { Name } from '../name'
+import { Name, NameInput } from '../name'
 import { p2pName } from '../../lib/names'
 import { PeerActorTag } from '../view_actor'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
@@ -83,13 +83,12 @@ function Overview({ v }: { v: ServerView }) {
     <Stack gap="md">
       <Stack as="label" gap="2xs">
         <span className="text-sm">Server name</span>
-        <input
+        <NameInput
           value={name}
           maxLength={p2p.limits().server.nameMax}
           disabled={!edit}
           onChange={e => setName(e.target.value)}
           aria-label="Server name"
-          className={`${fieldCls} streamer`}
         />
       </Stack>
       {edit ? (

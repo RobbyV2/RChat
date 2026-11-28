@@ -1,7 +1,7 @@
 'use client'
 import { asAccount } from '../lib/people'
 import { personName } from '../lib/names'
-import { Name } from './name'
+import { Name, NameSelect } from './name'
 import { useP2pApp, useP2p, P2pProvider } from '../lib/client/p2p_react'
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
@@ -612,9 +612,9 @@ export function DmBlock({
                   {accounts.length > 1 && (
                     <label className="text-xs">
                       As{' '}
-                      <select
+                      <NameSelect
                         aria-label="As"
-                        className="streamer"
+                        className=""
                         value={as.renderKey}
                         onChange={e =>
                           setAs(accounts.find(a => a.renderKey === Number(e.target.value)) ?? acct)
@@ -625,7 +625,7 @@ export function DmBlock({
                             {a.store.getState().me?.username ?? a.credentialTarget}@{a.conn.host}
                           </option>
                         ))}
-                      </select>
+                      </NameSelect>
                     </label>
                   )}
                   <input

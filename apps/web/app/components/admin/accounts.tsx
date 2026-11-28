@@ -1,6 +1,6 @@
 'use client'
 
-import { Name } from '../name'
+import { Name, NameInput } from '../name'
 import { handleName, serverCalled } from '../../lib/names'
 import { useId, useState } from 'react'
 import { Check, Copy, X } from 'lucide-react'
@@ -124,13 +124,13 @@ function ServerSearch({
   return (
     <Stack gap="2xs">
       <Row gap="none">
-        <input
+        <NameInput
           value={q}
           disabled={disabled}
           onChange={e => setQ(e.target.value)}
           placeholder={disabled ? 'The list is full' : 'Add a server by name'}
           aria-label="Add a server"
-          className={`${fieldCls} streamer disabled:opacity-50`}
+          className={`${fieldCls} disabled:opacity-50`}
         />
       </Row>
       <ServerMatches
@@ -307,14 +307,13 @@ export function CreateAccountDialog() {
             Username
           </label>
           <Row gap="none">
-            <input
+            <NameInput
               id={nameId}
               value={form.username}
               autoComplete="off"
               autoCapitalize="none"
               spellCheck={false}
               onChange={e => setForm({ ...form, username: e.target.value })}
-              className={`${fieldCls} streamer`}
             />
           </Row>
           <FieldError message={shown('username')} />
@@ -324,12 +323,11 @@ export function CreateAccountDialog() {
             Display name <span className="font-normal text-on-surface-variant">(optional)</span>
           </label>
           <Row gap="none">
-            <input
+            <NameInput
               id={displayId}
               value={form.displayName}
               autoComplete="off"
               onChange={e => setForm({ ...form, displayName: e.target.value })}
-              className={`${fieldCls} streamer`}
             />
           </Row>
           <FieldError message={shown('displayName')} />

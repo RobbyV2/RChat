@@ -1,5 +1,5 @@
 'use client'
-import { Name } from '../name'
+import { Name, NameInput } from '../name'
 import { handleName, personCalled } from '../../lib/names'
 import { asAccount } from '../../lib/people'
 import { useAccount } from '../../lib/client/react'
@@ -14,7 +14,7 @@ import { UserAvatar } from '../user_avatar'
 import { PageGroup } from '../settings_page'
 import { Button, ListRow } from '../controls'
 import { Grid, Row, Stack, Surface } from '../layout'
-import { Chips, Sentinel, fieldCls } from '../ui'
+import { Chips, Sentinel } from '../ui'
 import { useAccountChanges } from './account_state'
 import { Loaded, More, useAccountPages, useAccountSource, useRefreshOn } from '../loaded'
 import { time } from '../../lib/platform/time'
@@ -290,12 +290,11 @@ export function UsersSection() {
         </Button>
       </Row>
       <Row gap="none">
-        <input
+        <NameInput
           value={q}
           onChange={e => setQ(e.target.value)}
           placeholder="Search users"
           aria-label="Search users"
-          className={`${fieldCls} streamer`}
         />
       </Row>
       <Chips label="Show accounts" value={filter} options={ACCOUNT_FILTERS} onChange={setFilter} />

@@ -1,4 +1,5 @@
 'use client'
+import { NameArea, NameInput } from '../name'
 import { useAccount } from '../../lib/client/react'
 import { useId, useRef, useState, type ReactNode } from 'react'
 import { AnnouncementEditor } from './announcements'
@@ -109,7 +110,7 @@ function TextControl({ row }: { row: TextRow }) {
   const text = draft ?? stored
   const pinned = control?.pinned ?? false
   const off = control === null || pinned
-  const field = `${fieldCls} streamer disabled:opacity-50`
+  const field = `${fieldCls} disabled:opacity-50`
   return (
     <Surface
       as="form"
@@ -131,7 +132,7 @@ function TextControl({ row }: { row: TextRow }) {
       <p className={lineCls}>{row.line}</p>
       <Row gap="sm" wrap align="end">
         {row.lines ? (
-          <textarea
+          <NameArea
             id={id}
             rows={3}
             value={text}
@@ -141,7 +142,7 @@ function TextControl({ row }: { row: TextRow }) {
             className={`${field} min-h-20 basis-full resize-y`}
           />
         ) : (
-          <input
+          <NameInput
             id={id}
             value={text}
             disabled={off}
@@ -330,20 +331,20 @@ function SuggestionsControl() {
       {shown.list.length === 0 && <p className={lineCls}>No instances.</p>}
       {shown.list.map((s, i) => (
         <Pair key={i}>
-          <input
+          <NameInput
             value={s.url}
             onChange={e => edit(i, { url: e.target.value })}
             placeholder="https://"
             aria-label="Instance address"
             inputMode="url"
-            className={`${fieldCls} streamer basis-48`}
+            className={`${fieldCls} basis-48`}
           />
-          <input
+          <NameInput
             value={s.label}
             onChange={e => edit(i, { label: e.target.value })}
             placeholder="Label (optional)"
             aria-label="Instance label"
-            className={`${fieldCls} streamer basis-28`}
+            className={`${fieldCls} basis-28`}
           />
           <RemoveButton
             label="Remove the instance"

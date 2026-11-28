@@ -1,5 +1,5 @@
 'use client'
-import { Name } from '../name'
+import { Name, NameArea, NameInput } from '../name'
 import { p2pName, roomName } from '../../lib/names'
 import { identityPerson } from '../../lib/people'
 import { Button, Tab } from '../controls'
@@ -412,7 +412,7 @@ function ServerNewDialogBody({
                 </Surface>
               </div>
               <p className="text-xs text-on-surface-variant">{IP_NOTE}</p>
-              <input
+              <NameInput
                 autoFocus
                 value={name}
                 maxLength={p2p.limits().server.nameMax}
@@ -422,7 +422,7 @@ function ServerNewDialogBody({
                 }}
                 placeholder="Server name"
                 aria-label="Server name"
-                className={`${fieldCls} streamer w-full`}
+                className={`${fieldCls} w-full`}
               />
               <p className="text-xs text-on-surface-variant">{OWNER_TEXT}</p>
               <CoOwnerPicker value={coOwners} onChange={setCoOwners} />
@@ -457,7 +457,7 @@ function ServerNewDialogBody({
                   }}
                 />
               ) : (
-                <textarea
+                <NameArea
                   autoFocus
                   value={code}
                   onChange={e => {
@@ -467,7 +467,7 @@ function ServerNewDialogBody({
                   rows={4}
                   placeholder="Paste an invite code (rci1.…)"
                   aria-label="Invite code"
-                  className={`${areaCls} streamer`}
+                  className={areaCls}
                 />
               )}
               <Button onClick={() => setScan(s => !s)} place="self-start">

@@ -1,6 +1,6 @@
 'use client'
 
-import { Name } from './name'
+import { Name, NameInput } from './name'
 import { handleName } from '../lib/names'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import { Check, Copy, Lock, LockOpen, Plus } from 'lucide-react'
@@ -416,12 +416,12 @@ function NewPasswordDialog({
               Copy it now. It is not shown again, but this device remembers it for the invite link.
             </p>
             <Row gap="sm">
-              <input
+              <NameInput
                 readOnly
                 value={created.password}
                 aria-label="New password"
                 onFocus={e => e.currentTarget.select()}
-                className={`${fieldCls} streamer font-mono`}
+                className={`${fieldCls} font-mono`}
               />
               <CopyButton text={created.password} label="Copy password" />
               <CopyButton
@@ -479,7 +479,7 @@ function NewPasswordDialog({
               ))}
             </Row>
             {custom ? (
-              <input
+              <NameInput
                 type={streamer ? 'password' : 'text'}
                 value={secret}
                 onChange={e => setSecret(e.target.value)}
@@ -487,7 +487,7 @@ function NewPasswordDialog({
                 autoComplete={streamer ? 'new-password' : 'off'}
                 aria-label="Custom password"
                 placeholder="At least 8 characters"
-                className={`${fieldCls} streamer w-full`}
+                className={`${fieldCls} w-full`}
               />
             ) : (
               <p className="text-xs text-on-surface-variant">

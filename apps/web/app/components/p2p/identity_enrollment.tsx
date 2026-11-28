@@ -1,4 +1,5 @@
 'use client'
+import { NameInput, NameSelect } from '../name'
 
 import { Button } from '../controls'
 import { Surface } from '../layout'
@@ -18,7 +19,6 @@ import { FILE_LIMITS, decodeConfig, splitFile } from '../../lib/config_transfer'
 import { filesHead, type P2pSection } from '../../lib/p2p/transfer'
 import type { FilesPart } from '../../lib/p2p/app'
 import { P2pImport } from './p2p_transfer'
-import { fieldCls } from '../ui'
 import { time } from '../../lib/platform/time'
 
 type Slot = Awaited<ReturnType<typeof reserveIdentity>>
@@ -124,8 +124,7 @@ export function IdentityEnrollment({
         <>
           <label className="text-sm">
             Attach to account{' '}
-            <select
-              className={fieldCls + ' streamer'}
+            <NameSelect
               value={eligible.indexOf(target)}
               onChange={e => setTarget(eligible[Number(e.target.value)]!)}
             >
@@ -134,16 +133,11 @@ export function IdentityEnrollment({
                   {a.store.getState().me?.username}@{new URL(a.conn.origin).host}
                 </option>
               ))}
-            </select>
+            </NameSelect>
           </label>
           <label className="text-sm">
             Identity name{' '}
-            <input
-              className={fieldCls + ' streamer'}
-              maxLength={32}
-              value={name}
-              onChange={e => setName(e.target.value)}
-            />
+            <NameInput maxLength={32} value={name} onChange={e => setName(e.target.value)} />
           </label>
           <Button
             variant="filled"
