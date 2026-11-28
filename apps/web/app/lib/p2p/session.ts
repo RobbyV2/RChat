@@ -43,10 +43,11 @@ export interface Clock {
   clear: (handle: unknown) => void
 }
 
+// `clear` takes what `set` gave, or null for a timer that was never set.
 export const realClock: Clock = {
   now: () => time().now(),
   set: (fn, ms) => time().after(ms, fn),
-  clear: h => (h as Cancel)(),
+  clear: h => (h as Cancel | null)?.(),
 }
 
 // limits.ts `session`.

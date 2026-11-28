@@ -15,7 +15,7 @@ import {
   Reassembler,
   WIRE_MAX,
 } from '../p2p/frames'
-import { Session, type SessionOpts } from '../p2p/session'
+import { realClock, Session, type SessionOpts } from '../p2p/session'
 import { LOCAL } from '../p2p/limits'
 import { ManualClock, pipePair, settle, waitFor } from './p2p_net'
 
@@ -254,6 +254,13 @@ const pair = (
   sa.start()
   return { i, r, sa, sb, a, b, clock, got, wire }
 }
+
+test('the real clock clears a timer it set, and nothing for one never set', () => {
+  let ran = 0
+  realClock.clear(null)
+  realClock.clear(realClock.set(() => void (ran += 1), 0))
+  expect(ran).toBe(0)
+})
 
 describe('session', () => {
   test('handshake, hello and messages both ways', async () => {
