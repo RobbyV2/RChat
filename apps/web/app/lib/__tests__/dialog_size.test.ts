@@ -25,7 +25,7 @@ describe('named sizes', () => {
   test('without a size the dialog is the medium card', () => {
     const fit = dialogLayout({})
     has(fit.panel, 'max-w-lg', 'rounded-2xl', 'max-h-[min(85vh,100%)]', 'p-6', 'overflow-y-auto')
-    has(fit.backdrop, 'z-page', 'px-safe-4', 'py-4', 'bg-scrim/60')
+    has(fit.backdrop, 'z-page', 'safe-x-4', 'py-4', 'bg-scrim/60')
     has(fit.header, 'mb-4')
     lacks(fit.header, 'sticky')
     expect(fit.style).toBeUndefined()
@@ -59,7 +59,7 @@ describe('named sizes', () => {
       'sm:rounded-2xl',
       'sm:max-h-[min(85vh,100%)]'
     )
-    has(fit.backdrop, 'px-safe', 'sm:px-safe-4', 'sm:py-4')
+    has(fit.backdrop, 'safe-x', 'sm:safe-x-4', 'sm:py-4')
     has(fit.header, 'sticky', '-top-6', 'bg-surface-container-high')
     lacks(fit.header, 'border-b')
     has(dialogLayout({ full: true, size: 'lg' }).panel, 'h-full', 'sm:max-w-2xl')
@@ -69,7 +69,7 @@ describe('named sizes', () => {
     const settings = dialogLayout({ size: 'settings' })
     has(settings.panel, 'md:w-[min(94vw,1120px)]', 'md:h-[min(88dvh,820px)]', 'md:rounded-2xl')
     has(settings.panel, 'md:max-w-full', 'md:max-h-full', 'md:border')
-    has(settings.backdrop, 'md:px-safe-4', 'md:py-4')
+    has(settings.backdrop, 'md:safe-x-4', 'md:py-4')
     has(settings.header, 'sticky', 'border-b')
     has(dialogLayout({ size: 'full' }).panel, 'md:w-[min(96vw,1400px)]', 'md:h-[min(92dvh,960px)]')
   })
@@ -93,9 +93,9 @@ describe('large boxes on phones', () => {
         expect(panel).toContain('w-full')
         expect(panel).toContain('h-full')
         expect(panel.filter(c => /^(min-|max-)?w-/.test(c))).toEqual(['w-full'])
-        const around = phone(fit.backdrop).filter(c => /^p[xy]?-/.test(c))
-        expect(around).toEqual(chrome === 'default' ? ['px-safe'] : [])
-        if (chrome === 'bare') expect(panel).toContain('px-safe')
+        const around = phone(fit.backdrop).filter(c => /^(p[xy]?-|safe-)/.test(c))
+        expect(around).toEqual(chrome === 'default' ? ['safe-x'] : [])
+        if (chrome === 'bare') expect(panel).toContain('safe-x')
       }
   })
 
@@ -107,7 +107,7 @@ describe('large boxes on phones', () => {
 describe('chrome', () => {
   test('bare leaves padding and scrolling to the content', () => {
     const fit = dialogLayout({ size: 'settings', chrome: 'bare' })
-    has(fit.panel, 'flex', 'flex-col', 'overflow-hidden', 'bg-surface', 'px-safe', 'md:px-0')
+    has(fit.panel, 'flex', 'flex-col', 'overflow-hidden', 'bg-surface', 'safe-x', 'md:px-0')
     lacks(fit.panel, 'p-6', 'overflow-y-auto', 'bg-surface-container-high')
   })
 

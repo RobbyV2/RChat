@@ -59,7 +59,7 @@ import { WITH_OPTION, keepGuestsChoices } from './server_settings'
 import { SettingSwitch } from './settings_fields'
 import { GUEST_VOICE_OFF, GUEST_VOICE_ON } from '../lib/guest_voice'
 import { Button, IconButton } from './controls'
-import { Grid, Row, Stack, Surface } from './layout'
+import { Grid, Row, Stack, Surface, Inset } from './layout'
 import { Chips, Dialog, FieldError, fieldCls, useCopied } from './ui'
 import { time } from '../lib/platform/time'
 
@@ -80,20 +80,24 @@ const readBook = (key: string) => {
 const saveBook = (key: string, book: SecretBook) =>
   writeLocal(key, Object.keys(book.servers).length ? JSON.stringify(book) : null)
 
-const CHIP: Record<PasswordStatus, string> = {
+const CHIP = {
   live: 'bg-primary-container text-on-primary-container',
   expired: 'bg-surface-container-highest text-on-surface-variant',
   used_up: 'bg-surface-container-highest text-on-surface-variant',
   revoked: 'bg-error-container text-on-error-container',
-}
+} as const satisfies Record<PasswordStatus, string>
 
 function Chip({ status }: { status: PasswordStatus }) {
   return (
-    <span
-      className={`shrink-0 rounded-full px-2 py-0.5 text-2xs leading-4 font-medium ${CHIP[status]}`}
+    <Inset
+      as="span"
+      pad="sm"
+      inset="chip"
+      look={`rounded-full text-2xs leading-4 font-medium ${CHIP[status]}`}
+      place="shrink-0"
     >
       {STATUS_LABEL[status]}
-    </span>
+    </Inset>
   )
 }
 
@@ -228,14 +232,14 @@ function Radio({
         name={name}
         checked={checked}
         onChange={onChange}
-        className="mt-0.5 shrink-0 accent-primary"
+        className="shrink-0 accent-primary"
       />
       <span className="min-w-0">
         <Row as="span" gap="xs" text="sm" ink="strong" look="font-medium">
           {icon}
           {title}
         </Row>
-        <span className="block pt-0.5 text-xs text-on-surface-variant">{detail}</span>
+        <span className="block text-xs text-on-surface-variant">{detail}</span>
       </span>
     </Surface>
   )
@@ -456,7 +460,7 @@ function NewPasswordDialog({
             />
           </Stack>
           <Stack as="fieldset" gap={custom ? 'sm' : '2xs'}>
-            <legend className="pb-1 text-xs text-on-surface-variant">Password</legend>
+            <legend className="text-xs text-on-surface-variant">Password</legend>
             <Row gap="lg" wrap>
               {(
                 [
@@ -623,7 +627,7 @@ export function GuestParticipation({ server }: { server: string }) {
   }
   return (
     <div>
-      <div className="-mx-2">
+      <div>
         <SettingSwitch
           label="Guests can send messages"
           hint={
@@ -672,7 +676,7 @@ function MemberPrivacy({ server, visible }: { server: string; visible: boolean }
   }
   return (
     <div>
-      <div className="-mx-2">
+      <div>
         <SettingSwitch
           label={MEMBERS_VISIBLE_LABEL}
           hint={membersVisibleLine(visible)}

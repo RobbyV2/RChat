@@ -24,6 +24,7 @@ import {
 import { UserAvatar } from './user_avatar'
 import { Masked } from './ui'
 import { time } from '../lib/platform/time'
+import { Inset, Stack } from './layout'
 
 function Pieces({ pieces }: { pieces: Piece[] }) {
   return pieces.map((p, i) => (
@@ -79,14 +80,20 @@ function NoticeCard({ notice, paused }: { notice: Notice; paused: boolean }) {
       }}
       className="group/notice relative overflow-hidden rounded-xl bg-surface-container-high shadow-elevation-2 hover:bg-surface-container-highest"
     >
-      <button
+      <Inset
         onClick={() => {
           if (card.current?.contains(document.activeElement))
             (document.activeElement as HTMLElement).blur()
           dismiss(notice.id)
           openAccountNotice(owner, notice.go)
         }}
-        className="flex w-full items-start gap-3 p-3 pr-9 text-left focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+        as="button"
+        row
+        pad="md"
+        gap="md"
+        align="start"
+        look="text-left focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+        place="w-full"
       >
         {actor && !streamer ? (
           <UserAvatar person={asAccount(actor, 'notice')} size={36} />
@@ -106,12 +113,12 @@ function NoticeCard({ notice, paused }: { notice: Notice; paused: boolean }) {
             </span>
           )}
           {body && (
-            <span className="mt-0.5 block truncate text-sm text-on-surface">
+            <span className="block truncate text-sm text-on-surface">
               <Masked text={body} code file={notice.file} />
             </span>
           )}
         </span>
-      </button>
+      </Inset>
       <IconButton
         icon={X}
         label="Dismiss"
@@ -168,7 +175,7 @@ export function NoticeStack({ sessions }: { sessions: readonly AccountSession[] 
   )
 
   return (
-    <section
+    <Stack
       ref={region}
       aria-live="polite"
       aria-label="Notifications"
@@ -178,13 +185,16 @@ export function NoticeStack({ sessions }: { sessions: readonly AccountSession[] 
       onBlur={(e: FocusEvent) => {
         if (!region.current?.contains(e.relatedTarget as Node | null)) setFocus(false)
       }}
-      className="flex w-full flex-col gap-2 sm:fixed sm:top-below-bar sm:right-safe-4 sm:z-top sm:w-80 sm:max-w-screen-inset pointer-events-auto empty:pointer-events-none"
+      as="section"
+      gap="sm"
+      look="pointer-events-auto empty:pointer-events-none sm:fixed sm:top-below-bar sm:right-safe-4 sm:z-top sm:w-80 sm:max-w-screen-inset"
+      place="w-full"
     >
       {sessions.map(session => (
         <AccountProvider key={session.renderKey} session={session}>
           <AccountNotices onChange={onChange} />
         </AccountProvider>
       ))}
-    </section>
+    </Stack>
   )
 }

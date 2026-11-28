@@ -38,7 +38,7 @@ import { longPress } from './context_menu'
 import { RowSelecting } from './selection'
 import { useLiveNow } from './timestamp'
 import { MaskedText, MaskedTogether } from './ui'
-import { Row } from './layout'
+import { Row, Surface } from './layout'
 import { time } from '../lib/platform/time'
 
 const ICONS: Record<FileKind, LucideIcon> = {
@@ -192,10 +192,11 @@ export function FileCardBody({
       data-file-card=""
       className={dim ? `${cardBox} opacity-60` : cardBox}
     >
-      <div
-        className={`flex min-w-0 flex-col rounded-2xl border bg-surface-container p-3 ${
-          dashed ? 'border-dashed border-tertiary/60' : 'border-outline-variant'
-        }`}
+      <Surface
+        pad="md"
+        tone="base"
+        look={`border ${dashed ? 'border-dashed border-tertiary/60' : 'border-outline-variant'}`}
+        place="min-w-0"
       >
         {preview}
         <Row gap="md">
@@ -245,13 +246,13 @@ export function FileCardBody({
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={percent}
-            className="mt-3 h-1 w-full overflow-hidden rounded-full bg-surface-container-highest"
+            className="msg-part-loose h-1 w-full overflow-hidden rounded-full bg-surface-container-highest"
           >
             <div className="h-full rounded-full bg-primary" style={{ width: `${percent}%` }} />
           </div>
         )}
         {children}
-      </div>
+      </Surface>
       {footer}
     </div>
   )
@@ -261,7 +262,7 @@ export function FileCardBody({
 export function ExpiryLine({ at }: { at: number }) {
   useLiveNow(at * 1000)
   return (
-    <p title={expiryTitle(at)} className="mt-1.5 text-xs text-on-surface-variant">
+    <p title={expiryTitle(at)} className="msg-part text-xs text-on-surface-variant">
       {expiryLabel(at, Math.floor(time().now() / 1000))}
     </p>
   )

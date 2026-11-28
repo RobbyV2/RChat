@@ -6,6 +6,7 @@ import { validColor } from '../lib/profile'
 import { onColor } from '../lib/server_colors'
 import { Button } from './controls'
 import { Row, Stack } from './layout'
+import { smallFieldCls } from './ui'
 
 interface ColorPreset {
   color: string
@@ -88,7 +89,7 @@ export function ColorField({
             if (validColor(hex)) onChange(hex.toLowerCase())
           }}
           onBlur={() => setText(value ?? '')}
-          className="w-24 rounded-lg border border-outline bg-transparent px-2 py-1 text-base text-on-surface outline-none placeholder:text-on-surface-variant focus:border-primary md:text-sm"
+          className={`w-24 ${smallFieldCls} text-on-surface`}
         />
         {value === null ? (
           <span className="text-xs text-on-surface-variant">{defaultNote}</span>

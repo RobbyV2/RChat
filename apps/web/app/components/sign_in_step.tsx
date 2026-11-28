@@ -129,7 +129,7 @@ export function SignInStep({
   }
 
   const tab = (value: Mode, label: string) => (
-    <button
+    <Surface
       type="button"
       disabled={busy}
       onClick={() => {
@@ -137,14 +137,17 @@ export function SignInStep({
         setError(null)
         setNameError(null)
       }}
-      className={`flex-1 rounded-full py-2 text-sm font-medium outline-offset-2 transition-colors focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11 ${
-        mode === value
-          ? 'bg-primary-container text-on-primary-container'
-          : 'text-on-surface-variant hover-idle:bg-on-surface/8'
-      }`}
+      as="button"
+      pad="sm"
+      tone="plain"
+      radius="full"
+      align="center"
+      text="sm"
+      look={`font-medium outline-offset-2 transition-colors focus-visible:outline-2 focus-visible:outline-primary pointer-coarse:min-h-11 ${mode === value ? 'bg-primary-container text-on-primary-container' : 'text-on-surface-variant hover-idle:bg-on-surface/8'}`}
+      place="flex-1"
     >
       {label}
-    </button>
+    </Surface>
   )
 
   return (

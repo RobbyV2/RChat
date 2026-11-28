@@ -235,7 +235,7 @@ test('the page is a large dialog on wide screens and fills narrow ones', () => {
   const panel = /<div role="dialog"[^>]*class="([^"]*)"/.exec(html)?.[1] ?? ''
   expect(panel.split(' ')).toContain('h-full')
   expect(panel.split(' ')).toContain('w-full')
-  expect(panel.split(' ')).toContain('px-safe')
+  expect(panel.split(' ')).toContain('safe-x')
 })
 
 test('a section screen on narrow screens has the back arrow and a close button', () => {

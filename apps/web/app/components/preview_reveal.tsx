@@ -110,15 +110,21 @@ export function PreviewFilename({
 export function RevealChannelPreview({ target }: { target: ViewingTarget }) {
   const { requestViewing } = useAccount().viewing
   return (
-    <button
+    <Inset
       type="button"
-      className="min-h-8 shrink-0 cursor-pointer rounded-sm px-1 text-sm whitespace-nowrap text-primary underline focus-visible:outline-2 focus-visible:outline-primary"
       onClick={e => {
         e.stopPropagation()
         void requestViewing(target)
       }}
+      as="button"
+      pad="2xs"
+      inset="sides"
+      justify="center"
+      text="sm"
+      look="min-h-8 cursor-pointer rounded-sm whitespace-nowrap text-primary underline focus-visible:outline-2 focus-visible:outline-primary"
+      place="shrink-0"
     >
       Reveal preview
-    </button>
+    </Inset>
   )
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { desktopInfo, inShell, type DesktopOs } from '../lib/platform'
+import { Inset } from './layout'
 
 type Win = Awaited<ReturnType<typeof loadWindow>>
 
@@ -61,7 +62,13 @@ function Controls({ os, win }: { os: DesktopOs; win: Win | null }) {
   const size = windows ? 10 : 8
   const maxLabel = maximized ? 'Restore' : 'Maximize'
   return (
-    <div className={`flex h-full shrink-0 items-center ${windows ? '' : 'gap-3 px-2.5'}`}>
+    <Inset
+      row
+      pad={windows ? 'none' : 'sm'}
+      inset="sides"
+      gap={windows ? 'none' : 'md'}
+      place="h-full shrink-0"
+    >
       <button
         type="button"
         title="Minimize"
@@ -89,7 +96,7 @@ function Controls({ os, win }: { os: DesktopOs; win: Win | null }) {
       >
         {glyph(CLOSE, size)}
       </button>
-    </div>
+    </Inset>
   )
 }
 
@@ -127,14 +134,14 @@ export default function TitleBar() {
       className="fixed inset-x-0 top-0 z-chrome flex h-titlebar items-center bg-surface-container-lowest text-xs text-on-surface-variant select-none"
     >
       {os === 'windows' ? (
-        <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center gap-2 pl-3">
+        <Inset data-tauri-drag-region row pad="md" inset="sides" gap="sm" place="min-w-0 flex-1">
           <img src="/rchat_r.png" alt="" className="pointer-events-none size-4" />
           <span className="pointer-events-none truncate">{title}</span>
-        </div>
+        </Inset>
       ) : (
         <div
           data-tauri-drag-region
-          className={`flex min-w-0 flex-1 items-center justify-center ${mac ? 'px-20' : 'pl-28'}`}
+          className={`flex min-w-0 flex-1 items-center justify-center ${mac ? 'titlebar-clear-mac' : 'titlebar-clear'}`}
         >
           <span className="pointer-events-none truncate font-medium">{title}</span>
         </div>

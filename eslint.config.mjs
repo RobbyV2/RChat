@@ -35,37 +35,8 @@ const SPACING_SOURCES = [
 
 // Screens that set spacing classes of their own. On every other screen one fails the lint.
 const HAND_SPACED = [
-  'apps/web/app/\\[\\[...slug\\]\\]/app_shell.tsx',
-  'apps/web/app/components/admin/branding.tsx',
-  'apps/web/app/components/announcements.tsx',
-  'apps/web/app/components/autocomplete.tsx',
   'apps/web/app/components/backup_phrase/phrase_qr.tsx',
-  'apps/web/app/components/color_field.tsx',
-  'apps/web/app/components/file_card.tsx',
-  'apps/web/app/components/invite_card.tsx',
-  'apps/web/app/components/member_sidebar.tsx',
-  'apps/web/app/components/message_editor.tsx',
-  'apps/web/app/components/notice_stack.tsx',
-  'apps/web/app/components/p2p/p2p_badge.tsx',
-  'apps/web/app/components/p2p/p2p_chat.tsx',
-  'apps/web/app/components/p2p/p2p_server_flows.tsx',
-  'apps/web/app/components/palette_settings.tsx',
-  'apps/web/app/components/poll_dialog.tsx',
-  'apps/web/app/components/preview_reveal.tsx',
-  'apps/web/app/components/rule_editor.tsx',
-  'apps/web/app/components/server_access.tsx',
-  'apps/web/app/components/server_header.tsx',
-  'apps/web/app/components/settings_fields.tsx',
-  'apps/web/app/components/sign_in_step.tsx',
-  'apps/web/app/components/skeletons.tsx',
-  'apps/web/app/components/text_composer.tsx',
-  'apps/web/app/components/title_bar.tsx',
-  'apps/web/app/components/video_attachment.tsx',
   'apps/web/app/components/voice_grid.tsx',
-  'apps/web/app/components/word_grid.tsx',
-  'apps/web/app/login/page.tsx',
-  'apps/web/app/sso/page.tsx',
-  'apps/web/app/widget/page.tsx',
 ]
 
 const SINKS = ['TO_REQUEST', 'TO_STORE', 'TO_CRYPTO', 'TO_SCREEN']

@@ -293,7 +293,7 @@ export function RuleEditor({
                     : modeBlock(view, current)
                   : 'Set a permission first'
                 return (
-                  <button
+                  <Surface
                     key={text}
                     type="button"
                     aria-pressed={on}
@@ -302,10 +302,16 @@ export function RuleEditor({
                     onClick={() =>
                       row && !on && put(current, { allow: row.allow, deny: row.deny }, merge)
                     }
-                    className={`rounded-full px-3 py-1 text-xs disabled:opacity-60 pointer-coarse:min-h-11 ${on ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant enabled:hover:bg-surface-container-highest'}`}
+                    as="button"
+                    pad="md"
+                    inset="chip"
+                    tone="plain"
+                    radius="full"
+                    text="xs"
+                    look={`disabled:opacity-60 pointer-coarse:min-h-11 ${on ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant enabled:hover:bg-surface-container-highest'}`}
                   >
                     {text}
-                  </button>
+                  </Surface>
                 )
               })}
             </Row>

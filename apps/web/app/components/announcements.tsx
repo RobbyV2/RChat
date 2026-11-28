@@ -150,7 +150,7 @@ function Feed({ guest, storageKey }: { guest: boolean; storageKey: string }) {
   return (
     <section
       aria-label="Instance announcements"
-      className="max-h-dvh-25 shrink-0 overflow-y-auto bg-secondary-container px-safe text-on-secondary-container"
+      className="max-h-dvh-25 shrink-0 overflow-y-auto bg-secondary-container safe-x text-on-secondary-container"
     >
       {feed.announcements.map(a => (
         <Surface

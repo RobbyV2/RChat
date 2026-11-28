@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { useMotionPlays } from '../lib/motion/use_motion'
-import { Row, Stack, Surface } from './layout'
+import { Row, Stack, Surface, Inset } from './layout'
 import {
   channelShapes,
   dmShapes,
@@ -125,9 +125,9 @@ export function MemberListSkeleton({ seed, className = '' }: { seed: string; cla
     <Frame kind="members" label="Loading members" className={`flex flex-col ${className}`}>
       {memberShapes(seed).map((rows, i) => (
         <div key={i} className="flex flex-col">
-          <div className="flex h-8 items-end px-2 pb-1.5">
+          <Inset row pad="sm" inset="sides" look="h-8">
             <Blob className={`h-2.5 w-20 rounded-full ${soft}`} />
-          </div>
+          </Inset>
           {rows.map((m, j) => (
             <Surface
               key={j}
@@ -181,25 +181,25 @@ export function ChannelListSkeleton({
           <Blob className={`h-3.5 w-28 rounded-full ${strong}`} />
         </Surface>
       )}
-      <div className="flex min-h-0 flex-col overflow-hidden pb-3">
+      <Stack gap="md" place="min-h-0 overflow-hidden">
         {channelShapes(seed).map((g, i) => (
-          <div key={i} className="flex flex-col pt-3">
+          <Stack key={i} gap="none">
             {g.header && (
               <Surface pad="lg" inset="sides" row tone="plain" radius="none" look="h-6">
                 <Blob className={`h-2.5 w-24 rounded-full ${soft}`} />
               </Surface>
             )}
             {g.rows.map((w, j) => (
-              <div key={j} className="mx-2 flex h-8 items-center gap-2 px-2">
+              <Inset key={j} row pad="lg" inset="sides" gap="sm" look="h-8">
                 <Blob className={`size-4 shrink-0 rounded ${soft}`} />
                 <span className="flex min-w-0 flex-1">
                   <Blob className={`h-3 rounded-full ${strong}`} style={pct(w)} />
                 </span>
-              </div>
+              </Inset>
             ))}
-          </div>
+          </Stack>
         ))}
-      </div>
+      </Stack>
     </Frame>
   )
 }

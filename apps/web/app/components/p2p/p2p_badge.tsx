@@ -178,10 +178,7 @@ export function KeyAvatar({ person, size = 36 }: { person: Person; size?: number
 export const badgeDate = (ms: number) =>
   new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
 
-const CHIP: Record<
-  BadgeState,
-  { Icon: typeof BadgeCheck; cls: string; text: string; short: string }
-> = {
+const CHIP = {
   confirmed: {
     Icon: BadgeCheck,
     cls: 'bg-secondary-container text-on-secondary-container',
@@ -200,7 +197,10 @@ const CHIP: Record<
     text: "Couldn't check",
     short: "Couldn't check",
   },
-}
+} as const satisfies Record<
+  BadgeState,
+  { Icon: typeof BadgeCheck; cls: string; text: string; short: string }
+>
 
 // What the badge says in full: the hover tooltip, the screen reader label and the long-press
 // sheet. Streamer mode leaves the account out.
@@ -284,7 +284,7 @@ function AccountChipBody({ ik, size = 'full' }: { ik: string; size?: 'full' | 's
       identity
     )
   return (
-    <span
+    <Surface
       data-account-badge={state}
       title={line}
       aria-label={line}
@@ -299,9 +299,15 @@ function AccountChipBody({ ik, size = 'full' }: { ik: string; size?: 'full' | 's
         open(r.left, r.bottom)
       }}
       {...longPress(open)}
-      className={`inline-flex min-w-0 items-center gap-1 rounded-full py-px text-2xs leading-4 font-medium ${
-        size === 'icon' ? 'shrink-0 p-px' : 'shrink px-1.5'
-      } ${cls}`}
+      as="span"
+      row
+      pad={size === 'icon' ? '3xs' : 'xs'}
+      inset={size === 'icon' ? 'even' : 'chip'}
+      gap="2xs"
+      tone="plain"
+      radius="full"
+      look={`text-2xs leading-4 font-medium ${size === 'icon' ? 'shrink-0' : 'shrink'} ${cls}`}
+      place="inline-flex min-w-0"
     >
       <Icon size={12} className="shrink-0" aria-hidden />
       {size === 'icon' ? null : state === 'confirmed' && sub ? (
@@ -312,7 +318,7 @@ function AccountChipBody({ ik, size = 'full' }: { ik: string; size?: 'full' | 's
       ) : (
         <span className="truncate">{size === 'short' ? short : text}</span>
       )}
-    </span>
+    </Surface>
   )
 }
 

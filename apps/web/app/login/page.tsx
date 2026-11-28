@@ -94,7 +94,7 @@ function LoginForm({ next, owner }: { next: string; owner: RouteOwner | null }) 
       router.replace(accountPath(next, parseAccountPath(next)?.owner ?? routeOwnerFor(account)))
   }, [authed, account, adding, next, owner, router])
   return (
-    <div className="flex min-h-app flex-col items-center px-safe-3 sm:px-safe-4">
+    <div className="flex min-h-app flex-col items-center safe-x-3 sm:safe-x-4">
       <Surface as="header" tone="plain" radius="none" pad="sm" place="w-full shrink-0">
         <Row gap="sm" justify="between">
           <ThemeToggle />

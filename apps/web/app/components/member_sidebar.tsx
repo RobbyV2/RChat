@@ -38,7 +38,7 @@ const OVERSCAN = 400
 // What a line under the name adds to a row.
 const LINE = 16
 const linesOf = (entry: MemberEntry) => (entry.chip ? 1 : 0) + (entry.note ? 1 : 0)
-const ROW_HEIGHT = ['h-10', 'h-14', 'h-18']
+const ROW_HEIGHT = ['h-10', 'h-14', 'h-18'] as const
 
 const heightOf = (item: MemberItem) =>
   item.kind === 'head' ? HEAD : item.kind === 'more' ? EDGE : ROW + LINE * linesOf(item.entry)
@@ -170,13 +170,18 @@ function MemberRow({
         }
   const icon = look.icon && { ...look.icon, role: mask ? mask(look.icon.role) : look.icon.role }
   return (
-    <div
+    <Surface
       data-member={entry.who}
       {...(entry.menu ? longPress(menu) : {})}
       {...trigger}
-      className={`flex ${ROW_HEIGHT[linesOf(entry)]} cursor-pointer items-center gap-2 overflow-hidden rounded-xl px-2 hover:bg-surface-container-high ${rowFocus} ${
-        entry.faded ? 'opacity-70' : entry.online ? '' : 'opacity-50'
-      }`}
+      row
+      pad="sm"
+      inset="sides"
+      gap="sm"
+      tone="plain"
+      radius="lg"
+      look={`${ROW_HEIGHT[linesOf(entry)]} cursor-pointer hover:bg-surface-container-high ${rowFocus} ${entry.faded ? 'opacity-70' : entry.online ? '' : 'opacity-50'}`}
+      place="overflow-hidden"
     >
       <Face entry={entry} />
       <span className="flex min-w-0 flex-1 flex-col">
@@ -210,7 +215,7 @@ function MemberRow({
         </span>
       )}
       {entry.shield && <ContactShield kind={entry.shield} size={14} />}
-    </div>
+    </Surface>
   )
 }
 

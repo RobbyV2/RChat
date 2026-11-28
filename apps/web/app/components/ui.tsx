@@ -41,6 +41,9 @@ export const fieldCls =
 // A small field or select beside others on a toolbar line (a search filter).
 export const smallFieldCls =
   'rounded-lg border border-outline bg-transparent px-2 py-1 text-base outline-none placeholder:text-on-surface-variant focus:border-primary md:text-xs'
+// The square a color is picked from.
+export const colorSwatchCls =
+  'h-9 w-9 shrink-0 cursor-pointer rounded-lg border border-outline bg-transparent p-0.5 disabled:cursor-not-allowed disabled:opacity-60'
 // The field a name is edited in where it stands (a channel in the sidebar).
 export const renameFieldCls =
   'rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm'
@@ -296,7 +299,7 @@ export function Sheet({
 }) {
   const backdrop = sheet ? 'dim' : (float?.backdrop ?? 'dim')
   const look = sheet
-    ? `absolute inset-x-0 bottom-0 ${SHEET_HEIGHT[height]} animate-sheet-up rounded-t-3xl px-safe pb-[max(0.75rem,env(safe-area-inset-bottom))]`
+    ? `absolute inset-x-0 bottom-0 ${SHEET_HEIGHT[height]} animate-sheet-up rounded-t-3xl safe-x pb-[max(0.75rem,env(safe-area-inset-bottom))]`
     : `absolute ${float?.at ?? 'inset-0 m-auto h-fit max-h-[85%] w-[min(28rem,calc(100%-2rem))]'} rounded-2xl border border-outline-variant`
   return (
     <Overlay {...overlay} layer={layer} backdrop={backdrop} onClose={onClose}>
@@ -527,7 +530,7 @@ export function LinkPage({
 }) {
   const authed = useStore(s => s.me !== null || s.guest)
   return (
-    <div className="invite-backdrop fixed inset-x-0 top-app z-page flex h-app flex-col overflow-y-auto px-safe-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+    <div className="invite-backdrop fixed inset-x-0 top-app z-page flex h-app flex-col overflow-y-auto safe-x-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
       <header className="flex shrink-0 items-center justify-between pt-3 pb-2">
         <img src="/rchat_logo.png" alt="RChat" className="h-9 w-auto" />
         <div className="flex items-center gap-1">

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { keepDismissal, scrollToShow } from '../lib/autocomplete'
 import { composing } from '../lib/keys'
-import { Surface } from './layout'
+import { Surface, Inset } from './layout'
 
 interface Autocomplete<T> {
   open: boolean
@@ -104,20 +104,30 @@ export function AutocompletePopup<T>({
   if (!ac.open) return null
 
   return (
-    <div
+    <Surface
       data-popover
-      className={`absolute inset-x-0 z-popover overflow-hidden rounded-2xl ${below ? 'top-full mt-2' : 'bottom-full mb-2'} bg-surface-container-high py-2 shadow-elevation-2`}
       onMouseDown={e => e.preventDefault()}
+      pad="sm"
+      gap="2xs"
+      tone="high"
+      elevation={2}
+      place={
+        below
+          ? 'absolute inset-x-0 z-popover top-full translate-y-2 overflow-hidden'
+          : 'absolute inset-x-0 z-popover bottom-full -translate-y-2 overflow-hidden'
+      }
     >
-      <div className="truncate px-4 pb-1 text-xs font-medium tracking-wide text-on-surface-variant uppercase">
-        {title}
-      </div>
+      <Inset pad="sm" inset="sides">
+        <div className="truncate text-xs font-medium tracking-wide text-on-surface-variant uppercase">
+          {title}
+        </div>
+      </Inset>
       <div
         ref={listRef}
         id={id}
         role="listbox"
         aria-label={typeof title === 'string' ? title : undefined}
-        className="relative max-h-72 overflow-y-auto overscroll-contain px-2"
+        className="relative max-h-72 overflow-y-auto overscroll-contain"
       >
         {ac.items.map((item, i) => (
           <Surface
@@ -144,6 +154,6 @@ export function AutocompletePopup<T>({
           </Surface>
         ))}
       </div>
-    </div>
+    </Surface>
   )
 }

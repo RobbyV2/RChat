@@ -2,7 +2,7 @@
 
 import { KeyRound, LayoutGrid, X } from 'lucide-react'
 import type { PassKind } from '../lib/password'
-import { Grid, Row, Stack, Surface } from './layout'
+import { Grid, Row, Stack, Surface, Inset } from './layout'
 import { Loaded, useAccountRequest } from './loaded'
 
 interface Props {
@@ -22,15 +22,19 @@ export function WordGrid({ words, selected, onChange }: Props) {
         {words.map(word => {
           const idx = selected.indexOf(word)
           return (
-            <button
+            <Surface
               key={word}
               type="button"
               onClick={() => toggle(word)}
-              className={`relative min-w-0 break-words rounded-xl px-1 py-2 text-center text-xs leading-tight min-[360px]:text-sm transition-colors ${
-                idx >= 0
-                  ? 'bg-primary-container text-on-primary-container'
-                  : 'bg-surface-container-high text-on-surface hover:bg-surface-container-highest'
-              }`}
+              as="button"
+              pad="sm"
+              tone="plain"
+              radius="lg"
+              align="center"
+              justify="center"
+              text="xs"
+              look={`break-words text-center leading-tight min-[360px]:text-sm transition-colors ${idx >= 0 ? 'bg-primary-container text-on-primary-container' : 'bg-surface-container-high text-on-surface hover:bg-surface-container-highest'}`}
+              place="relative min-w-0"
             >
               {word}
               {idx >= 0 && (
@@ -38,7 +42,7 @@ export function WordGrid({ words, selected, onChange }: Props) {
                   {idx + 1}
                 </span>
               )}
-            </button>
+            </Surface>
           )
         })}
       </Grid>
@@ -81,19 +85,22 @@ export function PassSwitch({
   label?: string
 }) {
   const tab = (kind: PassKind, text: string, icon: React.ReactNode) => (
-    <button
+    <Inset
       type="button"
       aria-pressed={value === kind}
       onClick={() => onChange(kind)}
-      className={`flex flex-1 items-center justify-center gap-2 border border-outline py-2 text-sm transition-colors first:rounded-l-full last:rounded-r-full ${
-        value === kind
-          ? 'bg-secondary-container text-on-secondary-container'
-          : 'text-on-surface-variant hover:bg-surface-container-high'
-      }`}
+      as="button"
+      row
+      pad="sm"
+      gap="sm"
+      justify="center"
+      text="sm"
+      look={`border border-outline transition-colors first:rounded-l-full last:rounded-r-full ${value === kind ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
+      place="flex-1"
     >
       {icon}
       {text}
-    </button>
+    </Inset>
   )
   return (
     <Row role="group" aria-label={label} gap="none" align="stretch">

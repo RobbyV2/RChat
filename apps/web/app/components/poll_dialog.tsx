@@ -24,7 +24,7 @@ import type { PollKind, ShowResults } from '../lib/types'
 import { EmojiPicker } from './emoji_picker'
 import { Button, IconButton } from './controls'
 import { Row, Stack, Surface } from './layout'
-import { Chips, Dialog, FieldError, fieldCls } from './ui'
+import { Chips, Dialog, FieldError, fieldCls, smallFieldCls } from './ui'
 
 const KINDS: PollKind[] = ['single', 'multiple', 'ranked', 'rating', 'yes_no']
 const SHOWS: ShowResults[] = ['always', 'after_vote', 'after_close']
@@ -62,7 +62,7 @@ function Toggle({
             type="checkbox"
             checked={on}
             onChange={e => onChange(e.target.checked)}
-            className="mt-0.5 size-4 shrink-0 accent-primary"
+            className="size-4 shrink-0 accent-primary"
           />
           <span className="min-w-0">
             <span className="block text-sm text-on-surface">{label}</span>
@@ -171,7 +171,7 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
                     }}
                     placeholder={`Option ${i + 1}`}
                     aria-label={`Option ${i + 1}`}
-                    className={`${fieldCls} py-1.5`}
+                    className={fieldCls}
                   />
                   <IconButton
                     icon={Trash2}
@@ -201,7 +201,7 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
                   value={d.minChoices}
                   onChange={e => patch({ minChoices: Number(e.target.value) || 1 })}
                   aria-label="Fewest choices"
-                  className={`${fieldCls} w-16 flex-none py-1`}
+                  className={`${smallFieldCls} w-16 flex-none`}
                 />
                 <span className="text-sm text-on-surface">to</span>
                 <input
@@ -211,7 +211,7 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
                   value={d.maxChoices ?? Math.max(count, 1)}
                   onChange={e => patch({ maxChoices: Number(e.target.value) || null })}
                   aria-label="Most choices"
-                  className={`${fieldCls} w-16 flex-none py-1`}
+                  className={`${smallFieldCls} w-16 flex-none`}
                 />
                 <span className="text-sm text-on-surface-variant">options</span>
               </Row>
@@ -278,13 +278,13 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
                   setError(null)
                 }}
                 aria-label="Deadline amount"
-                className={`${fieldCls} w-24 flex-none py-1.5`}
+                className={`${smallFieldCls} w-24 flex-none`}
               />
               <select
                 value={mult}
                 onChange={e => setMult(Number(e.target.value))}
                 aria-label="Deadline unit"
-                className={`${fieldCls} flex-none bg-surface-container-high py-1.5`}
+                className={`${smallFieldCls} flex-none`}
               >
                 {UNITS.map(u => (
                   <option key={u.mult} value={u.mult}>

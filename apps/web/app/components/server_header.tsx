@@ -7,6 +7,7 @@ import { Settings } from 'lucide-react'
 import { GEAR_CHIP_CSS, headerColors } from '../lib/server_colors'
 import { longPress } from './context_menu'
 import { useOwnServer } from './ui'
+import { Inset } from './layout'
 
 const gearCls =
   'flex h-8 w-8 shrink-0 items-center justify-center rounded-full outline-offset-2 focus-visible:outline-2'
@@ -47,37 +48,36 @@ export function ServerHeader({
     : `${gearCls} text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface focus-visible:outline-primary`
   const gearIcon = <Settings size={18} />
   return (
-    <header
-      style={style}
-      className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-outline-variant px-4"
-    >
-      {server === 'rchat' ? (
-        <img src="/rchat_logo.png" alt="RChat" className="h-8 w-auto" />
-      ) : (
-        <Name
-          of={serverCalled(displayName, own)}
-          {...(onMenu ? longPress(onMenu) : {})}
-          color={colors?.fg || undefined}
-          look="truncate font-medium"
-        />
-      )}
-      {preview
-        ? showGear && (
-            <span aria-hidden style={chip} className={gear}>
-              {gearIcon}
-            </span>
-          )
-        : onSettings && (
-            <button
-              title="Server settings"
-              aria-label="Server settings"
-              onClick={onSettings}
-              style={chip}
-              className={gear}
-            >
-              {gearIcon}
-            </button>
-          )}
+    <header style={style} className="h-14 shrink-0 border-b border-outline-variant">
+      <Inset row pad="lg" inset="sides" gap="sm" justify="between" place="h-full">
+        {server === 'rchat' ? (
+          <img src="/rchat_logo.png" alt="RChat" className="h-8 w-auto" />
+        ) : (
+          <Name
+            of={serverCalled(displayName, own)}
+            {...(onMenu ? longPress(onMenu) : {})}
+            color={colors?.fg || undefined}
+            look="truncate font-medium"
+          />
+        )}
+        {preview
+          ? showGear && (
+              <span aria-hidden style={chip} className={gear}>
+                {gearIcon}
+              </span>
+            )
+          : onSettings && (
+              <button
+                title="Server settings"
+                aria-label="Server settings"
+                onClick={onSettings}
+                style={chip}
+                className={gear}
+              >
+                {gearIcon}
+              </button>
+            )}
+      </Inset>
     </header>
   )
 }

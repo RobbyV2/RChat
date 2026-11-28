@@ -3,6 +3,7 @@ import { useRef, useState, type Ref } from 'react'
 import { errorText } from '../lib/store'
 import { Button, LinkButton } from './controls'
 import { Row, Surface } from './layout'
+import { fieldCls } from './ui'
 
 export function TextComposer({
   send,
@@ -80,7 +81,7 @@ export function TextComposer({
               void submit()
             }
           }}
-          className="min-w-0 flex-1 resize-none rounded-xl bg-surface-container-high px-3 py-2 text-on-surface"
+          className={`${fieldCls} resize-none bg-surface-container-high text-on-surface`}
         />
         <Button type="submit" variant="filled" size="md" disabled={busy || !text.trim()}>
           Send

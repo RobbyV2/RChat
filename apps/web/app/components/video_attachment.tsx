@@ -156,7 +156,7 @@ export function VideoAttachmentBody({
       {...(open ? longPress(open) : {})}
       {...data}
       data-video-attachment=""
-      className="mt-1 w-fit max-w-full"
+      className="msg-part w-fit max-w-full"
     >
       <div className="group/video relative isolate w-fit max-w-full overflow-hidden rounded-xl bg-surface-container-lowest">
         <video
@@ -214,7 +214,7 @@ export function VideoAttachmentBody({
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={pct(progress)}
-          className="mt-1.5 text-xs text-on-surface-variant tabular-nums"
+          className="msg-part text-xs text-on-surface-variant tabular-nums"
         >
           Downloading {pct(progress)}%
         </p>
@@ -253,7 +253,7 @@ export function VideoPlaceholder({
       role={loading ? 'status' : 'group'}
       aria-label={loading ? `Loading ${shown}` : shown}
       style={style ?? undefined}
-      className={`mt-1 max-w-full rounded-xl bg-surface-container ${loading ? 'motion-safe:animate-pulse' : ''} ${style ? '' : 'aspect-video w-80'}`}
+      className={`msg-part max-w-full rounded-xl bg-surface-container ${loading ? 'motion-safe:animate-pulse' : ''} ${style ? '' : 'aspect-video w-80'}`}
     />
   )
 }

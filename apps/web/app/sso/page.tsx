@@ -28,6 +28,7 @@ import { NAME_MAX } from '../lib/rules'
 import type { ExchangeResponse } from '../lib/types'
 import { sameSecret, Secret } from '../lib/secret'
 import { time } from '../lib/platform/time'
+import { fieldCls } from '../components/ui'
 export default function SsoPage() {
   const [fragment, setFragment] = useState<string | null>(null)
   useEffect(() => {
@@ -240,7 +241,7 @@ function LocalReturn() {
                 onChange={e => setName(e.target.value)}
                 autoComplete="username"
                 required
-                className="block rounded border p-2"
+                className={fieldCls}
               />
             </label>
             <Button type="submit" variant="filled" size="md" disabled={busy || !name.trim()}>

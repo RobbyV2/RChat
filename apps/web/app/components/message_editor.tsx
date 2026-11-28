@@ -30,7 +30,7 @@ export function EditedMark({ at }: { at: number }) {
       data-edited
       title={when}
       aria-label={`Edited ${when}`}
-      className="ml-1 cursor-default align-baseline text-2xs text-on-surface-variant select-none"
+      className="cursor-default align-baseline text-2xs text-on-surface-variant select-none"
     >
       (edited)
     </span>
@@ -123,7 +123,7 @@ export function MessageEditor({ binding }: { binding?: EditBinding }) {
   return (
     <div
       data-editor
-      className="mt-1"
+      className="msg-part"
       onContextMenu={e => e.stopPropagation()}
       onTouchStart={e => e.stopPropagation()}
     >
@@ -158,7 +158,7 @@ export function MessageEditor({ binding }: { binding?: EditBinding }) {
                 save()
               }
             }}
-            className="max-h-80 min-w-0 flex-1 resize-none bg-transparent py-0.5 text-base leading-relaxed outline-none md:text-sm"
+            className="max-h-80 min-w-0 flex-1 resize-none bg-transparent text-base leading-relaxed outline-none md:text-sm"
           />
           {count > counterFrom(max) && (
             <span

@@ -64,11 +64,9 @@ function Note({
 }) {
   return (
     <Surface {...rest} pad="lg" tone={tone}>
-      <div
-        className={`flex flex-wrap items-center gap-3 text-sm${tone === 'base' ? ' text-on-surface-variant' : ''}`}
-      >
+      <Row gap="md" wrap text="sm" ink={tone === 'base' ? 'muted' : undefined}>
         {children}
-      </div>
+      </Row>
     </Surface>
   )
 }

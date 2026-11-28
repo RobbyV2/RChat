@@ -363,11 +363,7 @@ function ServerTile({
 function Counts({ invite, center }: { invite: Invite; center: boolean }) {
   const { online_count, member_count } = invite
   return (
-    <div
-      className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-on-surface-variant ${
-        center ? 'justify-center' : ''
-      }`}
-    >
+    <Row gap="md" lineGap="3xs" wrap justify={center ? 'center' : 'start'} text="xs" ink="muted">
       <Row as="span" gap="xs">
         <span className="size-2 rounded-full bg-status-green" />
         {online_count} Online
@@ -376,7 +372,7 @@ function Counts({ invite, center }: { invite: Invite; center: boolean }) {
         <span className="size-2 rounded-full bg-outline" />
         {member_count} {member_count === 1 ? 'Member' : 'Members'}
       </Row>
-    </div>
+    </Row>
   )
 }
 
@@ -384,13 +380,19 @@ function TicketNote({ invite, now, center }: { invite: Invite; now: number; cent
   const { password_expires_at: ends, password_uses_left: left } = invite
   if (ends === null && left === null) return null
   return (
-    <p
-      className={`flex flex-wrap gap-x-2 text-xs text-on-surface-variant ${center ? 'justify-center' : ''}`}
+    <Row
+      as="p"
+      gap="sm"
+      wrap
+      align="stretch"
+      justify={center ? 'center' : 'start'}
+      text="xs"
+      ink="muted"
     >
       {ends !== null && <span title={absoluteTime(ends)}>{countdown(ends, now)}</span>}
       {ends !== null && left !== null && <span aria-hidden>·</span>}
       {left !== null && <span>{usesLeftText(left)}</span>}
-    </p>
+    </Row>
   )
 }
 
@@ -448,7 +450,7 @@ export function PreviewLine({
             <SpoilerLine parts={parts} own={own && !message.forward} />
           )}
           {!hidden && media !== null && (
-            <span className="ml-1 inline-flex items-center gap-0.5 align-middle">
+            <Row as="span" gap="3xs" look="align-middle" place="inline-flex">
               <Paperclip size={big ? 13 : 11} />
               <PreviewFilename
                 key={media.id}
@@ -456,7 +458,7 @@ export function PreviewLine({
                 own={own && !message.forward}
                 spoiler={media.spoiler}
               />
-            </span>
+            </Row>
           )}
         </span>
       </p>
@@ -617,7 +619,7 @@ function Frame({
       </div>
     )
   return (
-    <div ref={ref} className="@container mt-1.5 w-full max-w-md">
+    <div ref={ref} className="@container msg-part w-full max-w-md">
       <Surface tone="base" border pad="md" gap="sm">
         <p className="text-2xs font-semibold tracking-wide text-on-surface-variant uppercase">
           {heading ??
@@ -681,11 +683,15 @@ function Layout({
           <div>{sub}</div>
         </Stack>
         {actions && (
-          <div
-            className={`flex w-full flex-wrap gap-1.5 ${stack ? '' : '@sm:w-auto @sm:shrink-0 @sm:flex-col @sm:items-end'}`}
+          <Row
+            gap="xs"
+            wrap
+            align="stretch"
+            look={stack ? '' : '@sm:w-auto @sm:shrink-0'}
+            place="w-full"
           >
             {actions}
-          </div>
+          </Row>
         )}
       </Row>
       {extra}

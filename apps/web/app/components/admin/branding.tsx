@@ -450,11 +450,16 @@ function ImageControl({
         <p className={labelCls}>{label}</p>
         <p className={lineCls}>{line}</p>
         <Row gap="md" wrap>
-          <div
+          <Surface
             data-brand-preview={preview}
-            className={`flex h-16 min-w-16 max-w-full shrink-0 items-center justify-center overflow-hidden bg-surface-container-highest px-2 ${
-              round ? 'w-16 rounded-2xl px-0' : 'rounded-xl'
-            }`}
+            row
+            pad={round ? 'none' : 'sm'}
+            inset="sides"
+            tone="highest"
+            radius={round ? 'xl' : 'lg'}
+            justify="center"
+            look={round ? 'h-16 w-16 min-w-16' : 'h-16 min-w-16'}
+            place="max-w-full shrink-0 overflow-hidden"
           >
             {path === null ? (
               <span className="text-xs text-on-surface-variant">None</span>
@@ -465,7 +470,7 @@ function ImageControl({
                 className={round ? 'h-16 w-16 object-cover' : 'max-h-12 w-auto max-w-48'}
               />
             )}
-          </div>
+          </Surface>
           <input
             ref={input}
             type="file"

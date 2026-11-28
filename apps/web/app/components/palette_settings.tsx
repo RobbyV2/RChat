@@ -11,7 +11,7 @@ import { useStore } from '../lib/store'
 import { useAccount } from '../lib/client/react'
 import { Choice } from './friends'
 import { Button } from './controls'
-import { Row, Stack } from './layout'
+import { Row, Stack, Grid } from './layout'
 import { SettingNotes } from './settings_fields'
 import { sectionCls } from './ui'
 
@@ -72,10 +72,7 @@ export function PaletteSettingsSection() {
             )}
           </Stack>
           <Stack gap="sm">
-            <dl
-              data-index-size
-              className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm text-on-surface-variant"
-            >
+            <Grid data-index-size as="dl" cols="pair" gap="lg" lineGap="2xs" text="sm" ink="muted">
               <dt>Size</dt>
               <dd className="text-on-surface">{fmtSize(status.bytes)}</dd>
               <dt>Messages</dt>
@@ -96,7 +93,7 @@ export function PaletteSettingsSection() {
                   <dd className="text-on-surface">Loading</dd>
                 </>
               )}
-            </dl>
+            </Grid>
             {status.error && (
               <p role="alert" className="text-xs text-error">
                 {status.error}

@@ -72,7 +72,7 @@ import { P2pBadge } from './p2p_badge'
 import { AttachmentList, PendingFiles } from './p2p_files'
 import { namePasted } from '../message_composer'
 import type { Look } from '../../lib/role_looks'
-import { Row, Stack, Surface } from '../layout'
+import { Row, Stack, Surface, Inset, Dock } from '../layout'
 
 // The message list and composer of a P2P conversation, shared by direct messages and P2P server
 // channels: what differs (the header, who may do what, names, mentions) comes in as props.
@@ -90,13 +90,13 @@ export function NoteBar({
   [data: `data-${string}`]: string | boolean | undefined
 }) {
   return (
-    <div className="shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] keyboard:pb-3">
+    <Dock gap="sm">
       <Surface {...rest} pad="lg" tone="base">
         <Row gap="sm" wrap text="sm" ink="muted">
           {children}
         </Row>
       </Surface>
-    </div>
+    </Dock>
   )
 }
 
@@ -117,14 +117,17 @@ function P2pIntroBody({ id, children }: { id: string; children: ReactNode }) {
           <Row gap="md" align="start">
             <P2pBadge />
             <p className="min-w-0 flex-1">{children}</p>
-            <button
+            <Inset
               title="Dismiss"
               aria-label="Dismiss"
               onClick={() => acct.home.hideTip(id)}
-              className="shrink-0 rounded-full p-1 hover:bg-surface-container-highest"
+              as="button"
+              pad="2xs"
+              look="rounded-full hover:bg-surface-container-highest"
+              place="shrink-0"
             >
               <X size={16} />
-            </button>
+            </Inset>
           </Row>
         </Surface>
       </div>
@@ -358,7 +361,7 @@ function P2pComposerBody({
   ) : null
 
   return (
-    <div className="shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] keyboard:pb-3">
+    <Dock gap="sm">
       <Stack gap="sm" align="start">
         <PeerCodeButton text={text} peer />
         {laterOpen && (
@@ -410,14 +413,17 @@ function P2pComposerBody({
               tools={
                 !textOnly && (
                   <>
-                    <button
+                    <Inset
                       title="Attach files"
                       aria-label="Attach files"
                       onClick={() => fileRef.current?.click()}
-                      className="shrink-0 rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
+                      as="button"
+                      pad="xs"
+                      look="rounded-full text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
+                      place="shrink-0"
                     >
                       <Plus size={20} />
-                    </button>
+                    </Inset>
                     <input
                       ref={fileRef}
                       type="file"
@@ -436,7 +442,7 @@ function P2pComposerBody({
           </Stack>
         </Stack>
       </Stack>
-    </div>
+    </Dock>
   )
 }
 

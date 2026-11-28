@@ -23,7 +23,7 @@ import { LightboxList, MediaLightbox } from '../components/media_lightbox'
 import { TextComposer } from '../components/text_composer'
 import { UserAvatar } from '../components/user_avatar'
 import { fieldCls, filledBtn, Masked, textBtn } from '../components/ui'
-import { Grid, Row, Stack, Surface } from '../components/layout'
+import { Grid, Row, Stack, Surface, Inset } from '../components/layout'
 import { audibleStreams, guestLabel, isGuestName } from '../lib/guest_voice'
 import { restoreStreamer } from '../lib/start'
 import { errorText } from '../lib/store'
@@ -189,12 +189,12 @@ function ChatRow({
       aria-labelledby={sender + ' ' + time}
       tabIndex={!place.first && !canReply ? 0 : undefined}
       className={
-        'group grid min-w-0 grid-cols-[36px_minmax(0,1fr)_auto] items-start gap-x-3 break-words rounded px-1 hover:bg-surface-container-low ' +
+        'group widget-row break-words rounded hover:bg-surface-container-low ' +
         groupPadCls(place.first, place.last)
       }
     >
       {place.first ? (
-        <div aria-hidden="true" data-author-avatar className="col-start-1 row-start-1 pt-0.5">
+        <div aria-hidden="true" data-author-avatar className="col-start-1 row-start-1">
           <UserAvatar person={asAccount(message.author, 'widget')} size={36} />
         </div>
       ) : (
@@ -211,7 +211,7 @@ function ChatRow({
       <div className="col-start-2 row-start-1 min-w-0">
         <div
           data-group-header={place.first ? '' : undefined}
-          className={place.first ? 'flex flex-wrap items-baseline gap-x-2' : 'sr-only'}
+          className={place.first ? 'widget-head' : 'sr-only'}
         >
           <strong id={sender} className="streamer min-w-0 max-w-full truncate text-sm">
             <Masked
@@ -229,7 +229,13 @@ function ChatRow({
           </time>
         </div>
         {message.reply_to && (
-          <div className="min-w-0 border-l-2 border-outline pl-2 text-xs break-words">
+          <Inset
+            pad="sm"
+            inset="sides"
+            text="xs"
+            look="border-l-2 border-outline break-words"
+            place="min-w-0"
+          >
             {message.reply_to.author && (
               <>
                 <span className="streamer">
@@ -262,7 +268,7 @@ function ChatRow({
             ) : (
               'Reply'
             )}
-          </div>
+          </Inset>
         )}
         {body && !body.open ? (
           <p className="text-sm text-on-surface-variant">
@@ -277,15 +283,19 @@ function ChatRow({
         )}
       </div>
       {canReply && (
-        <button
+        <Inset
           type="button"
           aria-label="Reply"
           title="Reply"
-          className="col-start-3 row-start-1 cursor-pointer rounded px-1 text-primary pointer-fine:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
           onClick={pick}
+          as="button"
+          pad="2xs"
+          inset="sides"
+          look="cursor-pointer rounded text-primary pointer-fine:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+          place="col-start-3 row-start-1"
         >
           <Reply size={16} />
-        </button>
+        </Inset>
       )}
     </article>
   )
@@ -600,7 +610,7 @@ export default function WidgetPage() {
       {target && (
         <Surface tone="plain" radius="none" border="top" pad="md" inset="bar" place="shrink-0">
           <details className="text-xs">
-            <summary className="w-fit cursor-pointer py-1 text-on-surface-variant">
+            <summary className="w-fit cursor-pointer text-on-surface-variant">
               Viewing options
             </summary>
             <Row as="label" gap="sm" look="min-h-8 cursor-pointer" place="w-fit">

@@ -543,21 +543,21 @@ body {
   top: var(--safe-top);
 }
 
-@utility px-safe {
+@utility safe-x {
   padding-right: env(safe-area-inset-right);
   padding-left: env(safe-area-inset-left);
 }
 
-@utility px-safe-* {
+@utility safe-x-* {
   padding-right: max(--spacing(--value(integer)), env(safe-area-inset-right));
   padding-left: max(--spacing(--value(integer)), env(safe-area-inset-left));
 }
 
-@utility pl-safe-* {
+@utility safe-l-* {
   padding-left: max(--spacing(--value(integer)), env(safe-area-inset-left));
 }
 
-@utility pr-safe-* {
+@utility safe-r-* {
   padding-right: max(--spacing(--value(integer)), env(safe-area-inset-right));
 }
 
@@ -611,6 +611,31 @@ body {
   border-radius: 0.25rem;
   padding-inline: var(--space-3xs);
   font-weight: 500;
+}
+
+/* The title of the desktop window clears the window's own buttons. */
+.titlebar-clear-mac {
+  padding-inline: 5rem;
+}
+
+.titlebar-clear {
+  padding-left: 7rem;
+}
+
+/* A message of the embedded widget: avatar, text, its action; and the line over a group. */
+.widget-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--space-md);
+}
+
+.widget-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-sm);
 }
 
 /* Under the header bar of the app. */

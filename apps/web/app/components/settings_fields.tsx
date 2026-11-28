@@ -8,7 +8,7 @@ import { hasBit, maskXor } from '../lib/perms'
 import type { Space } from '../lib/layout'
 import { Button } from './controls'
 import { Row, Surface } from './layout'
-import { fieldCls } from './ui'
+import { colorSwatchCls, fieldCls, smallFieldCls } from './ui'
 
 // Settings controls shared across the app: an on or off row, permission checks, a role's color,
 // name and creation, slow mode, and a channel's restrictions. Callers pass their own actions.
@@ -57,15 +57,18 @@ export function SettingSwitch({
       ) : (
         <span className="text-sm">{label}</span>
       )}
-      <span
-        className={`flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${
-          value
-            ? 'justify-end bg-primary'
-            : 'justify-start border border-outline bg-surface-container-highest'
-        }`}
+      <Surface
+        as="span"
+        row
+        pad="2xs"
+        tone="plain"
+        radius="full"
+        justify={value ? 'end' : 'start'}
+        look={`h-7 w-12 transition-colors ${value ? 'bg-primary' : 'border border-outline bg-surface-container-highest'}`}
+        place="shrink-0"
       >
         <span className={`h-5 w-5 rounded-full ${value ? 'bg-on-primary' : 'bg-outline'}`} />
-      </span>
+      </Surface>
     </Surface>
   )
 }
@@ -146,7 +149,7 @@ export function ColorSwatch({
       onBlur={() => {
         if (color !== initial) onCommit(color)
       }}
-      className="h-9 w-9 shrink-0 cursor-pointer rounded-lg border border-outline bg-transparent p-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+      className={colorSwatchCls}
     />
   )
 }
@@ -221,7 +224,7 @@ export function RoleCreateForm({
         title="Role color"
         aria-label="New role color"
         onChange={e => setColor(e.target.value)}
-        className="h-9 w-9 shrink-0 cursor-pointer rounded-lg border border-outline bg-transparent p-0.5"
+        className={colorSwatchCls}
       />
       <input
         value={name}
@@ -270,7 +273,7 @@ export function SlowmodeField({
             setCustom(false)
             apply(Number(e.target.value))
           }}
-          className="rounded-lg border border-outline bg-surface-container-high px-2 py-1 text-base text-on-surface outline-none focus:border-primary md:text-sm"
+          className={`${smallFieldCls} text-on-surface`}
         >
           {SLOWMODE_PRESETS.map(n => (
             <option key={n} value={n}>
@@ -298,7 +301,7 @@ export function SlowmodeField({
             placeholder="Seconds"
             aria-label="Slow mode seconds"
             title={`1 to ${SLOWMODE_MAX} seconds`}
-            className="w-20 rounded-lg border border-outline bg-transparent px-2 py-1 text-base text-on-surface outline-none focus:border-primary md:text-sm"
+            className={`w-20 ${smallFieldCls} text-on-surface`}
           />
           <Button type="submit">Set</Button>
         </Row>

@@ -87,7 +87,7 @@ const PAD_SAFE_BOTTOM: Record<Space, string> = {
 
 // The same at the left and right edges (a notch, a rounded corner).
 const PAD_SAFE_LEFT: Record<Space, string> = {
-  none: 'pl-[env(safe-area-inset-left)]',
+  none: 'safe-l-0',
   '3xs': 'pl-[max(var(--space-3xs),env(safe-area-inset-left))]',
   '2xs': 'pl-[max(var(--space-2xs),env(safe-area-inset-left))]',
   xs: 'pl-[max(var(--space-xs),env(safe-area-inset-left))]',
@@ -100,7 +100,7 @@ const PAD_SAFE_LEFT: Record<Space, string> = {
 }
 
 const PAD_SAFE_RIGHT: Record<Space, string> = {
-  none: 'pr-[env(safe-area-inset-right)]',
+  none: 'safe-r-0',
   '3xs': 'pr-[max(var(--space-3xs),env(safe-area-inset-right))]',
   '2xs': 'pr-[max(var(--space-2xs),env(safe-area-inset-right))]',
   xs: 'pr-[max(var(--space-xs),env(safe-area-inset-right))]',

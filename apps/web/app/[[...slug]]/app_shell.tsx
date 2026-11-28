@@ -473,7 +473,7 @@ function Chat() {
   return (
     <div className="flex h-app flex-col overflow-hidden">
       <AnnouncementBanner />
-      <div className="flex min-h-0 flex-1 overflow-hidden px-safe">
+      <div className="flex min-h-0 flex-1 overflow-hidden safe-x">
         <div className="hidden h-full md:flex">
           <ServerRail />
           {p2pServer ? <P2pServerSidebar /> : (!p2pHome || p2pBeside) && <ChannelSidebar />}
@@ -516,12 +516,12 @@ function Chat() {
           </div>
         )}
         {p2pPanel && (
-          <div className="fixed inset-x-0 top-app z-40 h-app bg-surface max-md:px-safe md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-outline-variant">
+          <div className="fixed inset-x-0 top-app z-page h-app bg-surface max-md:safe-x md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-outline-variant">
             {p2pPanel === 'thread' ? <P2pThreadPanel /> : <P2pSearchPanel />}
           </div>
         )}
         {panel && !p2pPanel && (
-          <div className="fixed inset-x-0 top-app z-40 h-app bg-surface max-md:px-safe md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-outline-variant">
+          <div className="fixed inset-x-0 top-app z-page h-app bg-surface max-md:safe-x md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-outline-variant">
             {panel.kind === 'thread' ? (
               <ThreadPanel />
             ) : panel.kind === 'search' ? (
@@ -533,7 +533,7 @@ function Chat() {
         )}
         {leftOpen && (
           <div data-drawer className="fixed inset-x-0 top-app z-40 flex h-app md:hidden">
-            <div className="flex h-full bg-surface-container-lowest pl-[env(safe-area-inset-left)] shadow-elevation-3">
+            <div className="flex h-full bg-surface-container-lowest safe-l-0 shadow-elevation-3">
               <DrawerClose.Provider value={closeLeft}>
                 <ServerRail />
                 {p2pServer ? <P2pServerSidebar /> : (!p2pHome || p2pBeside) && <ChannelSidebar />}
@@ -548,7 +548,7 @@ function Chat() {
             className="fixed inset-x-0 top-app z-40 flex h-app justify-end lg:hidden"
           >
             <div className="flex-1 bg-scrim/50" onClick={() => setRightOpen(false)} />
-            <div className="h-full bg-surface-container-low pr-[env(safe-area-inset-right)] shadow-elevation-3">
+            <div className="h-full bg-surface-container-low safe-r-0 shadow-elevation-3">
               {p2pServer ? <P2pMemberList /> : <MemberSidebar />}
             </div>
           </div>

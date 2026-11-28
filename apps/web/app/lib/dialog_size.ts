@@ -113,23 +113,23 @@ export const dialogLayout = ({
     : 'w-full overflow-y-auto bg-surface-container-high p-6 shadow-elevation-3 outline-none'
   if (isCard(asked) && !full)
     return {
-      backdrop: `${base} px-safe-4 py-4`,
+      backdrop: `${base} safe-x-4 py-4`,
       ...veil('backdrop-blur-[6px]'),
       panel: `${skin} ${CARDS[asked][0]}`,
       header: 'flex items-center justify-between mb-4',
     }
   if (isCard(asked))
     return {
-      backdrop: `${base} px-safe sm:px-safe-4 sm:py-4`,
+      backdrop: `${base} safe-x sm:safe-x-4 sm:py-4`,
       ...veil('sm:backdrop-blur-[6px]'),
       panel: `${skin} h-full max-h-none ${bare ? 'sm:h-auto' : `${FILL_PAD} sm:h-auto sm:pb-6`} ${CARDS[asked][1]}`,
       header: `flex items-center justify-between ${STICKY}`,
     }
   const box = typeof asked === 'object' ? asked : null
   return {
-    backdrop: `${base} ${bare ? '' : 'px-safe '}md:px-safe-4 md:py-4`,
+    backdrop: `${base} ${bare ? '' : 'safe-x '}md:safe-x-4 md:py-4`,
     ...veil('md:backdrop-blur-[6px]'),
-    panel: `${skin} h-full max-h-none ${bare ? 'px-safe md:px-0' : `${FILL_PAD} md:pb-6`} md:rounded-2xl md:border md:border-outline-variant/60 ${
+    panel: `${skin} h-full max-h-none ${bare ? 'safe-x md:px-0' : `${FILL_PAD} md:pb-6`} md:rounded-2xl md:border md:border-outline-variant/60 ${
       box ? LARGE.box : LARGE[asked as 'settings' | 'full']
     }`,
     header: `flex items-center justify-between ${STICKY} border-b border-outline-variant`,
