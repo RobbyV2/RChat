@@ -327,7 +327,7 @@ test('the voice dock, poll voters, invite previews and staff tools name the acco
   expect(render(<DockPlace peer={impostor} place="alice" />)).toBe(
     `<span class="streamer">${shown}</span>`
   )
-  expect(render(<DockPlace place="general" />)).toBe('general')
+  expect(render(<DockPlace place="general" />)).toBe('<span class="streamer">general</span>')
   expect(render(<VoterRow v={{ user: impostor, voted_at: 1 }} />)).toContain(shown)
   expect(
     render(<PreviewLine message={msg(1, { author: impostor, content: 'hi' })} big={false} />)

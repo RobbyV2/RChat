@@ -69,18 +69,18 @@ export class AccountPerson implements UserRef {
 export type Person = ShownPerson | AccountPerson
 
 const plain = new WeakMap<UserRef, ShownPerson>()
+const looked = new WeakMap<UserRef, WeakMap<MemberLook, ShownPerson>>()
 
 // `ref` as a place shows it: the name and avatar of the look over the account's. An explicit
 // avatar kind replaces the whole account avatar, color included. The username never changes,
-// so the identicon keeps its seed. The other fields of `ref` come along.
+// so the identicon keeps its seed. The other fields of `ref` come along. The same `ref` and
+// `look` give the same person, so a list row that takes one renders again only when they change.
 export function shownUser<T extends UserRef>(
   ref: T,
   look: MemberLook | null | undefined
 ): T & ShownPerson {
-  if (!look) {
-    const known = plain.get(ref)
-    if (known) return known as T & ShownPerson
-  }
+  const known = look ? looked.get(ref)?.get(look) : plain.get(ref)
+  if (known) return known as T & ShownPerson
   const avatar =
     !look || look.avatar_kind === null
       ? { avatar_kind: ref.avatar_kind, avatar_color: ref.avatar_color }
@@ -91,6 +91,11 @@ export function shownUser<T extends UserRef>(
     { ...ref, display_name: name, ...avatar }
   ) as T & ShownPerson
   if (!look) plain.set(ref, person)
+  else {
+    const byLook = looked.get(ref) ?? new WeakMap<MemberLook, ShownPerson>()
+    looked.set(ref, byLook)
+    byLook.set(look, person)
+  }
   return person
 }
 

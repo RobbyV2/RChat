@@ -754,7 +754,9 @@ export function DockPlace({ place, peer }: { place: string; peer?: UserRef }) {
   return peer ? (
     <Name of={personName(asAccount(peer, 'call'))} withUsername />
   ) : (
-    <Masked text={place} />
+    <span className="streamer">
+      <Masked text={place} />
+    </span>
   )
 }
 
@@ -897,7 +899,7 @@ function VoiceDockBody() {
                 place="max-w-full min-w-0"
               >
                 {roomVoice && <P2pBadge />}
-                <span className={`streamer truncate ${roomVoice ? 'max-w-3/5 shrink-0' : ''}`}>
+                <span className={`truncate ${roomVoice ? 'max-w-3/5 shrink-0' : ''}`}>
                   <DockPlace place={place} peer={dmPeer} />
                 </span>
                 {roomCall && <P2pBadge />}
